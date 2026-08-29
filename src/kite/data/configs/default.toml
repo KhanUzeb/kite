@@ -16,7 +16,7 @@ system = "system"
 instance = "instance"
 
 [tools]
-enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "memory"]
+enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "subagent", "memory"]
 bash_timeout_seconds = 30
 
 [guardrails]
@@ -58,6 +58,14 @@ max_context_chars = 24000
 
 [github]
 enabled = true
+
+[cache]
+enabled = true  # pi-style prefix caching; Anthropic cache_control + usage tracking
+
+[orchestrator]
+max_workers = 3
+step_limit = 10
+cost_limit = 1.0
 
 # MCP servers — portable JSON-RPC tools (stdio). Example:
 # [[mcp]]

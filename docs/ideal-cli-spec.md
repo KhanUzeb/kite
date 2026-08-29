@@ -7,7 +7,7 @@ Mapping of the 14-category Ideal Coding CLI spec to Kite features.
 | 1 | Verifiability | Antigravity | `VerificationCollector` → `artifact` events; diffs, test commands, verification status on submit |
 | 2 | Graduated autonomy | Codex CLI | `auto` / `trust` / `approve` / `readonly`; sandbox on by default; `trusted_paths` in guardrails |
 | 3 | Transparent context | Warp | Exact `$ command` rows; `secrets_redacted` count in tool output |
-| 4 | Parallel + legible | Claude/Antigravity | `task` tool `prompts[]` parallel fan-out; Warp-style command blocks with exit/duration |
+| 4 | Parallel + legible | Claude/Antigravity | `task` tool `prompts[]` parallel fan-out; **`subagent`** LLM orchestrator with manager events |
 | 5 | Model-agnostic | OpenCode | LiteLLM + Ollama catalog; `kite import <format>` for Cursor/Claude/Aider/Codex sessions |
 | 6 | MCP-native | Claude Code | `[[mcp]]` servers in TOML → stdio JSON-RPC → `mcp_<server>_<tool>` registry |
 | 7 | Long-horizon context | Claude Code | Auto-compaction, sessions/resume, image token budgeting in `estimate_message_tokens` |
@@ -16,7 +16,7 @@ Mapping of the 14-category Ideal Coding CLI spec to Kite features.
 | 10 | GitHub integration | Copilot | `gh_issue`, `gh_pr`, `gh_prs`, `gh_runs`, `gh_run` tools (via `gh` CLI) |
 | 11 | Governance/audit | Cline/OpenHands | `~/.kite/audit.jsonl`; `kite audit`; approval trail |
 | 12 | Multi-agent roles | Roo Code | `--role architect|implementer|debugger` + role prompt fragments |
-| 13 | Predictable cost | — | Pre-flight `cost_estimate` event; 80% `cost_warning`; footer meter |
+| 13 | Predictable cost | — | Pre-flight `cost_estimate` event; 80% `cost_warning`; footer meter; **`cache_hit`** ratio (pi-style prefix cache) |
 | 14 | Honest limits | — | Loop warnings, verification gaps, unverified submit banner |
 
 ## Commands
@@ -28,6 +28,29 @@ kite import cursor ~/.cursor/sessions/export.json
 kite apply ~/.kite/trajectories/<session>.json
 kite cloud apply <task-id>
 kite audit --json
+kite run  # footer shows cache hit % when provider returns cached tokens
+```
+
+## Orchestrator
+
+The `subagent` tool spawns bounded nested agent runs (default: 10 steps, $1 budget each).
+Pass multiple `prompts` for parallel workers — the TUI shows `▸ subagent` / `✓ subagent` rows.
+
+```toml
+[orchestrator]
+max_workers = 3
+step_limit = 10
+cost_limit = 1.0
+```
+
+## Prompt cache
+
+Pi-style prefix caching: stable system prompt gets `cache_control` breakpoints on Anthropic.
+OpenAI cached_tokens and Anthropic cache_read are tracked and shown in the footer.
+
+```toml
+[cache]
+enabled = true
 ```
 
 ## Config (`~/.kite/configs/default.toml`)
