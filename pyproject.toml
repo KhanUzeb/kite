@@ -1,0 +1,35 @@
+[project]
+name = "kite"
+version = "0.4.0"
+description = "Slim hybrid coding-agent harness (mini-swe-agent loop + tau-style tools/events/providers/memory)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "litellm>=1.60.0",
+  "tenacity>=8.0",
+  "pydantic>=2.0",
+  "python-dotenv>=1.0",
+  "jinja2>=3.1",
+  "rich>=13.0",
+  "tomli-w>=1.0",
+]
+
+[project.scripts]
+kite = "kite.run:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+kite = [
+  "data/*.toml",
+  "data/configs/*.toml",
+  "data/prompts/*.md",
+  "data/commands/*.md",
+  "data/skills/*/SKILL.md",
+  "py.typed",
+]

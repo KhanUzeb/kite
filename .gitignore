@@ -1,0 +1,16 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+trajectory.json
+.trajectories/
+.DS_Store
+
+# Generated design docs (source markdown is kept)
+*.pdf
+docs/*.pdf
+scripts/build_design_pdf.py
