@@ -67,6 +67,10 @@ max_workers = 3
 step_limit = 10
 cost_limit = 1.0
 
+# Terminal UI — loader style via KITE_LOADER=grid|dots|orbit|wave|spin
+[ui]
+loader = "grid"  # pixel-grid default (beautifului-inspired); override with KITE_LOADER
+
 # MCP servers — portable JSON-RPC tools (stdio). Example:
 # [[mcp]]
 # name = "filesystem"

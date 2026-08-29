@@ -16,6 +16,7 @@ from rich.text import Text
 
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode
+from kite.ui.chips import render_plan_tasks, render_tool_chip, render_tool_chip_done
 from kite.ui.diff import render_diff
 from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState, TodoItem
@@ -239,6 +240,8 @@ class RunDisplay:
         self._spinner = WaitSpinner(label="thinking")
         self._spinner_on = False
         self._plan_printed = False
+        self._anim_tick = 0
+        self._thinking_open = False
 
     def _touch_state(self) -> None:
         self.state.touch()
@@ -289,6 +292,7 @@ class RunDisplay:
 
     def _spin(self, on: bool, label: str = "thinking") -> None:
         if on and not self.quiet:
+            self._anim_tick += 1
             if not self._spinner_on:
                 self._spinner.start()
                 self._spinner_on = True
@@ -312,7 +316,7 @@ class RunDisplay:
         if self._plan_printed:
             self.console.print(Text(f"{GUTTER}{'─' * 36}", style="kite.muted"))
         self._plan_printed = True
-        self.console.print(render_plan(self.state.todos))
+        self.console.print(render_plan_tasks(self.state.todos, tick=self._anim_tick))
 
     def print_banner(self, task: str = "") -> None:
         if task:
@@ -416,7 +420,8 @@ class RunDisplay:
             if not isinstance(args, dict):
                 args = {}
             reason = str(args.get("reason") or p.get("reason") or "")
-            self.console.print(_render_tool_block(tool, args))
+            detail = _short_args(args, limit=60)
+            self.console.print(render_tool_chip(tool, detail, running=True))
             if reason:
                 self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted"))
             if tool == "bash" and args.get("command"):
@@ -430,18 +435,8 @@ class RunDisplay:
             self._end_stream_line()
             self._spin(False)
             tool = str(p.get("tool") or "tool")
-            args_preview = p.get("structured") if isinstance(p.get("structured"), dict) else {}
             ok = p.get("ok", True)
             blocked = bool(p.get("blocked"))
-            if blocked:
-                mark, style = SYMBOL_WARN, "kite.pending"
-            elif ok:
-                mark, style = SYMBOL_OK, "kite.success"
-            else:
-                mark, style = SYMBOL_FAIL, "kite.error"
-            line = Text()
-            line.append(f"{mark} ", style=style)
-            line.append(tool, style=style)
             duration = _format_duration(p.get("duration_ms"))
             exit_code = p.get("structured", {}).get("exit_code") if isinstance(p.get("structured"), dict) else p.get("exit_code")
             meta: list[str] = []
@@ -449,14 +444,9 @@ class RunDisplay:
                 meta.append(duration)
             if exit_code is not None:
                 meta.append(f"exit={exit_code}")
-            if meta:
-                line.append("  ")
-                line.append(" ".join(meta), style="kite.muted")
-            preview = p.get("preview")
-            if preview and not duration:
-                line.append("  ")
-                line.append(str(preview)[:80], style="kite.muted")
-            self.console.print(line)
+            self.console.print(
+                render_tool_chip_done(tool, ok=ok, warn=blocked, meta=" ".join(meta) if meta else "")
+            )
 
             diff = p.get("diff")
             if isinstance(diff, str) and diff.strip():
