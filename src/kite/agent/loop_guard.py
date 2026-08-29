@@ -30,7 +30,8 @@ class LoopGuard:
             self._recent = self._recent[-self.window :]
 
         count = self._recent.count(sig)
-        if count < self.repeat_threshold:
+        threshold = 2 if tool == "bash" else self.repeat_threshold
+        if count < threshold:
             return None
 
         return (

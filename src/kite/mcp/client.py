@@ -114,10 +114,11 @@ def mcp_tool_to_kite(client: McpClient, spec: dict[str, Any]) -> Tool:
     )
 
 
-def load_mcp_tools(servers: list[dict[str, Any]]) -> tuple[list[Tool], list[McpClient]]:
-    """Start configured MCP servers and return Kite tools + live clients (caller must close)."""
+def load_mcp_tools(servers: list[dict[str, Any]]) -> tuple[list[Tool], list[McpClient], list[str]]:
+    """Start configured MCP servers; return tools, clients, and startup warnings."""
     tools: list[Tool] = []
     clients: list[McpClient] = []
+    warnings: list[str] = []
     for srv in servers:
         if not srv.get("enabled", True):
             continue
@@ -135,6 +136,7 @@ def load_mcp_tools(servers: list[dict[str, Any]]) -> tuple[list[Tool], list[McpC
             for spec in client.list_tools():
                 tools.append(mcp_tool_to_kite(client, spec))
             clients.append(client)
-        except Exception:
+        except Exception as e:
             client.close()
-    return tools, clients
+            warnings.append(f"MCP '{name}' failed to start: {e}")
+    return tools, clients, warnings

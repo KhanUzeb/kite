@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -116,8 +117,24 @@ def _load_from_dir(skills_dir: Path) -> list[Skill]:
     return skills
 
 
+_SKILLS_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, list[Skill]]] = {}
+_SKILLS_TTL_SECONDS = 45.0
+
+
 def load_skills(cwd: str | Path = ".", extra_dirs: list[str] | None = None) -> list[Skill]:
     cwd_path = Path(cwd).expanduser().resolve()
+    extra_key = tuple(sorted(extra_dirs or []))
+    key = (str(cwd_path), extra_key)
+    now = time.monotonic()
+    cached = _SKILLS_CACHE.get(key)
+    if cached and now - cached[0] < _SKILLS_TTL_SECONDS:
+        return cached[1]
+    skills = _load_skills_uncached(cwd_path, extra_dirs)
+    _SKILLS_CACHE[key] = (now, skills)
+    return skills
+
+
+def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -> list[Skill]:
     by_name: dict[str, Skill] = {}
     for d in _iter_skill_dirs(cwd_path, extra_dirs):
         # For packaged Traversable paths that aren't real Path dirs on disk,
