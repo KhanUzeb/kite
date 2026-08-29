@@ -4,62 +4,87 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-HELP = """\
-/plan              switch to plan mode (read-only, produce a checklist)
-/build             switch to build mode (apply edits, gated bash)
-/model [id]        show or set provider/model
-/undo              revert the last kite task commit
-/clear             start a fresh session
-/compact           compact context now
-/cost              session tokens and USD
-/status            mode, model, cost, session id
-/session           show current session id
-/init              write KITE.md project memory
-/expand            expand last collapsed tool output
-/trace             show last error traceback
-/approve auto|approve|readonly
-/skills [name]     list skills, or show one
-/skill name [args] run a skill as this turn
-/commands          list markdown slash commands
-/commands new name write .kite/commands/name.md
-/plugins           list plugins
-/plugins init name scaffold .kite/plugins/name
-/memory            show durable notes
-/remember [user|project] text
-/forget id|text    drop matching notes
-/home              show ~/.kite paths
-/help              this list
-/quit              exit
-"""
 
-CONTROL_COMMANDS = frozenset(
-    {
-        "plan",
-        "build",
-        "model",
-        "undo",
-        "clear",
-        "compact",
-        "cost",
-        "init",
-        "expand",
-        "trace",
-        "approve",
-        "help",
-        "quit",
-        "mode",
-        "skills",
-        "skill",
-        "commands",
-        "plugins",
-        "memory",
-        "remember",
-        "forget",
-        "status",
-        "session",
-        "new",
-        "home",
-    }
+@dataclass(frozen=True)
+class BuiltinCommand:
+    name: str
+    description: str
+    hint: str = ""
+    group: str = "session"
+    aliases: tuple[str, ...] = ()
+
+
+BUILTINS: tuple[BuiltinCommand, ...] = (
+    BuiltinCommand("plan", "Read-only mode — produce a checklist", aliases=("p",), group="session"),
+    BuiltinCommand("build", "Apply edits, gated bash", aliases=("b",), group="session"),
+    BuiltinCommand("approve", "Autonomy for this session", hint="auto|approve|readonly", group="session"),
+    BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
+    BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),
+    BuiltinCommand("compact", "Summarize older turns now (OpenRouter free)", group="session"),
+    BuiltinCommand("expand", "Show full tool output next turn", group="session"),
+    BuiltinCommand("cost", "Session tokens and USD", group="session"),
+    BuiltinCommand("status", "Mode, model, effort, session id", group="session"),
+    BuiltinCommand("session", "Show current session id", group="session"),
+    BuiltinCommand("init", "Write KITE.md project memory", group="session"),
+    BuiltinCommand("trace", "Last error traceback", group="session"),
+    BuiltinCommand("home", "Show ~/.kite paths", group="session"),
+    BuiltinCommand("help", "This map", aliases=("h",), group="session"),
+    BuiltinCommand("quit", "Leave the REPL", aliases=("q", "exit"), group="session"),
+    BuiltinCommand("model", "Show or set provider/model", hint="provider/id", group="model"),
+    BuiltinCommand("models", "List live models for the current provider", group="model"),
+    BuiltinCommand("provider", "Show or set provider", hint="name", group="model"),
+    BuiltinCommand("thinking", "Extended thinking (if this model supports it)", group="model"),
+    BuiltinCommand("fast", "Low effort / low latency (if supported)", group="model"),
+    BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
+    BuiltinCommand("memory", "Semantic markdown + episodic sqlite", hint="semantic|episodic", aliases=("mem",), group="memory"),
+    BuiltinCommand("semantic", "Show markdown semantic memory", group="memory"),
+    BuiltinCommand("episodic", "Show sqlite episode log", group="memory"),
+    BuiltinCommand("remember", "Append a semantic note", hint="[user|project] text", group="memory"),
+    BuiltinCommand("forget", "Drop matching notes or episodes", hint="id|substring", group="memory"),
+    BuiltinCommand("skills", "List skills, or show one", hint="name", group="extensions"),
+    BuiltinCommand("skill", "Run a skill as this turn", hint="name [args]", group="extensions"),
+    BuiltinCommand("commands", "List markdown slash prompts", hint="new name", aliases=("cmd", "cmds"), group="extensions"),
+    BuiltinCommand("plugins", "List plugins, or scaffold one", hint="init name", aliases=("plugin",), group="extensions"),
+    BuiltinCommand("attach", "Attach a file or image to the next turn", hint="path", group="attach"),
+    BuiltinCommand("clip", "Attach the clipboard (text or image)", aliases=("clipboard", "paste"), group="attach"),
+    BuiltinCommand("detach", "Drop a pending attachment", hint="name|all", group="attach"),
+    BuiltinCommand("attachments", "List files queued for the next turn", group="attach"),
+)
+
+CONTROL_COMMANDS = frozenset(b.name for b in BUILTINS)
+
+ALIASES: dict[str, str] = {}
+for _b in BUILTINS:
+    for _a in _b.aliases:
+        ALIASES[_a] = _b.name
+
+ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
+    "approve": [
+        ("auto", "run tools without asking"),
+        ("approve", "ask before mutating"),
+        ("readonly", "block writes and bash"),
+    ],
+    "reasoning": [
+        ("auto", "provider default"),
+        ("off", "disable extended thinking"),
+        ("fast", "low effort / low latency"),
+        ("thinking", "extended thinking"),
+    ],
+    "effort": [
+        ("auto", "provider default"),
+        ("off", "disable extended thinking"),
+        ("fast", "low effort / low latency"),
+        ("thinking", "extended thinking"),
+    ],
+    "mode": [
+        ("plan", "read-only checklist"),
+        ("build", "apply edits"),
+    ],
+}
+
+HELP = "\n".join(
+    f"/{b.name:<16} {b.hint + '  ' if b.hint else ''}{b.description}".rstrip()
+    for b in BUILTINS
 )
 
 
@@ -84,17 +109,7 @@ def parse_slash(raw: str) -> SlashResult:
     cmd, _, rest = body.partition(" ")
     cmd = cmd.lower().strip()
     arg = rest.strip()
-    aliases = {
-        "q": "quit",
-        "exit": "quit",
-        "p": "plan",
-        "b": "build",
-        "h": "help",
-        "mem": "memory",
-        "cmd": "commands",
-        "cmds": "commands",
-    }
-    cmd = aliases.get(cmd, cmd)
+    cmd = ALIASES.get(cmd, cmd)
     if cmd in CONTROL_COMMANDS:
         return SlashResult("handled", command=cmd, arg=arg)
-    return SlashResult("unknown", command=cmd, arg=arg, message=f"unknown command /{cmd}  — /help")
+    return SlashResult("unknown", command=cmd, arg=arg, message=f"unknown command /{cmd}  — type / for the list")

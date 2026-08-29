@@ -58,6 +58,16 @@ def _parse_approval(raw: str | None, mode: AgentMode) -> ApprovalMode:
     return ApprovalMode.AUTO if mode is AgentMode.BUILD else ApprovalMode.READONLY
 
 
+def _load_attachments(paths: list[str], task: str, cwd: str):
+    from kite.ui.attach import collect_turn_attachments, load_file
+
+    pending = []
+    for raw in paths:
+        pending.append(load_file(raw, cwd=cwd))
+    leftover, bundled = collect_turn_attachments(task or "", cwd, pending)
+    return leftover, bundled
+
+
 def _wire_display(harness: Harness, console: Console, args: argparse.Namespace) -> SessionUiState:
     mode = _parse_mode(getattr(args, "mode", None))
     approval = _parse_approval(getattr(args, "approval", None), mode)
@@ -88,17 +98,24 @@ def _wire_display(harness: Harness, console: Console, args: argparse.Namespace) 
 def cmd_run(args: argparse.Namespace) -> int:
     console = _console()
     task = args.task
-    if not task and not args.stdin:
-        console.print("[red]Provide a task or --stdin[/]")
-        return 2
     if args.stdin:
         task = sys.stdin.read().strip()
-    if not task:
-        console.print("[red]Empty task[/]")
-        return 2
-
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
+    try:
+        task, attachments = _load_attachments(
+            getattr(args, "attach", None) or [],
+            task or "",
+            args.cwd,
+        )
+    except (OSError, ValueError) as e:
+        console.print(f"[red]{e}[/]")
+        return 2
+    if not task.strip() and attachments:
+        task = "Look at the attached files."
+    if not task.strip():
+        console.print("[red]Provide a task, --stdin, or --attach[/]")
+        return 2
     harness = Harness(
         HarnessConfig(
             provider=args.provider,
@@ -116,6 +133,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             mode=mode.value,
             approval=approval.value,
             interactive=False,
+            attachments=attachments,
         )
     )
     _wire_display(harness, console, args)
@@ -159,6 +177,15 @@ def cmd_resume(args: argparse.Namespace) -> int:
         return 2
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
+    try:
+        follow, attachments = _load_attachments(
+            getattr(args, "attach", None) or [],
+            follow,
+            args.cwd,
+        )
+    except (OSError, ValueError) as e:
+        console.print(f"[red]{e}[/]")
+        return 2
     harness = Harness(
         HarnessConfig(
             provider=args.provider,
@@ -176,6 +203,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             mode=mode.value,
             approval=approval.value,
             interactive=False,
+            attachments=attachments,
         )
     )
     _wire_display(harness, console, args)
@@ -563,6 +591,13 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-context", action="store_true", help="Skip AGENTS.md/git/tree injection")
     p.add_argument("--no-compact", action="store_true", help="Disable auto context compaction")
     p.add_argument("--no-guardrails", action="store_true", help="Disable path/bash/secret guardrails")
+    p.add_argument(
+        "--attach",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Attach a file or image to the task (repeatable)",
+    )
     p.add_argument("-q", "--quiet", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument(

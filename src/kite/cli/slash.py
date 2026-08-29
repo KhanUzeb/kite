@@ -28,6 +28,8 @@ class SlashSpec:
     path: Path | None = None
     plugin: str = ""
     hint: str = ""
+    group: str = ""
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass
@@ -94,6 +96,23 @@ class CommandIndex:
             if key not in specs:
                 put(skill_spec)
             put(skill_spec, alias=f"skill:{key}")
+
+        # Builtins always win.
+        from kite.ui.commands import BUILTINS
+
+        for builtin in BUILTINS:
+            spec = SlashSpec(
+                name=builtin.name,
+                kind="control",
+                source="builtin",
+                description=builtin.description,
+                hint=builtin.hint,
+                group=builtin.group,
+                aliases=builtin.aliases,
+            )
+            put(spec)
+            for alias in builtin.aliases:
+                put(spec, alias=alias)
 
         return cls(specs=specs, skills=skills, plugins=plugins, commands=overlay)
 
@@ -177,9 +196,22 @@ def expand_prompt_slash(
 
 
 def help_text(index: CommandIndex) -> str:
-    from kite.ui.commands import HELP
+    from kite.ui.commands import BUILTINS
 
-    lines = [HELP.strip(), "", "skills & commands"]
+    groups: dict[str, list] = {}
+    for builtin in BUILTINS:
+        groups.setdefault(builtin.group or "session", []).append(builtin)
+
+    lines: list[str] = []
+    for group, items in groups.items():
+        if lines:
+            lines.append("")
+        lines.append(group)
+        for b in items:
+            hint = f" {b.hint}" if b.hint else ""
+            lines.append(f"  /{b.name:<14}{hint}  {b.description}".rstrip())
+
+    lines.extend(["", "skills & commands"])
     seen: set[str] = set()
     rows = sorted(index.prompt_specs(), key=lambda s: (s.source, s.name))
     for spec in rows:
@@ -191,10 +223,10 @@ def help_text(index: CommandIndex) -> str:
         desc = (spec.description or "").strip()
         if len(desc) > 56:
             desc = desc[:55] + "…"
-        lines.append(f"/{spec.name:<16} ({tag}){hint}  {desc}".rstrip())
+        lines.append(f"  /{spec.name:<14} ({tag}){hint}  {desc}".rstrip())
         if len(seen) >= 40:
-            lines.append("…  /skills  /commands  /plugins")
+            lines.append("  …  /skills  /commands  /plugins")
             break
     if not seen:
-        lines.append("(none yet — /commands new name  or  /plugins init name)")
+        lines.append("  (none yet — /commands new name  or  /plugins init name)")
     return "\n".join(lines)
