@@ -12,6 +12,51 @@ from typing import Any, Iterator
 from kite.config import ensure_home, kite_home
 
 
+def format_meta_line(meta: SessionMeta) -> str:
+    """Canonical JSONL meta row — .6f timestamps keep line length stable for in-place patches."""
+    return (
+        '{"type":"meta"'
+        f',"id":{json.dumps(meta.id)}'
+        f',"created_at":{meta.created_at:.6f}'
+        f',"updated_at":{meta.updated_at:.6f}'
+        f',"cwd":{json.dumps(meta.cwd)}'
+        f',"provider":{json.dumps(meta.provider)}'
+        f',"model":{json.dumps(meta.model)}'
+        f',"task":{json.dumps(meta.task)}'
+        f',"label":{json.dumps(meta.label)}'
+        f',"exit_status":{json.dumps(meta.exit_status)}'
+        "}"
+    )
+
+
+def _meta_sidecar(path: Path) -> Path:
+    return path.with_suffix(".meta")
+
+
+def _read_first_line_bytes(path: Path) -> tuple[int, str]:
+    """Read only the first line — O(meta line), not O(file)."""
+    with path.open("rb") as f:
+        data = bytearray()
+        while True:
+            chunk = f.read(1)
+            if not chunk or chunk == b"\n":
+                break
+            data.extend(chunk)
+        return len(data), data.decode("utf-8")
+
+
+def _session_updated_at(path: Path, meta: SessionMeta) -> float:
+    sidecar = _meta_sidecar(path)
+    if sidecar.is_file():
+        try:
+            row = json.loads(sidecar.read_text(encoding="utf-8"))
+            if isinstance(row.get("updated_at"), (int, float)):
+                return float(row["updated_at"])
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+    return meta.updated_at
+
+
 def sessions_dir() -> Path:
     ensure_home()
     return kite_home() / "sessions"
@@ -90,11 +135,11 @@ class Session:
     def _write_meta(self) -> None:
         path = self._session_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Rewrite file: meta line + all messages (simple & durable enough for slim harness)
-        lines = [json.dumps({"type": "meta", **self.meta.to_dict()}, ensure_ascii=False)]
+        lines = [format_meta_line(self.meta)]
         for m in self.messages:
             lines.append(json.dumps({"type": "message", "message": m}, ensure_ascii=False))
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self._write_meta_sidecar(path)
 
     def _persist_tail(self, messages: tuple[dict, ...] | list[dict]) -> None:
         path = self._session_path()
@@ -109,23 +154,36 @@ class Session:
                 )
         self._touch_meta_timestamp(path)
 
+    def _write_meta_sidecar(self, path: Path) -> None:
+        _meta_sidecar(path).write_text(
+            json.dumps({"updated_at": self.meta.updated_at}, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
     def _touch_meta_timestamp(self, path: Path) -> None:
-        """Rewrite only the meta line so session list stays sorted."""
+        """Patch updated_at on line 1 — reads only the meta row, not the full transcript."""
+        self._write_meta_sidecar(path)
         try:
-            with path.open("r+", encoding="utf-8") as f:
-                first = f.readline()
-                if not first.strip():
-                    return
-                row = json.loads(first)
-                if row.get("type") != "meta":
-                    return
-                new_first = json.dumps({"type": "meta", **self.meta.to_dict()}, ensure_ascii=False) + "\n"
-                rest = f.read()
-                f.seek(0)
-                f.write(new_first + rest)
-                f.truncate()
+            line_len, old_line = _read_first_line_bytes(path)
+            if not old_line.strip():
+                return
+            row = json.loads(old_line)
+            if row.get("type") != "meta":
+                return
+            new_line = format_meta_line(self.meta)
+            new_bytes = new_line.encode("utf-8")
+            if len(new_bytes) == line_len:
+                with path.open("r+b") as f:
+                    f.seek(0)
+                    f.write(new_bytes)
+                return
+            with path.open("rb") as f:
+                f.seek(line_len + 1)
+                tail = f.read()
+            with path.open("wb") as f:
+                f.write(new_bytes + b"\n" + tail)
         except (OSError, json.JSONDecodeError, ValueError):
-            self._write_meta()
+            pass
 
     def save(self) -> Path:
         self._write_meta()
@@ -183,6 +241,7 @@ def load_session(session_id: str) -> Session:
         row = json.loads(line)
         if row.get("type") == "meta":
             meta = SessionMeta.from_dict(row)
+            meta.updated_at = _session_updated_at(path, meta)
         elif row.get("type") == "message":
             messages.append(row["message"])
     if meta is None:
@@ -197,12 +256,15 @@ def list_sessions(*, limit: int = 30) -> list[SessionMeta]:
             first = path.read_text(encoding="utf-8").splitlines()[0]
             row = json.loads(first)
             if row.get("type") == "meta":
-                rows.append(SessionMeta.from_dict(row))
+                meta = SessionMeta.from_dict(row)
+                meta.updated_at = _session_updated_at(path, meta)
+                rows.append(meta)
         except (OSError, json.JSONDecodeError, IndexError, KeyError, ValueError):
             continue
         if len(rows) >= limit:
             break
-    return rows
+    rows.sort(key=lambda m: m.updated_at, reverse=True)
+    return rows[:limit]
 
 
 @dataclass(frozen=True)
@@ -219,7 +281,8 @@ def _trajectory_path(session_id: str) -> Path:
 def delete_session(session_id: str) -> DeletedSession:
     path = resolve_session_path(session_id, unique=True)
     sid = path.stem
-    path.unlink()
+    path.unlink(missing_ok=True)
+    _meta_sidecar(path).unlink(missing_ok=True)
     traj = _trajectory_path(sid)
     traj_ok = False
     if traj.is_file():
@@ -234,6 +297,7 @@ def delete_all_sessions() -> list[DeletedSession]:
         sid = path.stem
         try:
             path.unlink()
+            _meta_sidecar(path).unlink(missing_ok=True)
         except OSError:
             continue
         traj = _trajectory_path(sid)

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import re
-import time
+import re
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
 from kite.config import kite_home
+from kite.util.cache import TtlCache
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 
@@ -117,21 +118,14 @@ def _load_from_dir(skills_dir: Path) -> list[Skill]:
     return skills
 
 
-_SKILLS_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, list[Skill]]] = {}
-_SKILLS_TTL_SECONDS = 45.0
+_SKILLS_CACHE: TtlCache[tuple[str, tuple[str, ...]], list[Skill]] = TtlCache(45.0)
 
 
 def load_skills(cwd: str | Path = ".", extra_dirs: list[str] | None = None) -> list[Skill]:
     cwd_path = Path(cwd).expanduser().resolve()
     extra_key = tuple(sorted(extra_dirs or []))
     key = (str(cwd_path), extra_key)
-    now = time.monotonic()
-    cached = _SKILLS_CACHE.get(key)
-    if cached and now - cached[0] < _SKILLS_TTL_SECONDS:
-        return cached[1]
-    skills = _load_skills_uncached(cwd_path, extra_dirs)
-    _SKILLS_CACHE[key] = (now, skills)
-    return skills
+    return _SKILLS_CACHE.get_or_set(key, lambda: _load_skills_uncached(cwd_path, extra_dirs))
 
 
 def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -> list[Skill]:
