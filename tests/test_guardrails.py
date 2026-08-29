@@ -33,3 +33,12 @@ def test_write_inside_workspace_allowed(workspace: Path) -> None:
     target = workspace / "src" / "new.py"
     verdict = policy.check_path(str(target), for_write=True)
     assert verdict.allowed
+
+
+def test_redact_secrets_masks_api_keys(workspace: Path) -> None:
+    policy = GuardrailPolicy(GuardrailConfig(), workspace)
+    text = "api_key=sk-abcdefghijklmnopqrstuvwxyz123456"
+    redacted, count = policy.redact_secrets(text)
+    assert count >= 1
+    assert "REDACTED" in redacted
+    assert "sk-abc" not in redacted
