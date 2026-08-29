@@ -327,13 +327,21 @@ class ChatSession:
             return True
         if cmd == "cost":
             pct = f"{self.state.context_pct:.0%}" if self.state.context_pct is not None else "—"
+            cache = ""
+            if self.state.cache_hit_tokens:
+                cache = f"  ·  cache {self.state.cache_hit_ratio:.0%} ({self.state.cache_hit_tokens} tok)"
             self.console.print(
-                f"${self.state.cost:.4f}  ·  ctx {self.state.tokens}/{self.state.window or '—'} ({pct})  ·  calls {self.state.n_calls}"
+                f"${self.state.cost:.4f}  ·  ctx {self.state.tokens}/{self.state.window or '—'} ({pct}){cache}  ·  calls {self.state.n_calls}"
             )
             return True
         if cmd == "expand":
-            self.state.expanded_all = True
-            self.console.print("[kite.muted]next tool outputs will be expanded[/]")
+            self.state.expanded_all = not self.state.expanded_all
+            mode = "expanded" if self.state.expanded_all else "collapsed"
+            self.console.print(f"[kite.muted]tool output {mode}[/]  [kite.muted](/expand toggles)[/]")
+            return True
+        if cmd == "collapse":
+            self.state.expanded_all = False
+            self.console.print("[kite.muted]tool output collapsed[/]")
             return True
         if cmd == "trace":
             if self.state.last_trace:
