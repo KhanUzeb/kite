@@ -13,7 +13,7 @@ from rich.prompt import Prompt
 from rich.text import Text
 
 from kite.config import kite_home
-from kite.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
+from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
 from kite.ui.style import GUTTER, SYMBOL_WARN
 
 Decision = Literal["allow", "session", "always", "deny", "stop"]

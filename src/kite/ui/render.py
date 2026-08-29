@@ -15,8 +15,8 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
-from kite.events import Event
-from kite.mode import AgentMode, ApprovalMode
+from kite.agent.events import Event
+from kite.agent.mode import AgentMode, ApprovalMode
 from kite.ui.diff import render_diff
 from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState, TodoItem

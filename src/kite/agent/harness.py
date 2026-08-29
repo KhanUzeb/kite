@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from kite.config import UserConfig
-from kite.events import Event
+from kite.agent.events import Event
 from kite.memory.session import Session
-from kite.runtime import AgentRuntime, RuntimeOptions
+from kite.agent.runtime import AgentRuntime, RuntimeOptions
 from kite.tools.store import TodoStore
 
 

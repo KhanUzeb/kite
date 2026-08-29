@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from kite.mode import AgentMode, ApprovalMode
+from kite.agent.mode import AgentMode, ApprovalMode
 
 TodoStatus = Literal["pending", "in_progress", "completed"]
 

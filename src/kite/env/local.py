@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kite.exceptions import Submitted
+from kite.agent.exceptions import Submitted
 from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
 

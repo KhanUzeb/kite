@@ -8,11 +8,11 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
-from kite.events import Event
-from kite.exceptions import FormatError, InterruptAgentFlow, Interrupted, LimitsExceeded, Submitted, TimeExceeded
-from kite.loop.compaction import CompactionConfig, LoopCompactor
+from kite.agent.events import Event
+from kite.agent.exceptions import FormatError, InterruptAgentFlow, Interrupted, LimitsExceeded, Submitted, TimeExceeded
+from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.memory.session import Session
-from kite.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
+from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
 from kite.prompts import load_prompt_template
 
 try:

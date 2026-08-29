@@ -7,8 +7,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from kite.events import Event
-from kite.exceptions import FormatError
+from kite.agent.events import Event
+from kite.agent.exceptions import FormatError
 from kite.providers.resolve import ResolvedModel
 from kite.tools import ToolRegistry
 

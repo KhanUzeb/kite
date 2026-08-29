@@ -7,21 +7,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kite.agent import DefaultAgent
-from kite.configs import AgentRuntimeConfig, load_runtime_config
+from kite.agent.loop import DefaultAgent
+from kite.agent.events import Event
+from kite.agent.mode import AgentMode, ApprovalMode, tools_for_mode
+from kite.cli.slash import expand_prompt_slash
+from kite.config import AgentRuntimeConfig, UserConfig, ensure_home, load_runtime_config
 from kite.context.discovery import gather_project_context
 from kite.env.local import LocalEnvironment
-from kite.events import Event
 from kite.guardrails import GuardrailPolicy
 from kite.memory.session import Session, create_session, load_session
+from kite.memory.store import MemoryStore
 from kite.models.litellm_model import LitellmModel
-from kite.mode import AgentMode, ApprovalMode, tools_for_mode
 from kite.prompts import assemble_instance_prompt, assemble_system_prompt, load_prompt_template
 from kite.providers.resolve import ResolvedModel, missing_credentials, missing_model, resolve_model
-from kite.config import UserConfig, ensure_home
-from kite.memory.store import MemoryStore
 from kite.skills.loader import load_skills
-from kite.slash import expand_prompt_slash
 from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
 from kite.tools.store import TodoStore

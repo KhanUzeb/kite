@@ -11,7 +11,7 @@ from kite.context.window import (
     estimate_usage,
     should_compact,
 )
-from kite.events import Event
+from kite.agent.events import Event
 
 
 @dataclass
