@@ -12,6 +12,7 @@ from kite.agent.events import Event
 from kite.agent.exceptions import FormatError, InterruptAgentFlow, Interrupted, LimitsExceeded, Submitted, TimeExceeded
 from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.loop_guard import LoopGuard
+from kite.agent.verification import VerificationCollector
 from kite.memory.session import Session
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
 from kite.prompts import load_prompt_template
@@ -58,6 +59,8 @@ class DefaultAgent:
         summarizer=None,
         attachments=None,
         send_images: bool = True,
+        verification: VerificationCollector | None = None,
+        audit=None,
     ):
         self.model = model
         self.env = env
@@ -87,6 +90,9 @@ class DefaultAgent:
         self.attachments = list(attachments or [])
         self.send_images = send_images
         self._task = ""
+        self.verification = verification or VerificationCollector()
+        self.audit = audit
+        self._cost_warned = False
 
         self.messages: list[dict] = []
         self.cost = 0.0
@@ -191,6 +197,12 @@ class DefaultAgent:
         for att in self.attachments:
             self._emit("attach", name=att.name, kind=att.kind, source=att.source)
         self._emit("agent_start", task=task, provider=provider, model=model_name, mode=self.mode.value, approval=self.approval.value)
+        self._emit(
+            "cost_estimate",
+            cost_limit=self.cost_limit,
+            step_limit=self.step_limit,
+            note=f"Budget: ≤${self.cost_limit:.2f} across up to {self.step_limit} model calls",
+        )
 
         user_text = follow = kwargs.get("follow_up") or task
         content: object = user_text
@@ -271,9 +283,13 @@ class DefaultAgent:
                 if self.messages and self.messages[-1].get("role") == "exit":
                     break
         finally:
+            vsum = self.verification.summary()
+            self._emit("artifact", **vsum)
             self._flush_task_commit()
 
         result = self.messages[-1].get("extra", {}) if self.messages else {}
+        if result:
+            result = {**result, "verification": vsum, "verification_status": vsum.get("status")}
         if self.session is not None:
             self.session.set_exit(str(result.get("exit_status") or ""))
         self._emit("agent_end", **result)
@@ -325,6 +341,18 @@ class DefaultAgent:
             )
         self.cost += message.get("extra", {}).get("cost", 0.0)
         self._emit("cost", cost=self.cost)
+        if (
+            not self._cost_warned
+            and self.cost_limit > 0
+            and self.cost >= 0.8 * self.cost_limit
+        ):
+            self._cost_warned = True
+            self._emit(
+                "cost_warning",
+                cost=self.cost,
+                limit=self.cost_limit,
+                message=f"Cost at ${self.cost:.3f} — 80% of ${self.cost_limit:.2f} limit",
+            )
         self.add_messages(message)
         return message
 
@@ -413,6 +441,7 @@ class DefaultAgent:
                 path=out.get("path") or args.get("path"),
                 duration_ms=duration_ms,
                 structured=structured,
+                secrets_redacted=out.get("secrets_redacted"),
             )
             if tool == "todo_write" and out.get("items") is not None:
                 self._emit("todo", items=out["items"])
@@ -439,6 +468,11 @@ class DefaultAgent:
                 self._emit("loop_warning", message=loop_warn, tool=tool)
                 existing = str(out.get("output") or out.get("error") or "")
                 out = {**out, "output": f"{loop_warn}\n\n{existing}".strip(), "loop_warning": True}
+            self.verification.on_tool_end(tool, args, out)
+            if self.hooks is not None:
+                self.hooks.call("after_tool", out, tool=tool, args=args)
+            if self.audit is not None:
+                self.audit.log_tool(tool, ok=bool(out.get("ok")), duration_ms=duration_ms)
             outputs.append(out)
         obs = self.add_messages(*self.model.format_observation_messages(message, outputs))
         if self._interrupt:
@@ -512,7 +546,8 @@ class DefaultAgent:
                     "estimated_tokens": usage.total_tokens if usage else None,
                     "ratio": round(usage.ratio, 3) if usage else None,
                 },
-                "kite_version": "0.5.0",
+                "kite_version": "0.6.0",
+                "verification": self.verification.summary(),
             },
             "messages": self.messages,
             "trajectory_format": "kite-0.3",

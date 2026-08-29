@@ -416,10 +416,45 @@ class RunDisplay:
                     self.console.print(render_error(err.splitlines()[0], show_trace_hint=False))
             else:
                 output = str(p.get("output") or "")
+                redacted = p.get("secrets_redacted")
                 expanded = self.verbose or self.state.expanded_all
                 collapsed = _collapse_text(output, expanded=expanded)
                 if collapsed.plain:
                     self.console.print(collapsed)
+                if redacted:
+                    self.console.print(Text(f"{GUTTER}{GUTTER}· {redacted} secret(s) redacted", style="kite.muted"))
+            return
+
+        if kind == "artifact":
+            self._end_stream_line()
+            self._spin(False)
+            status = str(p.get("status") or "unknown")
+            style = "kite.success" if status == "verified" else ("kite.pending" if status == "partial" else "kite.error")
+            line = Text()
+            line.append(f"{SYMBOL_OK if status == 'verified' else SYMBOL_WARN} ", style=style)
+            line.append(f"artifacts  {status}", style=style)
+            count = p.get("artifact_count")
+            if count:
+                line.append(f"  ({count})", style="kite.muted")
+            self.console.print(line)
+            for art in (p.get("artifacts") or [])[-5:]:
+                if isinstance(art, dict):
+                    mark = "✓" if art.get("ok", True) else "✗"
+                    self.console.print(
+                        Text(f"{GUTTER}{mark} [{art.get('kind', '?')}] {art.get('summary', '')}", style="kite.muted")
+                    )
+            for gap in p.get("gaps") or []:
+                self.console.print(Text(f"{GUTTER}⚠ {gap}", style="kite.pending"))
+            return
+
+        if kind == "cost_estimate":
+            note = str(p.get("note") or "")
+            if note:
+                self.console.print(Text(f"{GUTTER}{note}", style="kite.muted"))
+            return
+
+        if kind == "cost_warning":
+            self.console.print(Text(f"{SYMBOL_WARN} {p.get('message') or 'cost warning'}", style="kite.pending"))
             return
 
         if kind == "loop_warning":
@@ -504,6 +539,14 @@ class RunDisplay:
                 if submission and not self._saw_answer:
                     self._stream_write(submission, channel="answer")
                     self._end_stream_line()
+                vstatus = p.get("verification_status")
+                if vstatus in {"unverified", "failed", "partial"}:
+                    self.console.print(
+                        Text(
+                            f"{SYMBOL_WARN} verification: {vstatus} — review artifacts above",
+                            style="kite.pending",
+                        )
+                    )
             elif status in {"Interrupted", "Denied"}:
                 self.console.print(Text(str(status).lower(), style="kite.pending"))
             else:

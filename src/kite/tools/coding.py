@@ -354,22 +354,46 @@ def make_coding_tools(
         lines = [f"{x['status']:12} {x['content']}" for x in items]
         return {"ok": True, "output": "\n".join(lines) or "(empty plan)", "items": items}
 
-    def task_dispatch(args: dict[str, Any]) -> dict[str, Any]:
-        """Bounded search sub-task: glob + optional grep, return a summary (keeps main context lean)."""
-        prompt = str(args.get("prompt") or "")
-        glob_pat = str(args.get("glob") or "**/*.{py,ts,tsx,js,go,rs,md}")
-        pattern = args.get("pattern")
-        root_path = _resolve(str(args.get("path") or "."), root)
+    def _single_task(prompt: str, glob_pat: str, pattern: Any, root_path: Path) -> str:
         matches = glob_files({"pattern": glob_pat, "root": str(root_path), "max": 40})
         parts = [f"task: {prompt}", "files:", matches.get("output") or "(none)"]
         if pattern:
             grepped = grep_files({"pattern": str(pattern), "path": str(root_path), "max_hits": 30})
             parts.append("hits:")
             parts.append(str(grepped.get("output") or ""))
-        text = "\n".join(parts)
-        if len(text) > 8_000:
-            text = text[:8_000] + "\n… summary truncated …"
-        return {"ok": True, "output": text, "summary": True}
+        return "\n".join(parts)
+
+    def task_dispatch(args: dict[str, Any]) -> dict[str, Any]:
+        """Bounded parallel investigations — glob + optional grep summaries."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        glob_pat = str(args.get("glob") or "**/*.{py,ts,tsx,js,go,rs,md}")
+        pattern = args.get("pattern")
+        root_path = _resolve(str(args.get("path") or "."), root)
+        prompts = args.get("prompts") or args.get("tasks")
+        if isinstance(prompts, list) and prompts:
+            sections: list[str] = [f"parallel tasks: {len(prompts)}"]
+            with ThreadPoolExecutor(max_workers=min(4, len(prompts))) as pool:
+                futures = {
+                    pool.submit(_single_task, str(p), glob_pat, pattern, root_path): i
+                    for i, p in enumerate(prompts, 1)
+                }
+                results: dict[int, str] = {}
+                for fut in as_completed(futures):
+                    idx = futures[fut]
+                    try:
+                        results[idx] = fut.result()
+                    except Exception as e:
+                        results[idx] = f"task {idx} error: {e}"
+            for i in sorted(results):
+                sections.append(f"\n--- subagent {i} ---\n{results[i]}")
+            text = "\n".join(sections)
+        else:
+            prompt = str(args.get("prompt") or "")
+            text = _single_task(prompt, glob_pat, pattern, root_path)
+        if len(text) > 12_000:
+            text = text[:12_000] + "\n… summary truncated …"
+        return {"ok": True, "output": text, "summary": True, "parallel": bool(prompts)}
 
     def web_search(args: dict[str, Any]) -> dict[str, Any]:
         return websearch(
@@ -610,16 +634,20 @@ def make_coding_tools(
             "task",
             Tool(
                 name="task",
-                description="Dispatch a bounded investigation (glob + optional grep) and get a summary back instead of dumping raw hits into the main thread.",
+                description="Dispatch bounded investigation(s). Pass `prompt` or `prompts` (list) for parallel sub-searches.",
                 parameters={
                     "type": "object",
                     "properties": {
                         "prompt": {"type": "string"},
+                        "prompts": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Run multiple searches in parallel",
+                        },
                         "glob": {"type": "string"},
                         "pattern": {"type": "string"},
                         "path": {"type": "string"},
                     },
-                    "required": ["prompt"],
                 },
                 execute_fn=lambda a: gated("task", a, task_dispatch),
             ),
