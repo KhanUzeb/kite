@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import subprocess
-import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from kite.util.cache import TtlCache
 
 PROJECT_MARKERS = (".git", "pyproject.toml", "package.json", "Cargo.toml", "go.mod")
 SKIP_DIRS = {
@@ -151,8 +152,7 @@ def tree_snippet(root: Path, *, max_entries: int = 80) -> str:
     return "\n".join(lines)
 
 
-_CTX_CACHE: dict[tuple[str, bool, bool, int], tuple[float, ProjectContext]] = {}
-_CTX_TTL_SECONDS = 30.0
+_CTX_CACHE: TtlCache[tuple[str, bool, bool, int], ProjectContext] = TtlCache(30.0)
 
 
 def gather_project_context(
@@ -164,17 +164,15 @@ def gather_project_context(
 ) -> ProjectContext:
     cwd_path = Path(cwd).expanduser().resolve()
     key = (str(cwd_path), include_git, include_tree, tree_max_entries)
-    now = time.monotonic()
-    cached = _CTX_CACHE.get(key)
-    if cached and now - cached[0] < _CTX_TTL_SECONDS:
-        return cached[1]
-    root = find_project_root(cwd_path)
-    ctx = ProjectContext(
-        root=root,
-        cwd=cwd_path,
-        files=discover_agents_files(cwd_path),
-        git_status=git_status_snippet(cwd_path) if include_git else "",
-        tree_snippet=tree_snippet(root, max_entries=tree_max_entries) if include_tree else "",
-    )
-    _CTX_CACHE[key] = (now, ctx)
-    return ctx
+
+    def build() -> ProjectContext:
+        root = find_project_root(cwd_path)
+        return ProjectContext(
+            root=root,
+            cwd=cwd_path,
+            files=discover_agents_files(cwd_path),
+            git_status=git_status_snippet(cwd_path) if include_git else "",
+            tree_snippet=tree_snippet(root, max_entries=tree_max_entries) if include_tree else "",
+        )
+
+    return _CTX_CACHE.get_or_set(key, build)
