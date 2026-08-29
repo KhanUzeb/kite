@@ -31,6 +31,8 @@ EventKind = Literal[
     "commit",
     "route",
     "attach",
+    "loop_warning",
+    "artifact",
 ]
 
 
