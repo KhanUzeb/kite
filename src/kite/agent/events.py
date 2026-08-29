@@ -13,6 +13,7 @@ EventKind = Literal[
     "turn_end",
     "message",
     "stream_start",
+    "stream_reasoning",
     "stream_delta",
     "stream_tool",
     "stream_end",
@@ -28,6 +29,8 @@ EventKind = Literal[
     "mode",
     "cost",
     "commit",
+    "route",
+    "attach",
 ]
 
 

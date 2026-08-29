@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -12,6 +14,9 @@ from typing import Any
 from kite.config import UserConfig
 from kite.providers.catalog import Catalog, ProviderSpec, load_catalog
 from kite.providers.keys import api_key_env_names, api_key_for
+
+_LIST_CACHE: dict[str, tuple[float, "ListModelsResult"]] = {}
+_LIST_TTL = 90.0
 
 # Modality ids that are useless for the coding agent (not a hard model allowlist).
 _NON_CHAT_HINTS = (
@@ -37,6 +42,43 @@ class RemoteModel:
     context_window: int | None = None
     owned_by: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+
+    def is_free(self) -> bool:
+        """True when the live payload marks this model as free (suffix or zero price)."""
+        low = self.id.lower()
+        if low.endswith(":free") or low.endswith("/free"):
+            return True
+        pricing = self.raw.get("pricing")
+        if not isinstance(pricing, dict):
+            return False
+        try:
+            prompt = float(pricing.get("prompt") if pricing.get("prompt") is not None else 1)
+            completion = float(pricing.get("completion") if pricing.get("completion") is not None else 1)
+        except (TypeError, ValueError):
+            return False
+        return prompt == 0.0 and completion == 0.0
+
+    def parameter_names(self) -> frozenset[str]:
+        return frozenset(_collect_parameter_names(self.raw))
+
+    def input_modalities(self) -> frozenset[str]:
+        return frozenset(_collect_input_modalities(self.raw))
+
+    def supports_vision(self) -> bool:
+        mods = {m.lower() for m in self.input_modalities()}
+        if mods & {"image", "images", "vision", "visual"}:
+            return True
+        params = self.parameter_names()
+        if params & {"vision", "image", "images", "image_url"}:
+            return True
+        details = self.raw.get("details") if isinstance(self.raw.get("details"), dict) else {}
+        families = details.get("families") if isinstance(details, dict) else None
+        if isinstance(families, (list, tuple)):
+            for item in families:
+                low = str(item).lower()
+                if "clip" in low or "vision" in low:
+                    return True
+        return False
 
 
 @dataclass(frozen=True)
@@ -256,28 +298,169 @@ def _fetch_ollama(spec: ProviderSpec, cfg: UserConfig) -> ListModelsResult:
     return _fetch_openai_compatible(spec, cfg)
 
 
+def _collect_parameter_names(raw: dict[str, Any]) -> set[str]:
+    """Pull capability / parameter names out of a live model payload."""
+    found: set[str] = set()
+
+    def add(value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            found.add(value.strip().lower().replace("-", "_"))
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                add(value=item)
+
+    for key in (
+        "supported_parameters",
+        "supported_params",
+        "supportedParameters",
+        "supportedGenerationMethods",
+        "supported_generation_methods",
+    ):
+        val = raw.get(key)
+        if isinstance(val, dict):
+            add(list(val.keys()))
+        else:
+            add(val)
+
+    for key in ("capabilities", "features", "supports"):
+        val = raw.get(key)
+        if isinstance(val, dict):
+            for name, flag in val.items():
+                if flag:
+                    add(name)
+        else:
+            add(val)
+
+    reasoning = raw.get("reasoning")
+    if isinstance(reasoning, dict):
+        found.add("reasoning")
+        add(reasoning.get("supported_parameters"))
+        add(reasoning.get("supported_efforts"))
+        if reasoning.get("supported") or reasoning.get("enabled") or reasoning.get("supported_efforts"):
+            found.add("reasoning")
+
+    return found
+
+
+def _collect_input_modalities(raw: dict[str, Any]) -> set[str]:
+    found: set[str] = set()
+
+    def add(value: Any) -> None:
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if not text:
+                return
+            # OpenRouter: "text+image->text"
+            if "->" in text:
+                text = text.split("->", 1)[0]
+            for piece in re.split(r"[+,\s/|]+", text):
+                if piece:
+                    found.add(piece.replace("-", "_"))
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                add(item)
+        elif isinstance(value, dict):
+            for key, flag in value.items():
+                if flag:
+                    add(key)
+
+    arch = raw.get("architecture")
+    if isinstance(arch, dict):
+        add(arch.get("input_modalities") or arch.get("input_modality") or arch.get("modality"))
+    for key in ("input_modalities", "inputModalities", "modalities"):
+        add(raw.get(key))
+    caps = raw.get("capabilities") or raw.get("supports")
+    if isinstance(caps, dict):
+        for name in ("vision", "image", "images", "multimodal"):
+            if caps.get(name):
+                found.add(name)
+    return found
+
+
+def _ids_equal(listed: str, wanted: str) -> bool:
+    a = listed.lower().strip()
+    b = wanted.lower().strip().removeprefix("openrouter/")
+    if a == b:
+        return True
+    if a.endswith("/" + b) or b.endswith("/" + a):
+        return True
+    return a.split("/")[-1] == b.split("/")[-1] and bool(a.split("/")[-1])
+
+
+def find_remote_model(
+    provider: str | ProviderSpec,
+    model: str,
+    *,
+    config: UserConfig | None = None,
+    catalog: Catalog | None = None,
+) -> RemoteModel | None:
+    """Resolve a model id against the live provider catalog."""
+    wanted = (model or "").strip()
+    if not wanted:
+        return None
+    result = list_models_for_provider(provider, config=config, catalog=catalog)
+    if not result.ok:
+        return None
+    exact = [m for m in result.models if _ids_equal(m.id, wanted)]
+    if len(exact) == 1:
+        return exact[0]
+    if exact:
+        return exact[0]
+    needle = wanted.lower().removeprefix("openrouter/")
+    hits = [m for m in result.models if needle in m.id.lower() or m.id.lower() in needle]
+    return hits[0] if len(hits) == 1 else None
+
+
+def list_free_models(
+    provider: str | ProviderSpec = "openrouter",
+    *,
+    config: UserConfig | None = None,
+    catalog: Catalog | None = None,
+) -> ListModelsResult:
+    """Live models whose payload says they are free (OpenRouter :free / zero price)."""
+    result = list_models_for_provider(provider, config=config, catalog=catalog)
+    if result.error:
+        return result
+    free = tuple(m for m in result.models if m.is_free())
+    if not free:
+        return ListModelsResult(result.provider, (), result.source, error="No free-tier models in live catalog")
+    return ListModelsResult(result.provider, free, result.source)
+
+
 def list_models_for_provider(
     provider: str | ProviderSpec,
     *,
     config: UserConfig | None = None,
     catalog: Catalog | None = None,
+    refresh: bool = False,
 ) -> ListModelsResult:
     """Fetch live models for one provider using its API key / local endpoint."""
     cfg = config or UserConfig.load()
     cat = catalog or load_catalog()
     spec = provider if isinstance(provider, ProviderSpec) else cat.get(provider)
 
+    cache_key = spec.name
+    now = time.monotonic()
+    if not refresh:
+        hit = _LIST_CACHE.get(cache_key)
+        if hit and now - hit[0] < _LIST_TTL:
+            return hit[1]
+
     kind = (spec.kind or "").lower()
     name = spec.name
 
     if name == "anthropic" or kind == "anthropic":
-        return _fetch_anthropic(spec, cfg)
-    if name == "gemini" or kind == "gemini":
-        return _fetch_gemini(spec, cfg)
-    if name == "ollama":
-        return _fetch_ollama(spec, cfg)
-    # openai, groq, openrouter, huggingface, openai-compatible, …
-    return _fetch_openai_compatible(spec, cfg)
+        result = _fetch_anthropic(spec, cfg)
+    elif name == "gemini" or kind == "gemini":
+        result = _fetch_gemini(spec, cfg)
+    elif name == "ollama":
+        result = _fetch_ollama(spec, cfg)
+    else:
+        # openai, groq, openrouter, huggingface, openai-compatible, …
+        result = _fetch_openai_compatible(spec, cfg)
+
+    _LIST_CACHE[cache_key] = (now, result)
+    return result
 
 
 def list_models(

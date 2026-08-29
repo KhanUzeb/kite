@@ -9,8 +9,69 @@ from typing import Any
 
 from kite.agent.events import Event
 from kite.agent.exceptions import FormatError
+from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, parse_mode
 from kite.providers.resolve import ResolvedModel
 from kite.tools import ToolRegistry
+
+
+def _as_str(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def extract_reasoning_and_content(delta: Any) -> tuple[str, str]:
+    """Split a stream delta / message into (reasoning, answer). Never mix the two."""
+    reasoning = ""
+    content = ""
+    if delta is None:
+        return "", ""
+
+    if isinstance(delta, dict):
+        reasoning = _as_str(
+            delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
+        )
+        raw = delta.get("content")
+        if isinstance(raw, str):
+            content = raw
+        elif isinstance(raw, list):
+            reasoning, content = _parts_to_channels(raw, reasoning, content)
+        return reasoning, content
+
+    for name in ("reasoning_content", "reasoning", "thinking"):
+        reasoning += _as_str(getattr(delta, name, None))
+
+    raw = getattr(delta, "content", None)
+    if isinstance(raw, str):
+        content = raw
+    elif isinstance(raw, list):
+        reasoning, content = _parts_to_channels(raw, reasoning, content)
+
+    extras = getattr(delta, "provider_specific_fields", None)
+    if isinstance(extras, dict) and not reasoning:
+        reasoning = _as_str(extras.get("reasoning_content") or extras.get("reasoning"))
+    return reasoning, content
+
+
+def _parts_to_channels(parts: list[Any], reasoning: str, content: str) -> tuple[str, str]:
+    for part in parts:
+        if isinstance(part, dict):
+            ptype = str(part.get("type") or "")
+            text = _as_str(part.get("thinking") or part.get("reasoning") or part.get("text") or part.get("content"))
+        else:
+            ptype = str(getattr(part, "type", "") or "")
+            text = _as_str(
+                getattr(part, "thinking", None)
+                or getattr(part, "reasoning", None)
+                or getattr(part, "text", None)
+            )
+        if ptype in {"thinking", "reasoning", "thought"}:
+            reasoning += text
+        elif text:
+            content += text
+    return reasoning, content
 
 
 class LitellmModel:
@@ -22,6 +83,7 @@ class LitellmModel:
         max_retries: int = 2,
         on_event: Callable[[Event], None] | None = None,
         stream: bool = True,
+        reasoning: str = "auto",
     ):
         self.resolved = resolved
         self.model_name = resolved.litellm_model
@@ -30,6 +92,12 @@ class LitellmModel:
         self.max_retries = max_retries
         self.on_event = on_event
         self.stream = stream
+        self.reasoning_mode = parse_mode(reasoning)
+        self.reasoning_support = detect_reasoning(
+            resolved.provider,
+            resolved.model,
+            litellm_model=resolved.litellm_model,
+        )
         self.cost = 0.0
         self.last_usage: dict[str, Any] = {}
         self.should_stop = lambda: False
@@ -38,7 +106,7 @@ class LitellmModel:
         if self.on_event:
             self.on_event(Event(kind=kind, payload=payload))  # type: ignore[arg-type]
 
-    def format_message(self, role: str, content: str = "", extra: dict | None = None, **kwargs) -> dict:
+    def format_message(self, role: str, content: str | list = "", extra: dict | None = None, **kwargs) -> dict:
         msg: dict[str, Any] = {"role": role, "content": content, **kwargs}
         if extra is not None:
             msg["extra"] = extra
@@ -70,6 +138,11 @@ class LitellmModel:
         if self.registry is not None:
             kwargs["tools"] = self.registry.openai_schemas()
             kwargs["tool_choice"] = "auto"
+        kwargs = apply_reasoning(kwargs, self.reasoning_support, self.reasoning_mode)
+        # Ask the provider to return internal reasoning as a separate channel.
+        extra = dict(kwargs.get("extra_body") or {})
+        extra.setdefault("include_reasoning", True)
+        kwargs["extra_body"] = extra
         return kwargs
 
     def _build_assistant(
@@ -78,6 +151,7 @@ class LitellmModel:
         content: str,
         tool_calls_acc: dict[int, dict[str, Any]],
         cost: float,
+        reasoning: str = "",
     ) -> dict:
         actions: list[dict] = []
         tool_calls_out: list[dict] = []
@@ -125,6 +199,7 @@ class LitellmModel:
                 "provider": self.resolved.provider,
                 "model": self.resolved.model,
                 "timestamp": time.time(),
+                "reasoning": reasoning,
             },
         }
         if tool_calls_out:
@@ -140,6 +215,7 @@ class LitellmModel:
             model=self.resolved.model,
         )
         content = ""
+        reasoning = ""
         tool_calls_acc: dict[int, dict[str, Any]] = {}
         cost = 0.0
 
@@ -164,10 +240,13 @@ class LitellmModel:
                 if not choices:
                     continue
                 delta = choices[0].delta
-                piece = getattr(delta, "content", None)
-                if piece:
-                    content += piece
-                    self._emit("stream_delta", text=piece)
+                think_piece, answer_piece = extract_reasoning_and_content(delta)
+                if think_piece:
+                    reasoning += think_piece
+                    self._emit("stream_reasoning", text=think_piece)
+                if answer_piece:
+                    content += answer_piece
+                    self._emit("stream_delta", text=answer_piece)
 
                 for tc in getattr(delta, "tool_calls", None) or []:
                     idx = int(getattr(tc, "index", 0) or 0)
@@ -187,8 +266,8 @@ class LitellmModel:
             raise
 
         self.cost += cost
-        self._emit("stream_end", ok=True, chars=len(content), tools=len(tool_calls_acc))
-        return self._build_assistant(content=content, tool_calls_acc=tool_calls_acc, cost=cost)
+        self._emit("stream_end", ok=True, chars=len(content), tools=len(tool_calls_acc), reasoning_chars=len(reasoning))
+        return self._build_assistant(content=content, tool_calls_acc=tool_calls_acc, cost=cost, reasoning=reasoning)
 
     def _query_blocking(self, messages: list[dict]) -> dict:
         import litellm
@@ -211,7 +290,12 @@ class LitellmModel:
         cost = float(getattr(response, "_hidden_params", {}).get("response_cost") or 0.0)
         self.cost += cost
 
-        content = message.content or ""
+        think, answer = extract_reasoning_and_content(message)
+        if not think:
+            think = _as_str(getattr(message, "reasoning_content", None))
+        if think:
+            self._emit("stream_reasoning", text=think)
+        content = answer if answer else _as_str(message.content)
         if content:
             self._emit("stream_delta", text=content)
 
@@ -223,11 +307,12 @@ class LitellmModel:
                     "name": tc.function.name,
                     "arguments": tc.function.arguments or "{}",
                 }
-        self._emit("stream_end", ok=True, chars=len(content), tools=len(tool_calls_acc))
+        self._emit("stream_end", ok=True, chars=len(content), tools=len(tool_calls_acc), reasoning_chars=len(think))
         return self._build_assistant(
             content=content,
             tool_calls_acc=tool_calls_acc,
             cost=cost,
+            reasoning=think,
         )
 
     def query(self, messages: list[dict]) -> dict:
@@ -240,8 +325,13 @@ class LitellmModel:
                 return self._query_stream(messages)
             except FormatError:
                 raise
-            except Exception:
-                # Some providers/models reject stream+tools; fall back once.
+            except Exception as e:
+                if looks_like_reasoning_error(e):
+                    self.reasoning_mode = "off"
+                    try:
+                        return self._query_stream(messages)
+                    except Exception:
+                        return self._query_blocking(messages)
                 return self._query_blocking(messages)
         return self._query_blocking(messages)
 
