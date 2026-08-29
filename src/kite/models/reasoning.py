@@ -1,7 +1,11 @@
 """Detect and apply thinking / fast from live provider + LiteLLM metadata.
 
 No model-id allowlist. Support is whatever the current API payload and
-LiteLLM `supports_reasoning` / supported params say for this provider+model.
+LiteLLM supported params say for this provider+model.
+
+LiteLLM `supports_reasoning` is not treated as license to send
+`extra_body.include_reasoning` — that field is OpenRouter-style and NVIDIA NIM
+rejects it as an unsupported parameter.
 """
 
 from __future__ import annotations
@@ -32,6 +36,13 @@ _EFFORT_RANK = ("none", "disable", "disabled", "minimal", "min", "low", "medium"
 _cache: dict[tuple[str, str], "ReasoningSupport"] = {}
 
 
+# extra_body.include_reasoning is OpenRouter-style. Strict OpenAI clones
+# (NVIDIA NIM, Groq, Ollama) validate the body and reject the field.
+_NO_INCLUDE_REASONING = frozenset({"nvidia", "nvidia_nim", "groq", "ollama"})
+_INCLUDE_REASONING_PROVIDERS = frozenset({"openrouter"})
+_REASONING_BODY_KEYS = frozenset({"include_reasoning", "reasoning", "thinking", "thinking_config"})
+
+
 @dataclass(frozen=True)
 class ReasoningSupport:
     supported: bool
@@ -43,6 +54,7 @@ class ReasoningSupport:
     off_kwargs: dict[str, Any] = field(default_factory=dict)
     source: str = "none"  # live | litellm | none
     efforts: tuple[str, ...] = ()
+    include_reasoning: bool = False
 
     @property
     def label(self) -> str:
@@ -122,17 +134,19 @@ def _params_from_remote(raw: dict[str, Any]) -> tuple[set[str], list[str], bool]
 
 
 def _params_from_litellm(provider: str, model: str, litellm_model: str) -> set[str]:
+    """Collect reasoning *request* params LiteLLM lists for this model.
+
+    `supports_reasoning` only means the model can emit thinking tokens. It
+    does not mean the HTTP API accepts `extra_body.reasoning` or
+    `include_reasoning` — NVIDIA NIM rejects both even when LiteLLM says
+    the model supports reasoning.
+    """
     found: set[str] = set()
     try:
         import litellm
     except Exception:
         return found
     mid = litellm_model or model
-    try:
-        if litellm.supports_reasoning(model=mid):
-            found.add("reasoning")
-    except Exception:
-        pass
     try:
         extra: dict[str, Any] = {}
         if provider:
@@ -172,22 +186,23 @@ def _kwargs_from_params(
         can_off = not mandatory
 
     if "reasoning" in params:
-        extra_t = dict(thinking.get("extra_body") or {})
-        extra_f = dict(fast.get("extra_body") or {})
-        extra_o = dict(off.get("extra_body") or {})
-        extra_t["reasoning"] = {"effort": high or "high"}
-        extra_f["reasoning"] = {"effort": low or "low", "exclude": True}
-        thinking["extra_body"] = extra_t
-        fast["extra_body"] = extra_f
-        if not mandatory:
-            extra_o["reasoning"] = {"enabled": False}
-            off["extra_body"] = extra_o
         can_t = can_f = True
         can_off = can_off or (not mandatory)
-        if provider == "openrouter":
-            # LiteLLM maps reasoning_effort for many OpenRouter models too.
-            thinking.setdefault("reasoning_effort", high or "high")
-            fast.setdefault("reasoning_effort", low or "low")
+        # extra_body.reasoning is OpenRouter-style; NIM/Groq/Ollama reject it.
+        if provider not in _NO_INCLUDE_REASONING:
+            extra_t = dict(thinking.get("extra_body") or {})
+            extra_f = dict(fast.get("extra_body") or {})
+            extra_o = dict(off.get("extra_body") or {})
+            extra_t["reasoning"] = {"effort": high or "high"}
+            extra_f["reasoning"] = {"effort": low or "low", "exclude": True}
+            thinking["extra_body"] = extra_t
+            fast["extra_body"] = extra_f
+            if not mandatory:
+                extra_o["reasoning"] = {"enabled": False}
+                off["extra_body"] = extra_o
+            if provider == "openrouter":
+                thinking.setdefault("reasoning_effort", high or "high")
+                fast.setdefault("reasoning_effort", low or "low")
 
     if "thinking" in params or "thinking_config" in params or "thinkingconfig" in params:
         thinking["thinking"] = {"type": "enabled"}
@@ -198,7 +213,22 @@ def _kwargs_from_params(
         can_f = True
         can_off = can_off or (not mandatory)
 
+    if "include_reasoning" in params:
+        for blob in (thinking, fast):
+            extra = dict(blob.get("extra_body") or {})
+            extra["include_reasoning"] = True
+            blob["extra_body"] = extra
+
     return thinking, fast, off, can_t, can_f, can_off
+
+
+def _wants_include_reasoning(provider: str, params: set[str], *, can_reason: bool) -> bool:
+    provider = (provider or "").strip().lower()
+    if provider in _NO_INCLUDE_REASONING:
+        return False
+    if "include_reasoning" in params:
+        return True
+    return bool(can_reason and provider in _INCLUDE_REASONING_PROVIDERS)
 
 
 def detect_reasoning(
@@ -255,6 +285,9 @@ def detect_reasoning(
         params |= llm_params
         sources.append("litellm")
 
+    if provider in _NO_INCLUDE_REASONING:
+        params.discard("include_reasoning")
+
     if not (params & _REASONING_PARAMS) and "reasoning" not in params:
         support = ReasoningSupport(False, False, False, False, source="none")
         _cache[key] = support
@@ -278,6 +311,7 @@ def detect_reasoning(
         off_kwargs=off,
         source="+".join(sources) or "live",
         efforts=tuple(efforts),
+        include_reasoning=_wants_include_reasoning(provider, params, can_reason=True),
     )
     _cache[key] = support
     return support
@@ -287,26 +321,50 @@ def apply_reasoning(
     kwargs: dict[str, Any],
     support: ReasoningSupport,
     mode: ReasoningMode,
+    *,
+    drop_reasoning: bool = False,
 ) -> dict[str, Any]:
-    """Merge thinking/fast params into LiteLLM completion kwargs. `auto` sends nothing."""
-    if mode == "auto" or not support.supported:
-        return kwargs
-    extra: dict[str, Any] = {}
-    if mode == "thinking" and support.can_thinking:
-        extra = dict(support.thinking_kwargs)
-    elif mode == "fast" and support.can_fast:
-        extra = dict(support.fast_kwargs)
-    elif mode == "off" and support.can_disable:
-        extra = dict(support.off_kwargs)
-    if not extra:
-        return kwargs
+    """Merge thinking/fast params into LiteLLM completion kwargs. `auto` sends nothing.
+
+    `include_reasoning` is only added when the provider actually accepts it.
+    LiteLLM merges extra_body into the JSON body, so unknown fields (NVIDIA NIM)
+    become 400s rather than being dropped.
+    """
     out = dict(kwargs)
+    extra: dict[str, Any] = {}
+    if not drop_reasoning and mode != "auto" and support.supported:
+        if mode == "thinking" and support.can_thinking:
+            extra = dict(support.thinking_kwargs)
+        elif mode == "fast" and support.can_fast:
+            extra = dict(support.fast_kwargs)
+        elif mode == "off" and support.can_disable:
+            extra = dict(support.off_kwargs)
     body = dict(out.get("extra_body") or {})
-    extra_body = extra.pop("extra_body", None)
-    out.update(extra)
+    extra_body = extra.pop("extra_body", None) if extra else None
+    if extra:
+        out.update(extra)
     if isinstance(extra_body, dict):
         body.update(extra_body)
+    send_include = (
+        not drop_reasoning
+        and mode != "off"
+        and support.include_reasoning
+    )
+    if send_include:
+        body.setdefault("include_reasoning", True)
+    else:
+        body.pop("include_reasoning", None)
+    if drop_reasoning:
+        for key in list(body):
+            if key.lower().replace("-", "_") in _REASONING_BODY_KEYS:
+                body.pop(key, None)
+        for key in list(out):
+            if key.lower().replace("-", "_") in _REASONING_PARAMS:
+                out.pop(key, None)
+    if body:
         out["extra_body"] = body
+    else:
+        out.pop("extra_body", None)
     return out
 
 

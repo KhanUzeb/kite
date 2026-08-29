@@ -19,11 +19,32 @@ from kite.tools import Tool
 from kite.tools.store import TodoStore
 
 
+_SKIP_NAMES = frozenset({".git", ".venv", "node_modules", "__pycache__"})
+
+
 def _resolve(path: str, cwd: str) -> Path:
     p = Path(path)
     if not p.is_absolute():
         p = Path(cwd) / p
     return p.resolve()
+
+
+def _io_fail(path: Path, exc: BaseException) -> dict[str, Any]:
+    msg = f"{type(exc).__name__}: {exc}"
+    return {"ok": False, "error": msg, "path": str(path), "output": msg}
+
+
+def _list_dir_names(path: Path) -> tuple[list[str], str | None]:
+    try:
+        entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+    except OSError as e:
+        return [], str(e)
+    names = []
+    for e in entries:
+        if e.name in _SKIP_NAMES:
+            continue
+        names.append(e.name + ("/" if e.is_dir() else ""))
+    return names, None
 
 
 def _unified_diff(path: str, before: str, after: str) -> str:
@@ -87,7 +108,23 @@ def make_coding_tools(
 
     def read_file(args: dict[str, Any]) -> dict[str, Any]:
         path = _resolve(str(args["path"]), root)
-        text = path.read_text(encoding="utf-8", errors="replace")
+        if not path.exists():
+            msg = f"not found: {path}"
+            return {"ok": False, "error": msg, "path": str(path), "output": msg}
+        if path.is_dir():
+            # Windows open() on a directory raises PermissionError (errno 13),
+            # not IsADirectoryError — list it instead of crashing the run.
+            names, err = _list_dir_names(path)
+            if err:
+                msg = f"{path} is a directory ({err}). Use ls."
+                return {"ok": False, "error": msg, "path": str(path), "output": msg}
+            listing = "\n".join(names) if names else "(empty)"
+            msg = f"{path} is a directory. Use ls, or read a file inside it.\n{listing}"
+            return {"ok": True, "path": str(path), "output": msg, "directory": True, "count": len(names)}
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return _io_fail(path, e)
         start = int(args.get("offset", 1))
         limit = args.get("limit")
         lines = text.splitlines(keepends=True)
@@ -104,10 +141,16 @@ def make_coding_tools(
 
     def write_file(args: dict[str, Any]) -> dict[str, Any]:
         path = _resolve(str(args["path"]), root)
+        if path.exists() and path.is_dir():
+            msg = f"cannot write: {path} is a directory"
+            return {"ok": False, "error": msg, "path": str(path), "output": msg}
         after = str(args["content"])
-        before = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(after, encoding="utf-8")
+        try:
+            before = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(after, encoding="utf-8")
+        except OSError as e:
+            return _io_fail(path, e)
         diff = _unified_diff(str(path), before, after)
         return {
             "ok": True,
@@ -119,8 +162,14 @@ def make_coding_tools(
 
     def edit_file(args: dict[str, Any]) -> dict[str, Any]:
         path = _resolve(str(args["path"]), root)
+        if path.is_dir():
+            msg = f"cannot edit: {path} is a directory"
+            return {"ok": False, "error": msg, "path": str(path), "output": msg}
         old, new = str(args["old"]), str(args["new"])
-        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return _io_fail(path, e)
         count = text.count(old)
         if count == 0:
             return {"ok": False, "error": "old string not found", "path": str(path), "output": "old string not found"}
@@ -128,7 +177,10 @@ def make_coding_tools(
             msg = f"old string found {count} times; pass replace_all=true or make it unique"
             return {"ok": False, "error": msg, "path": str(path), "output": msg}
         after = text.replace(old, new) if args.get("replace_all") else text.replace(old, new, 1)
-        path.write_text(after, encoding="utf-8")
+        try:
+            path.write_text(after, encoding="utf-8")
+        except OSError as e:
+            return _io_fail(path, e)
         n = count if args.get("replace_all") else 1
         return {
             "ok": True,
@@ -270,7 +322,7 @@ def make_coding_tools(
             return {"ok": False, "error": str(e), "output": str(e)}
         lines = []
         for e in entries:
-            if e.name in {".git", ".venv", "node_modules", "__pycache__"}:
+            if e.name in _SKIP_NAMES:
                 continue
             suffix = "/" if e.is_dir() else ""
             lines.append(e.name + suffix)
@@ -371,7 +423,7 @@ def make_coding_tools(
             "read",
             Tool(
                 name="read",
-                description="Read a text file. Optional 1-based offset and line limit. Huge files auto-truncate.",
+                description="Read a text file. Optional 1-based offset and line limit. Huge files auto-truncate. Directories are listed (use ls, or read a file inside).",
                 parameters={
                     "type": "object",
                     "properties": {

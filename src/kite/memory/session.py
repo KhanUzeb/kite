@@ -130,15 +130,24 @@ def create_session(
     return session
 
 
-def load_session(session_id: str) -> Session:
-    path = sessions_dir() / f"{session_id}.jsonl"
-    if not path.is_file():
-        # allow prefix match
-        matches = sorted(sessions_dir().glob(f"{session_id}*.jsonl"))
-        if not matches:
-            raise FileNotFoundError(f"No session matching '{session_id}'")
-        path = matches[-1]
+def resolve_session_path(session_id: str, *, unique: bool = False) -> Path:
+    """Exact id, or a filename prefix. `unique` refuses an ambiguous prefix."""
+    folder = sessions_dir()
+    exact = folder / f"{session_id}.jsonl"
+    if exact.is_file():
+        return exact
+    matches = sorted(folder.glob(f"{session_id}*.jsonl"))
+    if not matches:
+        raise FileNotFoundError(f"No session matching '{session_id}'")
+    if unique and len(matches) > 1:
+        shown = ", ".join(p.stem for p in matches[:8])
+        extra = " …" if len(matches) > 8 else ""
+        raise ValueError(f"ambiguous session id '{session_id}': {shown}{extra}")
+    return matches[-1]
 
+
+def load_session(session_id: str) -> Session:
+    path = resolve_session_path(session_id)
     meta: SessionMeta | None = None
     messages: list[dict] = []
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -167,6 +176,49 @@ def list_sessions(*, limit: int = 30) -> list[SessionMeta]:
         if len(rows) >= limit:
             break
     return rows
+
+
+@dataclass(frozen=True)
+class DeletedSession:
+    id: str
+    session: bool
+    trajectory: bool
+
+
+def _trajectory_path(session_id: str) -> Path:
+    return kite_home() / "trajectories" / f"{session_id}.json"
+
+
+def delete_session(session_id: str) -> DeletedSession:
+    path = resolve_session_path(session_id, unique=True)
+    sid = path.stem
+    path.unlink()
+    traj = _trajectory_path(sid)
+    traj_ok = False
+    if traj.is_file():
+        traj.unlink()
+        traj_ok = True
+    return DeletedSession(id=sid, session=True, trajectory=traj_ok)
+
+
+def delete_all_sessions() -> list[DeletedSession]:
+    deleted: list[DeletedSession] = []
+    for path in sorted(sessions_dir().glob("*.jsonl")):
+        sid = path.stem
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        traj = _trajectory_path(sid)
+        traj_ok = False
+        if traj.is_file():
+            try:
+                traj.unlink()
+                traj_ok = True
+            except OSError:
+                pass
+        deleted.append(DeletedSession(id=sid, session=True, trajectory=traj_ok))
+    return deleted
 
 
 def iter_session_messages(session_id: str) -> Iterator[dict]:

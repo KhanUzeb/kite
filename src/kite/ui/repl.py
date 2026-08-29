@@ -51,6 +51,7 @@ class ChatSession:
         approval: ApprovalMode | None = None,
         config_name: str | None = None,
         verbose: bool = False,
+        session_id: str | None = None,
     ):
         self.cwd = cwd
         self.provider = provider
@@ -73,6 +74,7 @@ class ChatSession:
         self._harness: Harness | None = None
         self._prompt = None
         self._model_cache: list[str] = []
+        self._pending_open = session_id
 
     def _approver(self):
         return make_approver(
@@ -349,14 +351,7 @@ class ChatSession:
         if cmd == "new":
             cmd = "clear"
         if cmd == "clear":
-            self._session_id = None
-            self._harness = None
-            self.todos = TodoStore()
-            self.state.todos = []
-            self.state.n_calls = 0
-            self.state.cost = 0.0
-            self.attachments = []
-            self.state.pending_attach = 0
+            self._reset_chat()
             self.console.print("[kite.muted]session cleared[/]")
             return True
         if cmd == "init":
@@ -493,8 +488,16 @@ class ChatSession:
                 f"${self.state.cost:.4f} · session {sid}"
             )
             return True
-        if cmd == "session":
-            self.console.print(self._session_id or "[kite.muted]no session yet[/]")
+        if cmd == "resume":
+            if not arg:
+                self.console.print("[kite.error]/resume <session-id>[/]  ·  /sessions")
+                return True
+            self._open_session(arg)
+            return True
+        if cmd in {"session", "sessions"}:
+            if cmd == "sessions" and not arg:
+                arg = "list"
+            self._handle_session(arg)
             return True
         if cmd == "home":
             home = kite_home()
@@ -504,6 +507,134 @@ class ChatSession:
             self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")
             return True
         return True
+
+    def _reset_chat(self) -> None:
+        self._session_id = None
+        self._harness = None
+        self.todos = TodoStore()
+        self.state.todos = []
+        self.state.n_calls = 0
+        self.state.cost = 0.0
+        self.attachments = []
+        self.state.pending_attach = 0
+
+    def _print_session(self, session, *, tail: int = 12) -> None:
+        meta = session.meta
+        self.console.print(
+            f"[kite.muted]{session.id}[/]  {meta.provider}/{meta.model}  "
+            f"{meta.exit_status or 'open'}  {(meta.label or meta.task)[:60]}"
+        )
+        shown = session.messages[-tail:]
+        if not shown:
+            self.console.print("[kite.muted](empty transcript)[/]")
+            return
+        skipped = len(session.messages) - len(shown)
+        if skipped > 0:
+            self.console.print(f"[kite.muted]  … {skipped} earlier messages[/]")
+        for m in shown:
+            role = str(m.get("role") or "?")
+            content = (m.get("content") or "").replace("\n", " ").strip()
+            if len(content) > 160:
+                content = content[:160] + "…"
+            if not content:
+                extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
+                actions = extra.get("actions") if isinstance(extra, dict) else None
+                if actions:
+                    tools = ", ".join(str(a.get("tool") or "") for a in actions if isinstance(a, dict))
+                    content = f"[tools: {tools}]" if tools else "[tool call]"
+                else:
+                    content = "—"
+            self.console.print(f"  [cyan]{role}[/] {content}")
+
+    def _open_session(self, session_id: str) -> None:
+        from kite.memory.session import load_session
+
+        try:
+            session = load_session(session_id)
+        except (OSError, ValueError) as e:
+            self.console.print(f"[kite.error]{e}[/]")
+            return
+        self._harness = None
+        self._session_id = session.id
+        if session.meta.provider:
+            self.provider = session.meta.provider
+            self.state.provider = session.meta.provider
+        if session.meta.model:
+            self.model = session.meta.model
+            self.state.model = session.meta.model
+        self._print_session(session, tail=8)
+        self.console.print(f"[kite.success]opened[/] {session.id}  ·  type to continue")
+
+    def _handle_session(self, arg: str) -> None:
+        from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
+
+        raw = arg.strip()
+        verb, _, rest = raw.partition(" ")
+        verb = verb.lower()
+        rest = rest.strip()
+        if not raw:
+            if self._session_id:
+                self.console.print(self._session_id)
+            else:
+                self.console.print("[kite.muted]no session yet[/]  ·  /sessions")
+            return
+        if verb in {"list", "ls"}:
+            rows = list_sessions(limit=20)
+            if not rows:
+                self.console.print("[kite.muted]no sessions[/]")
+                return
+            table = kite_table("sessions")
+            table.add_column("id")
+            table.add_column("model")
+            table.add_column("label")
+            for meta in rows:
+                mark = " · current" if meta.id == self._session_id else ""
+                table.add_row(meta.id, f"{meta.provider}/{meta.model}", (meta.label or "")[:50] + mark)
+            self.console.print(table)
+            self.console.print("[kite.muted]/session open <id>  ·  /session show <id>[/]")
+            return
+        if verb in {"show", "cat", "view"}:
+            target = rest or self._session_id
+            if not target:
+                self.console.print("[kite.error]no session yet[/]  ·  /session show <id>")
+                return
+            try:
+                session = load_session(target)
+            except (OSError, ValueError) as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            self._print_session(session, tail=20)
+            return
+        if verb in {"open", "resume", "use"}:
+            if not rest:
+                self.console.print("[kite.error]/session open <id>[/]  ·  /sessions")
+                return
+            self._open_session(rest)
+            return
+        if verb == "delete":
+            target = rest
+            if not target or target.lower() in {"this", "current", "."}:
+                if not self._session_id:
+                    self.console.print("[kite.error]no session yet[/]  ·  /session delete <id>")
+                    return
+                target = self._session_id
+            if target.lower() == "all":
+                gone = delete_all_sessions()
+                self._reset_chat()
+                self.console.print(f"[kite.success]deleted[/] {len(gone)} session{'s' if len(gone) != 1 else ''}")
+                return
+            try:
+                gone = delete_session(target)
+            except (OSError, ValueError) as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            if gone.id == self._session_id:
+                self._reset_chat()
+            extra = " + trajectory" if gone.trajectory else ""
+            self.console.print(f"[kite.success]deleted[/] {gone.id}{extra}")
+            return
+        # Bare id: /session 20260829-…
+        self._open_session(raw)
 
     def _show_skills(self, name: str) -> None:
         index = self._index()
@@ -681,6 +812,9 @@ class ChatSession:
         banner.append("kite", style="kite.brand")
         banner.append("  / commands", style="kite.muted")
         self.console.print(banner)
+        if self._pending_open:
+            self._open_session(self._pending_open)
+            self._pending_open = None
 
         while True:
             line = self._read_input()

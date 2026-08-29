@@ -30,7 +30,14 @@ class LocalEnvironment:
         if tool is None:
             return {"ok": False, "error": f"unknown tool: {name}", "output": ""}
 
-        result = tool.run(dict(args))
+        try:
+            result = tool.run(dict(args))
+        except Submitted:
+            raise
+        except Exception as e:
+            # Windows open() on a directory is PermissionError; keep it a tool
+            # result so the agent can recover instead of aborting the run.
+            return {"ok": False, "error": str(e), "output": str(e)}
         if result.get("submitted"):
             raise Submitted(
                 {

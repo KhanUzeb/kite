@@ -20,9 +20,10 @@ Prefix `//` if you need a natural-language line that starts with `/`.
 ```
 kite                         # REPL (same as kite chat)
 kite --version
-kite chat [--mode plan|build] [--approval auto|approve|readonly]
+kite chat [--mode plan|build] [--approval auto|approve|readonly] [--session id]
 kite run "task"              # one-shot
-kite resume <session-id> [follow-up]
+kite resume <session-id>                 # open that transcript in chat
+kite resume <session-id> [follow-up]     # one-shot continue
 ```
 
 Shared flags on `run` / `chat` / `resume`:
@@ -44,6 +45,8 @@ Housekeeping (no model):
 
 ```
 kite sessions [--limit N] [--show id] [--tail N]
+kite sessions --delete <id> [<id> ...]
+kite sessions --delete-all -y
 kite providers
 kite models [-p provider] [--select]
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
@@ -78,7 +81,11 @@ These never go to the model.
 | `/compact` | Summarize older turns now (OpenRouter free tier) |
 | `/cost` | USD + context |
 | `/status` | Mode, approval, model, cost, session id |
-| `/session` | Session id |
+| `/session` | Current session id |
+| `/sessions` `/session list` | Recent transcripts |
+| `/session show [id]` | Print a transcript (current if omitted) |
+| `/session open <id>` `/resume <id>` | Continue that chat |
+| `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Expand collapsed tool output |
 | `/trace` | Last traceback |

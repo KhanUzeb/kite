@@ -135,6 +135,32 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             return
         elif cmd == "detach":
             choices = [("all", "drop pending attachments")]
+        elif cmd in {"session", "sessions", "resume"}:
+            bits = rest.split()
+            first = bits[0].lower() if bits else ""
+            verbs = {
+                "list": "recent transcripts",
+                "show": "print a transcript",
+                "open": "continue this chat",
+                "delete": "remove a session",
+            }
+            if cmd == "resume" or (
+                first in {"delete", "open", "show", "resume"}
+                and (rest.endswith(" ") or len(bits) > 1)
+            ):
+                choices = []
+                if first == "delete":
+                    choices.append(("all", "every saved session"))
+                from kite.memory.session import list_sessions
+
+                for meta in list_sessions(limit=30):
+                    choices.append((meta.id, (meta.label or meta.task)[:50]))
+            elif not bits or (len(bits) == 1 and not rest.endswith(" ")):
+                choices = list(verbs.items())
+                from kite.memory.session import list_sessions
+
+                for meta in list_sessions(limit=30):
+                    choices.append((meta.id, (meta.label or meta.task)[:50]))
 
         needle = prefix.lower()
         for value, meta in choices:

@@ -18,7 +18,7 @@ from kite.config import UserConfig, ensure_home, kite_home
 from kite.context.discovery import gather_project_context
 from kite.context.window import estimate_usage
 from kite.agent.harness import Harness, HarnessConfig
-from kite.memory.session import list_sessions, load_session
+from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
 from kite.agent.mode import AgentMode, ApprovalMode, default_approval
 from kite.providers.catalog import load_catalog
 from kite.providers.keys import api_key_for
@@ -165,16 +165,16 @@ def cmd_chat(args: argparse.Namespace) -> int:
         approval=approval,
         config_name=getattr(args, "config", None),
         verbose=getattr(args, "verbose", False),
+        session_id=getattr(args, "session", None),
     )
     return session.run()
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    console = _console()
     follow = args.message or args.task
     if not follow:
-        console.print("[red]Provide a follow-up message[/]")
-        return 2
+        return cmd_chat(args)
+    console = _console()
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
     try:
@@ -218,6 +218,29 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 def cmd_sessions(args: argparse.Namespace) -> int:
     console = _console()
+    if args.delete_all:
+        rows = list_sessions(limit=10_000)
+        if not rows:
+            console.print("[dim]no sessions[/]")
+            return 0
+        if not args.yes:
+            console.print(f"[red]delete {len(rows)} sessions? pass -y to confirm[/]")
+            return 1
+        deleted = delete_all_sessions()
+        console.print(f"deleted {len(deleted)} session{'s' if len(deleted) != 1 else ''}")
+        return 0
+    if args.delete:
+        failed = 0
+        for sid in args.delete:
+            try:
+                gone = delete_session(sid)
+            except (OSError, ValueError) as e:
+                console.print(f"[red]{e}[/]")
+                failed += 1
+                continue
+            extra = " + trajectory" if gone.trajectory else ""
+            console.print(f"deleted {gone.id}{extra}")
+        return 1 if failed else 0
     if args.show:
         session = load_session(args.show)
         console.print(Panel(json.dumps(session.meta.to_dict(), indent=2), title=session.id))
@@ -630,19 +653,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat = sub.add_parser("chat", help="Interactive session (plan/build, slash commands)")
     _add_run_flags(chat)
+    chat.add_argument("--session", help="Open an existing session id")
     chat.set_defaults(func=cmd_chat)
 
-    resume = sub.add_parser("resume", help="Continue an existing session")
+    resume = sub.add_parser("resume", help="Continue an existing session (omit message to open chat)")
     resume.add_argument("session", help="Session id (or prefix)")
     resume.add_argument("message", nargs="?", help="Follow-up message")
     resume.add_argument("--task", help="Alias for follow-up message")
     _add_run_flags(resume)
     resume.set_defaults(func=cmd_resume)
 
-    sessions = sub.add_parser("sessions", help="List or inspect sessions")
+    sessions = sub.add_parser("sessions", help="List, inspect, or delete sessions")
     sessions.add_argument("--limit", type=int, default=20)
     sessions.add_argument("--show", help="Show session id")
     sessions.add_argument("--tail", type=int, default=12, help="Messages to show with --show")
+    sessions.add_argument(
+        "--delete",
+        nargs="+",
+        metavar="ID",
+        help="Delete session id(s) (prefix ok if unique)",
+    )
+    sessions.add_argument("--delete-all", action="store_true", help="Delete every saved session")
+    sessions.add_argument("-y", "--yes", action="store_true", help="Confirm --delete-all")
     sessions.set_defaults(func=cmd_sessions)
 
     providers = sub.add_parser("providers", help="List providers + credential status")

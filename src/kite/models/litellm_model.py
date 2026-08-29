@@ -98,6 +98,7 @@ class LitellmModel:
             resolved.model,
             litellm_model=resolved.litellm_model,
         )
+        self._drop_reasoning = False
         self.cost = 0.0
         self.last_usage: dict[str, Any] = {}
         self.should_stop = lambda: False
@@ -138,12 +139,12 @@ class LitellmModel:
         if self.registry is not None:
             kwargs["tools"] = self.registry.openai_schemas()
             kwargs["tool_choice"] = "auto"
-        kwargs = apply_reasoning(kwargs, self.reasoning_support, self.reasoning_mode)
-        # Ask the provider to return internal reasoning as a separate channel.
-        extra = dict(kwargs.get("extra_body") or {})
-        extra.setdefault("include_reasoning", True)
-        kwargs["extra_body"] = extra
-        return kwargs
+        return apply_reasoning(
+            kwargs,
+            self.reasoning_support,
+            self.reasoning_mode,
+            drop_reasoning=self._drop_reasoning,
+        )
 
     def _build_assistant(
         self,
@@ -328,6 +329,7 @@ class LitellmModel:
             except Exception as e:
                 if looks_like_reasoning_error(e):
                     self.reasoning_mode = "off"
+                    self._drop_reasoning = True
                     try:
                         return self._query_stream(messages)
                     except Exception:

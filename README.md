@@ -40,6 +40,7 @@ kite run --mode build --approval approve "add tests"
 kite run -p groq -m llama-3.3-70b-versatile "add tests" -v
 kite run "/commit"
 kite run "/skill:debug flaky login test"
+kite resume <session-id>
 kite resume <session-id> "also update the README"
 ```
 
@@ -51,6 +52,9 @@ Other commands:
 
 ```bash
 kite sessions
+kite sessions --show <session-id>
+kite sessions --delete <session-id>
+kite sessions --delete-all -y
 kite skills --show commit
 kite commands
 kite plugins
