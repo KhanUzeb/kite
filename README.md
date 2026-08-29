@@ -43,7 +43,7 @@ kite run "/skill:debug flaky login test"
 kite resume <session-id> "also update the README"
 ```
 
-In the REPL: `/plan` `/build` `/undo` `/skills` `/commit` `/explain` `/commands` `/plugins` `/memory` `/remember` `/help`. Ctrl+C stops the current turn.
+In the REPL: `/plan` `/build` `/undo` `/thinking` `/fast` `/effort` `/attach` `/clip` `/skills` `/commit` `/explain` `/commands` `/plugins` `/memory` `/help`. Type `/` for the command menu. Ctrl+C stops the current turn.
 
 Full command map: [`kite_commands.md`](kite_commands.md)
 

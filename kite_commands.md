@@ -38,6 +38,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--steps` `--cost` `--time` | Limits |
 | `-v` / `-q` | Verbose tool bodies / quiet |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
+| `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. |
 
 Housekeeping (no model):
 
@@ -54,7 +55,7 @@ kite memory [--remember text] [--forget query] [--project]
 kite runtime-config [--config name]
 ```
 
-`kite run "/commit"` and `kite run "/explain auth.py"` expand the same way as the REPL.
+You can also drop a path into the prompt with `@screenshot.png` or `@C:\path\spec.md`.
 
 ---
 
@@ -68,9 +69,13 @@ These never go to the model.
 | `/build` `/b` | Apply edits; approval stays unless it was readonly |
 | `/approve auto\|approve\|readonly` | Autonomy for this session |
 | `/model [provider/id]` | Show or set model |
+| `/models [provider]` | List live models for the current (or named) provider |
+| `/provider [name]` | Show or set provider |
+| `/thinking` `/fast` | Effort: extended thinking, or low-latency (if the model supports it) |
+| `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort; shown on the footer |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
 | `/clear` `/new` | Fresh chat session (memory notes stay) |
-| `/compact` | Next model call will compact if over budget |
+| `/compact` | Summarize older turns now (OpenRouter free tier) |
 | `/cost` | USD + context |
 | `/status` | Mode, approval, model, cost, session id |
 | `/session` | Session id |
@@ -82,10 +87,15 @@ These never go to the model.
 | `/commands new name` | Write `.kite/commands/name.md` |
 | `/plugins` | List plugins |
 | `/plugins init name` | Scaffold `.kite/plugins/name` |
-| `/memory` | List durable notes |
+| `/memory [semantic\|episodic]` | Semantic markdown + episodic sqlite |
+| `/semantic` | Show `MEMORY.md` notes |
+| `/episodic` | Show sqlite episode log |
 | `/remember [user\|project] text` | Append a note |
 | `/forget id\|substring` | Drop matching notes |
-| `/home` | Print `~/.kite` paths |
+| `/attach path` | Queue a file or image for the next turn (any path on disk) |
+| `/clip` `/paste` `/clipboard` | Attach clipboard text or image |
+| `/detach [name\|all]` | Drop queued attachments |
+| `/attachments` | List queued files |
 | `/help` `/h` | This map |
 | `/quit` `/q` `/exit` | Leave the REPL |
 
@@ -171,8 +181,8 @@ Build mode adds: `write` `edit` `bash`.
   commands/*.md        # your slash prompts
   skills/*/SKILL.md
   plugins/<id>/
-  memory/notes.jsonl
-  memory/MEMORY.md     # optional pin
+  memory/MEMORY.md     # semantic facts
+  memory/episodes.sqlite
   sessions/*.jsonl
   approvals.json
 
