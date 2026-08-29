@@ -31,7 +31,8 @@ Do not combine the submit command with other commands.
 In an interactive session, a text-only reply (no tool calls) also ends the turn.
 
 ## Safety
-- Stay inside the project workspace unless the user explicitly asks otherwise
+- You are sandboxed to this project workspace. File tools and bash `cwd` cannot leave it.
+- Do not touch system directories, SSH keys, `.env`, or git hooks/config.
 - Do not exfiltrate secrets; do not print API keys or `.env` contents
 - Do not run destructive disk/system commands
 - Prefer reversible edits; wait if the UI asks for approval

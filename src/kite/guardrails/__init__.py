@@ -8,14 +8,22 @@ from pathlib import Path
 from typing import Any
 
 from kite.config import GuardrailConfig
+from kite.guardrails.sandbox import (
+    SENSITIVE_NAMES,
+    check_command_paths,
+    check_dangerous,
+    clamp_cwd,
+    is_inside,
+    is_protected,
+    resolve_in_workspace,
+    workspace_root,
+)
 
 SECRET_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|secret|token|password|passwd|authorization)\s*[:=]\s*['\"]?[^\s'\"]{8,}"),
     re.compile(r"(?i)-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"(?i)\b(sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|xox[baprs]-[a-zA-Z0-9-]{20,})\b"),
 ]
-
-SENSITIVE_NAMES = {".env", ".env.local", ".env.production", "credentials.json", "id_rsa", "id_ed25519"}
 
 
 @dataclass(frozen=True)
@@ -28,45 +36,52 @@ class GuardrailVerdict:
 class GuardrailPolicy:
     def __init__(self, config: GuardrailConfig, cwd: str | Path):
         self.config = config
-        self.cwd = Path(cwd).expanduser().resolve()
+        self.cwd = workspace_root(cwd)
         self._deny = [re.compile(p, re.IGNORECASE) for p in config.deny_bash_patterns]
 
     def check_path(self, path: str | Path, *, for_write: bool = False) -> GuardrailVerdict:
         if not self.config.enabled:
             return GuardrailVerdict(True)
         try:
-            resolved = Path(path)
-            if not resolved.is_absolute():
-                resolved = (self.cwd / resolved).resolve()
-            else:
-                resolved = resolved.resolve()
+            resolved = resolve_in_workspace(path, self.cwd)
         except OSError as e:
             return GuardrailVerdict(False, f"invalid path: {e}")
 
         if self.config.sandbox_to_cwd and not self.config.allow_paths_outside_cwd:
-            try:
-                resolved.relative_to(self.cwd)
-            except ValueError:
+            if not is_inside(resolved, self.cwd):
                 return GuardrailVerdict(
                     False,
                     f"path escapes workspace sandbox ({self.cwd}): {resolved}",
                 )
+
+        if is_protected(resolved):
+            kind = "write" if for_write else "touch"
+            return GuardrailVerdict(False, f"refusing to {kind} protected path: {resolved}")
 
         if for_write and self.config.block_secret_writes and resolved.name in SENSITIVE_NAMES:
             return GuardrailVerdict(False, f"refusing to write sensitive file: {resolved.name}")
 
         return GuardrailVerdict(True)
 
-    def check_bash(self, command: str) -> GuardrailVerdict:
+    def check_bash(self, command: str, *, cwd: str | None = None) -> GuardrailVerdict:
         if not self.config.enabled:
             return GuardrailVerdict(True)
+        dangerous = check_dangerous(command)
+        if dangerous:
+            return GuardrailVerdict(False, dangerous)
         for rx in self._deny:
             if rx.search(command):
                 return GuardrailVerdict(False, f"bash command blocked by guardrail pattern: {rx.pattern}")
-        # soft-block reading .env via common patterns
         if re.search(r"(?i)(cat|type|Get-Content)\s+[^\n]*\.env\b", command):
             return GuardrailVerdict(False, "refusing to dump .env via bash; use careful read if needed")
-        return GuardrailVerdict(True)
+        if self.config.sandbox_to_cwd and not self.config.allow_paths_outside_cwd:
+            escaped = check_command_paths(command, self.cwd)
+            if escaped:
+                return GuardrailVerdict(False, escaped)
+        workdir, reason = clamp_cwd(cwd, self.cwd)
+        if workdir is None:
+            return GuardrailVerdict(False, reason)
+        return GuardrailVerdict(True, rewritten_args={"cwd": str(workdir)})
 
     def redact_secrets(self, text: str) -> str:
         if not text:
@@ -93,7 +108,14 @@ class GuardrailPolicy:
                     return v
 
         if tool == "bash":
-            return self.check_bash(str(args.get("command") or ""))
+            v = self.check_bash(str(args.get("command") or ""), cwd=str(args.get("cwd") or "") or None)
+            if not v.allowed:
+                return v
+            if v.rewritten_args:
+                args.update(v.rewritten_args)
+            else:
+                args["cwd"] = str(self.cwd)
+            return GuardrailVerdict(True, rewritten_args=args)
 
         if tool == "write" and self.config.block_secret_writes:
             content = str(args.get("content") or "")

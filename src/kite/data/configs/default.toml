@@ -33,6 +33,11 @@ deny_bash_patterns = [
   "powershell -enc",
   "curl .*\\|\\s*sh",
   "wget .*\\|\\s*sh",
+  "Remove-Item.*-Recurse",
+  "Stop-Computer",
+  "Restart-Computer",
+  "diskpart",
+  "bcdedit",
 ]
 block_secret_writes = true
 max_bash_output_chars = 100000

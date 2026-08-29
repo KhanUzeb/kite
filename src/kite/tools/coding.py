@@ -141,6 +141,16 @@ def make_coding_tools(
     def bash(args: dict[str, Any]) -> dict[str, Any]:
         command = str(args["command"])
         workdir = str(args.get("cwd") or root)
+        # Last-line sandbox: never launch a shell outside the workspace root.
+        try:
+            from kite.guardrails.sandbox import clamp_cwd, workspace_root
+
+            clamped, reason = clamp_cwd(workdir, workspace_root(root))
+            if clamped is None:
+                return {"ok": False, "error": reason, "output": reason, "blocked": True}
+            workdir = str(clamped)
+        except Exception:
+            workdir = root
         try:
             proc = subprocess.run(
                 command,
