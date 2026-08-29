@@ -20,4 +20,4 @@ Design lineage
   project context discovery, session memory, context accounting/compaction.
 """
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
