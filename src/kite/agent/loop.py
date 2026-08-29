@@ -11,6 +11,7 @@ from pathlib import Path
 from kite.agent.events import Event
 from kite.agent.exceptions import FormatError, InterruptAgentFlow, Interrupted, LimitsExceeded, Submitted, TimeExceeded
 from kite.agent.compaction import CompactionConfig, LoopCompactor
+from kite.agent.loop_guard import LoopGuard
 from kite.memory.session import Session
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
 from kite.prompts import load_prompt_template
@@ -95,6 +96,8 @@ class DefaultAgent:
         self.last_usage_estimate = None
         self._compactor: LoopCompactor | None = None
         self._interrupt = False
+        self._loop_guard = LoopGuard()
+        self._tool_started_at: float | None = None
         if hasattr(self.model, "should_stop"):
             self.model.should_stop = lambda: self._interrupt
 
@@ -358,6 +361,7 @@ class DefaultAgent:
                 tool = str(action.get("tool") or tool)
                 args = action.get("arguments") if isinstance(action.get("arguments"), dict) else args
             self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
+            self._tool_started_at = time.time()
 
             try:
                 if self.mode is AgentMode.PLAN and tool in MUTATING_TOOLS and tool != "todo_write":
@@ -379,6 +383,24 @@ class DefaultAgent:
                 raise
 
             preview = (out.get("output") or out.get("error") or "")[:120]
+            duration_ms = None
+            if self._tool_started_at is not None:
+                duration_ms = int((time.time() - self._tool_started_at) * 1000)
+                self._tool_started_at = None
+            structured = {
+                "tool": tool,
+                "ok": out.get("ok", True),
+                "blocked": out.get("blocked", False),
+                "duration_ms": duration_ms,
+                "exit_code": out.get("returncode"),
+                "preview": preview.replace("\n", " "),
+            }
+            if tool == "bash":
+                structured["command"] = str(args.get("command") or "")
+            elif tool in {"read", "write", "edit", "grep", "glob", "ls"}:
+                structured["target"] = str(args.get("path") or args.get("pattern") or args.get("command") or "")
+            elif tool in {"websearch", "webfetch", "webcrawl"}:
+                structured["target"] = str(args.get("query") or args.get("url") or "")
             self._emit(
                 "tool_end",
                 tool=tool,
@@ -389,6 +411,8 @@ class DefaultAgent:
                 error=out.get("error") or "",
                 diff=out.get("diff") or "",
                 path=out.get("path") or args.get("path"),
+                duration_ms=duration_ms,
+                structured=structured,
             )
             if tool == "todo_write" and out.get("items") is not None:
                 self._emit("todo", items=out["items"])
@@ -410,6 +434,11 @@ class DefaultAgent:
                 and out.get("path")
             ):
                 self._note_edit(str(out["path"]))
+            loop_warn = self._loop_guard.record(tool, args)
+            if loop_warn:
+                self._emit("loop_warning", message=loop_warn, tool=tool)
+                existing = str(out.get("output") or out.get("error") or "")
+                out = {**out, "output": f"{loop_warn}\n\n{existing}".strip(), "loop_warning": True}
             outputs.append(out)
         obs = self.add_messages(*self.model.format_observation_messages(message, outputs))
         if self._interrupt:
@@ -483,7 +512,7 @@ class DefaultAgent:
                     "estimated_tokens": usage.total_tokens if usage else None,
                     "ratio": round(usage.ratio, 3) if usage else None,
                 },
-                "kite_version": "0.4.0",
+                "kite_version": "0.5.0",
             },
             "messages": self.messages,
             "trajectory_format": "kite-0.3",
