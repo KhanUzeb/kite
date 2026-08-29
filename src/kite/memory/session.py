@@ -36,13 +36,27 @@ def _meta_sidecar(path: Path) -> Path:
 def _read_first_line_bytes(path: Path) -> tuple[int, str]:
     """Read only the first line — O(meta line), not O(file)."""
     with path.open("rb") as f:
-        data = bytearray()
-        while True:
-            chunk = f.read(1)
-            if not chunk or chunk == b"\n":
-                break
-            data.extend(chunk)
-        return len(data), data.decode("utf-8")
+        raw = f.readline()
+        if not raw:
+            return 0, ""
+        if raw.endswith(b"\n"):
+            raw = raw[:-1]
+        return len(raw), raw.decode("utf-8")
+
+
+def _read_session_meta(path: Path) -> SessionMeta | None:
+    try:
+        _, first_line = _read_first_line_bytes(path)
+        if not first_line.strip():
+            return None
+        row = json.loads(first_line)
+        if row.get("type") != "meta":
+            return None
+        meta = SessionMeta.from_dict(row)
+        meta.updated_at = _session_updated_at(path, meta)
+        return meta
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
 
 
 def _session_updated_at(path: Path, meta: SessionMeta) -> float:
@@ -135,10 +149,10 @@ class Session:
     def _write_meta(self) -> None:
         path = self._session_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [format_meta_line(self.meta)]
-        for m in self.messages:
-            lines.append(json.dumps({"type": "message", "message": m}, ensure_ascii=False))
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        with path.open("w", encoding="utf-8") as f:
+            f.write(format_meta_line(self.meta) + "\n")
+            for m in self.messages:
+                f.write(json.dumps({"type": "message", "message": m}, ensure_ascii=False) + "\n")
         self._write_meta_sidecar(path)
 
     def _persist_tail(self, messages: tuple[dict, ...] | list[dict]) -> None:
@@ -235,15 +249,16 @@ def load_session(session_id: str) -> Session:
     path = resolve_session_path(session_id)
     meta: SessionMeta | None = None
     messages: list[dict] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        row = json.loads(line)
-        if row.get("type") == "meta":
-            meta = SessionMeta.from_dict(row)
-            meta.updated_at = _session_updated_at(path, meta)
-        elif row.get("type") == "message":
-            messages.append(row["message"])
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("type") == "meta":
+                meta = SessionMeta.from_dict(row)
+                meta.updated_at = _session_updated_at(path, meta)
+            elif row.get("type") == "message":
+                messages.append(row["message"])
     if meta is None:
         raise ValueError(f"Session file missing meta: {path}")
     return Session(meta=meta, messages=messages, path=path)
@@ -251,18 +266,10 @@ def load_session(session_id: str) -> Session:
 
 def list_sessions(*, limit: int = 30) -> list[SessionMeta]:
     rows: list[SessionMeta] = []
-    for path in sorted(sessions_dir().glob("*.jsonl"), reverse=True):
-        try:
-            first = path.read_text(encoding="utf-8").splitlines()[0]
-            row = json.loads(first)
-            if row.get("type") == "meta":
-                meta = SessionMeta.from_dict(row)
-                meta.updated_at = _session_updated_at(path, meta)
-                rows.append(meta)
-        except (OSError, json.JSONDecodeError, IndexError, KeyError, ValueError):
-            continue
-        if len(rows) >= limit:
-            break
+    for path in sessions_dir().glob("*.jsonl"):
+        meta = _read_session_meta(path)
+        if meta is not None:
+            rows.append(meta)
     rows.sort(key=lambda m: m.updated_at, reverse=True)
     return rows[:limit]
 

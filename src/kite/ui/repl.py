@@ -15,7 +15,7 @@ from kite.agent.harness import Harness, HarnessConfig
 from kite.memory.store import MemoryStore
 from kite.agent.mode import AgentMode, ApprovalMode, default_approval
 from kite.plugins.loader import project_plugins_dir, write_plugin_stub
-from kite.cli.slash import CommandIndex, help_text, resolve_slash
+from kite.cli.slash import CommandIndex, help_text, invalidate_command_index, resolve_slash
 from kite.tools.store import TodoStore
 from kite.ui.approval import ApprovalPolicy, make_approver
 from kite.ui.commands import parse_slash
@@ -675,6 +675,7 @@ class ChatSession:
                 self.console.print(f"[kite.error]{e}[/]")
                 return
             self.console.print(f"[kite.success]wrote[/] {path}  ·  edit then /{Path(path).stem}")
+            invalidate_command_index()
             return
         index = self._index()
         table = kite_table("commands")
@@ -704,6 +705,7 @@ class ChatSession:
             self.console.print(
                 f"[kite.success]wrote[/] {path}  ·  add commands/*.md and skills/*/SKILL.md"
             )
+            invalidate_command_index()
             return
         plugins = self._index().plugins
         if arg:
