@@ -134,7 +134,7 @@ class Session:
     def replace_messages(self, messages: list[dict]) -> None:
         self.messages = list(messages)
         self.meta.updated_at = time.time()
-        self.save()
+        self._persist_compact_snapshot(messages)
 
     def set_exit(self, status: str) -> None:
         self.meta.exit_status = status
@@ -166,6 +166,22 @@ class Session:
                 f.write(
                     json.dumps({"type": "message", "message": m}, ensure_ascii=False) + "\n"
                 )
+        self._touch_meta_timestamp(path)
+
+    def _persist_compact_snapshot(self, messages: list[dict]) -> None:
+        """Append a compaction snapshot — O(new messages), not O(transcript)."""
+        path = self._session_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.is_file() or path.stat().st_size == 0:
+            self._write_meta()
+            return
+        row = {
+            "type": "compact_snapshot",
+            "updated_at": self.meta.updated_at,
+            "messages": messages,
+        }
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
         self._touch_meta_timestamp(path)
 
     def _write_meta_sidecar(self, path: Path) -> None:
@@ -245,6 +261,14 @@ def resolve_session_path(session_id: str, *, unique: bool = False) -> Path:
     return matches[-1]
 
 
+def _apply_session_row(row: dict[str, Any], messages: list[dict]) -> list[dict]:
+    if row.get("type") == "compact_snapshot":
+        return list(row.get("messages") or [])
+    if row.get("type") == "message":
+        messages.append(row["message"])
+    return messages
+
+
 def load_session(session_id: str) -> Session:
     path = resolve_session_path(session_id)
     meta: SessionMeta | None = None
@@ -257,8 +281,8 @@ def load_session(session_id: str) -> Session:
             if row.get("type") == "meta":
                 meta = SessionMeta.from_dict(row)
                 meta.updated_at = _session_updated_at(path, meta)
-            elif row.get("type") == "message":
-                messages.append(row["message"])
+            else:
+                messages = _apply_session_row(row, messages)
     if meta is None:
         raise ValueError(f"Session file missing meta: {path}")
     return Session(meta=meta, messages=messages, path=path)
@@ -320,5 +344,14 @@ def delete_all_sessions() -> list[DeletedSession]:
 
 
 def iter_session_messages(session_id: str) -> Iterator[dict]:
-    session = load_session(session_id)
-    yield from session.messages
+    path = resolve_session_path(session_id)
+    messages: list[dict] = []
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("type") == "meta":
+                continue
+            messages = _apply_session_row(row, messages)
+    yield from messages
