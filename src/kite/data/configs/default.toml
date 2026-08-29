@@ -1,0 +1,50 @@
+# Default agent runtime config (override via ~/.kite/configs/default.toml or --config)
+
+[agent]
+name = "kite-default"
+step_limit = 40
+cost_limit = 5.0
+wall_time_limit_seconds = 0
+max_consecutive_format_errors = 3
+auto_compact = true
+compaction_reserve_tokens = 16384
+compaction_keep_recent_tokens = 20000
+
+[prompts]
+system = "system"
+instance = "instance"
+
+[tools]
+enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "skill", "todo_write", "todo_read", "task", "webfetch", "memory"]
+bash_timeout_seconds = 30
+
+[guardrails]
+enabled = true
+sandbox_to_cwd = true
+allow_paths_outside_cwd = false
+deny_bash_patterns = [
+  "rm -rf /",
+  "rm -rf /*",
+  "mkfs",
+  ":(){:|:&};:",
+  "dd if=",
+  "shutdown",
+  "reboot",
+  "powershell -enc",
+  "curl .*\\|\\s*sh",
+  "wget .*\\|\\s*sh",
+]
+block_secret_writes = true
+max_bash_output_chars = 100000
+max_read_chars = 200000
+
+[skills]
+enabled = true
+auto_index_in_system_prompt = true
+dirs = []  # extra skill dirs
+
+[context]
+include_git_status = true
+include_tree_snippet = true
+tree_max_entries = 80
+max_context_chars = 24000

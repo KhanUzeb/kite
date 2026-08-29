@@ -1,0 +1,585 @@
+"""Built-in tools: read / write / edit / bash / grep / glob / ls / skill / todo / task / webfetch / memory."""
+
+from __future__ import annotations
+
+import difflib
+import os
+import re
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+
+from kite.guardrails import GuardrailPolicy
+from kite.memory.store import MemoryStore
+from kite.skills.loader import Skill, format_skill_invocation
+from kite.tools import Tool
+from kite.tools.store import TodoStore
+
+
+def _resolve(path: str, cwd: str) -> Path:
+    p = Path(path)
+    if not p.is_absolute():
+        p = Path(cwd) / p
+    return p.resolve()
+
+
+def _unified_diff(path: str, before: str, after: str) -> str:
+    rel = path.replace("\\", "/")
+    lines = list(
+        difflib.unified_diff(
+            before.splitlines(),
+            after.splitlines(),
+            fromfile=f"a/{rel}",
+            tofile=f"b/{rel}",
+            lineterm="",
+        )
+    )
+    return ("\n".join(lines) + "\n") if lines else ""
+
+
+def make_coding_tools(
+    cwd: str | None = None,
+    timeout: int = 30,
+    *,
+    enabled: list[str] | None = None,
+    guardrails: GuardrailPolicy | None = None,
+    skills: list[Skill] | None = None,
+    todos: TodoStore | None = None,
+    memory: MemoryStore | None = None,
+) -> list[Tool]:
+    root = cwd or os.getcwd()
+    allow = set(
+        enabled
+        or [
+            "read",
+            "write",
+            "edit",
+            "bash",
+            "grep",
+            "glob",
+            "ls",
+            "skill",
+            "todo_write",
+            "todo_read",
+            "task",
+            "webfetch",
+            "memory",
+        ]
+    )
+    skill_by_name = {s.name: s for s in (skills or [])}
+    store = todos or TodoStore()
+    mem = memory or MemoryStore.open(root)
+
+    def gated(tool_name: str, arguments: dict[str, Any], fn):
+        if guardrails is not None:
+            verdict = guardrails.check_tool_call(tool_name, arguments)
+            if not verdict.allowed:
+                return {"ok": False, "error": verdict.reason, "output": verdict.reason, "blocked": True}
+            if verdict.rewritten_args is not None:
+                arguments = verdict.rewritten_args
+        result = fn(arguments)
+        if guardrails is not None:
+            result = guardrails.clamp_output(tool_name, result)
+        return result
+
+    def read_file(args: dict[str, Any]) -> dict[str, Any]:
+        path = _resolve(str(args["path"]), root)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        start = int(args.get("offset", 1))
+        limit = args.get("limit")
+        lines = text.splitlines(keepends=True)
+        chunk = lines[start - 1 :] if start > 1 else lines
+        if limit is not None:
+            chunk = chunk[: int(limit)]
+        numbered = "".join(f"{i + start:6}|{line}" for i, line in enumerate(chunk))
+        truncated = False
+        if limit is None and len(lines) > 800:
+            numbered = "".join(f"{i + start:6}|{line}" for i, line in enumerate(lines[:400]))
+            numbered += f"\n... [{len(lines) - 400} lines truncated; pass offset/limit] ...\n"
+            truncated = True
+        return {"ok": True, "path": str(path), "output": numbered, "truncated": truncated}
+
+    def write_file(args: dict[str, Any]) -> dict[str, Any]:
+        path = _resolve(str(args["path"]), root)
+        after = str(args["content"])
+        before = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(after, encoding="utf-8")
+        diff = _unified_diff(str(path), before, after)
+        return {
+            "ok": True,
+            "path": str(path),
+            "bytes": path.stat().st_size,
+            "output": f"wrote {path}",
+            "diff": diff,
+        }
+
+    def edit_file(args: dict[str, Any]) -> dict[str, Any]:
+        path = _resolve(str(args["path"]), root)
+        old, new = str(args["old"]), str(args["new"])
+        text = path.read_text(encoding="utf-8", errors="replace")
+        count = text.count(old)
+        if count == 0:
+            return {"ok": False, "error": "old string not found", "path": str(path), "output": "old string not found"}
+        if count > 1 and not args.get("replace_all"):
+            msg = f"old string found {count} times; pass replace_all=true or make it unique"
+            return {"ok": False, "error": msg, "path": str(path), "output": msg}
+        after = text.replace(old, new) if args.get("replace_all") else text.replace(old, new, 1)
+        path.write_text(after, encoding="utf-8")
+        n = count if args.get("replace_all") else 1
+        return {
+            "ok": True,
+            "path": str(path),
+            "replacements": n,
+            "output": f"edited {path} ({n} hunk{'s' if n != 1 else ''})",
+            "diff": _unified_diff(str(path), text, after),
+        }
+
+    def bash(args: dict[str, Any]) -> dict[str, Any]:
+        command = str(args["command"])
+        workdir = str(args.get("cwd") or root)
+        try:
+            proc = subprocess.run(
+                command,
+                shell=True,
+                cwd=workdir,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=int(args.get("timeout") or timeout),
+                env=os.environ | {"PAGER": "cat", "GIT_PAGER": "cat"},
+            )
+            output = proc.stdout + (("\n" + proc.stderr) if proc.stderr else "")
+            lines = output.lstrip().splitlines(keepends=True)
+            submitted = (
+                bool(lines)
+                and lines[0].strip() == "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+                and proc.returncode == 0
+            )
+            return {
+                "ok": proc.returncode == 0,
+                "returncode": proc.returncode,
+                "output": output,
+                "submitted": submitted,
+                "submission": "".join(lines[1:]) if submitted else "",
+            }
+        except subprocess.TimeoutExpired as e:
+            return {
+                "ok": False,
+                "returncode": -1,
+                "output": (e.output or "") if isinstance(e.output, str) else "",
+                "error": f"timeout after {timeout}s",
+            }
+
+    def grep_files(args: dict[str, Any]) -> dict[str, Any]:
+        pattern = str(args["pattern"])
+        root_path = _resolve(str(args.get("path") or "."), root)
+        glob_pat = str(args.get("glob") or "")
+        max_hits = int(args.get("max_hits") or 50)
+        rg = shutil.which("rg")
+        if rg:
+            cmd = [rg, "--line-number", "--no-heading", "--color", "never", "--hidden", "-g", "!.git", "-e", pattern]
+            if glob_pat:
+                cmd.extend(["--glob", glob_pat])
+            cmd.append(str(root_path))
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=20,
+                    cwd=root,
+                )
+            except (OSError, subprocess.TimeoutExpired) as e:
+                return {"ok": False, "error": str(e), "output": str(e)}
+            lines = (proc.stdout or "").splitlines()
+            truncated = len(lines) > max_hits
+            body = "\n".join(lines[:max_hits]) or "(no matches)"
+            if truncated:
+                body += "\n… truncated …"
+            return {"ok": True, "output": body, "hits": min(len(lines), max_hits), "engine": "rg"}
+
+        rx = re.compile(pattern)
+        hits: list[str] = []
+        glob_use = glob_pat or "*"
+        paths = [root_path] if root_path.is_file() else sorted(root_path.rglob(glob_use))
+        for p in paths:
+            if not p.is_file():
+                continue
+            if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in p.parts):
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                if rx.search(line):
+                    hits.append(f"{p}:{i}:{line[:240]}")
+                    if len(hits) >= max_hits:
+                        return {
+                            "ok": True,
+                            "output": "\n".join(hits) + "\n… truncated …",
+                            "hits": len(hits),
+                            "engine": "python",
+                        }
+        return {
+            "ok": True,
+            "output": "\n".join(hits) if hits else "(no matches)",
+            "hits": len(hits),
+            "engine": "python",
+        }
+
+    def glob_files(args: dict[str, Any]) -> dict[str, Any]:
+        pattern = str(args["pattern"])
+        root_path = _resolve(str(args.get("root") or "."), root)
+        matches = []
+        for p in sorted(root_path.glob(pattern)):
+            if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in p.parts):
+                continue
+            matches.append(str(p.relative_to(root_path) if p.is_relative_to(root_path) else p))
+            if len(matches) >= int(args.get("max") or 200):
+                matches.append("…")
+                break
+        return {"ok": True, "output": "\n".join(matches) if matches else "(no matches)", "count": len(matches)}
+
+    def ls_dir(args: dict[str, Any]) -> dict[str, Any]:
+        path = _resolve(str(args.get("path") or "."), root)
+        if not path.exists():
+            return {"ok": False, "error": f"not found: {path}", "output": f"not found: {path}"}
+        if path.is_file():
+            return {"ok": True, "output": path.name, "count": 1}
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except OSError as e:
+            return {"ok": False, "error": str(e), "output": str(e)}
+        lines = []
+        for e in entries:
+            if e.name in {".git", ".venv", "node_modules", "__pycache__"}:
+                continue
+            suffix = "/" if e.is_dir() else ""
+            lines.append(e.name + suffix)
+        return {"ok": True, "output": "\n".join(lines) if lines else "(empty)", "count": len(lines)}
+
+    def load_skill(args: dict[str, Any]) -> dict[str, Any]:
+        name = str(args["name"])
+        skill = skill_by_name.get(name)
+        if skill is None:
+            known = ", ".join(sorted(skill_by_name)) or "(none)"
+            return {"ok": False, "error": f"unknown skill: {name}", "output": f"unknown skill: {name}. known: {known}"}
+        extra = args.get("instructions")
+        text = format_skill_invocation(skill, str(extra) if extra else None)
+        return {"ok": True, "output": text, "skill": name}
+
+    def todo_write(args: dict[str, Any]) -> dict[str, Any]:
+        items = args.get("todos") or args.get("items") or []
+        if not isinstance(items, list):
+            return {"ok": False, "error": "todos must be a list", "output": "todos must be a list"}
+        written = store.write(items)
+        lines = [f"{x['status']:12} {x['content']}" for x in written]
+        return {"ok": True, "output": "\n".join(lines) or "(empty plan)", "items": written}
+
+    def todo_read(_args: dict[str, Any]) -> dict[str, Any]:
+        items = store.read()
+        lines = [f"{x['status']:12} {x['content']}" for x in items]
+        return {"ok": True, "output": "\n".join(lines) or "(empty plan)", "items": items}
+
+    def task_dispatch(args: dict[str, Any]) -> dict[str, Any]:
+        """Bounded search sub-task: glob + optional grep, return a summary (keeps main context lean)."""
+        prompt = str(args.get("prompt") or "")
+        glob_pat = str(args.get("glob") or "**/*.{py,ts,tsx,js,go,rs,md}")
+        pattern = args.get("pattern")
+        root_path = _resolve(str(args.get("path") or "."), root)
+        matches = glob_files({"pattern": glob_pat, "root": str(root_path), "max": 40})
+        parts = [f"task: {prompt}", "files:", matches.get("output") or "(none)"]
+        if pattern:
+            grepped = grep_files({"pattern": str(pattern), "path": str(root_path), "max_hits": 30})
+            parts.append("hits:")
+            parts.append(str(grepped.get("output") or ""))
+        text = "\n".join(parts)
+        if len(text) > 8_000:
+            text = text[:8_000] + "\n… summary truncated …"
+        return {"ok": True, "output": text, "summary": True}
+
+    def webfetch(args: dict[str, Any]) -> dict[str, Any]:
+        url = str(args["url"])
+        if not url.startswith(("https://", "http://")):
+            return {"ok": False, "error": "only http(s) URLs allowed", "output": "only http(s) URLs allowed"}
+        req = Request(url, headers={"User-Agent": "kite-agent/0.4"})
+        try:
+            with urlopen(req, timeout=int(args.get("timeout") or 15)) as resp:  # noqa: S310
+                raw = resp.read(80_000)
+                charset = "utf-8"
+                ctype = resp.headers.get_content_charset()
+                if ctype:
+                    charset = ctype
+                text = raw.decode(charset, errors="replace")
+        except (URLError, OSError, TimeoutError, ValueError) as e:
+            return {"ok": False, "error": str(e), "output": str(e)}
+        if len(text) > 40_000:
+            text = text[:20_000] + "\n...<truncated>...\n" + text[-8_000:]
+        return {"ok": True, "output": text, "url": url}
+
+    def memory_op(args: dict[str, Any]) -> dict[str, Any]:
+        action = str(args.get("action") or "list").lower()
+        scope = str(args.get("scope") or "user").lower()
+        if scope not in {"user", "project"}:
+            scope = "user"
+        if action == "list":
+            notes = mem.notes()
+            lines = [f"{n.scope}/{n.id}  {n.text}" for n in notes]
+            return {"ok": True, "output": "\n".join(lines) or "(empty memory)", "count": len(notes)}
+        if action == "remember":
+            text = str(args.get("text") or "").strip()
+            if not text:
+                return {"ok": False, "error": "text required", "output": "text required"}
+            try:
+                note = mem.remember(text, scope=scope)  # type: ignore[arg-type]
+            except ValueError as e:
+                return {"ok": False, "error": str(e), "output": str(e)}
+            return {"ok": True, "output": f"remembered {note.scope}/{note.id}: {note.text}", "id": note.id}
+        if action == "forget":
+            query = str(args.get("text") or args.get("query") or "").strip()
+            if not query:
+                return {"ok": False, "error": "text required", "output": "text required"}
+            removed = mem.forget(query)
+            if not removed:
+                return {"ok": True, "output": "no matching notes", "count": 0}
+            lines = [f"forgot {n.scope}/{n.id}: {n.text}" for n in removed]
+            return {"ok": True, "output": "\n".join(lines), "count": len(removed)}
+        return {"ok": False, "error": "action must be list|remember|forget", "output": "action must be list|remember|forget"}
+
+    reason_prop = {"reason": {"type": "string", "description": "One-line why, shown in the UI"}}
+
+    catalog: list[tuple[str, Tool]] = [
+        (
+            "read",
+            Tool(
+                name="read",
+                description="Read a text file. Optional 1-based offset and line limit. Huge files auto-truncate.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "offset": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["path"],
+                },
+                execute_fn=lambda a: gated("read", a, read_file),
+            ),
+        ),
+        (
+            "write",
+            Tool(
+                name="write",
+                description="Create or overwrite a text file. Prefer edit for existing files.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                        **reason_prop,
+                    },
+                    "required": ["path", "content"],
+                },
+                execute_fn=lambda a: gated("write", a, write_file),
+            ),
+        ),
+        (
+            "edit",
+            Tool(
+                name="edit",
+                description="Replace an exact string in a file (unique match unless replace_all). Diff is shown in the UI.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "old": {"type": "string"},
+                        "new": {"type": "string"},
+                        "replace_all": {"type": "boolean"},
+                        **reason_prop,
+                    },
+                    "required": ["path", "old", "new"],
+                },
+                execute_fn=lambda a: gated("edit", a, edit_file),
+            ),
+        ),
+        (
+            "bash",
+            Tool(
+                name="bash",
+                description="Run a shell command in a fresh subprocess (state does not persist). Highest privilege — gated.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"},
+                        "cwd": {"type": "string"},
+                        "timeout": {"type": "integer"},
+                        **reason_prop,
+                    },
+                    "required": ["command"],
+                },
+                execute_fn=lambda a: gated("bash", a, bash),
+            ),
+        ),
+        (
+            "grep",
+            Tool(
+                name="grep",
+                description="Search file contents. Uses ripgrep (rg) when installed.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "path": {"type": "string"},
+                        "glob": {"type": "string"},
+                        "max_hits": {"type": "integer"},
+                    },
+                    "required": ["pattern"],
+                },
+                execute_fn=lambda a: gated("grep", a, grep_files),
+            ),
+        ),
+        (
+            "glob",
+            Tool(
+                name="glob",
+                description="List files matching a glob pattern under root.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "root": {"type": "string"},
+                        "max": {"type": "integer"},
+                    },
+                    "required": ["pattern"],
+                },
+                execute_fn=lambda a: gated("glob", a, glob_files),
+            ),
+        ),
+        (
+            "ls",
+            Tool(
+                name="ls",
+                description="List a directory (names only, dirs end with /).",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": [],
+                },
+                execute_fn=lambda a: gated("ls", a, ls_dir),
+            ),
+        ),
+        (
+            "skill",
+            Tool(
+                name="skill",
+                description="Load a named skill's full instructions into context.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "instructions": {"type": "string", "description": "Optional extra user instructions"},
+                    },
+                    "required": ["name"],
+                },
+                execute_fn=lambda a: gated("skill", a, load_skill),
+            ),
+        ),
+        (
+            "todo_write",
+            Tool(
+                name="todo_write",
+                description="Replace the live plan checklist. Call this for any multi-step task. statuses: pending | in_progress | completed.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "todos": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "content": {"type": "string"},
+                                    "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                                },
+                                "required": ["content", "status"],
+                            },
+                        }
+                    },
+                    "required": ["todos"],
+                },
+                execute_fn=lambda a: gated("todo_write", a, todo_write),
+            ),
+        ),
+        (
+            "todo_read",
+            Tool(
+                name="todo_read",
+                description="Read the current plan checklist.",
+                parameters={"type": "object", "properties": {}},
+                execute_fn=lambda a: gated("todo_read", a, todo_read),
+            ),
+        ),
+        (
+            "task",
+            Tool(
+                name="task",
+                description="Dispatch a bounded investigation (glob + optional grep) and get a summary back instead of dumping raw hits into the main thread.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "glob": {"type": "string"},
+                        "pattern": {"type": "string"},
+                        "path": {"type": "string"},
+                    },
+                    "required": ["prompt"],
+                },
+                execute_fn=lambda a: gated("task", a, task_dispatch),
+            ),
+        ),
+        (
+            "webfetch",
+            Tool(
+                name="webfetch",
+                description="Fetch a URL (http/https) and return truncated text. For docs and issues mid-task.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string"},
+                        "timeout": {"type": "integer"},
+                    },
+                    "required": ["url"],
+                },
+                execute_fn=lambda a: gated("webfetch", a, webfetch),
+            ),
+        ),
+        (
+            "memory",
+            Tool(
+                name="memory",
+                description="List, add, or drop durable notes (user or project). Survives sessions. Not the chat log.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["list", "remember", "forget"],
+                        },
+                        "text": {"type": "string", "description": "Note text, or a substring/id to forget"},
+                        "scope": {"type": "string", "enum": ["user", "project"]},
+                    },
+                    "required": ["action"],
+                },
+                execute_fn=lambda a: gated("memory", a, memory_op),
+            ),
+        ),
+    ]
+    return [tool for name, tool in catalog if name in allow]

@@ -1,0 +1,109 @@
+"""Paths and user preferences (~/.kite/)."""
+
+from __future__ import annotations
+
+import os
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+try:
+    import tomli_w
+except ImportError:  # pragma: no cover
+    tomli_w = None  # type: ignore
+
+
+def kite_home() -> Path:
+    override = os.getenv("KITE_HOME")
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path.home() / ".kite"
+
+
+def ensure_home() -> Path:
+    home = kite_home()
+    for name in ("sessions", "trajectories", "skills", "commands", "plugins", "memory", "configs"):
+        (home / name).mkdir(parents=True, exist_ok=True)
+    return home
+
+
+@dataclass
+class UserConfig:
+    default_provider: str = "openai"
+    default_model: str | None = None
+    step_limit: int = 40
+    cost_limit: float = 5.0
+    context_window: int | None = None
+    compaction_reserve_tokens: int = 16_384
+    compaction_keep_recent_tokens: int = 20_000
+    auto_compact: bool = True
+    include_git_status: bool = True
+    include_tree_snippet: bool = True
+    tree_max_entries: int = 80
+    api_bases: dict[str, str] = field(default_factory=dict)
+    # provider -> model override default
+    provider_defaults: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls) -> UserConfig:
+        ensure_home()
+        path = kite_home() / "config.toml"
+        if not path.is_file():
+            return cls()
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        return cls(
+            default_provider=str(data.get("default_provider", "openai")),
+            default_model=data.get("default_model"),
+            step_limit=int(data.get("step_limit", 40)),
+            cost_limit=float(data.get("cost_limit", 5.0)),
+            context_window=data.get("context_window"),
+            compaction_reserve_tokens=int(data.get("compaction_reserve_tokens", 16_384)),
+            compaction_keep_recent_tokens=int(data.get("compaction_keep_recent_tokens", 20_000)),
+            auto_compact=bool(data.get("auto_compact", True)),
+            include_git_status=bool(data.get("include_git_status", True)),
+            include_tree_snippet=bool(data.get("include_tree_snippet", True)),
+            tree_max_entries=int(data.get("tree_max_entries", 80)),
+            api_bases=dict(data.get("api_bases") or {}),
+            provider_defaults=dict(data.get("provider_defaults") or {}),
+        )
+
+    def save(self) -> Path:
+        ensure_home()
+        path = kite_home() / "config.toml"
+        payload = {
+            "default_provider": self.default_provider,
+            "default_model": self.default_model,
+            "step_limit": self.step_limit,
+            "cost_limit": self.cost_limit,
+            "context_window": self.context_window,
+            "compaction_reserve_tokens": self.compaction_reserve_tokens,
+            "compaction_keep_recent_tokens": self.compaction_keep_recent_tokens,
+            "auto_compact": self.auto_compact,
+            "include_git_status": self.include_git_status,
+            "include_tree_snippet": self.include_tree_snippet,
+            "tree_max_entries": self.tree_max_entries,
+            "api_bases": self.api_bases,
+            "provider_defaults": self.provider_defaults,
+        }
+        # tomli_w cannot serialize None; omit null optional fields
+        payload = {k: v for k, v in payload.items() if v is not None}
+        if tomli_w is None:
+            # Minimal TOML writer fallback
+            lines = []
+            for k, v in payload.items():
+                if isinstance(v, bool):
+                    lines.append(f"{k} = {'true' if v else 'false'}")
+                elif isinstance(v, str) or v is None:
+                    if v is None:
+                        continue
+                    lines.append(f'{k} = "{v}"')
+                elif isinstance(v, (int, float)):
+                    lines.append(f"{k} = {v}")
+                elif isinstance(v, dict):
+                    lines.append(f"\n[{k}]")
+                    for dk, dv in v.items():
+                        lines.append(f'{dk} = "{dv}"')
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        else:
+            path.write_text(tomli_w.dumps(payload), encoding="utf-8")
+        return path
