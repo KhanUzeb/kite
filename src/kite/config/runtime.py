@@ -8,7 +8,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from kite.config import kite_home
+from kite.config.user import kite_home
 
 
 @dataclass
