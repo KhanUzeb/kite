@@ -37,8 +37,9 @@ def _migrate_jsonl(semantic: SemanticStore) -> None:
             lines = path.read_text(encoding="utf-8").splitlines()
         except OSError:
             continue
-        existing_ids = {n.id for n in semantic.notes(scope=scope)}  # type: ignore[arg-type]
-        existing_text = {n.text.lower() for n in semantic.notes(scope=scope)}  # type: ignore[arg-type]
+        existing = semantic.notes(scope=scope)  # type: ignore[arg-type]
+        existing_ids = {n.id for n in existing}
+        existing_text = {n.text.lower() for n in existing}
         moved = 0
         for line in lines:
             if not line.strip():

@@ -16,6 +16,14 @@ from kite.commands.loader import (
 from kite.plugins.loader import Plugin, load_plugins
 from kite.skills.loader import Skill, expand_skill_slash, format_skill_invocation, load_skills
 from kite.ui.commands import SlashResult, parse_slash
+from kite.util.cache import TtlCache
+
+
+_INDEX_CACHE: TtlCache[tuple[str, tuple[str, ...]], "CommandIndex"] = TtlCache(30.0)
+
+
+def invalidate_command_index() -> None:
+    _INDEX_CACHE.clear()
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,12 @@ class CommandIndex:
     @classmethod
     def load(cls, cwd: str | Path = ".", extra_skill_dirs: list[str] | None = None) -> CommandIndex:
         cwd_path = Path(cwd).expanduser().resolve()
+        extra_key = tuple(sorted(extra_skill_dirs or []))
+        key = (str(cwd_path), extra_key)
+        return _INDEX_CACHE.get_or_set(key, lambda: cls._load_uncached(cwd_path, extra_skill_dirs))
+
+    @classmethod
+    def _load_uncached(cls, cwd_path: Path, extra_skill_dirs: list[str] | None = None) -> CommandIndex:
         extra = list(extra_skill_dirs or [])
         plugins = load_plugins(cwd_path)
         skills = load_skills(cwd_path, extra_dirs=extra)
