@@ -132,14 +132,12 @@ def _collapse_text(text: str, *, expanded: bool, limit: int = COLLAPSE_LINES) ->
 
 def render_turn_boundary(turn: int) -> Text:
     t = Text()
-    t.append(f"{GUTTER}{'─' * 36}\n", style="kite.muted")
     t.append(f"{GUTTER}turn {turn}\n", style="kite.muted")
     return t
 
 
 def render_compact_boundary(before: int | str, after: int | str) -> Text:
     t = Text()
-    t.append(f"{GUTTER}{'─' * 36}\n", style="kite.muted")
     t.append(f"{GUTTER}{SYMBOL_COMPACT}  ", style="kite.muted")
     t.append(f"{before} → {after}", style="kite.muted")
     t.append("\n")
@@ -293,10 +291,11 @@ class RunDisplay:
     def _spin(self, on: bool, label: str = "thinking") -> None:
         if on and not self.quiet:
             self._anim_tick += 1
+            fast = label.startswith(("working", "subagent"))
             if not self._spinner_on:
                 self._spinner.start()
                 self._spinner_on = True
-            self._spinner.kick(label)
+            self._spinner.kick(label, fast=fast)
         else:
             if self._spinner_on:
                 self._spinner.stop()
@@ -313,8 +312,6 @@ class RunDisplay:
     def print_plan(self) -> None:
         if self.quiet or not self.state.todos:
             return
-        if self._plan_printed:
-            self.console.print(Text(f"{GUTTER}{'─' * 36}", style="kite.muted"))
         self._plan_printed = True
         self.console.print(render_plan_tasks(self.state.todos, tick=self._anim_tick))
 
@@ -351,6 +348,7 @@ class RunDisplay:
             self.state.model = str(p.get("model") or self.state.model)
             self.state.interrupted = False
             self._plan_printed = False
+            self._thinking_open = False
             self.print_banner(str(p.get("task") or "").strip())
             self.print_plan()
             self._channel = None
@@ -371,6 +369,9 @@ class RunDisplay:
         if kind == "stream_reasoning":
             text = p.get("text") or ""
             if text:
+                if not self._thinking_open:
+                    self.console.print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
+                    self._thinking_open = True
                 self._spin(False)
                 self._stream_write(text, channel="thinking")
             else:
@@ -394,16 +395,12 @@ class RunDisplay:
         if kind == "stream_end":
             self._end_stream_line()
             self._channel = None
+            self._thinking_open = False
             self._spin(True, "working")
-            if p.get("ok") is False:
-                self.console.print("[kite.muted](stream ended)[/]")
             return
 
         if kind == "turn_start":
             self.state.turn += 1
-            if self.state.turn > 1:
-                self._end_stream_line()
-                self.console.print(render_turn_boundary(self.state.turn))
             self._touch_state()
             return
 

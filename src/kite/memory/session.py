@@ -97,8 +97,16 @@ class Session:
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _persist_tail(self, messages: tuple[dict, ...] | list[dict]) -> None:
-        # For append-heavy loops we still rewrite — keeps format correct after compaction
-        self._write_meta()
+        path = self._session_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.is_file() or path.stat().st_size == 0:
+            self._write_meta()
+            return
+        with path.open("a", encoding="utf-8") as f:
+            for m in messages:
+                f.write(
+                    json.dumps({"type": "message", "message": m}, ensure_ascii=False) + "\n"
+                )
 
     def save(self) -> Path:
         self._write_meta()
