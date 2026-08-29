@@ -11,6 +11,7 @@ from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode, tools_for_mode
+from kite.agent.role import AgentRole, parse_role, tools_for_role
 from kite.cli.slash import expand_prompt_slash
 from kite.config import AgentRuntimeConfig, UserConfig, ensure_home, load_runtime_config
 from kite.context.discovery import gather_project_context
@@ -18,6 +19,8 @@ from kite.env.local import LocalEnvironment
 from kite.guardrails import GuardrailPolicy
 from kite.memory.session import Session, create_session, load_session
 from kite.memory.store import MemoryStore
+from kite.memory.audit import AuditLog
+from kite.agent.verification import VerificationCollector
 from kite.models.litellm_model import LitellmModel
 from kite.prompts import assemble_instance_prompt, assemble_system_prompt, load_prompt_template
 from kite.providers.resolve import ResolvedModel, missing_credentials, missing_model, resolve_model
@@ -49,6 +52,7 @@ class RuntimeOptions:
     approval: str = "auto"
     interactive: bool = False
     reasoning: str = "auto"
+    role: str = "auto"
     attachments: list | None = None
 
 
@@ -115,10 +119,16 @@ class AgentRuntime:
 
         extra_sections: list[str] = []
         mode = (self.options.mode or "build").lower()
+        role = parse_role(self.options.role or rcfg.role, mode=mode)
         try:
             extra_sections.append(load_prompt_template(f"mode_{mode}"))
         except (FileNotFoundError, OSError):
             pass
+        if role is not AgentRole.AUTO:
+            try:
+                extra_sections.append(load_prompt_template(f"role_{role.value}"))
+            except (FileNotFoundError, OSError):
+                pass
 
         memory_text = MemoryStore.open(cwd).render_for_prompt() if self.slots.memory is None else self.slots.memory.render_for_prompt()
 
@@ -204,6 +214,8 @@ class AgentRuntime:
             approval = ApprovalMode.AUTO
 
         enabled = tools_for_mode(mode, list(rcfg.tools.enabled))
+        role = parse_role(self.options.role or rcfg.role, mode=mode.value)
+        enabled = tools_for_role(role, enabled)
         if self.slots.tools is not None:
             tools = self.slots.tools(
                 cwd=cwd,
@@ -226,6 +238,16 @@ class AgentRuntime:
             )
         if self.extra_tools:
             tools = list(tools) + list(self.extra_tools)
+        if rcfg.github_tools:
+            from kite.tools.github import make_github_tools
+
+            tools = list(tools) + make_github_tools(enabled=True)
+        mcp_clients = []
+        if rcfg.mcp_servers:
+            from kite.mcp.client import load_mcp_tools
+
+            mcp_tools, mcp_clients = load_mcp_tools(rcfg.mcp_servers)
+            tools = list(tools) + mcp_tools
         registry = ToolRegistry(tools)
         if self.slots.env is not None:
             env = self.slots.env(cwd=cwd, registry=registry)
@@ -279,6 +301,9 @@ class AgentRuntime:
 
             summarizer = make_summarizer(ucfg)
 
+        audit = AuditLog()
+        verification = VerificationCollector()
+
         agent = DefaultAgent(
             model,
             env,
@@ -311,12 +336,29 @@ class AgentRuntime:
             summarizer=summarizer,
             attachments=attachments,
             send_images=send_images,
+            verification=verification,
+            audit=audit,
         )
+
+        def _audit_listener(event: Event) -> None:
+            if event.kind == "approval":
+                p = event.payload
+                audit.log_approval(
+                    str(p.get("tool") or ""),
+                    str(p.get("pattern") or ""),
+                    str(p.get("decision") or ""),
+                )
+
+        self._listeners.append(_audit_listener)
 
         follow = self.options.follow_up
         if resume_messages is not None:
             result = agent.run(task if not follow else "", follow_up=follow or task)
         else:
             result = agent.run(task)
+        for client in mcp_clients:
+            client.close()
+        if session is not None:
+            audit.log_run(session.id, str(result.get("exit_status") or ""), verification=verification.summary())
         self.hooks.fire("after_run", result=result, task=task)
         return result
