@@ -22,7 +22,7 @@ def kite_home() -> Path:
 
 def ensure_home() -> Path:
     home = kite_home()
-    for name in ("sessions", "trajectories", "skills", "commands", "plugins", "memory", "configs"):
+    for name in ("sessions", "trajectories", "skills", "commands", "plugins", "memory", "configs", "extensions", "attachments"):
         (home / name).mkdir(parents=True, exist_ok=True)
     return home
 
@@ -43,6 +43,10 @@ class UserConfig:
     api_bases: dict[str, str] = field(default_factory=dict)
     # provider -> model override default
     provider_defaults: dict[str, str] = field(default_factory=dict)
+    compaction_provider: str = "openrouter"
+    compaction_model: str | None = None  # None = first live free-tier model
+    compaction_use_llm: bool = True
+    reasoning: str = "auto"
 
     @classmethod
     def load(cls) -> UserConfig:
@@ -65,6 +69,10 @@ class UserConfig:
             tree_max_entries=int(data.get("tree_max_entries", 80)),
             api_bases=dict(data.get("api_bases") or {}),
             provider_defaults=dict(data.get("provider_defaults") or {}),
+            compaction_provider=str(data.get("compaction_provider") or "openrouter"),
+            compaction_model=data.get("compaction_model") or None,
+            compaction_use_llm=bool(data.get("compaction_use_llm", True)),
+            reasoning=str(data.get("reasoning") or "auto"),
         )
 
     def save(self) -> Path:
@@ -84,6 +92,10 @@ class UserConfig:
             "tree_max_entries": self.tree_max_entries,
             "api_bases": self.api_bases,
             "provider_defaults": self.provider_defaults,
+            "compaction_provider": self.compaction_provider,
+            "compaction_model": self.compaction_model,
+            "compaction_use_llm": self.compaction_use_llm,
+            "reasoning": self.reasoning,
         }
         # tomli_w cannot serialize None; omit null optional fields
         payload = {k: v for k, v in payload.items() if v is not None}
