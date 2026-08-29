@@ -666,6 +666,12 @@ class RunDisplay:
                 self.console.print(Text(f"{GUTTER}{GUTTER}{preview[:100]}", style="kite.muted"))
             return
 
+        if kind == "warning":
+            msg = str(p.get("message") or "").strip()
+            if msg:
+                self.console.print(Text(f"{GUTTER}{SYMBOL_WARN} {msg}", style="kite.muted"))
+            return
+
         if kind == "mode":
             try:
                 self.state.mode = AgentMode(str(p.get("mode")))

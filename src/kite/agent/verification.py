@@ -36,7 +36,7 @@ class VerificationCollector:
     diffs: list[str] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)
 
-    _TEST_HINTS = ("pytest", "npm test", "go test", "cargo test", "make test", "jest", "vitest", "ruff check")
+    _TEST_HINTS = ("pytest", "npm test", "pnpm test", "go test", "cargo test", "make test", "jest", "vitest", "ruff check", "uv run")
 
     def on_tool_end(self, tool: str, args: dict[str, Any], result: dict[str, Any]) -> None:
         if tool in {"write", "edit"} and result.get("ok"):

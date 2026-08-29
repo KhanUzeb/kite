@@ -276,8 +276,10 @@ class AgentRuntime:
         if rcfg.mcp_servers:
             from kite.mcp.client import load_mcp_tools
 
-            mcp_tools, mcp_clients = load_mcp_tools(rcfg.mcp_servers)
+            mcp_tools, mcp_clients, mcp_warnings = load_mcp_tools(rcfg.mcp_servers)
             tools = list(tools) + mcp_tools
+            for note in mcp_warnings:
+                self._on_event(Event("warning", payload={"message": note}))
         registry = ToolRegistry(tools)
         if self.slots.env is not None:
             env = self.slots.env(cwd=cwd, registry=registry)

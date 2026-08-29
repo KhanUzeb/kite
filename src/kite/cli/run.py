@@ -84,11 +84,16 @@ def _wire_display(harness: Harness, console: Console, args: argparse.Namespace) 
     )
     harness.subscribe(display)
     if approval is not ApprovalMode.AUTO or mode is AgentMode.PLAN:
+        from kite.config import load_runtime_config
+
+        rcfg = load_runtime_config(getattr(args, "config", None))
         harness.approver = make_approver(
             console,
             mode=mode,
             approval=approval,
             interactive=sys.stdin.isatty() and not getattr(args, "quiet", False),
+            trusted_paths=rcfg.guardrails.trusted_paths,
+            workspace_cwd=getattr(args, "cwd", os.getcwd()),
         )
     if mode is AgentMode.BUILD:
         harness.checkpoints = GitCheckpoints.open(getattr(args, "cwd", os.getcwd()))

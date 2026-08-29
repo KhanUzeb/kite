@@ -30,7 +30,16 @@ def action_pattern(tool: str, arguments: dict[str, Any]) -> str:
     return f"{tool}:*"
 
 
-def needs_approval(tool: str, mode: AgentMode, approval: ApprovalMode, *, command: str = "") -> bool:
+def needs_approval(
+    tool: str,
+    mode: AgentMode,
+    approval: ApprovalMode,
+    *,
+    command: str = "",
+    trusted_paths: list[str] | None = None,
+    workspace_cwd: str | None = None,
+    bash_cwd: str | None = None,
+) -> bool:
     if tool not in MUTATING_TOOLS:
         return False
     if mode is AgentMode.PLAN and tool != "todo_write":
@@ -42,6 +51,13 @@ def needs_approval(tool: str, mode: AgentMode, approval: ApprovalMode, *, comman
     if approval is ApprovalMode.TRUST:
         if tool != "bash":
             return False
+        if trusted_paths and workspace_cwd:
+            from kite.guardrails.sandbox import clamp_cwd, cwd_in_trusted, workspace_root
+
+            root = workspace_root(workspace_cwd)
+            workdir, _ = clamp_cwd(bash_cwd, root)
+            if workdir and cwd_in_trusted(workdir, root, trusted_paths):
+                return False
         cmd = command.lower()
         destructive = any(
             tok in cmd
@@ -178,6 +194,8 @@ def make_approver(
     approval: ApprovalMode,
     policy: ApprovalPolicy | None = None,
     interactive: bool = True,
+    trusted_paths: list[str] | None = None,
+    workspace_cwd: str | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], Decision]:
     """Returns a callback (tool, args, extra) -> Decision."""
     policy = policy or ApprovalPolicy.load()
@@ -188,7 +206,15 @@ def make_approver(
             return "deny"
         if approval is ApprovalMode.READONLY and tool in MUTATING_TOOLS:
             return "deny"
-        if not needs_approval(tool, mode, approval, command=str(arguments.get("command") or "")):
+        if not needs_approval(
+            tool,
+            mode,
+            approval,
+            command=str(arguments.get("command") or ""),
+            trusted_paths=trusted_paths,
+            workspace_cwd=workspace_cwd,
+            bash_cwd=str(arguments.get("cwd") or "") or None,
+        ):
             return "allow"
         pattern = action_pattern(tool, arguments)
         if policy.remembered(pattern):
