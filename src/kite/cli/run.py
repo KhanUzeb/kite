@@ -13,13 +13,13 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from kite.cli_display import make_run_display
+from kite.cli.display import make_run_display
 from kite.config import UserConfig, ensure_home, kite_home
 from kite.context.discovery import gather_project_context
 from kite.context.window import estimate_usage
-from kite.harness import Harness, HarnessConfig
+from kite.agent.harness import Harness, HarnessConfig
 from kite.memory.session import list_sessions, load_session
-from kite.mode import AgentMode, ApprovalMode, default_approval
+from kite.agent.mode import AgentMode, ApprovalMode, default_approval
 from kite.providers.catalog import load_catalog
 from kite.providers.keys import api_key_for
 from kite.providers.list_models import list_models_for_provider
@@ -476,7 +476,7 @@ def cmd_skills(args: argparse.Namespace) -> int:
 
 def cmd_commands(args: argparse.Namespace) -> int:
     console = _console()
-    from kite.slash import CommandIndex
+    from kite.cli.slash import CommandIndex
 
     index = CommandIndex.load(args.cwd)
     table = Table(title="Slash commands")
@@ -543,7 +543,7 @@ def cmd_runtime_config(args: argparse.Namespace) -> int:
     console = _console()
     from dataclasses import asdict
 
-    from kite.configs import load_runtime_config
+    from kite.config import load_runtime_config
 
     rcfg = load_runtime_config(args.config)
     console.print(Panel(json.dumps(asdict(rcfg), indent=2), title="runtime config"))

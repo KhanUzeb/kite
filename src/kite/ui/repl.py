@@ -13,11 +13,11 @@ from rich.text import Text
 
 from kite.commands.loader import project_commands_dir, write_command_stub
 from kite.config import UserConfig, kite_home
-from kite.harness import Harness, HarnessConfig
+from kite.agent.harness import Harness, HarnessConfig
 from kite.memory.store import MemoryStore
-from kite.mode import AgentMode, ApprovalMode, default_approval
+from kite.agent.mode import AgentMode, ApprovalMode, default_approval
 from kite.plugins.loader import project_plugins_dir, write_plugin_stub
-from kite.slash import CommandIndex, help_text, resolve_slash
+from kite.cli.slash import CommandIndex, help_text, resolve_slash
 from kite.tools.store import TodoStore
 from kite.ui.approval import ApprovalPolicy, make_approver
 from kite.ui.commands import parse_slash

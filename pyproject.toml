@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-kite = "kite.run:main"
+kite = "kite.cli.run:main"
 
 [build-system]
 requires = ["setuptools>=68"]
