@@ -1,13 +1,22 @@
-"""Thin harness wrapper — delegates to AgentRuntime."""
+"""Thin harness wrapper — delegates to AgentRuntime.
+
+Swap internals without forking:
+
+    harness.use("summarizer", my_fn)
+    harness.use("model", lambda **kw: MyModel(...))
+    harness.on("before_query", lambda messages, **_: messages)
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from kite.config import UserConfig
 from kite.agent.events import Event
+from kite.agent.hooks import SLOTS, HarnessSlots, HookBus
 from kite.memory.session import Session
 from kite.agent.runtime import AgentRuntime, RuntimeOptions
 from kite.tools.store import TodoStore
@@ -30,30 +39,55 @@ class HarnessConfig:
     no_context: bool = False
     no_compact: bool = False
     no_guardrails: bool = False
+    no_extensions: bool = False
     config_name: str | Path | None = None
     mode: str = "build"
     approval: str = "auto"
     interactive: bool = False
+    reasoning: str = "auto"
+    attachments: list | None = None
 
 
 @dataclass
 class Harness:
     config: HarnessConfig = field(default_factory=HarnessConfig)
     user_config: UserConfig | None = None
+    slots: HarnessSlots = field(default_factory=HarnessSlots)
+    hooks: HookBus = field(default_factory=HookBus)
+    extra_tools: list[Any] = field(default_factory=list)
     _runtime: AgentRuntime | None = field(default=None, init=False)
     last_session: Session | None = field(default=None, init=False)
     approver: object | None = None
     checkpoints: object | None = None
     todos: TodoStore | None = None
+    _extensions_loaded: bool = field(default=False, init=False)
+
+    def use(self, slot: str, impl: Any) -> Harness:
+        if slot not in SLOTS:
+            raise KeyError(f"unknown slot '{slot}'. known: {', '.join(SLOTS)}")
+        setattr(self.slots, slot, impl)
+        return self
+
+    def on(self, event: str, fn: Callable) -> Harness:
+        self.hooks.on(event, fn)
+        return self
 
     def subscribe(self, listener: Callable[[Event], None]) -> Callable[[], None]:
-        # Lazily create runtime so listeners attach before run
         if self._runtime is None:
             self._runtime = self._make_runtime()
         return self._runtime.subscribe(listener)
 
+    def _load_extensions(self) -> None:
+        if self._extensions_loaded or self.config.no_extensions:
+            return
+        self._extensions_loaded = True
+        from kite.extensions.loader import load_extensions
+
+        load_extensions(self, self.config.cwd or ".")
+
     def _make_runtime(self) -> AgentRuntime:
-        return AgentRuntime(
+        self._load_extensions()
+        runtime = AgentRuntime(
             RuntimeOptions(
                 provider=self.config.provider,
                 model=self.config.model_name,
@@ -74,13 +108,23 @@ class Harness:
                 mode=self.config.mode,
                 approval=self.config.approval,
                 interactive=self.config.interactive,
+                reasoning=self.config.reasoning,
+                attachments=self.config.attachments,
             ),
             user_config=self.user_config,
         )
+        runtime.slots = self.slots
+        runtime.hooks = self.hooks
+        runtime.extra_tools = self.extra_tools
+        return runtime
 
     def run(self, task: str) -> dict:
+        self._load_extensions()
         runtime = self._runtime or self._make_runtime()
         self._runtime = runtime
+        runtime.slots = self.slots
+        runtime.hooks = self.hooks
+        runtime.extra_tools = self.extra_tools
         if self.approver is not None:
             runtime.approver = self.approver  # type: ignore[assignment]
         if self.checkpoints is not None:

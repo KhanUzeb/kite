@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode, tools_for_mode
@@ -47,6 +48,8 @@ class RuntimeOptions:
     mode: str = "build"
     approval: str = "auto"
     interactive: bool = False
+    reasoning: str = "auto"
+    attachments: list | None = None
 
 
 @dataclass
@@ -62,6 +65,9 @@ class AgentRuntime:
     approver: Callable | None = None
     checkpoints: Any = None
     todos: TodoStore = field(default_factory=TodoStore)
+    slots: HarnessSlots = field(default_factory=HarnessSlots)
+    hooks: HookBus = field(default_factory=HookBus)
+    extra_tools: list[Any] = field(default_factory=list)
 
     def subscribe(self, listener: Callable[[Event], None]) -> Callable[[], None]:
         self._listeners.append(listener)
@@ -114,27 +120,75 @@ class AgentRuntime:
         except (FileNotFoundError, OSError):
             pass
 
-        memory_text = MemoryStore.open(cwd).render_for_prompt()
+        memory_text = MemoryStore.open(cwd).render_for_prompt() if self.slots.memory is None else self.slots.memory.render_for_prompt()
 
-        system = assemble_system_prompt(
-            config=rcfg,
-            project_context=project_ctx,
-            skills=skills,
-            extra_sections=extra_sections,
-            override_system=self.options.system_prompt_override,
-            memory=memory_text,
-        )
+        if self.slots.assemble_system is not None:
+            system = self.slots.assemble_system(
+                config=rcfg,
+                project_context=project_ctx,
+                skills=skills,
+                extra_sections=extra_sections,
+                override_system=self.options.system_prompt_override,
+                memory=memory_text,
+            )
+        else:
+            system = assemble_system_prompt(
+                config=rcfg,
+                project_context=project_ctx,
+                skills=skills,
+                extra_sections=extra_sections,
+                override_system=self.options.system_prompt_override,
+                memory=memory_text,
+            )
         return rcfg, resolved, system
 
     def run(self, task: str) -> dict:
         ucfg = self.user_config or UserConfig.load()
         rcfg, resolved, system = self.prepare()
         cwd = str(Path(self.options.cwd or ".").resolve())
+        attachments = list(self.options.attachments or [])
+        send_images = True
+        if any(getattr(item, "kind", "") == "image" for item in attachments):
+            from kite.models.vision import route_vision
+
+            route = route_vision(resolved, config=ucfg)
+            if route.source == "none":
+                send_images = False
+                self._on_event(
+                    Event(
+                        "route",
+                        payload={
+                            "reason": "vision-missing",
+                            "provider": resolved.provider,
+                            "model": resolved.model,
+                        },
+                    )
+                )
+            elif route.switched:
+                resolved = resolve_model(provider=route.provider, model=route.model, config=ucfg)
+                miss = missing_credentials(resolved) or missing_model(resolved)
+                if miss:
+                    send_images = False
+                    self._on_event(Event("route", payload={"reason": "vision-missing", "error": miss}))
+                else:
+                    self.last_resolved = resolved
+                    self._on_event(
+                        Event(
+                            "route",
+                            payload={
+                                "reason": "vision",
+                                "provider": resolved.provider,
+                                "model": resolved.model,
+                                "source": route.source,
+                            },
+                        )
+                    )
 
         # Expand /skill, /commit, custom commands, plugin commands
         skills = load_skills(cwd, extra_dirs=rcfg.skills.dirs) if rcfg.skills.enabled else []
         task = expand_prompt_slash(task, cwd, extra_skill_dirs=rcfg.skills.dirs)
-        mem = MemoryStore.open(cwd)
+        mem = self.slots.memory or MemoryStore.open(cwd)
+        self.hooks.fire("before_run", task=task, cwd=cwd)
 
         guard = None
         if rcfg.guardrails.enabled and not self.options.no_guardrails:
@@ -150,18 +204,47 @@ class AgentRuntime:
             approval = ApprovalMode.AUTO
 
         enabled = tools_for_mode(mode, list(rcfg.tools.enabled))
-        tools = make_coding_tools(
-            cwd=cwd,
-            timeout=rcfg.tools.bash_timeout_seconds,
-            enabled=enabled,
-            guardrails=guard,
-            skills=skills,
-            todos=self.todos,
-            memory=mem,
-        )
+        if self.slots.tools is not None:
+            tools = self.slots.tools(
+                cwd=cwd,
+                timeout=rcfg.tools.bash_timeout_seconds,
+                enabled=enabled,
+                guardrails=guard,
+                skills=skills,
+                todos=self.todos,
+                memory=mem,
+            )
+        else:
+            tools = make_coding_tools(
+                cwd=cwd,
+                timeout=rcfg.tools.bash_timeout_seconds,
+                enabled=enabled,
+                guardrails=guard,
+                skills=skills,
+                todos=self.todos,
+                memory=mem,
+            )
+        if self.extra_tools:
+            tools = list(tools) + list(self.extra_tools)
         registry = ToolRegistry(tools)
-        env = LocalEnvironment(cwd=cwd, registry=registry)
-        model = LitellmModel(resolved=resolved, registry=registry, on_event=self._on_event)
+        if self.slots.env is not None:
+            env = self.slots.env(cwd=cwd, registry=registry)
+        else:
+            env = LocalEnvironment(cwd=cwd, registry=registry)
+        if self.slots.model is not None:
+            model = self.slots.model(
+                resolved=resolved,
+                registry=registry,
+                on_event=self._on_event,
+                reasoning=self.options.reasoning,
+            )
+        else:
+            model = LitellmModel(
+                resolved=resolved,
+                registry=registry,
+                on_event=self._on_event,
+                reasoning=self.options.reasoning,
+            )
 
         session: Session | None = None
         resume_messages: list[dict] | None = None
@@ -189,6 +272,12 @@ class AgentRuntime:
             out_path = ensure_home() / "trajectories" / f"{session.id}.json"
 
         instance = assemble_instance_prompt(config=rcfg, task="{task}")
+
+        summarizer = self.slots.summarizer
+        if summarizer is None and not self.options.no_compact:
+            from kite.agent.summarize import make_summarizer
+
+            summarizer = make_summarizer(ucfg)
 
         agent = DefaultAgent(
             model,
@@ -218,9 +307,16 @@ class AgentRuntime:
             checkpoints=self.checkpoints,
             interactive=self.options.interactive,
             todos=self.todos,
+            hooks=self.hooks,
+            summarizer=summarizer,
+            attachments=attachments,
+            send_images=send_images,
         )
 
         follow = self.options.follow_up
         if resume_messages is not None:
-            return agent.run(task if not follow else "", follow_up=follow or task)
-        return agent.run(task)
+            result = agent.run(task if not follow else "", follow_up=follow or task)
+        else:
+            result = agent.run(task)
+        self.hooks.fire("after_run", result=result, task=task)
+        return result

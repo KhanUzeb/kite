@@ -53,6 +53,10 @@ class DefaultAgent:
         checkpoints=None,
         interactive: bool = False,
         todos=None,
+        hooks=None,
+        summarizer=None,
+        attachments=None,
+        send_images: bool = True,
     ):
         self.model = model
         self.env = env
@@ -77,6 +81,10 @@ class DefaultAgent:
         self.checkpoints = checkpoints
         self.interactive = interactive
         self.todos = todos
+        self.hooks = hooks
+        self.summarizer = summarizer
+        self.attachments = list(attachments or [])
+        self.send_images = send_images
         self._task = ""
 
         self.messages: list[dict] = []
@@ -146,6 +154,7 @@ class DefaultAgent:
                 system=self._full_system(),
                 tool_schemas=schemas,
                 on_event=self.on_event,
+                summarizer=self.summarizer,
             )
         return self._compactor
 
@@ -158,12 +167,17 @@ class DefaultAgent:
         return list(messages)
 
     def _maybe_compact(self) -> None:
-        result = self._ensure_compactor().maybe_compact(self.messages)
+        messages = self.messages
+        if self.hooks is not None:
+            messages = self.hooks.call("before_compact", messages)
+        result = self._ensure_compactor().maybe_compact(messages)
         self.last_usage_estimate = result.usage
         if result.compacted:
             self.messages = result.messages
             if self.session is not None:
                 self.session.replace_messages(self.messages)
+            if self.hooks is not None:
+                self.hooks.fire("after_compact", before=result.before, after=result.after)
 
     def run(self, task: str = "", **kwargs) -> dict:
         self._start_time = time.time()
@@ -171,22 +185,33 @@ class DefaultAgent:
         self._task = str(kwargs.get("follow_up") or task or "")
         provider = getattr(getattr(self.model, "resolved", None), "provider", "") or ""
         model_name = getattr(getattr(self.model, "resolved", None), "model", "") or ""
+        for att in self.attachments:
+            self._emit("attach", name=att.name, kind=att.kind, source=att.source)
         self._emit("agent_start", task=task, provider=provider, model=model_name, mode=self.mode.value, approval=self.approval.value)
+
+        user_text = follow = kwargs.get("follow_up") or task
+        content: object = user_text
+        if self.attachments:
+            from kite.ui.attach import user_content_with_attachments
+
+            if self.resume_messages:
+                prompt = follow
+            else:
+                prompt = self.instance_prompt.format(task=task, **{k: v for k, v in kwargs.items() if k not in {"follow_up", "attachments"}})
+            content = user_content_with_attachments(prompt, self.attachments, images=self.send_images)
 
         if self.resume_messages:
             self.messages = list(self.resume_messages)
-            # Continue with a new user turn
-            follow = kwargs.get("follow_up") or task
             if follow:
-                self.add_messages(self.model.format_message(role="user", content=follow))
+                payload = content if self.attachments else follow
+                self.add_messages(self.model.format_message(role="user", content=payload))
         else:
             self.messages = []
+            if not self.attachments:
+                content = self.instance_prompt.format(task=task, **{k: v for k, v in kwargs.items() if k not in {"follow_up", "attachments"}})
             self.add_messages(
                 self.model.format_message(role="system", content=self._full_system()),
-                self.model.format_message(
-                    role="user",
-                    content=self.instance_prompt.format(task=task, **{k: v for k, v in kwargs.items() if k != "follow_up"}),
-                ),
+                self.model.format_message(role="user", content=content),
             )
 
         try:
@@ -273,7 +298,13 @@ class DefaultAgent:
             )
         self.n_calls += 1
         try:
+            messages = self.messages
+            if self.hooks is not None:
+                messages = self.hooks.call("before_query", messages)
+                self.messages = messages
             message = self.model.query(self.messages)
+            if self.hooks is not None:
+                message = self.hooks.call("after_query", message)
         except KeyboardInterrupt:
             self.request_interrupt()
             raise Interrupted(
@@ -322,6 +353,10 @@ class DefaultAgent:
                 break
             tool = str(action.get("tool") or "")
             args = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
+            if self.hooks is not None:
+                action = self.hooks.call("before_tool", action) or action
+                tool = str(action.get("tool") or tool)
+                args = action.get("arguments") if isinstance(action.get("arguments"), dict) else args
             self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
 
             try:
