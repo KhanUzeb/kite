@@ -1,6 +1,6 @@
 [project]
 name = "kite"
-version = "0.6.4"
+version = "0.6.5"
 description = "Slim hybrid coding-agent harness (mini-swe-agent loop + tau-style tools/events/providers/memory)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,6 +13,11 @@ dependencies = [
   "rich>=13.7.0",
   "prompt_toolkit>=3.0.47",
   "tomli-w>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
 ]
 
 [project.scripts]
@@ -34,3 +39,8 @@ kite = [
   "data/skills/*/SKILL.md",
   "py.typed",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
