@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 CHARS_PER_TOKEN = 4
 MESSAGE_OVERHEAD = 4
@@ -101,7 +101,9 @@ def deterministic_summary(messages: list[dict], *, max_chars: int = 6_000) -> st
         role = m.get("role", "?")
         content = m.get("content") or ""
         if isinstance(content, list):
-            content = json.dumps(content)
+            from kite.ui.attach import strip_media_for_summary
+
+            content = strip_media_for_summary(content)
         content = " ".join(str(content).split())
         if m.get("tool_calls"):
             names = ", ".join(tc.get("function", {}).get("name", "?") for tc in m["tool_calls"])
@@ -119,9 +121,13 @@ def compact_messages(
     messages: list[dict],
     *,
     keep_recent_tokens: int = DEFAULT_KEEP_RECENT,
+    summarizer: Callable | None = None,
+    force: bool = False,
 ) -> list[dict]:
     """Replace older turns with a summary user message; keep recent tail."""
-    if len(messages) < 6:
+    if len(messages) < 4:
+        return messages
+    if len(messages) < 6 and not force:
         return messages
 
     # Always keep leading system message if present
@@ -141,8 +147,12 @@ def compact_messages(
         budget += t
     kept = list(reversed(kept_rev))
     dropped = body[: len(body) - len(kept)]
+    if not dropped and force and len(body) > 4:
+        dropped = body[:-4]
+        kept = body[-4:]
     if not dropped:
         return messages
 
-    summary = COMPACTION_PREFIX + deterministic_summary(dropped)
+    body_text = summarizer(dropped) if summarizer else deterministic_summary(dropped)
+    summary = COMPACTION_PREFIX + body_text
     return [*head, {"role": "user", "content": summary, "extra": {"compacted": True}}, *kept]

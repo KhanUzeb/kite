@@ -41,11 +41,13 @@ class LoopCompactor:
         system: str = "",
         tool_schemas: list[dict] | None = None,
         on_event: Callable[[Event], None] | None = None,
+        summarizer: Callable[[list[dict]], str] | None = None,
     ):
         self.config = config
         self.system = system
         self.tool_schemas = tool_schemas or []
         self.on_event = on_event
+        self.summarizer = summarizer
         self.last_usage: ContextUsage | None = None
 
     def _emit(self, kind: str, **payload: Any) -> None:
@@ -69,19 +71,19 @@ class LoopCompactor:
         )
         return usage
 
-    def maybe_compact(self, messages: list[dict]) -> CompactionResult:
+    def maybe_compact(self, messages: list[dict], *, force: bool = False) -> CompactionResult:
         usage = self.measure(messages)
         before = len(messages)
-        if not self.config.enabled or not should_compact(usage, reserve=self.config.reserve_tokens):
+        if not force and (not self.config.enabled or not should_compact(usage, reserve=self.config.reserve_tokens)):
             return CompactionResult(messages=messages, usage=usage, compacted=False, before=before, after=before)
 
         compacted = compact_messages(
             messages,
             keep_recent_tokens=self.config.keep_recent_tokens,
+            summarizer=self.summarizer,
+            force=force,
         )
         after = len(compacted)
-        did = after != before or compacted is not messages
-        # detect real change
         did = compacted != messages
         if did:
             self._emit("compact", before=before, after=after)
