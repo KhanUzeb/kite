@@ -47,6 +47,8 @@ class SessionUiState:
     todos: list[TodoItem] = field(default_factory=list)
     last_tool: ToolBlock | None = None
     expanded_all: bool = False
+    reasoning: str = "auto"
+    pending_attach: int = 0
 
     @property
     def context_pct(self) -> float | None:

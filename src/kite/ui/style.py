@@ -1,31 +1,46 @@
-"""Kite CLI style guide — one palette, symbols never color-only.
+"""Kite CLI style — Codex cells + Antigravity effort language.
+
+Visual language (stolen, not invented)
+--------------------------------------
+  Codex CLI
+    ›  user turn (dim bullet, no box)
+    …  thinking (italic dim; a cell, not mixed into the answer)
+    •  answer  (normal weight; separate cell)
+    status words: thinking / working
+    footer: one line, · separators, approval lives here
+    no decorative panels around you / result / speech
+
+  Antigravity CLI
+    effort badge on the footer (fast | thinking)
+    compaction as a boundary marker, not a banner
+    tools as one-line rows
+    keyboard-first, no flicker, no chrome
 
 Palette
--------
-  brand     cyan      product chrome (name, prompt)
-  assistant magenta   model speech
+--------
+  brand     cyan      product name, composer
+  thinking  italic dim  internal chain-of-thought
+  answer    default   final model reply
   success   green     applied / done / allow
-  pending   yellow    approval wait / in-progress
+  pending   yellow    approval wait / in-progress / effort
   error     red       blocked / fail / interrupt
   muted     dim       collapsed output, secondary meta
-  user      white     human input
+  user      default   human input
 
-Symbols (always paired with color)
-----------------------------------
+Symbols (always paired with color — never color alone)
+-------------------------------------------------------
   ✓  success/applied     ✗  error/denied
   ⚠  approval needed     ●  in-progress
-  ○  pending todo        ▸  collapsed tool
-  ▾  expanded tool       ❯  input prompt
-  ↻  compact/retry       ·  status separator
+  ○  pending todo        ▸  tool row
+  ▾  expanded            ›  user / composer
+  •  answer cell         …  thinking cell
+  ↻  compact boundary    ·  status separator
 
 Spacing
 -------
   gutter        2 spaces before body text
-  tool indent   2 spaces
-  diff indent   4 spaces (unified hunk body)
+  cell indent   subsequent lines of a cell align under the glyph
   collapse      first 4 lines, then dim "+N lines  /expand"
-  panels        padding=(0, 1), no extra blank lines between
-                consecutive tool rows
   footer        one line, never wraps if terminal ≥ 80 cols
 """
 
@@ -38,20 +53,23 @@ from rich.theme import Theme
 
 KITE_THEME = Theme(
     {
-        "kite.brand": "bold cyan",
-        "kite.assistant": "bold magenta",
-        "kite.user": "bold white",
+        "kite.brand": "cyan",
+        "kite.thinking": "italic dim",
+        "kite.reasoning": "italic dim",  # alias — UI language is "thinking"
+        "kite.answer": "default",
+        "kite.assistant": "default",
+        "kite.user": "default",
         "kite.success": "green",
         "kite.pending": "yellow",
         "kite.error": "bold red",
         "kite.muted": "dim",
-        "kite.tool": "bold cyan",
+        "kite.tool": "cyan",
         "kite.diff.add": "green",
         "kite.diff.del": "red",
         "kite.diff.hunk": "cyan",
         "kite.diff.meta": "dim",
-        "kite.plan": "bold yellow",
-        "kite.build": "bold green",
+        "kite.plan": "yellow",
+        "kite.build": "green",
     }
 )
 
@@ -62,9 +80,17 @@ SYMBOL_SPIN = "●"
 SYMBOL_TODO = "○"
 SYMBOL_COLLAPSE = "▸"
 SYMBOL_EXPAND = "▾"
-SYMBOL_PROMPT = "❯"
+SYMBOL_PROMPT = "›"
+SYMBOL_USER = "›"
+SYMBOL_AGENT = "•"
 SYMBOL_COMPACT = "↻"
 SYMBOL_SEP = "·"
+SYMBOL_REASON = "…"
+
+CHANNEL_PREFIX = {
+    "thinking": SYMBOL_REASON + " ",
+    "answer": SYMBOL_AGENT + " ",
+}
 
 COLLAPSE_LINES = 4
 DIFF_PREVIEW_LINES = 40

@@ -1,7 +1,7 @@
-"""Core render loop: stream → collapse/expand tools → diffs → approval → footer.
+"""Core render loop: history cells, not mixed token soup.
 
-Single-column, keyboard-first. Console chrome on stderr so token streaming
-on stdout never fights Rich markup.
+Codex: user / thinking / answer / exec as separate cells.
+Antigravity: effort on the footer, compaction as a boundary, tools as rows.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
-from rich.panel import Panel
 from rich.text import Text
 
 from kite.agent.events import Event
@@ -21,6 +20,7 @@ from kite.ui.diff import render_diff
 from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState, TodoItem
 from kite.ui.style import (
+    CHANNEL_PREFIX,
     COLLAPSE_LINES,
     GUTTER,
     SYMBOL_COLLAPSE,
@@ -30,6 +30,7 @@ from kite.ui.style import (
     SYMBOL_SEP,
     SYMBOL_SPIN,
     SYMBOL_TODO,
+    SYMBOL_USER,
     SYMBOL_WARN,
     make_console,
 )
@@ -96,6 +97,9 @@ def render_status(state: SessionUiState) -> Text:
     t.append(state.approval.value, style="kite.pending" if state.approval is ApprovalMode.APPROVE else "kite.muted")
     model = f"{state.provider}/{state.model}" if state.provider else (state.model or "—")
     t.append(f" {SYMBOL_SEP} {model}")
+    if state.reasoning and state.reasoning != "auto":
+        effort_style = "kite.pending" if state.reasoning == "thinking" else "kite.muted"
+        t.append(f" {SYMBOL_SEP} {state.reasoning}", style=effort_style)
     if state.context_pct is not None:
         t.append(f" {SYMBOL_SEP} ctx {state.context_pct:.0%}", style="kite.muted")
     t.append(f" {SYMBOL_SEP} ${state.cost:.3f}", style="kite.muted")
@@ -116,6 +120,16 @@ def render_error(message: str, *, show_trace_hint: bool = True) -> Text:
     return t
 
 
+def render_user_cell(task: str) -> Text:
+    """Codex user cell: › first line, then a matching gutter."""
+    t = Text()
+    lines = task.splitlines() or [task]
+    for i, line in enumerate(lines):
+        t.append(f"{SYMBOL_USER} " if i == 0 else "  ", style="kite.muted")
+        t.append(line + "\n", style="kite.user")
+    return t
+
+
 class RunDisplay:
     """Stateful event sink — the core render loop."""
 
@@ -132,6 +146,10 @@ class RunDisplay:
         self.verbose = verbose
         self.state = state or SessionUiState()
         self._streaming = False
+        self._channel: str | None = None
+        self._need_prefix = False
+        self._did_first_line = False
+        self._saw_answer = False
         self._spinner = WaitSpinner(label="thinking")
         self._spinner_on = False
 
@@ -141,8 +159,43 @@ class RunDisplay:
 
     def _end_stream_line(self) -> None:
         if self._streaming:
-            self._stdout_write("\n")
+            self.console.print()
             self._streaming = False
+        self._need_prefix = False
+
+    def _ensure_channel(self, channel: str) -> None:
+        """thinking and answer never share a cell."""
+        if self._channel == channel:
+            return
+        had = self._channel is not None
+        self._end_stream_line()
+        if had:
+            self.console.print()
+        self._channel = channel
+        self._need_prefix = True
+        self._did_first_line = False
+
+    def _stream_write(self, text: str, *, channel: str) -> None:
+        self._ensure_channel(channel)
+        if channel == "answer":
+            self._saw_answer = True
+        style = "kite.thinking" if channel == "thinking" else "kite.answer"
+        prefix = CHANNEL_PREFIX.get(channel, "  ")
+        parts = text.split("\n")
+        for i, part in enumerate(parts):
+            if i > 0:
+                self.console.print()
+                self._need_prefix = True
+            if self._need_prefix and part:
+                indent = prefix if not self._did_first_line else "  "
+                self.console.print(indent, style=style, end="", highlight=False, markup=False)
+                self._need_prefix = False
+                self._did_first_line = True
+            if part:
+                self.console.print(part, style=style, end="", highlight=False, markup=False)
+                self._streaming = True
+            elif i > 0:
+                self._streaming = True
 
     def _spin(self, on: bool, label: str = "thinking") -> None:
         if on and not self.quiet:
@@ -169,17 +222,8 @@ class RunDisplay:
         self.console.print(render_plan(self.state.todos))
 
     def print_banner(self, task: str = "") -> None:
-        header = Text()
-        header.append("kite", style="kite.brand")
-        header.append(f"  {self.state.mode.value}", style="kite.plan" if self.state.mode is AgentMode.PLAN else "kite.build")
-        if self.state.provider or self.state.model:
-            header.append(
-                f"  {self.state.provider}/{self.state.model}",
-                style="kite.muted",
-            )
-        self.console.print(header)
         if task:
-            self.console.print(Panel(escape(task), title="you", border_style="cyan", padding=(0, 1)))
+            self.console.print(render_user_cell(task), highlight=False)
 
     def __call__(self, event: Event) -> None:
         if self.quiet:
@@ -187,13 +231,33 @@ class RunDisplay:
         kind = event.kind
         p = event.payload
 
+        if kind == "attach":
+            name = str(p.get("name") or "")
+            source = str(p.get("source") or "file")
+            kind_label = str(p.get("kind") or "")
+            extra = f"  {kind_label}" if kind_label and kind_label != "text" else ""
+            self.console.print(f"[kite.muted]attach  {source}  {name}{extra}[/]")
+            return
+
+        if kind == "route":
+            reason = str(p.get("reason") or "")
+            if reason == "vision":
+                self.console.print(
+                    f"[kite.muted]vision  {p.get('provider')}/{p.get('model')}[/]"
+                )
+            else:
+                self.console.print("[kite.muted]no vision model on selected providers — image noted, not sent[/]")
+            return
+
         if kind == "agent_start":
             self.state.provider = str(p.get("provider") or self.state.provider)
             self.state.model = str(p.get("model") or self.state.model)
             self.state.interrupted = False
             self.print_banner(str(p.get("task") or "").strip())
             self.print_plan()
-            self._spin(True, "starting")
+            self._channel = None
+            self._saw_answer = False
+            self._spin(True, "thinking")
             return
 
         if kind == "stream_start":
@@ -201,29 +265,37 @@ class RunDisplay:
             self.state.provider = str(p.get("provider") or self.state.provider)
             self.state.model = str(p.get("model") or self.state.model)
             self.state.n_calls += 1
-            label = f"{self.state.provider}/{self.state.model}" if self.state.provider else "assistant"
-            self.console.print(f"[kite.assistant]{escape(label)}[/]")
-            self._streaming = True
+            self._channel = None
+            self._streaming = False
             self._spin(True, "thinking")
+            return
+
+        if kind == "stream_reasoning":
+            text = p.get("text") or ""
+            if text:
+                self._spin(False)
+                self._stream_write(text, channel="thinking")
+            else:
+                self._spin(True, "thinking")
             return
 
         if kind == "stream_delta":
             text = p.get("text") or ""
             if text:
                 self._spin(False)
-                self._stdout_write(text)
-                self._streaming = True
+                self._stream_write(text, channel="answer")
             else:
                 self._spin(True, "thinking")
             return
 
         if kind == "stream_tool":
             name = p.get("name") or "?"
-            self._spin(True, f"tool {name}")
+            self._spin(True, f"working  {name}")
             return
 
         if kind == "stream_end":
             self._end_stream_line()
+            self._channel = None
             self._spin(True, "working")
             if p.get("ok") is False:
                 self.console.print("[kite.muted](stream ended)[/]")
@@ -247,7 +319,7 @@ class RunDisplay:
                 line.append("  ")
                 line.append(reason, style="kite.muted")
             self.console.print(line)
-            self._spin(True, f"{tool}")
+            self._spin(True, f"working  {tool}")
             return
 
         if kind == "tool_end":
@@ -315,13 +387,13 @@ class RunDisplay:
             bits = [f"ctx {total}/{window}"]
             if ratio is not None:
                 bits.append(f"{ratio:.0%}" if isinstance(ratio, float) else str(ratio))
-            self.console.print(f"[kite.muted]{' · '.join(str(b) for b in bits)}[/]")
+            self.console.print(f"[kite.muted]{SYMBOL_SEP} {' '.join(str(b) for b in bits)}[/]")
             return
 
         if kind == "compact":
             self._end_stream_line()
             self.console.print(
-                f"[kite.pending]{SYMBOL_COMPACT} compacted[/] {p.get('before')} → {p.get('after')} msgs"
+                f"[kite.muted]{SYMBOL_COMPACT}  {p.get('before')} → {p.get('after')}[/]"
             )
             return
 
@@ -361,13 +433,13 @@ class RunDisplay:
             status = p.get("exit_status") or "done"
             submission = (p.get("submission") or "").strip()
             if status == "Submitted":
-                border = "green"
+                if submission and not self._saw_answer:
+                    self._stream_write(submission, channel="answer")
+                    self._end_stream_line()
             elif status in {"Interrupted", "Denied"}:
-                border = "yellow"
+                self.console.print(Text(str(status).lower(), style="kite.pending"))
             else:
-                border = "red" if "Error" in str(status) else "yellow"
-            body = escape(submission) if submission else f"[kite.muted]exit_status={escape(str(status))}[/]"
-            self.console.print(Panel(body, title=f"result · {status}", border_style=border, padding=(0, 1)))
+                self.console.print(render_error(str(status), show_trace_hint=False))
             self.print_status()
             return
 

@@ -8,7 +8,6 @@ from fnmatch import fnmatch
 from typing import Any, Callable, Literal
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.text import Text
 
@@ -84,7 +83,8 @@ class ApprovalPolicy:
             self.session_patterns.add(pattern)
 
 
-def render_approval_panel(tool: str, arguments: dict[str, Any], *, diff: str = "", reason: str = "") -> Panel:
+def render_approval_panel(tool: str, arguments: dict[str, Any], *, diff: str = "", reason: str = "") -> Text:
+    """Compact gate — Codex keeps this in the composer, not a boxed panel."""
     body = Text()
     body.append(f"{SYMBOL_WARN}  approve ", style="kite.pending")
     body.append(tool, style="bold")
@@ -103,7 +103,6 @@ def render_approval_panel(tool: str, arguments: dict[str, Any], *, diff: str = "
             if arguments.get(key):
                 body.append(f"{GUTTER}{key}={arguments[key]}\n")
         if diff:
-            # Show the actual diff — never a vague "will edit a file".
             preview = "\n".join(diff.splitlines()[:80])
             body.append("\n")
             for line in preview.splitlines():
@@ -120,8 +119,8 @@ def render_approval_panel(tool: str, arguments: dict[str, Any], *, diff: str = "
                 body.append(f"{GUTTER}… {extra} more diff lines\n", style="kite.muted")
 
     body.append("\n")
-    body.append(f"{GUTTER}[a] allow once   [s] session   [p] always this pattern   [n] deny   [q] stop\n", style="kite.muted")
-    return Panel(body, border_style="yellow", padding=(0, 1), title="permission")
+    body.append(f"{GUTTER}[a] once  [s] session  [p] always  [n] deny  [q] stop\n", style="kite.muted")
+    return body
 
 
 def prompt_approval(
@@ -141,7 +140,7 @@ def prompt_approval(
     console.print(render_approval_panel(tool, arguments, diff=diff, reason=reason))
     try:
         choice = Prompt.ask(
-            "  decision",
+            " ",
             choices=["a", "s", "p", "n", "q"],
             default="n",
             console=console,
