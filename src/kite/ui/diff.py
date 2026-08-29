@@ -12,6 +12,7 @@ from kite.ui.style import (
     DIFF_PREVIEW_LINES,
     GUTTER,
     SYMBOL_COLLAPSE,
+    SYMBOL_EXPAND,
     syntax_theme,
 )
 
@@ -58,7 +59,9 @@ def render_diff(
         body.append(line + "\n", style=style)
     extra = len(lines) - len(shown)
     if extra > 0:
-        body.append(f"{GUTTER}{GUTTER}{SYMBOL_COLLAPSE} +{extra} lines  /expand\n", style="kite.muted")
+        glyph = SYMBOL_EXPAND if not collapsed else SYMBOL_COLLAPSE
+        hint = "/expand" if collapsed else "/collapse"
+        body.append(f"{GUTTER}{GUTTER}{glyph} +{extra} lines  {hint}\n", style="kite.muted")
     return body
 
 

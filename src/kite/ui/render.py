@@ -19,12 +19,14 @@ from kite.agent.mode import AgentMode, ApprovalMode
 from kite.ui.diff import render_diff
 from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState, TodoItem
+from kite.ui.status import approval_style, mode_style
 from kite.ui.style import (
     CHANNEL_PREFIX,
     COLLAPSE_LINES,
     GUTTER,
     SYMBOL_COLLAPSE,
     SYMBOL_COMPACT,
+    SYMBOL_EXPAND,
     SYMBOL_FAIL,
     SYMBOL_OK,
     SYMBOL_REASON,
@@ -118,18 +120,37 @@ def _collapse_text(text: str, *, expanded: bool, limit: int = COLLAPSE_LINES) ->
         out.append(f"{GUTTER}{GUTTER}{line}\n", style="kite.muted")
     extra = len(lines) - len(shown)
     if extra > 0:
+        glyph = SYMBOL_EXPAND if expanded else SYMBOL_COLLAPSE
+        hint = "/collapse" if expanded else "/expand"
         out.append(
-            f"{GUTTER}{GUTTER}{SYMBOL_COLLAPSE} +{extra} lines  /expand\n",
+            f"{GUTTER}{GUTTER}{glyph} +{extra} lines  {hint}\n",
             style="kite.muted",
         )
     return out
+
+
+def render_turn_boundary(turn: int) -> Text:
+    t = Text()
+    t.append(f"{GUTTER}{'─' * 36}\n", style="kite.muted")
+    t.append(f"{GUTTER}turn {turn}\n", style="kite.muted")
+    return t
+
+
+def render_compact_boundary(before: int | str, after: int | str) -> Text:
+    t = Text()
+    t.append(f"{GUTTER}{'─' * 36}\n", style="kite.muted")
+    t.append(f"{GUTTER}{SYMBOL_COMPACT}  ", style="kite.muted")
+    t.append(f"{before} → {after}", style="kite.muted")
+    t.append("\n")
+    return t
 
 
 def render_plan(todos: list[TodoItem]) -> Text:
     t = Text()
     if not todos:
         return t
-    t.append("plan\n", style="kite.plan")
+    done = sum(1 for item in todos if item.status == "completed")
+    t.append(f"plan  ({done}/{len(todos)})\n", style="kite.plan")
     for item in todos:
         if item.status == "completed":
             mark, style = SYMBOL_OK, "kite.success"
@@ -143,27 +164,35 @@ def render_plan(todos: list[TodoItem]) -> Text:
 
 
 def render_status(state: SessionUiState) -> Text:
+    from kite.ui.status import context_meter
+
     t = Text()
     t.append("kite", style="kite.brand")
-    t.append(f" {SYMBOL_SEP} ")
-    mode_style = "kite.plan" if state.mode is AgentMode.PLAN else "kite.build"
-    t.append(state.mode.value, style=mode_style)
-    t.append(f" {SYMBOL_SEP} ")
-    t.append(state.approval.value, style="kite.pending" if state.approval is ApprovalMode.APPROVE else "kite.muted")
+    t.append(f" {SYMBOL_SEP} ", style="kite.muted")
+    t.append(state.mode.value, style=mode_style(state))
+    t.append(f" {SYMBOL_SEP} ", style="kite.muted")
+    t.append(state.approval.value, style=approval_style(state))
     model = f"{state.provider}/{state.model}" if state.provider else (state.model or "—")
-    t.append(f" {SYMBOL_SEP} {model}")
+    meta: list[str] = [model]
     if state.reasoning and state.reasoning != "auto":
-        effort_style = "kite.pending" if state.reasoning == "thinking" else "kite.muted"
-        t.append(f" {SYMBOL_SEP} {state.reasoning}", style=effort_style)
-    if state.context_pct is not None:
-        t.append(f" {SYMBOL_SEP} ctx {state.context_pct:.0%}", style="kite.muted")
+        meta.append(state.reasoning)
+    if state.pending_attach:
+        meta.append(f"+{state.pending_attach}")
+    if state.active_subagents:
+        meta.append(f"agents {state.active_subagents}")
+    meter = context_meter(state.context_pct)
+    if meter:
+        meta.append(meter)
+    elif state.tokens and state.window:
+        meta.append(f"ctx {state.tokens}/{state.window}")
     if state.cache_hit_tokens > 0:
-        t.append(f" {SYMBOL_SEP} cache {state.cache_hit_ratio:.0%}", style="kite.success")
-    t.append(f" {SYMBOL_SEP} ${state.cost:.3f}", style="kite.muted")
+        meta.append(f"cache {state.cache_hit_ratio:.0%}")
+    meta.append(f"${state.cost:.3f}")
     if state.git_branch:
-        t.append(f" {SYMBOL_SEP} {state.git_branch}", style="kite.muted")
+        meta.append(state.git_branch)
     if state.interrupted:
-        t.append("  interrupted", style="kite.error")
+        meta.append("interrupted")
+    t.append(f" {SYMBOL_SEP} ".join(meta), style="kite.muted")
     return t
 
 
@@ -209,6 +238,10 @@ class RunDisplay:
         self._saw_answer = False
         self._spinner = WaitSpinner(label="thinking")
         self._spinner_on = False
+        self._plan_printed = False
+
+    def _touch_state(self) -> None:
+        self.state.touch()
 
     def _stdout_write(self, text: str) -> None:
         sys.stdout.write(text)
@@ -276,6 +309,9 @@ class RunDisplay:
     def print_plan(self) -> None:
         if self.quiet or not self.state.todos:
             return
+        if self._plan_printed:
+            self.console.print(Text(f"{GUTTER}{'─' * 36}", style="kite.muted"))
+        self._plan_printed = True
         self.console.print(render_plan(self.state.todos))
 
     def print_banner(self, task: str = "") -> None:
@@ -310,6 +346,7 @@ class RunDisplay:
             self.state.provider = str(p.get("provider") or self.state.provider)
             self.state.model = str(p.get("model") or self.state.model)
             self.state.interrupted = False
+            self._plan_printed = False
             self.print_banner(str(p.get("task") or "").strip())
             self.print_plan()
             self._channel = None
@@ -356,6 +393,20 @@ class RunDisplay:
             self._spin(True, "working")
             if p.get("ok") is False:
                 self.console.print("[kite.muted](stream ended)[/]")
+            return
+
+        if kind == "turn_start":
+            self.state.turn += 1
+            if self.state.turn > 1:
+                self._end_stream_line()
+                self.console.print(render_turn_boundary(self.state.turn))
+            self._touch_state()
+            return
+
+        if kind == "turn_end":
+            self._end_stream_line()
+            self._spin(True, "thinking")
+            self._touch_state()
             return
 
         if kind == "tool_start":
@@ -456,7 +507,21 @@ class RunDisplay:
             return
 
         if kind == "cost_warning":
-            self.console.print(Text(f"{SYMBOL_WARN} {p.get('message') or 'cost warning'}", style="kite.pending"))
+            msg = str(p.get("message") or "cost warning")
+            line = Text()
+            line.append(f"{SYMBOL_WARN} ", style="kite.pending")
+            line.append(msg, style="kite.pending")
+            ratio = p.get("ratio") or p.get("pct")
+            if ratio is not None:
+                try:
+                    pct = max(0.0, min(1.0, float(ratio)))
+                    filled = int(round(pct * 10))
+                    bar = "█" * filled + "░" * (10 - filled)
+                    line.append(f"  {bar} {pct:.0%}", style="kite.muted")
+                except (TypeError, ValueError):
+                    pass
+            line.append("\n")
+            self.console.print(line)
             return
 
         if kind == "loop_warning":
@@ -484,22 +549,22 @@ class RunDisplay:
         if kind == "context":
             total = p.get("total_tokens")
             window = p.get("window")
-            ratio = p.get("ratio")
             if isinstance(total, int):
                 self.state.tokens = total
             if isinstance(window, int):
                 self.state.window = window
-            bits = [f"ctx {total}/{window}"]
-            if ratio is not None:
-                bits.append(f"{ratio:.0%}" if isinstance(ratio, float) else str(ratio))
-            self.console.print(f"[kite.muted]{SYMBOL_SEP} {' '.join(str(b) for b in bits)}[/]")
+            self._touch_state()
+            if self.verbose:
+                ratio = p.get("ratio")
+                bits = [f"ctx {total}/{window}"]
+                if ratio is not None:
+                    bits.append(f"{ratio:.0%}" if isinstance(ratio, float) else str(ratio))
+                self.console.print(f"[kite.muted]{SYMBOL_SEP} {' '.join(str(b) for b in bits)}[/]")
             return
 
         if kind == "compact":
             self._end_stream_line()
-            self.console.print(
-                f"[kite.muted]{SYMBOL_COMPACT}  {p.get('before')} → {p.get('after')}[/]"
-            )
+            self.console.print(render_compact_boundary(p.get("before", "?"), p.get("after", "?")))
             return
 
         if kind == "commit":
@@ -530,6 +595,8 @@ class RunDisplay:
         if kind == "approval":
             self._end_stream_line()
             self._spin(False)
+            tool = str(p.get("tool") or "action")
+            self.console.print(Text(f"{SYMBOL_WARN}  waiting  {tool}", style="kite.pending"))
             return
 
         if kind == "agent_end":
@@ -570,6 +637,7 @@ class RunDisplay:
                 self.state.cost = float(p.get("cost") or self.state.cost)
             except (TypeError, ValueError):
                 pass
+            self._touch_state()
             return
 
         if kind == "cache_hit":
@@ -581,6 +649,7 @@ class RunDisplay:
                     self.state.cache_hit_ratio = float(session.get("hit_ratio") or 0.0)
                 except (TypeError, ValueError):
                     pass
+                self._touch_state()
                 if self.verbose:
                     self.console.print(
                         f"[kite.muted]{GUTTER}cache hit  {hits} tokens ({self.state.cache_hit_ratio:.0%})[/]"
@@ -590,7 +659,9 @@ class RunDisplay:
         if kind == "subagent_start":
             self._end_stream_line()
             label = str(p.get("label") or p.get("id") or "subagent")
-            self.console.print(Text(f"{GUTTER}▸ subagent  {label}", style="kite.plan"))
+            self.state.active_subagents += 1
+            self._touch_state()
+            self.console.print(Text(f"{GUTTER}{SYMBOL_COLLAPSE} subagent  {label}", style="kite.plan"))
             self._spin(True, f"subagent  {label}")
             return
 
@@ -600,6 +671,8 @@ class RunDisplay:
             ok = p.get("ok", True)
             mark = SYMBOL_OK if ok else SYMBOL_FAIL
             style = "kite.success" if ok else "kite.error"
+            self.state.active_subagents = max(0, self.state.active_subagents - 1)
+            self._touch_state()
             self.console.print(Text(f"{GUTTER}{mark} subagent  {label}", style=style))
             preview = str(p.get("preview") or "")
             if preview:
