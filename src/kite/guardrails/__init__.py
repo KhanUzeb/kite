@@ -83,13 +83,17 @@ class GuardrailPolicy:
             return GuardrailVerdict(False, reason)
         return GuardrailVerdict(True, rewritten_args={"cwd": str(workdir)})
 
-    def redact_secrets(self, text: str) -> str:
+    def redact_secrets(self, text: str) -> tuple[str, int]:
+        """Return (redacted_text, count_of_redactions)."""
         if not text:
-            return text
+            return text, 0
+        count = 0
         out = text
         for rx in SECRET_PATTERNS:
-            out = rx.sub("[REDACTED_SECRET]", out)
-        return out
+            new, n = rx.subn("[REDACTED_SECRET]", out)
+            count += n
+            out = new
+        return out, count
 
     def check_tool_call(self, tool: str, arguments: dict[str, Any]) -> GuardrailVerdict:
         if not self.config.enabled:
@@ -131,12 +135,17 @@ class GuardrailPolicy:
         out = dict(result)
         text = out.get("output")
         if isinstance(text, str):
-            text = self.redact_secrets(text)
+            text, redacted = self.redact_secrets(text)
+            if redacted:
+                out["secrets_redacted"] = redacted
             limit = self.config.max_bash_output_chars if tool == "bash" else self.config.max_read_chars
             if len(text) > limit:
                 text = text[: limit // 2] + "\n...<guardrail truncated>...\n" + text[-(limit // 2) :]
                 out["truncated"] = True
             out["output"] = text
         if isinstance(out.get("error"), str):
-            out["error"] = self.redact_secrets(out["error"])
+            err, redacted = self.redact_secrets(out["error"])
+            out["error"] = err
+            if redacted:
+                out["secrets_redacted"] = int(out.get("secrets_redacted") or 0) + redacted
         return out

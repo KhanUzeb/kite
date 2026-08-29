@@ -16,6 +16,7 @@ class GuardrailConfig:
     enabled: bool = True
     sandbox_to_cwd: bool = True
     allow_paths_outside_cwd: bool = False
+    trusted_paths: list[str] = field(default_factory=list)  # relative subtrees with elevated bash trust
     deny_bash_patterns: list[str] = field(default_factory=list)
     block_secret_writes: bool = True
     max_bash_output_chars: int = 100_000
@@ -82,6 +83,9 @@ class AgentRuntimeConfig:
     guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
+    mcp_servers: list[dict[str, Any]] = field(default_factory=list)
+    github_tools: bool = True
+    role: str = "auto"
 
     def with_overrides(self, **kwargs: Any) -> AgentRuntimeConfig:
         return replace(self, **{k: v for k, v in kwargs.items() if v is not None})
@@ -141,6 +145,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             enabled=bool(guard.get("enabled", True)),
             sandbox_to_cwd=bool(guard.get("sandbox_to_cwd", True)),
             allow_paths_outside_cwd=bool(guard.get("allow_paths_outside_cwd", False)),
+            trusted_paths=list(guard.get("trusted_paths") or []),
             deny_bash_patterns=list(guard.get("deny_bash_patterns") or []),
             block_secret_writes=bool(guard.get("block_secret_writes", True)),
             max_bash_output_chars=int(guard.get("max_bash_output_chars", 100_000)),
@@ -157,6 +162,9 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             tree_max_entries=int(context.get("tree_max_entries", 80)),
             max_context_chars=int(context.get("max_context_chars", 24_000)),
         ),
+        mcp_servers=list(data.get("mcp") or data.get("mcp_servers") or []),
+        github_tools=bool((data.get("github") or {}).get("enabled", True)),
+        role=str((data.get("agent") or {}).get("role", "auto")),
     )
 
 

@@ -14,6 +14,7 @@ class ApprovalMode(str, Enum):
     """How much autonomy is granted — surfaced in the prompt itself."""
 
     AUTO = "auto"  # mutate inside sandbox without asking
+    TRUST = "trust"  # approve-for-me: auto in workspace, ask on destructive bash
     APPROVE = "approve"  # ask on every gated tool
     READONLY = "readonly"  # never mutate (plan default)
 
@@ -21,7 +22,10 @@ class ApprovalMode(str, Enum):
 # Cheap, read-only tools — unrestricted in both modes.
 # Cheap, read-only tools — unrestricted in both modes.
 READONLY_TOOLS = frozenset(
-    {"read", "grep", "glob", "ls", "skill", "todo_read", "webfetch", "websearch", "webcrawl", "memory"}
+    {
+        "read", "grep", "glob", "ls", "skill", "todo_read", "webfetch", "websearch", "webcrawl",
+        "memory", "gh_issue", "gh_pr", "gh_prs", "gh_runs", "gh_run",
+    }
 )
 
 # Mutating / side-effecting — gated, and blocked entirely in plan mode.
