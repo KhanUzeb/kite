@@ -1,11 +1,11 @@
-# Ideal CLI Spec Coverage (Kite 0.6)
+# Ideal CLI Spec Coverage (Kite 0.6.5)
 
 Mapping of the 14-category Ideal Coding CLI spec to Kite features.
 
 | # | Category | Bar | Kite implementation |
 |---|----------|-----|---------------------|
 | 1 | Verifiability | Antigravity | `VerificationCollector` → `artifact` events; diffs, test commands, verification status on submit |
-| 2 | Graduated autonomy | Codex CLI | `auto` / `trust` / `approve` / `readonly`; sandbox on by default; `trusted_paths` in guardrails |
+| 2 | Graduated autonomy | Codex CLI | `auto` / `trust` / `approve` / `readonly`; sandbox on by default; **`trusted_paths`** relaxes trust-mode bash inside subtrees |
 | 3 | Transparent context | Warp | Exact `$ command` rows; `secrets_redacted` count in tool output |
 | 4 | Parallel + legible | Claude/Antigravity | `task` tool `prompts[]` parallel fan-out; **`subagent`** LLM orchestrator with manager events |
 | 5 | Model-agnostic | OpenCode | LiteLLM + Ollama catalog; `kite import <format>` for Cursor/Claude/Aider/Codex sessions |
@@ -18,6 +18,15 @@ Mapping of the 14-category Ideal Coding CLI spec to Kite features.
 | 12 | Multi-agent roles | Roo Code | `--role architect|implementer|debugger` + role prompt fragments |
 | 13 | Predictable cost | — | Pre-flight `cost_estimate` event; 80% `cost_warning`; footer meter; **`cache_hit`** ratio (pi-style prefix cache) |
 | 14 | Honest limits | — | Loop warnings, verification gaps, unverified submit banner |
+
+## Testing
+
+```bash
+uv pip install -e ".[dev]"
+pytest
+```
+
+32 unit tests in `tests/` cover guardrails, `trusted_paths` approval, loop guard, session append, verification heuristics, MCP startup warnings, orchestrator dispatch, context/skills caches, and UI status/chip helpers.
 
 ## Commands
 
@@ -51,6 +60,20 @@ OpenAI cached_tokens and Anthropic cache_read are tracked and shown in the foote
 ```toml
 [cache]
 enabled = true
+```
+
+## UI loaders
+
+Terminal loaders inspired by [beautifului.dev](https://www.beautifului.dev/) (TTY-only subset):
+
+```bash
+KITE_LOADER=grid   # default — pixel strip + shimmer + elapsed time
+KITE_LOADER=dots   # dot chase
+```
+
+```toml
+[ui]
+loader = "grid"
 ```
 
 ## Config (`~/.kite/configs/default.toml`)

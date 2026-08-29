@@ -1,6 +1,6 @@
 # Kite — System Design, Code Atlas & Engineering Notes
 
-**Version:** 0.5.0  
+**Version:** 0.6.5  
 **Stack:** Python 3.12 · LiteLLM · Rich · uv  
 **Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)  
 **Companion UX spec:** [cli-ux.md](cli-ux.md) (PDF: `docs/cli-ux.pdf`)  
@@ -19,7 +19,7 @@ Kite is a **slim coding-agent harness**: a mini-swe-agent–style sync loop (que
 ### Goals
 - Hackable in one sitting; every layer readable alone
 - Multi-provider models via a **config catalog** (not hardcoded SDKs)
-- Real coding tools (`read` / `write` / `edit` / `bash` / `grep` / `glob` / `ls` / `todo_*` / `task` / `webfetch` / `websearch` / `webcrawl` / `skill`)
+- Real coding tools (`read` / `write` / `edit` / `bash` / `grep` / `glob` / `ls` / `todo_*` / `task` / `subagent` / `webfetch` / `websearch` / `webcrawl` / `skill`)
 - Context engineering: KITE.md + AGENTS.md, git status, tree sketch, token estimate, compaction
 - Durable sessions + trajectories for debug / resume
 - Guardrails that fail closed on path escape & destructive bash
@@ -31,7 +31,7 @@ Kite is a **slim coding-agent harness**: a mini-swe-agent–style sync loop (que
 - Session tree branching / leaf replay (tau has this; we stay linear)
 - Benchmark runners (SWE-bench batch) — env swap later is enough
 - Persistent shell sessions
-- Nested LLM sub-agents (`task` is a bounded glob+grep summary, not a second model loop)
+- ~~Nested LLM sub-agents~~ — **`subagent` tool** (0.6) spawns bounded nested harness runs; `task` remains the cheaper glob+grep fan-out
 
 ---
 
@@ -348,8 +348,8 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 7. **Guardrail clamp on outputs** — Secrets shouldn’t echo back into the next prompt.
 
 ### Nits (fix or watch)
-1. Session rewrite-on-append is O(n) per message — fine for weekend scale; later append-only + compaction entries.
-2. `litellm_model_id` edge cases for odd openrouter names — add tests.
+1. ~~Session rewrite-on-append is O(n) per message~~ **improved (0.6.3):** append-only message lines + meta timestamp patch; full rewrite still on compaction/replace.
+2. ~~Add tests for guardrails, approval, loop guard~~ **partial (0.6.5):** 32 pytest cases in `tests/`; expand catalog resolve and compaction next.
 3. Tree snippet can be large on monorepos — already capped; consider ripgrep-based file list.
 4. No retry taxonomy beyond LiteLLM `num_retries` — tau’s provider retry events are richer.
 5. `Harress`/`Runtime` duplication of options fields — could collapse to one dataclass.
@@ -358,7 +358,7 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 8. Cost accounting depends on LiteLLM hidden params — may be 0 for some providers.
 9. Windows shell + `shell=True` — document PowerShell vs cmd differences.
 10. Packaged skill path via `importlib.resources` can look ugly in prompts — still readable to the model.
-11. REPL builds a new harness per turn so `/plan`/`/build` can swap the tool schema — extra prepare() cost after the first message.
+11. REPL builds a new harness per turn so `/plan`/`/build` can swap the tool schema — **mitigated (0.6.3):** 30s context cache + 45s skills cache on repeat `prepare()`.
 12. Approval “always” patterns live in `~/.kite/approvals.json` — treat that file as a credential-adjacent allowlist.
 
 ### Footguns
@@ -459,12 +459,28 @@ REPL slash commands: builtins (`/plan` `/build` `/undo` `/memory` `/remember` `/
 
 1. DockerEnvironment (`docker exec`) — unlocks eval sandboxes  
 2. LLM-backed compaction (tau prompts) when deterministic summary loses too much  
-3. Append-only session log + compaction entries (stop full rewrite)  
+3. ~~Append-only session log~~ **partial (0.6.3):** message append; compaction still rewrites  
 4. ~~Streaming + Textual TUI consuming events~~ **done (0.4):** Rich linear TUI — see [cli-ux.md](cli-ux.md)  
 5. ~~ripgrep-backed grep tool~~ **done (0.4)**  
-6. Tests for catalog resolve, guardrails, compaction invariants, approval policy  
-7. Optional text-action fallback for nested LLM `task` sub-agents  
+6. ~~Tests for guardrails, approval, loop guard~~ **partial (0.6.5):** `pytest` in `tests/` — expand catalog resolve + compaction  
+7. ~~Optional nested LLM `subagent` tool~~ **done (0.6)**  
 8. Click-to-expand tool blocks (needs a full-screen TUI if we ever want it)  
+
+### Running tests
+
+```bash
+uv pip install -e ".[dev]"
+pytest
+```
+
+| Module | Tests |
+|--------|-------|
+| `guardrails/` | path sandbox, secrets redaction, `trusted_paths` |
+| `agent/` | loop guard, verification, orchestrator |
+| `memory/` | session append + meta timestamp |
+| `mcp/` | startup warning on bad server |
+| `context/` `skills/` | TTL caches |
+| `ui/` | loaders, status meter, chips, warning events |
 
 ---
 
@@ -475,6 +491,7 @@ kite/
   pyproject.toml
   requirements.txt
   README.md
+  tests/                   # pytest (guardrails, agent, sessions, ui)
   .python-version
   src/kite/
     __init__.py
