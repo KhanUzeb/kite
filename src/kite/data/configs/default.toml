@@ -15,7 +15,7 @@ system = "system"
 instance = "instance"
 
 [tools]
-enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "skill", "todo_write", "todo_read", "task", "webfetch", "memory"]
+enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "memory"]
 bash_timeout_seconds = 30
 
 [guardrails]
