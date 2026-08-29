@@ -27,6 +27,7 @@ from kite.ui.style import (
     SYMBOL_COMPACT,
     SYMBOL_FAIL,
     SYMBOL_OK,
+    SYMBOL_REASON,
     SYMBOL_SEP,
     SYMBOL_SPIN,
     SYMBOL_TODO,
@@ -36,11 +37,65 @@ from kite.ui.style import (
 )
 
 
+def _format_duration(ms: int | None) -> str:
+    if ms is None:
+        return ""
+    if ms < 1000:
+        return f"{ms}ms"
+    return f"{ms / 1000:.1f}s"
+
+
+def _render_tool_block(tool: str, args: dict[str, Any], *, structured: dict[str, Any] | None = None) -> Text:
+    """Warp-style command block header — one scannable row."""
+    line = Text()
+    line.append(f"{SYMBOL_COLLAPSE} ", style="kite.tool")
+    line.append(tool, style="kite.tool bold")
+
+    s = structured or {}
+    target = s.get("command") or s.get("target") or _short_args(args)
+    if target:
+        line.append("  ")
+        line.append(str(target)[:100], style="kite.muted")
+
+    duration = _format_duration(s.get("duration_ms"))
+    exit_code = s.get("exit_code")
+    meta_bits: list[str] = []
+    if duration:
+        meta_bits.append(duration)
+    if exit_code is not None:
+        meta_bits.append(f"exit={exit_code}")
+    if meta_bits:
+        line.append("  ")
+        line.append(" ".join(meta_bits), style="kite.muted")
+    return line
+
+
+def render_reasoning_block(text: str, *, step: int | None = None) -> Text:
+    """Structured reasoning cell — distinct from answer, never mixed."""
+    t = Text()
+    prefix = f"{SYMBOL_REASON} "
+    if step is not None:
+        prefix = f"{SYMBOL_REASON} [{step}] "
+    for i, line in enumerate(text.splitlines() or [text]):
+        t.append(prefix if i == 0 else "    ", style="kite.thinking")
+        t.append(line + "\n", style="kite.thinking")
+    return t
+
+
+def render_loop_warning(message: str) -> Text:
+    t = Text()
+    t.append(f"{SYMBOL_WARN} ", style="kite.pending")
+    t.append("loop  ", style="kite.pending bold")
+    t.append(message.strip(), style="kite.pending")
+    t.append("\n")
+    return t
+
+
 def _short_args(args: dict[str, Any], limit: int = 120) -> str:
     if not args:
         return ""
     skip = {"content", "old", "new", "reason"}
-    for key in ("path", "command", "pattern", "query", "name", "prompt"):
+    for key in ("path", "command", "pattern", "query", "name", "prompt", "url"):
         if key in args and args[key] is not None:
             val = str(args[key]).replace("\n", " ")
             if len(val) > limit:
@@ -308,17 +363,13 @@ class RunDisplay:
             if not isinstance(args, dict):
                 args = {}
             reason = str(args.get("reason") or p.get("reason") or "")
-            line = Text()
-            line.append(f"{SYMBOL_COLLAPSE} ", style="kite.tool")
-            line.append(tool, style="kite.tool")
-            detail = _short_args(args)
-            if detail:
-                line.append("  ")
-                line.append(detail, style="kite.muted")
+            self.console.print(_render_tool_block(tool, args))
             if reason:
-                line.append("  ")
-                line.append(reason, style="kite.muted")
-            self.console.print(line)
+                self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted"))
+            if tool == "bash" and args.get("command"):
+                cmd = str(args["command"]).strip()
+                for cmd_line in cmd.splitlines():
+                    self.console.print(Text(f"{GUTTER}{GUTTER}$ {cmd_line}", style="kite.muted"))
             self._spin(True, f"working  {tool}")
             return
 
@@ -326,6 +377,7 @@ class RunDisplay:
             self._end_stream_line()
             self._spin(False)
             tool = str(p.get("tool") or "tool")
+            args_preview = p.get("structured") if isinstance(p.get("structured"), dict) else {}
             ok = p.get("ok", True)
             blocked = bool(p.get("blocked"))
             if blocked:
@@ -337,8 +389,18 @@ class RunDisplay:
             line = Text()
             line.append(f"{mark} ", style=style)
             line.append(tool, style=style)
+            duration = _format_duration(p.get("duration_ms"))
+            exit_code = p.get("structured", {}).get("exit_code") if isinstance(p.get("structured"), dict) else p.get("exit_code")
+            meta: list[str] = []
+            if duration:
+                meta.append(duration)
+            if exit_code is not None:
+                meta.append(f"exit={exit_code}")
+            if meta:
+                line.append("  ")
+                line.append(" ".join(meta), style="kite.muted")
             preview = p.get("preview")
-            if preview and self.verbose:
+            if preview and not duration:
                 line.append("  ")
                 line.append(str(preview)[:80], style="kite.muted")
             self.console.print(line)
@@ -358,6 +420,12 @@ class RunDisplay:
                 collapsed = _collapse_text(output, expanded=expanded)
                 if collapsed.plain:
                     self.console.print(collapsed)
+            return
+
+        if kind == "loop_warning":
+            self._end_stream_line()
+            self._spin(False)
+            self.console.print(render_loop_warning(str(p.get("message") or "")))
             return
 
         if kind == "todo":
