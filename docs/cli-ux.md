@@ -1,7 +1,7 @@
 # Kite CLI UX
 
 **Agent:** kite  
-**Version:** 0.4.0  
+**Version:** 0.5.0  
 **Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)  
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
@@ -21,7 +21,7 @@ Patterns stolen, not invented:
 
 | Mode | Tools | Approval default | What it produces |
 |------|--------|------------------|------------------|
-| **plan** | read, grep, glob, ls, task, webfetch, skill, memory, todo_* | `readonly` | A live checklist. No file mutations. |
+| **plan** | read, grep, glob, ls, task, webfetch, websearch, webcrawl, skill, memory, todo_* | `readonly` | A live checklist. No file mutations. |
 | **build** | all tools | `approve` (chat) / `auto` (one-shot `kite run`) | Diffs, git checkpoints, gated bash. |
 
 Switch in the REPL with `/plan` and `/build`. One-shot: `kite run --mode plan "…"`.
