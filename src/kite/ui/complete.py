@@ -10,6 +10,7 @@ from kite.cli.slash import CommandIndex, SlashSpec
 from kite.config import ensure_home, kite_home
 from kite.ui.attach import IMAGE_EXTS
 from kite.ui.commands import ALIASES, ARG_CHOICES
+from kite.ui.status import format_status_tail
 from kite.ui.style import SYMBOL_PROMPT
 from kite.ui.state import SessionUiState
 
@@ -31,7 +32,7 @@ except Exception:  # pragma: no cover
     _PT = False
 
 
-PROMPT_STYLE = (
+PROMPT_STYLE_DARK = (
     Style.from_dict(
         {
             "prompt": "ansicyan",
@@ -49,6 +50,46 @@ PROMPT_STYLE = (
     if _PT
     else None
 )
+
+PROMPT_STYLE_LIGHT = (
+    Style.from_dict(
+        {
+            "prompt": "ansiblue",
+            "placeholder": "#888888",
+            "bottom-toolbar": "noreverse #555555 bg:#f4f4f4",
+            "completion-menu": "bg:#ffffff #222222",
+            "completion-menu.completion": "bg:#ffffff #222222",
+            "completion-menu.completion.current": "bg:#e0f0ff #000000",
+            "completion-menu.meta.completion": "#777777",
+            "completion-menu.meta.completion.current": "#555555",
+            "scrollbar.background": "bg:#eeeeee",
+            "scrollbar.button": "bg:#cccccc",
+        }
+    )
+    if _PT
+    else None
+)
+
+
+def _terminal_is_light() -> bool:
+    import os
+
+    colorfgbg = os.environ.get("COLORFGBG", "")
+    if ";" in colorfgbg:
+        try:
+            return int(colorfgbg.split(";")[-1]) >= 8
+        except ValueError:
+            pass
+    return False
+
+
+def prompt_style() -> Any:
+    if not _PT:
+        return None
+    return PROMPT_STYLE_LIGHT if _terminal_is_light() else PROMPT_STYLE_DARK
+
+
+PROMPT_STYLE = prompt_style()
 
 
 class SlashCompleter(Completer):  # type: ignore[misc]
@@ -217,19 +258,7 @@ def _visible_specs(index: CommandIndex, *, reasoning_ok: bool) -> list[SlashSpec
 
 
 def _toolbar_html(state: SessionUiState) -> Any:
-    rest: list[str] = [state.mode.value, state.approval.value]
-    model = f"{state.provider}/{state.model}" if state.provider else (state.model or "—")
-    rest.append(model)
-    if state.reasoning and state.reasoning != "auto":
-        rest.append(state.reasoning)
-    if state.pending_attach:
-        rest.append(f"+{state.pending_attach}")
-    if state.context_pct is not None:
-        rest.append(f"ctx {state.context_pct:.0%}")
-    rest.append(f"${state.cost:.3f}")
-    if state.git_branch:
-        rest.append(state.git_branch)
-    tail = " · ".join(rest)
+    tail = format_status_tail(state)
     return HTML(
         f"<style fg='ansicyan'>kite</style>"
         f"<style fg='#6e6e6e'> · {_escape_html(tail)}</style>"
@@ -255,7 +284,7 @@ def make_prompt_session(completer: SlashCompleter) -> Any:
         "completer": completer,
         "complete_while_typing": True,
         "auto_suggest": AutoSuggestFromHistory(),
-        "style": PROMPT_STYLE,
+        "style": prompt_style(),
         "mouse_support": False,
         "reserve_space_for_menu": 8,
     }
@@ -273,13 +302,26 @@ def read_repl_line(
     """prompt_toolkit input with `/` dropdown; Rich Prompt if unavailable."""
     if session is None:
         return fallback()
+
+    def _invalidate() -> None:
+        try:
+            app = getattr(session, "app", None)
+            if app is not None:
+                app.invalidate()
+        except Exception:
+            pass
+
+    state._refresh = _invalidate
+    placeholder_fg = "#888888" if _terminal_is_light() else "#555555"
     try:
         return session.prompt(
             HTML(f"<style fg='ansicyan'>{SYMBOL_PROMPT}</style> "),
-            placeholder=HTML("<style fg='#555555'>/ commands</style>"),
+            placeholder=HTML(f"<style fg='{placeholder_fg}'>/ commands · @file attach</style>"),
             bottom_toolbar=lambda: _toolbar_html(state),
         )
     except EOFError:
         return None
     except KeyboardInterrupt:
         return None
+    finally:
+        state._refresh = None
