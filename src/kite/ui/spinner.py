@@ -16,19 +16,20 @@ from kite.ui.animations import (
 
 
 class WaitSpinner:
-    """Animated loader on stderr after ~1s idle. Never stay silent."""
+    """Animated loader on stderr after brief idle. Never stay silent."""
 
     def __init__(
         self,
         stream: TextIO | None = None,
         *,
-        delay: float = 1.0,
+        delay: float = 0.45,
         label: str = "thinking",
         style: str | None = None,
         shimmer: bool = True,
     ):
         self.stream = stream or sys.stderr
         self.delay = delay
+        self._delay_active = delay
         self.label = label
         self.style = style or default_loader_style()
         self.shimmer = shimmer
@@ -40,9 +41,16 @@ class WaitSpinner:
         self._shown = False
         self._thread: threading.Thread | None = None
 
-    def kick(self, label: str | None = None) -> None:
+    def set_delay(self, seconds: float) -> None:
+        self._delay_active = max(0.0, seconds)
+
+    def kick(self, label: str | None = None, *, fast: bool = False) -> None:
         with self._lock:
             self._last = time.monotonic()
+            if fast:
+                self._delay_active = 0.15
+            else:
+                self._delay_active = self.delay
             if label:
                 self.label = label
             if self._shown:
@@ -60,7 +68,7 @@ class WaitSpinner:
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=0.4)
+            self._thread.join(timeout=0.15)
             self._thread = None
         with self._lock:
             if self._shown:
@@ -88,10 +96,10 @@ class WaitSpinner:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            time.sleep(0.09)
+            time.sleep(0.06)
             with self._lock:
                 idle = time.monotonic() - self._last
-                if idle < self.delay:
+                if idle < self._delay_active:
                     continue
                 self._tick += 1
                 line = self._format_line()

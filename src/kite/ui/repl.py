@@ -309,13 +309,13 @@ class ChatSession:
         if cmd == "plan" or (cmd == "mode" and arg == "plan"):
             self.state.mode = AgentMode.PLAN
             self.state.approval = ApprovalMode.READONLY
-            self.console.print("[kite.plan]plan[/]  read-only · produce a checklist, then /build")
+            self.console.print("[kite.plan]plan[/]  read-only")
             return True
         if cmd == "build" or (cmd == "mode" and arg == "build"):
             self.state.mode = AgentMode.BUILD
             if self.state.approval is ApprovalMode.READONLY:
                 self.state.approval = ApprovalMode.APPROVE
-            self.console.print("[kite.build]build[/]  edits on · approval=" + self.state.approval.value)
+            self.console.print("[kite.build]build[/]  edits on")
             return True
         if cmd == "approve":
             try:
@@ -818,7 +818,9 @@ class ChatSession:
         # Cold start: chrome first, no model/context I/O.
         banner = Text()
         banner.append("kite", style="kite.brand")
-        banner.append("  / commands", style="kite.muted")
+        banner.append("  ", style="kite.muted")
+        banner.append("›", style="kite.brand")
+        banner.append("  /help", style="kite.muted")
         self.console.print(banner)
         if self._pending_open:
             self._open_session(self._pending_open)

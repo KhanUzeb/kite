@@ -286,7 +286,7 @@ def make_prompt_session(completer: SlashCompleter) -> Any:
         "auto_suggest": AutoSuggestFromHistory(),
         "style": prompt_style(),
         "mouse_support": False,
-        "reserve_space_for_menu": 8,
+        "reserve_space_for_menu": 5,
     }
     if CompleteStyle is not None:
         kwargs["complete_style"] = CompleteStyle.COLUMN
