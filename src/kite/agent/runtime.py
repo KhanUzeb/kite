@@ -22,6 +22,8 @@ from kite.memory.store import MemoryStore
 from kite.memory.audit import AuditLog
 from kite.agent.verification import VerificationCollector
 from kite.models.litellm_model import LitellmModel
+from kite.models.cache import PromptCacheManager
+from kite.agent.orchestrator import SubagentOrchestrator
 from kite.prompts import assemble_instance_prompt, assemble_system_prompt, load_prompt_template
 from kite.providers.resolve import ResolvedModel, missing_credentials, missing_model, resolve_model
 from kite.skills.loader import load_skills
@@ -216,6 +218,33 @@ class AgentRuntime:
         enabled = tools_for_mode(mode, list(rcfg.tools.enabled))
         role = parse_role(self.options.role or rcfg.role, mode=mode.value)
         enabled = tools_for_role(role, enabled)
+
+        def _subagent_runner(prompt: str) -> dict:
+            from kite.agent.harness import Harness, HarnessConfig
+
+            h = Harness(
+                HarnessConfig(
+                    cwd=cwd,
+                    provider=resolved.provider,
+                    model_name=resolved.model,
+                    step_limit=min(rcfg.orchestrator_step_limit, rcfg.step_limit),
+                    cost_limit=min(rcfg.orchestrator_cost_limit, rcfg.cost_limit),
+                    approval="auto",
+                    interactive=False,
+                    no_context=True,
+                    label="subagent",
+                ),
+                user_config=ucfg,
+            )
+            h.subscribe(self._on_event)
+            return h.run(prompt)
+
+        orchestrator = SubagentOrchestrator(
+            runner=_subagent_runner,
+            on_event=self._on_event,
+            max_workers=rcfg.orchestrator_max_workers,
+        )
+
         if self.slots.tools is not None:
             tools = self.slots.tools(
                 cwd=cwd,
@@ -235,6 +264,7 @@ class AgentRuntime:
                 skills=skills,
                 todos=self.todos,
                 memory=mem,
+                orchestrator=orchestrator,
             )
         if self.extra_tools:
             tools = list(tools) + list(self.extra_tools)
@@ -261,11 +291,13 @@ class AgentRuntime:
                 reasoning=self.options.reasoning,
             )
         else:
+            prompt_cache = PromptCacheManager(resolved.provider, enabled=rcfg.prompt_cache_enabled)
             model = LitellmModel(
                 resolved=resolved,
                 registry=registry,
                 on_event=self._on_event,
                 reasoning=self.options.reasoning,
+                prompt_cache=prompt_cache,
             )
 
         session: Session | None = None

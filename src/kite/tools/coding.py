@@ -71,6 +71,7 @@ def make_coding_tools(
     skills: list[Skill] | None = None,
     todos: TodoStore | None = None,
     memory: MemoryStore | None = None,
+    orchestrator=None,
 ) -> list[Tool]:
     root = cwd or os.getcwd()
     allow = set(
@@ -90,6 +91,7 @@ def make_coding_tools(
             "webfetch",
             "websearch",
             "webcrawl",
+            "subagent",
             "memory",
         ]
     )
@@ -394,6 +396,11 @@ def make_coding_tools(
         if len(text) > 12_000:
             text = text[:12_000] + "\n… summary truncated …"
         return {"ok": True, "output": text, "summary": True, "parallel": bool(prompts)}
+
+    def subagent_run(args: dict[str, Any]) -> dict[str, Any]:
+        if orchestrator is None:
+            return {"ok": False, "error": "orchestrator not configured", "output": "orchestrator not configured"}
+        return orchestrator.dispatch(args)
 
     def web_search(args: dict[str, Any]) -> dict[str, Any]:
         return websearch(
@@ -700,6 +707,27 @@ def make_coding_tools(
                     "required": ["url"],
                 },
                 execute_fn=lambda a: gated("webcrawl", a, web_crawl),
+            ),
+        ),
+        (
+            "subagent",
+            Tool(
+                name="subagent",
+                description=(
+                    "Spawn nested LLM subagent(s) via the orchestrator. "
+                    "Pass `prompt` for one worker or `prompts` (list) for parallel workers against the current plan. "
+                    "Each subagent has a bounded step budget — use for independent plan items."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "prompts": {"type": "array", "items": {"type": "string"}},
+                        "label": {"type": "string"},
+                        "labels": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+                execute_fn=lambda a: gated("subagent", a, subagent_run),
             ),
         ),
         (
