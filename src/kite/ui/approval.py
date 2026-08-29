@@ -30,7 +30,7 @@ def action_pattern(tool: str, arguments: dict[str, Any]) -> str:
     return f"{tool}:*"
 
 
-def needs_approval(tool: str, mode: AgentMode, approval: ApprovalMode) -> bool:
+def needs_approval(tool: str, mode: AgentMode, approval: ApprovalMode, *, command: str = "") -> bool:
     if tool not in MUTATING_TOOLS:
         return False
     if mode is AgentMode.PLAN and tool != "todo_write":
@@ -39,6 +39,15 @@ def needs_approval(tool: str, mode: AgentMode, approval: ApprovalMode) -> bool:
         return True
     if approval is ApprovalMode.AUTO:
         return False
+    if approval is ApprovalMode.TRUST:
+        if tool != "bash":
+            return False
+        cmd = command.lower()
+        destructive = any(
+            tok in cmd
+            for tok in ("rm -", "git push", "git reset", "chmod", "curl", "wget", "pip install", "npm install")
+        )
+        return destructive
     return True
 
 
@@ -179,7 +188,7 @@ def make_approver(
             return "deny"
         if approval is ApprovalMode.READONLY and tool in MUTATING_TOOLS:
             return "deny"
-        if not needs_approval(tool, mode, approval):
+        if not needs_approval(tool, mode, approval, command=str(arguments.get("command") or "")):
             return "allow"
         pattern = action_pattern(tool, arguments)
         if policy.remembered(pattern):

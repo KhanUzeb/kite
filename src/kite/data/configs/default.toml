@@ -2,6 +2,7 @@
 
 [agent]
 name = "kite-default"
+role = "auto"  # auto | architect | implementer | debugger
 step_limit = 40
 cost_limit = 5.0
 wall_time_limit_seconds = 0
@@ -22,6 +23,7 @@ bash_timeout_seconds = 30
 enabled = true
 sandbox_to_cwd = true
 allow_paths_outside_cwd = false
+trusted_paths = []  # relative subtrees with elevated trust (e.g. "src/", "tests/")
 deny_bash_patterns = [
   "rm -rf /",
   "rm -rf /*",
@@ -53,3 +55,13 @@ include_git_status = true
 include_tree_snippet = true
 tree_max_entries = 80
 max_context_chars = 24000
+
+[github]
+enabled = true
+
+# MCP servers — portable JSON-RPC tools (stdio). Example:
+# [[mcp]]
+# name = "filesystem"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed"]
+# enabled = true

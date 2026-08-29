@@ -134,16 +134,31 @@ def cmd_run(args: argparse.Namespace) -> int:
             approval=approval.value,
             interactive=False,
             attachments=attachments,
+            role=getattr(args, "role", "auto"),
         )
     )
     _wire_display(harness, console, args)
     try:
         result = harness.run(task)
     except Exception as e:
-        console.print(f"[red]{e}[/]")
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            console.print(f"[red]{e}[/]")
         return 1
 
     sid = harness.last_session.id if harness.last_session else ""
+    if getattr(args, "json", False):
+        data = {
+            "ok": result.get("exit_status") == "Submitted",
+            "exit_status": result.get("exit_status"),
+            "submission": result.get("submission"),
+            "session_id": sid,
+            "verification": result.get("verification"),
+        }
+        print(json.dumps(data, indent=2))
+        return 0 if data["ok"] else 1
+
     console.print(
         f"[bold]exit[/]={result.get('exit_status')}  "
         f"[bold]session[/]={sid}  "
@@ -601,6 +616,89 @@ def cmd_runtime_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_apply(args: argparse.Namespace) -> int:
+    from kite.cli.apply_cmd import apply_trajectory, apply_unified_diff
+
+    console = _console()
+    path = Path(args.path)
+    if not path.is_file():
+        console.print(f"[red]not found: {path}[/]")
+        return 2
+    if path.suffix == ".diff" or path.name.endswith(".patch"):
+        result = apply_unified_diff(path.read_text(encoding="utf-8"), cwd=args.cwd, dry_run=args.dry_run)
+    else:
+        result = apply_trajectory(path, cwd=args.cwd, dry_run=args.dry_run)
+    for line in result.get("applied") or []:
+        console.print(f"[green]{'would ' if args.dry_run else ''}{line}[/]")
+    for line in result.get("skipped") or []:
+        console.print(f"[yellow]skipped: {line}[/]")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    from kite.cli.import_cmd import import_session
+
+    console = _console()
+    try:
+        session = import_session(args.format, Path(args.path), cwd=args.cwd, label=args.label or "")
+    except (OSError, ValueError) as e:
+        console.print(f"[red]{e}[/]")
+        return 1
+    console.print(f"[green]imported[/] session {session.id} ({len(session.messages)} messages)")
+    console.print(f"[dim]resume with: kite resume {session.id}[/]")
+    return 0
+
+
+def cmd_exec(args: argparse.Namespace) -> int:
+    args.approval = args.approval or "auto"
+    if not getattr(args, "quiet", False) and not getattr(args, "verbose", False):
+        args.quiet = True
+    return cmd_run(args)
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    from kite.memory.audit import AuditLog
+
+    console = _console()
+    rows = AuditLog().tail(args.limit)
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    for row in rows:
+        kind = row.get("kind", "?")
+        ts = row.get("ts", "")
+        payload = {k: v for k, v in row.items() if k not in {"ts", "kind"}}
+        console.print(f"[dim]{ts:.0f}[/] [cyan]{kind}[/] {json.dumps(payload)}")
+    return 0
+
+
+def cmd_cloud(args: argparse.Namespace) -> int:
+    console = _console()
+    cloud_dir = kite_home() / "cloud"
+    if args.action == "list":
+        if not cloud_dir.is_dir():
+            console.print("[dim]no cloud tasks — save trajectories to ~/.kite/cloud/<id>.json[/]")
+            return 0
+        for p in sorted(cloud_dir.glob("*.json")):
+            console.print(p.stem)
+        return 0
+    if args.action == "apply":
+        if not args.task_id:
+            console.print("[red]task id required[/]")
+            return 2
+        path = cloud_dir / f"{args.task_id}.json"
+        if not path.is_file():
+            console.print(f"[red]not found: {path}[/]")
+            return 1
+        from kite.cli.apply_cmd import apply_trajectory
+
+        result = apply_trajectory(path, cwd=args.cwd, dry_run=args.dry_run)
+        console.print(f"applied {result.get('count', 0)} patch(es)")
+        return 0
+    console.print("[red]use: kite cloud list | kite cloud apply <id>[/]")
+    return 2
+
+
 def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("-p", "--provider", help="Provider name from catalog")
     p.add_argument("-m", "--model", help="Model id within provider")
@@ -631,10 +729,17 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--approval",
-        choices=["auto", "approve", "readonly"],
+        choices=["auto", "trust", "approve", "readonly"],
         default=None,
-        help="Autonomy: auto (sandbox), approve (ask), readonly. Default: auto for run, approve for chat.",
+        help="Autonomy: auto | trust (approve-for-me) | approve | readonly",
     )
+    p.add_argument(
+        "--role",
+        choices=["auto", "architect", "implementer", "debugger"],
+        default="auto",
+        help="Agent persona — architect/debugger/implementer",
+    )
+    p.add_argument("--json", action="store_true", help="Emit final trajectory JSON on stdout (CI-friendly)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -731,6 +836,37 @@ def build_parser() -> argparse.ArgumentParser:
     rt = sub.add_parser("runtime-config", help="Show merged agent runtime TOML config")
     rt.add_argument("--config", help="Named config or path")
     rt.set_defaults(func=cmd_runtime_config)
+
+    apply_p = sub.add_parser("apply", help="Apply a trajectory or diff patch to the working tree")
+    apply_p.add_argument("path", help="Trajectory JSON or .diff/.patch file")
+    apply_p.add_argument("--cwd", default=os.getcwd())
+    apply_p.add_argument("--dry-run", action="store_true")
+    apply_p.set_defaults(func=cmd_apply)
+
+    imp = sub.add_parser("import", help="Import session history from another coding CLI")
+    imp.add_argument("format", choices=["cursor", "claude", "claude-code", "aider", "codex", "kite"])
+    imp.add_argument("path", help="Export file path")
+    imp.add_argument("--cwd", default=os.getcwd())
+    imp.add_argument("--label", default="")
+    imp.set_defaults(func=cmd_import)
+
+    exec_p = sub.add_parser("exec", help="CI one-shot (auto approval, quiet, optional --json)")
+    exec_p.add_argument("task", nargs="?", help="Task prompt")
+    exec_p.add_argument("--stdin", action="store_true")
+    _add_run_flags(exec_p)
+    exec_p.set_defaults(func=cmd_exec)
+
+    audit = sub.add_parser("audit", help="Show governance audit log")
+    audit.add_argument("--limit", type=int, default=30)
+    audit.add_argument("--json", action="store_true")
+    audit.set_defaults(func=cmd_audit)
+
+    cloud = sub.add_parser("cloud", help="Cloud/local task parity — list and apply saved outputs")
+    cloud.add_argument("action", choices=["list", "apply"], nargs="?", default="list")
+    cloud.add_argument("task_id", nargs="?", help="Task id for apply")
+    cloud.add_argument("--cwd", default=os.getcwd())
+    cloud.add_argument("--dry-run", action="store_true")
+    cloud.set_defaults(func=cmd_cloud)
 
     return parser
 
