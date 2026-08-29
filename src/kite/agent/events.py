@@ -37,6 +37,7 @@ EventKind = Literal[
     "cost_warning",
     "subagent_start",
     "subagent_end",
+    "cache_hit",
 ]
 
 

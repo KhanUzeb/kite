@@ -157,6 +157,8 @@ def render_status(state: SessionUiState) -> Text:
         t.append(f" {SYMBOL_SEP} {state.reasoning}", style=effort_style)
     if state.context_pct is not None:
         t.append(f" {SYMBOL_SEP} ctx {state.context_pct:.0%}", style="kite.muted")
+    if state.cache_hit_tokens > 0:
+        t.append(f" {SYMBOL_SEP} cache {state.cache_hit_ratio:.0%}", style="kite.success")
     t.append(f" {SYMBOL_SEP} ${state.cost:.3f}", style="kite.muted")
     if state.git_branch:
         t.append(f" {SYMBOL_SEP} {state.git_branch}", style="kite.muted")
@@ -568,6 +570,40 @@ class RunDisplay:
                 self.state.cost = float(p.get("cost") or self.state.cost)
             except (TypeError, ValueError):
                 pass
+            return
+
+        if kind == "cache_hit":
+            session = p.get("session") if isinstance(p.get("session"), dict) else {}
+            hits = int(session.get("cache_hit_tokens") or p.get("cache_read") or p.get("cached") or 0)
+            if hits:
+                self.state.cache_hit_tokens = hits
+                try:
+                    self.state.cache_hit_ratio = float(session.get("hit_ratio") or 0.0)
+                except (TypeError, ValueError):
+                    pass
+                if self.verbose:
+                    self.console.print(
+                        f"[kite.muted]{GUTTER}cache hit  {hits} tokens ({self.state.cache_hit_ratio:.0%})[/]"
+                    )
+            return
+
+        if kind == "subagent_start":
+            self._end_stream_line()
+            label = str(p.get("label") or p.get("id") or "subagent")
+            self.console.print(Text(f"{GUTTER}▸ subagent  {label}", style="kite.plan"))
+            self._spin(True, f"subagent  {label}")
+            return
+
+        if kind == "subagent_end":
+            self._spin(False)
+            label = str(p.get("label") or p.get("id") or "subagent")
+            ok = p.get("ok", True)
+            mark = SYMBOL_OK if ok else SYMBOL_FAIL
+            style = "kite.success" if ok else "kite.error"
+            self.console.print(Text(f"{GUTTER}{mark} subagent  {label}", style=style))
+            preview = str(p.get("preview") or "")
+            if preview:
+                self.console.print(Text(f"{GUTTER}{GUTTER}{preview[:100]}", style="kite.muted"))
             return
 
         if kind == "mode":
