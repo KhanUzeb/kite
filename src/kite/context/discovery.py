@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -150,6 +151,10 @@ def tree_snippet(root: Path, *, max_entries: int = 80) -> str:
     return "\n".join(lines)
 
 
+_CTX_CACHE: dict[tuple[str, bool, bool, int], tuple[float, ProjectContext]] = {}
+_CTX_TTL_SECONDS = 30.0
+
+
 def gather_project_context(
     cwd: str | Path,
     *,
@@ -158,11 +163,18 @@ def gather_project_context(
     tree_max_entries: int = 80,
 ) -> ProjectContext:
     cwd_path = Path(cwd).expanduser().resolve()
+    key = (str(cwd_path), include_git, include_tree, tree_max_entries)
+    now = time.monotonic()
+    cached = _CTX_CACHE.get(key)
+    if cached and now - cached[0] < _CTX_TTL_SECONDS:
+        return cached[1]
     root = find_project_root(cwd_path)
-    return ProjectContext(
+    ctx = ProjectContext(
         root=root,
         cwd=cwd_path,
         files=discover_agents_files(cwd_path),
         git_status=git_status_snippet(cwd_path) if include_git else "",
         tree_snippet=tree_snippet(root, max_entries=tree_max_entries) if include_tree else "",
     )
+    _CTX_CACHE[key] = (now, ctx)
+    return ctx
