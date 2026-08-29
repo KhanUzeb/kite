@@ -33,6 +33,10 @@ EventKind = Literal[
     "attach",
     "loop_warning",
     "artifact",
+    "cost_estimate",
+    "cost_warning",
+    "subagent_start",
+    "subagent_end",
 ]
 
 

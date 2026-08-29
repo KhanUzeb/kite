@@ -45,6 +45,7 @@ class HarnessConfig:
     approval: str = "auto"
     interactive: bool = False
     reasoning: str = "auto"
+    role: str = "auto"
     attachments: list | None = None
 
 
@@ -109,6 +110,7 @@ class Harness:
                 approval=self.config.approval,
                 interactive=self.config.interactive,
                 reasoning=self.config.reasoning,
+                role=self.config.role,
                 attachments=self.config.attachments,
             ),
             user_config=self.user_config,

@@ -40,13 +40,21 @@ def estimate_text_tokens(text: str) -> int:
     return max(1, (len(text) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN)
 
 
-def estimate_message_tokens(message: dict[str, Any]) -> int:
+def estimate_message_tokens(message: dict[str, Any], *, image_token_cost: int = 1024) -> int:
     tokens = MESSAGE_OVERHEAD
     content = message.get("content")
     if isinstance(content, str):
         tokens += estimate_text_tokens(content)
     elif isinstance(content, list):
-        tokens += estimate_text_tokens(json.dumps(content))
+        for part in content:
+            if isinstance(part, dict):
+                ptype = str(part.get("type") or "")
+                if ptype == "image_url":
+                    tokens += image_token_cost
+                else:
+                    tokens += estimate_text_tokens(str(part.get("text") or part.get("content") or ""))
+            else:
+                tokens += estimate_text_tokens(json.dumps(content))
     if message.get("tool_calls"):
         tokens += estimate_text_tokens(json.dumps(message["tool_calls"]))
     if message.get("name"):
