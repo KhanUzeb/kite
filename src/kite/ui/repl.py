@@ -77,12 +77,17 @@ class ChatSession:
         self._pending_open = session_id
 
     def _approver(self):
+        from kite.config import load_runtime_config
+
+        rcfg = load_runtime_config(self.config_name)
         return make_approver(
             self.console,
             mode=self.state.mode,
             approval=self.state.approval,
             policy=self.policy,
             interactive=sys.stdin.isatty(),
+            trusted_paths=rcfg.guardrails.trusted_paths,
+            workspace_cwd=self.cwd,
         )
 
     def _make_harness(self, *, resume: bool = False, follow_up: str | None = None) -> Harness:

@@ -107,6 +107,26 @@ class Session:
                 f.write(
                     json.dumps({"type": "message", "message": m}, ensure_ascii=False) + "\n"
                 )
+        self._touch_meta_timestamp(path)
+
+    def _touch_meta_timestamp(self, path: Path) -> None:
+        """Rewrite only the meta line so session list stays sorted."""
+        try:
+            with path.open("r+", encoding="utf-8") as f:
+                first = f.readline()
+                if not first.strip():
+                    return
+                row = json.loads(first)
+                if row.get("type") != "meta":
+                    return
+                row["updated_at"] = self.meta.updated_at
+                new_first = json.dumps({"type": "meta", **self.meta.to_dict()}, ensure_ascii=False) + "\n"
+                rest = f.read()
+                f.seek(0)
+                f.write(new_first + rest)
+                f.truncate()
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
 
     def save(self) -> Path:
         self._write_meta()
