@@ -508,26 +508,12 @@ class DefaultAgent:
         try:
             from pathlib import Path
 
-            p = Path(path)
-            if not p.is_absolute():
-                cwd = getattr(self.env, "cwd", None) or "."
-                p = Path(cwd) / path
-            before = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+            from kite.ui.diff import preview_mutating_diff
+
+            cwd = getattr(self.env, "cwd", None) or "."
+            return preview_mutating_diff(tool, Path(path), args, cwd=cwd)
         except OSError:
             return ""
-        if tool == "write":
-            after = str(args.get("content") or "")
-        elif tool == "edit":
-            old, new = str(args.get("old") or ""), str(args.get("new") or "")
-            if args.get("replace_all"):
-                after = before.replace(old, new)
-            else:
-                after = before.replace(old, new, 1)
-        else:
-            return ""
-        from kite.tools.coding import _unified_diff
-
-        return _unified_diff(str(path), before, after)
 
     def serialize(self) -> dict:
         last = self.messages[-1] if self.messages else {}
