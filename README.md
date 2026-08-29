@@ -45,6 +45,8 @@ kite resume <session-id> "also update the README"
 
 In the REPL: `/plan` `/build` `/undo` `/skills` `/commit` `/explain` `/commands` `/plugins` `/memory` `/remember` `/help`. Ctrl+C stops the current turn.
 
+Full command map: [`kite_commands.md`](kite_commands.md)
+
 Other commands:
 
 ```bash
@@ -63,7 +65,7 @@ kite config
 kite config --select-model
 ```
 
-UX notes: `docs/cli-ux.md`
+UX notes: `docs/cli-ux.md` · command map: `kite_commands.md`
 
 Home: `~/.kite/` (`sessions/`, `trajectories/`, `configs/`, `commands/`, `skills/`, `plugins/`, `memory/`, `catalog.toml`, `config.toml`, `.env`). Project overlays: `.kite/commands`, `.kite/plugins`, `.kite/memory`.
 
@@ -72,11 +74,11 @@ Home: `~/.kite/` (`sessions/`, `trajectories/`, `configs/`, `commands/`, `skills
 ```
 CLI → AgentRuntime → DefaultAgent loop
          │               │
-         ├ configs/      ├ LoopCompactor
-         ├ prompts/      ├ tools (+ guardrails)
-         ├ skills/       └ sessions / trajectory
-         ├ providers/
-         └ context/
+    ├ config/       ├ compaction
+    ├ prompts/      ├ tools (+ guardrails)
+    ├ skills/       └ sessions / trajectory
+    ├ providers/
+    └ context/
 ```
 
 ## Design docs
@@ -85,6 +87,7 @@ Canonical markdown:
 
 - `docs/kite-system-design.md` — architecture, atlas, tradeoffs
 - `docs/cli-ux.md` — plan/build TUI, style guide, render loop
+- `kite_commands.md` — CLI, REPL slashes, skills, plugins, tools
 
 Generated PDFs (gitignored): `docs/kite-system-design.pdf`, `docs/cli-ux.pdf`
 
@@ -95,22 +98,15 @@ python scripts/build_design_pdf.py
 
 ```
 src/kite/
-  runtime.py               # assembles everything
-  agent.py                 # run/step/query/execute
-  harness.py               # thin CLI-facing wrapper
-  loop/compaction.py       # turn-level context compaction
-  configs/                 # TOML runtime config loader
-  prompts/                 # system/instance assembly
-  guardrails/              # path sandbox, bash deny, secrets
-  skills/                  # SKILL.md discovery + /skill: expand
-  commands/                # markdown slash prompts
-  plugins/                 # plugin packs
-  slash.py                 # CommandIndex
-  tools/coding.py          # read write edit bash grep glob ls todo task webfetch skill memory
-  ui/                      # Rich TUI: stream, diffs, plan, approval, slash commands
-  providers/               # catalog + litellm resolve
-  context/                 # AGENTS.md, git, tree, tokens
-  memory/                  # JSONL sessions + durable notes
+  agent/                   # loop, runtime, harness, mode, events, exceptions
+  cli/                     # argparse entry, slash index
+  ui/                      # Rich TUI
+  config/                  # ~/.kite prefs + runtime TOML
+  tools/coding.py
+  providers/
+  context/
+  memory/
+  skills/ commands/ plugins/
   data/configs/default.toml
   data/prompts/{system,instance}.md
   data/commands/{explain,fix,pr}.md

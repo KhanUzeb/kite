@@ -131,7 +131,7 @@ Implemented in `src/kite/ui/render.py` (`RunDisplay.__call__`):
 5. `todo_write` rewrites the plan checklist in place (done / in-progress / pending). Completing a todo (or ending the turn) flushes one `kite:` commit of that step's files.
 6. Footer updates model, mode, approval, ctx %, cost, git branch.
 
-Slash commands are parsed before any natural-language turn. Builtins (`/plan`, `/build`, `/undo`, `/memory`, …) never hit the model. Skills (`/commit`), bundled prompts (`/explain` `/fix` `/pr`), `.kite/commands/*.md`, `~/.kite/commands/*.md`, and plugin commands expand into the turn. `/commands new name` and `/plugins init name` scaffold files. `/remember` writes the durable memory store.
+Slash commands are parsed before any natural-language turn. Builtins (`/plan`, `/build`, `/undo`, `/memory`, …) never hit the model. Skills (`/commit`), bundled prompts (`/explain` `/fix` `/pr`), `.kite/commands/*.md`, `~/.kite/commands/*.md`, and plugin commands expand into the turn. Full map: [kite_commands.md](../kite_commands.md).
 
 Interrupt: **Ctrl+C** stops the current turn without killing the process; type a correction and continue. `/undo` resets the last `kite:` task commit.
 

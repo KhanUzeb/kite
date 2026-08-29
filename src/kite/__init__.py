@@ -1,5 +1,16 @@
 """Kite — slim hybrid coding-agent harness.
 
+Layout
+------
+  agent/     loop, runtime, harness, mode, events, exceptions
+  cli/       argparse entry, slash index
+  ui/        Rich TUI
+  config/    ~/.kite prefs + runtime TOML
+  tools/ env/ models/ providers/ prompts/
+  context/ memory/ guardrails/
+  skills/ commands/ plugins/   # markdown extensions
+  data/    packaged prompts, skills, catalog
+
 Design lineage
 --------------
 * mini-swe-agent: Agent / Model / Environment split, linear message history,

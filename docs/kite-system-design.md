@@ -71,7 +71,7 @@ Kite is a **slim coding-agent harness**: a mini-swe-agent–style sync loop (que
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    CLI (run.py) + ui/                            │
+│                    CLI (cli/run.py) + ui/                        │
 │  kite | chat | run | resume | …                                  │
 │  plan/build · approval · slash commands · status footer          │
 └────────────────────────────┬────────────────────────────────────┘
@@ -193,27 +193,27 @@ DefaultAgent.run
 
 ## 4. Module atlas (every package)
 
-### 4.1 `runtime.py` — AgentRuntime
+### 4.1 `agent/runtime.py` — AgentRuntime
 **Job:** One façade that wires the world before the loop.  
 **Owns:** options, listeners, last_session, last_resolved, runtime_config, approver, checkpoints, todos.  
 **Does:** `prepare()` → resolve model, load skills, gather context, assemble system prompt (+ mode + memory); `run()` → expand slash commands/skills, filter tools by plan/build, build guardrails+tools, session, DefaultAgent.  
 **Does not:** render UI, know Rich, parse CLI argv.
 
-### 4.2 `harness.py` — Harness
+### 4.2 `agent/harness.py` — Harness
 **Job:** Thin CLI adapter mapping `HarnessConfig` → `RuntimeOptions`. Forwards approver, git checkpoints, and the shared `TodoStore` so a REPL can reuse them across turns.  
-**Why it exists:** Keep `run.py` ignorant of runtime internals; allow library use.
+**Why it exists:** Keep `cli/run.py` ignorant of runtime internals; allow library use.
 
-### 4.3 `agent.py` — DefaultAgent
+### 4.3 `agent/loop.py` — DefaultAgent
 **Job:** The mini loop, plus plan/build gating, approval callback, interrupt, git checkpoints.  
 **Key methods:** `run`, `step`, `query`, `execute_actions`, `_run_gated`, `request_interrupt`, `add_messages`, `_maybe_compact`, `serialize`/`save`.  
 **Interactive / plan:** a text-only assistant reply (no tool calls) ends the turn via `Submitted`. Ctrl+C / `should_stop` raises `Interrupted` without killing the process.  
 **Nit:** System prompt already includes project context when built by runtime; `project_context` field remains for standalone agent use.
 
-### 4.4 `loop/compaction.py` — LoopCompactor
+### 4.4 `agent/compaction.py` — LoopCompactor
 **Job:** Before each query, estimate tokens; if `total >= window - reserve`, replace older body with a deterministic summary user message; keep recent tail by token budget.  
 **Pick:** Deterministic summary first (no extra LLM spend). LLM summarization can plug in later like tau’s compaction prompts.
 
-### 4.5 `configs/` — AgentRuntimeConfig
+### 4.5 `config/runtime.py` — AgentRuntimeConfig
 **Job:** TOML schema for agent limits, tools enable-list, guardrails, skills, context.  
 **Merge order:** packaged `default.toml` → `~/.kite/configs/default.toml` → `--config` path/name.
 
@@ -257,7 +257,7 @@ Optional `reason` on mutating tools is shown in the UI. Every call goes through 
 **Discovery order (later wins):** bundled → `~/.kite/skills` → plugins → `.kite/skills` → `.agents/skills` → config extra dirs.  
 **Invocation:** tool `skill`, prompt `/skill:name …` / `/skill name …`, or `/name` when no markdown command took that name.
 
-### 4.12b `commands/` + `plugins/` + `slash.py`
+### 4.12b `commands/` + `plugins/` + `cli/slash.py`
 Markdown slash prompts (`--- name / description ---` + `$ARGUMENTS`) live in `data/commands`, `~/.kite/commands`, `.kite/commands`, and `plugins/*/commands`.  
 A plugin is a folder with `plugin.toml` (or `plugin.json`) plus optional `commands/` and `skills/`.  
 `CommandIndex` overlay: bundled → user commands → plugins → project commands → skills fill unused names. Builtins always win. `/commands new` and `/plugins init` scaffold project files.
@@ -270,20 +270,20 @@ A plugin is a folder with `plugin.toml` (or `plugin.json`) plus optional `comman
 **Sessions:** JSONL transcript (`session.py`); first line `type=meta`, then `type=message`.  
 **Notes:** `store.py` JSONL + optional `MEMORY.md`. `/remember` / `/forget` / `memory` tool. Injected into the system prompt each run. Distinct from `KITE.md` (repo instructions).
 
-### 4.15 `config.py` — UserConfig
+### 4.15 `config/` — UserConfig + runtime TOML
 **Job:** `~/.kite/config.toml` prefs (default provider/model, api_bases, auto_compact, …). Distinct from **runtime** agent config.
 
-### 4.16 `exceptions.py`
+### 4.16 `agent/exceptions.py`
 `InterruptAgentFlow` · `Submitted` · `LimitsExceeded` · `FormatError` · `TimeExceeded` · `Interrupted` — all carry messages to append. `Interrupted` ends the turn but keeps the session (REPL can steer).
 
-### 4.17 `events.py` / `protocols.py`
+### 4.17 `agent/events.py` / `agent/protocols.py`
 Duck-typed contracts + thin Event dataclass for CLI printers.
 
-### 4.18 `run.py` — CLI
+### 4.18 `cli/run.py` — CLI
 Subcommands: `chat` (default when invoked as bare `kite`), `run`, `resume`, `sessions`, `providers`, `models`, `config`, `context`, `skills`, `commands`, `plugins`, `memory`, `runtime-config`.  
-Flags: `--mode plan|build`, `--approval auto|approve|readonly`.
+Flags: `--mode plan|build`, `--approval auto|approve|readonly`. Full map: [kite_commands.md](../kite_commands.md).
 
-### 4.19 `mode.py` — plan vs build
+### 4.19 `agent/mode.py` — plan vs build
 **Plan:** read-only tools + `todo_write`; approval defaults to `readonly`; text-only reply finishes with a plan.  
 **Build:** full tool set; chat defaults to `approve`, one-shot `kite run` defaults to `auto`.  
 Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
@@ -420,6 +420,8 @@ Zen/Go are OpenAI-compatible gateways (`openai/` + `api_base`). NIM uses LiteLLM
 
 ## 10. CLI cheat sheet
 
+See [kite_commands.md](../kite_commands.md) for the full map (CLI, REPL slashes, skills, plugins, tools).
+
 ```
 kite                         # interactive REPL (plan/build)
 kite chat --mode plan
@@ -474,30 +476,21 @@ kite/
   src/kite/
     __init__.py
     __main__.py
-    run.py              # CLI (chat default, run, resume, …)
-    runtime.py          # assembly façade
-    harness.py          # thin wrapper
-    agent.py            # loop + approval + interrupt
-    mode.py             # plan / build + approval modes
-    config.py           # ~/.kite user prefs
-    events.py
-    exceptions.py
-    protocols.py
-    ui/                 # Rich TUI (render, approval, repl, git, slash)
-    loop/compaction.py
-    configs/            # runtime TOML loader
-    prompts/            # prompt assembly
-    providers/          # catalog + resolve
+    agent/              # loop, runtime, harness, mode, events, exceptions
+    cli/                # argparse + slash index
+    config/             # ~/.kite prefs + runtime TOML
+    ui/                 # Rich TUI
+    prompts/
+    providers/
     models/litellm_model.py
-    tools/              # registry + coding tools + TodoStore
+    tools/
     env/local.py
-    guardrails/         # policy
+    guardrails/
     commands/           # markdown slash prompts
-    plugins/            # plugin.toml + commands + skills
-    skills/             # SKILL.md loader
-    slash.py            # CommandIndex
-    context/            # discovery + tokens
-    memory/             # JSONL sessions + notes store
+    plugins/
+    skills/
+    context/
+    memory/
     data/
       catalog.toml
       configs/default.toml
@@ -507,6 +500,7 @@ kite/
 docs/
   kite-system-design.md
   cli-ux.md
+kite_commands.md
 ```
 
 ---
