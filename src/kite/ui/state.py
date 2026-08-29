@@ -49,6 +49,8 @@ class SessionUiState:
     expanded_all: bool = False
     reasoning: str = "auto"
     pending_attach: int = 0
+    cache_hit_tokens: int = 0
+    cache_hit_ratio: float = 0.0
 
     @property
     def context_pct(self) -> float | None:
