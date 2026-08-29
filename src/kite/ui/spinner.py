@@ -41,9 +41,6 @@ class WaitSpinner:
         self._shown = False
         self._thread: threading.Thread | None = None
 
-    def set_delay(self, seconds: float) -> None:
-        self._delay_active = max(0.0, seconds)
-
     def kick(self, label: str | None = None, *, fast: bool = False) -> None:
         with self._lock:
             self._last = time.monotonic()
@@ -95,8 +92,7 @@ class WaitSpinner:
         return f"  {glyph}  {label}{elapsed}"
 
     def _run(self) -> None:
-        while not self._stop.is_set():
-            time.sleep(0.06)
+        while not self._stop.wait(0.06):
             with self._lock:
                 idle = time.monotonic() - self._last
                 if idle < self._delay_active:

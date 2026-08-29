@@ -119,14 +119,13 @@ class Session:
                 row = json.loads(first)
                 if row.get("type") != "meta":
                     return
-                row["updated_at"] = self.meta.updated_at
                 new_first = json.dumps({"type": "meta", **self.meta.to_dict()}, ensure_ascii=False) + "\n"
                 rest = f.read()
                 f.seek(0)
                 f.write(new_first + rest)
                 f.truncate()
         except (OSError, json.JSONDecodeError, ValueError):
-            pass
+            self._write_meta()
 
     def save(self) -> Path:
         self._write_meta()
