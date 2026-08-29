@@ -53,6 +53,8 @@ class ToolsConfig:
             "todo_read",
             "task",
             "webfetch",
+            "websearch",
+            "webcrawl",
             "memory",
         ]
     )

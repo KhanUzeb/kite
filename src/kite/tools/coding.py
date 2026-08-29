@@ -1,4 +1,4 @@
-"""Built-in tools: read / write / edit / bash / grep / glob / ls / skill / todo / task / webfetch / memory."""
+"""Built-in tools: read / write / edit / bash / grep / glob / ls / skill / todo / task / webfetch / websearch / webcrawl / memory."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from kite.memory.store import MemoryStore
 from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
 from kite.tools.store import TodoStore
+from kite.tools.web import webcrawl, websearch
 
 
 _SKIP_NAMES = frozenset({".git", ".venv", "node_modules", "__pycache__"})
@@ -87,6 +88,8 @@ def make_coding_tools(
             "todo_read",
             "task",
             "webfetch",
+            "websearch",
+            "webcrawl",
             "memory",
         ]
     )
@@ -368,6 +371,20 @@ def make_coding_tools(
             text = text[:8_000] + "\n… summary truncated …"
         return {"ok": True, "output": text, "summary": True}
 
+    def web_search(args: dict[str, Any]) -> dict[str, Any]:
+        return websearch(
+            str(args.get("query") or ""),
+            max_results=int(args.get("max_results") or 8),
+        )
+
+    def web_crawl(args: dict[str, Any]) -> dict[str, Any]:
+        return webcrawl(
+            str(args.get("url") or ""),
+            max_pages=int(args.get("max_pages") or 5),
+            max_depth=int(args.get("max_depth") or 1),
+            same_origin=bool(args.get("same_origin", True)),
+        )
+
     def webfetch(args: dict[str, Any]) -> dict[str, Any]:
         url = str(args["url"])
         if not url.startswith(("https://", "http://")):
@@ -611,7 +628,7 @@ def make_coding_tools(
             "webfetch",
             Tool(
                 name="webfetch",
-                description="Fetch a URL (http/https) and return truncated text. For docs and issues mid-task.",
+                description="Fetch a single URL (http/https) and return truncated text. For docs and issues mid-task.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -621,6 +638,40 @@ def make_coding_tools(
                     "required": ["url"],
                 },
                 execute_fn=lambda a: gated("webfetch", a, webfetch),
+            ),
+        ),
+        (
+            "websearch",
+            Tool(
+                name="websearch",
+                description="Search the web (free, no API key). Returns titles, URLs, and snippets. Use before webfetch/webcrawl when you need to find sources.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "max_results": {"type": "integer", "description": "Max hits (default 8, max 15)"},
+                    },
+                    "required": ["query"],
+                },
+                execute_fn=lambda a: gated("websearch", a, web_search),
+            ),
+        ),
+        (
+            "webcrawl",
+            Tool(
+                name="webcrawl",
+                description="Crawl a site starting from a URL — fetches pages and extracts text (free, no API key). Prefer webfetch for a single page.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "Seed URL"},
+                        "max_pages": {"type": "integer", "description": "Max pages to fetch (default 5)"},
+                        "max_depth": {"type": "integer", "description": "Link depth from seed (default 1)"},
+                        "same_origin": {"type": "boolean", "description": "Stay on same host (default true)"},
+                    },
+                    "required": ["url"],
+                },
+                execute_fn=lambda a: gated("webcrawl", a, web_crawl),
             ),
         ),
         (
