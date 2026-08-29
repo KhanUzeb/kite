@@ -20,7 +20,7 @@ Prefix `//` if you need a natural-language line that starts with `/`.
 ```
 kite                         # REPL (same as kite chat)
 kite --version
-kite chat [--mode plan|build] [--approval auto|approve|readonly] [--session id]
+kite chat [--mode plan|build] [--approval auto|approve|trust|readonly] [--session id]
 kite run "task"              # one-shot
 kite resume <session-id>                 # open that transcript in chat
 kite resume <session-id> [follow-up]     # one-shot continue
@@ -35,7 +35,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--cwd` | Workspace |
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
-| `--approval auto\|approve\|readonly` | Default: `auto` for `run`, `approve` for chat |
+| `--approval auto\|approve\|trust\|readonly` | Default: `auto` for `run`, `approve` for chat |
 | `--steps` `--cost` `--time` | Limits |
 | `-v` / `-q` | Verbose tool bodies / quiet |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
@@ -70,7 +70,7 @@ These never go to the model.
 |---------|----------------|
 | `/plan` `/p` | Read-only mode, checklist |
 | `/build` `/b` | Apply edits; approval stays unless it was readonly |
-| `/approve auto\|approve\|readonly` | Autonomy for this session |
+| `/approve auto\|approve\|trust\|readonly` | Autonomy for this session |
 | `/model [provider/id]` | Show or set model |
 | `/models [provider]` | List live models for the current (or named) provider |
 | `/provider [name]` | Show or set provider |
@@ -87,7 +87,8 @@ These never go to the model.
 | `/session open <id>` `/resume <id>` | Continue that chat |
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
-| `/expand` | Expand collapsed tool output |
+| `/expand` | Toggle expanded tool output |
+| `/collapse` | Collapse tool output (default) |
 | `/trace` | Last traceback |
 | `/skills [name]` | List skills, or print one |
 | `/commands` | List markdown slash prompts |
@@ -202,3 +203,15 @@ Build mode adds: `write` `edit` `bash`.
 ```
 
 Human commits are the source of truth for the project. Checkpoint `kite:` commits exist so `/undo` can revert agent edits without touching your own history.
+
+---
+
+## 6. Development
+
+```bash
+uv pip install -e ".[dev]"
+pytest              # 32 tests
+pytest -v
+```
+
+See `tests/` for guardrails, approval/trust, loop guard, sessions, verification, MCP, orchestrator, caches, and UI helpers.
