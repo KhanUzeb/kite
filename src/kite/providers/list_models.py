@@ -1,0 +1,292 @@
+"""Fetch available models from a provider using the configured API key."""
+
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass, field
+from typing import Any
+
+from kite.config import UserConfig
+from kite.providers.catalog import Catalog, ProviderSpec, load_catalog
+from kite.providers.keys import api_key_env_names, api_key_for
+
+# Modality ids that are useless for the coding agent (not a hard model allowlist).
+_NON_CHAT_HINTS = (
+    "rerank",
+    "whisper",
+    "tts",
+    "embed",
+    "embedding",
+    "dall-e",
+    "dalle",
+    "moderation",
+    "realtime",
+    "audio",
+    "transcribe",
+    "speak",
+    "image",
+)
+
+
+@dataclass(frozen=True)
+class RemoteModel:
+    id: str
+    context_window: int | None = None
+    owned_by: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ListModelsResult:
+    provider: str
+    models: tuple[RemoteModel, ...]
+    source: str  # "live"
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and bool(self.models)
+
+
+def _api_key(spec: ProviderSpec) -> str | None:
+    return api_key_for(spec)
+
+
+def _http_json(url: str, headers: dict[str, str], *, timeout: float = 30.0) -> Any:
+    # Cloudflare (and some WAFs) reject urllib's default "Python-urllib/…" UA (error 1010).
+    merged = {
+        "User-Agent": "kite/0.4.0 (https://github.com/local/kite; +OpenAI-compatible client)",
+        "Accept": "application/json",
+        "Accept-Encoding": "identity",
+    }
+    merged.update(headers)
+    req = urllib.request.Request(url, headers=merged, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _is_chatish(model_id: str) -> bool:
+    low = model_id.lower()
+    return not any(h in low for h in _NON_CHAT_HINTS)
+
+
+def _openai_compat_base(spec: ProviderSpec, cfg: UserConfig) -> str:
+    override = cfg.api_bases.get(spec.name)
+    if override:
+        return override.rstrip("/")
+    if spec.base_url:
+        return spec.base_url.rstrip("/")
+    # Built-in defaults when catalog leaves base_url empty (e.g. litellm-native groq).
+    defaults = {
+        "openai": "https://api.openai.com/v1",
+        "groq": "https://api.groq.com/openai/v1",
+        "openrouter": "https://openrouter.ai/api/v1",
+        "huggingface": "https://router.huggingface.co/v1",
+        "ollama": "http://localhost:11434/v1",
+        "openai-compatible": "http://localhost:8000/v1",
+        "opencode-zen": "https://opencode.ai/zen/v1",
+        "opencode-go": "https://opencode.ai/zen/go/v1",
+        "nvidia": "https://integrate.api.nvidia.com/v1",
+    }
+    return defaults.get(spec.name, "").rstrip("/")
+
+
+def _parse_openai_style(data: Any) -> list[RemoteModel]:
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    out: list[RemoteModel] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        mid = str(row.get("id") or "").strip()
+        if not mid:
+            continue
+        if row.get("active") is False:
+            continue
+        ctx = row.get("context_window") or row.get("context_length") or row.get("max_model_len")
+        try:
+            context = int(ctx) if ctx is not None else None
+        except (TypeError, ValueError):
+            context = None
+        owned = row.get("owned_by") or row.get("ownedBy")
+        out.append(
+            RemoteModel(
+                id=mid,
+                context_window=context,
+                owned_by=str(owned) if owned else None,
+                raw=row,
+            )
+        )
+    return out
+
+
+def _fetch_openai_compatible(spec: ProviderSpec, cfg: UserConfig) -> ListModelsResult:
+    base = _openai_compat_base(spec, cfg)
+    if not base:
+        return ListModelsResult(spec.name, (), "live", error=f"No models API base URL for '{spec.name}'")
+    key = _api_key(spec)
+    if spec.api_key_env and not key:
+        names = " or ".join(f"${n}" for n in api_key_env_names(spec))
+        return ListModelsResult(
+            spec.name,
+            (),
+            "live",
+            error=f"Missing {names} — set it to list live models",
+        )
+    headers = {"Accept": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    url = f"{base}/models"
+    try:
+        data = _http_json(url, headers)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:300]
+        return ListModelsResult(spec.name, (), "live", error=f"HTTP {e.code} from {url}: {body}")
+    except Exception as e:  # noqa: BLE001 — surface network errors to CLI
+        return ListModelsResult(spec.name, (), "live", error=f"{type(e).__name__}: {e}")
+    models = [m for m in _parse_openai_style(data) if _is_chatish(m.id)]
+    models.sort(key=lambda m: m.id.lower())
+    if not models:
+        return ListModelsResult(spec.name, (), "live", error=f"No chat models returned from {url}")
+    return ListModelsResult(spec.name, tuple(models), "live")
+
+
+def _fetch_anthropic(spec: ProviderSpec, cfg: UserConfig) -> ListModelsResult:
+    key = _api_key(spec)
+    if not key:
+        return ListModelsResult(
+            spec.name,
+            (),
+            "live",
+            error=f"Missing ${spec.api_key_env} — set it to list live models",
+        )
+    base = (cfg.api_bases.get(spec.name) or spec.base_url or "https://api.anthropic.com").rstrip("/")
+    url = f"{base}/v1/models"
+    headers = {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "Accept": "application/json",
+    }
+    try:
+        data = _http_json(url, headers)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:300]
+        return ListModelsResult(spec.name, (), "live", error=f"HTTP {e.code} from {url}: {body}")
+    except Exception as e:  # noqa: BLE001
+        return ListModelsResult(spec.name, (), "live", error=f"{type(e).__name__}: {e}")
+    models = [m for m in _parse_openai_style(data) if _is_chatish(m.id)]
+    models.sort(key=lambda m: m.id.lower())
+    if not models:
+        return ListModelsResult(spec.name, (), "live", error=f"No models returned from {url}")
+    return ListModelsResult(spec.name, tuple(models), "live")
+
+
+def _fetch_gemini(spec: ProviderSpec, cfg: UserConfig) -> ListModelsResult:
+    key = _api_key(spec)
+    if not key:
+        return ListModelsResult(
+            spec.name,
+            (),
+            "live",
+            error=f"Missing ${spec.api_key_env} — set it to list live models",
+        )
+    base = (
+        cfg.api_bases.get(spec.name)
+        or "https://generativelanguage.googleapis.com/v1beta"
+    ).rstrip("/")
+    url = f"{base}/models?key={urllib.parse.quote(key)}"
+    try:
+        data = _http_json(url, {"Accept": "application/json"})
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:300]
+        return ListModelsResult(spec.name, (), "live", error=f"HTTP {e.code}: {body}")
+    except Exception as e:  # noqa: BLE001
+        return ListModelsResult(spec.name, (), "live", error=f"{type(e).__name__}: {e}")
+
+    rows = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return ListModelsResult(spec.name, (), "live", error="Unexpected Gemini models response")
+    out: list[RemoteModel] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").removeprefix("models/").strip()
+        methods = row.get("supportedGenerationMethods") or []
+        if methods and "generateContent" not in methods:
+            continue
+        if not name or not _is_chatish(name):
+            continue
+        ctx = row.get("inputTokenLimit")
+        try:
+            context = int(ctx) if ctx is not None else None
+        except (TypeError, ValueError):
+            context = None
+        out.append(RemoteModel(id=name, context_window=context, owned_by="google", raw=row))
+    out.sort(key=lambda m: m.id.lower())
+    if not out:
+        return ListModelsResult(spec.name, (), "live", error="No Gemini generateContent models found")
+    return ListModelsResult(spec.name, tuple(out), "live")
+
+
+def _fetch_ollama(spec: ProviderSpec, cfg: UserConfig) -> ListModelsResult:
+    base = (cfg.api_bases.get(spec.name) or spec.base_url or "http://localhost:11434").rstrip("/")
+    # Prefer native tags API (always present); fall back to OpenAI-compat /v1/models.
+    tags_url = f"{base.removesuffix('/v1')}/api/tags"
+    try:
+        data = _http_json(tags_url, {"Accept": "application/json"})
+        rows = data.get("models") if isinstance(data, dict) else None
+        if isinstance(rows, list):
+            out: list[RemoteModel] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                mid = str(row.get("name") or row.get("model") or "").strip()
+                if not mid:
+                    continue
+                out.append(RemoteModel(id=mid, owned_by="ollama", raw=row))
+            out.sort(key=lambda m: m.id.lower())
+            if out:
+                return ListModelsResult(spec.name, tuple(out), "live")
+    except Exception:
+        pass
+    return _fetch_openai_compatible(spec, cfg)
+
+
+def list_models_for_provider(
+    provider: str | ProviderSpec,
+    *,
+    config: UserConfig | None = None,
+    catalog: Catalog | None = None,
+) -> ListModelsResult:
+    """Fetch live models for one provider using its API key / local endpoint."""
+    cfg = config or UserConfig.load()
+    cat = catalog or load_catalog()
+    spec = provider if isinstance(provider, ProviderSpec) else cat.get(provider)
+
+    kind = (spec.kind or "").lower()
+    name = spec.name
+
+    if name == "anthropic" or kind == "anthropic":
+        return _fetch_anthropic(spec, cfg)
+    if name == "gemini" or kind == "gemini":
+        return _fetch_gemini(spec, cfg)
+    if name == "ollama":
+        return _fetch_ollama(spec, cfg)
+    # openai, groq, openrouter, huggingface, openai-compatible, …
+    return _fetch_openai_compatible(spec, cfg)
+
+
+def list_models(
+    provider: str | None = None,
+    *,
+    config: UserConfig | None = None,
+    catalog: Catalog | None = None,
+) -> list[ListModelsResult]:
+    cfg = config or UserConfig.load()
+    cat = catalog or load_catalog()
+    names = [provider] if provider else [p.name for p in cat.list()]
+    return [list_models_for_provider(n, config=cfg, catalog=cat) for n in names]

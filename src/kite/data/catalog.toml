@@ -1,0 +1,129 @@
+# Kite built-in provider catalog (tau-inspired, slim).
+# User overlay: ~/.kite/catalog.toml
+# Preferences: ~/.kite/config.toml
+#
+# Models are NOT hardcoded — use `kite models` / `kite models --select`
+# to fetch live ids from each provider using your API key.
+
+schema_version = 1
+
+[[providers]]
+name = "openai"
+display_name = "OpenAI"
+kind = "openai"
+litellm_prefix = ""
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+models = []
+default_model = ""
+docs_url = "https://platform.openai.com/docs"
+
+[[providers]]
+name = "anthropic"
+display_name = "Anthropic"
+kind = "anthropic"
+litellm_prefix = "anthropic/"
+base_url = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+models = []
+default_model = ""
+docs_url = "https://docs.anthropic.com"
+
+[[providers]]
+name = "openrouter"
+display_name = "OpenRouter"
+kind = "openai-compatible"
+litellm_prefix = "openrouter/"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+models = []
+default_model = ""
+docs_url = "https://openrouter.ai/docs"
+
+[[providers]]
+name = "huggingface"
+display_name = "Hugging Face"
+kind = "openai-compatible"
+litellm_prefix = "huggingface/"
+base_url = "https://router.huggingface.co/v1"
+api_key_env = "HF_TOKEN"
+models = []
+default_model = ""
+docs_url = "https://huggingface.co/docs/inference-providers"
+
+[[providers]]
+name = "ollama"
+display_name = "Ollama (local)"
+kind = "openai-compatible"
+litellm_prefix = "ollama/"
+base_url = "http://localhost:11434"
+api_key_env = ""
+models = []
+default_model = ""
+docs_url = "https://ollama.com"
+
+[[providers]]
+name = "gemini"
+display_name = "Google Gemini"
+kind = "gemini"
+litellm_prefix = "gemini/"
+base_url = "https://generativelanguage.googleapis.com"
+api_key_env = "GEMINI_API_KEY"
+models = []
+default_model = ""
+docs_url = "https://ai.google.dev/gemini-api/docs"
+
+[[providers]]
+name = "groq"
+display_name = "Groq"
+kind = "groq"
+litellm_prefix = "groq/"
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+models = []
+default_model = ""
+docs_url = "https://console.groq.com/docs"
+
+[[providers]]
+name = "opencode-zen"
+display_name = "OpenCode Zen"
+kind = "openai-compatible"
+litellm_prefix = "openai/"
+base_url = "https://opencode.ai/zen/v1"
+api_key_env = "OPENCODE_API_KEY"
+models = []
+default_model = ""
+docs_url = "https://opencode.ai/docs/zen/"
+
+[[providers]]
+name = "opencode-go"
+display_name = "OpenCode Go"
+kind = "openai-compatible"
+litellm_prefix = "openai/"
+base_url = "https://opencode.ai/zen/go/v1"
+api_key_env = "OPENCODE_API_KEY"
+models = []
+default_model = ""
+docs_url = "https://opencode.ai/docs/zen/"
+
+[[providers]]
+name = "nvidia"
+display_name = "NVIDIA NIM"
+kind = "nvidia_nim"
+litellm_prefix = "nvidia_nim/"
+base_url = "https://integrate.api.nvidia.com/v1"
+api_key_env = "NVIDIA_API_KEY"
+models = []
+default_model = ""
+docs_url = "https://docs.api.nvidia.com/nim/"
+
+[[providers]]
+name = "openai-compatible"
+display_name = "Custom OpenAI-compatible"
+kind = "openai-compatible"
+litellm_prefix = "openai/"
+base_url = "http://localhost:8000/v1"
+api_key_env = "OPENAI_API_KEY"
+models = []
+default_model = ""
+docs_url = "https://docs.litellm.ai/docs/providers/openai_compatible"
