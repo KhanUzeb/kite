@@ -56,6 +56,7 @@ class ToolsConfig:
             "webfetch",
             "websearch",
             "webcrawl",
+            "subagent",
             "memory",
         ]
     )
@@ -86,6 +87,10 @@ class AgentRuntimeConfig:
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     github_tools: bool = True
     role: str = "auto"
+    prompt_cache_enabled: bool = True
+    orchestrator_max_workers: int = 3
+    orchestrator_step_limit: int = 10
+    orchestrator_cost_limit: float = 1.0
 
     def with_overrides(self, **kwargs: Any) -> AgentRuntimeConfig:
         return replace(self, **{k: v for k, v in kwargs.items() if v is not None})
@@ -107,6 +112,8 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
     guard = data.get("guardrails") or {}
     skills = data.get("skills") or {}
     context = data.get("context") or {}
+    cache = data.get("cache") or {}
+    orch = data.get("orchestrator") or {}
     return AgentRuntimeConfig(
         name=str(agent.get("name", "kite-default")),
         step_limit=int(agent.get("step_limit", 40)),
@@ -165,6 +172,10 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         mcp_servers=list(data.get("mcp") or data.get("mcp_servers") or []),
         github_tools=bool((data.get("github") or {}).get("enabled", True)),
         role=str((data.get("agent") or {}).get("role", "auto")),
+        prompt_cache_enabled=bool(cache.get("enabled", True)),
+        orchestrator_max_workers=int(orch.get("max_workers", 3)),
+        orchestrator_step_limit=int(orch.get("step_limit", 10)),
+        orchestrator_cost_limit=float(orch.get("cost_limit", 1.0)),
     )
 
 
