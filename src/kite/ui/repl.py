@@ -314,13 +314,13 @@ class ChatSession:
         if cmd == "plan" or (cmd == "mode" and arg == "plan"):
             self.state.mode = AgentMode.PLAN
             self.state.approval = ApprovalMode.READONLY
-            self.console.print("[kite.plan]plan[/]  read-only")
+            self.console.print("[kite.plan]plan mode[/]  read-only — I'll suggest, not edit")
             return True
         if cmd == "build" or (cmd == "mode" and arg == "build"):
             self.state.mode = AgentMode.BUILD
             if self.state.approval is ApprovalMode.READONLY:
                 self.state.approval = ApprovalMode.APPROVE
-            self.console.print("[kite.build]build[/]  edits on")
+            self.console.print("[kite.build]build mode[/]  edits are on")
             return True
         if cmd == "approve":
             try:
@@ -342,7 +342,7 @@ class ChatSession:
         if cmd == "expand":
             self.state.expanded_all = not self.state.expanded_all
             mode = "expanded" if self.state.expanded_all else "collapsed"
-            self.console.print(f"[kite.muted]tool output {mode}[/]  [kite.muted](/expand toggles)[/]")
+            self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
             return True
         if cmd == "collapse":
             self.state.expanded_all = False
@@ -354,7 +354,7 @@ class ChatSession:
             elif self.state.last_error:
                 self.console.print(self.state.last_error)
             else:
-                self.console.print("[kite.muted]no traceback[/]")
+                self.console.print("[kite.muted]no traceback saved yet[/]")
             return True
         if cmd == "undo":
             ok, msg = self.git.undo()
@@ -365,7 +365,7 @@ class ChatSession:
             cmd = "clear"
         if cmd == "clear":
             self._reset_chat()
-            self.console.print("[kite.muted]session cleared[/]")
+            self.console.print("[kite.muted]fresh start — conversation cleared[/]")
             return True
         if cmd == "init":
             path = Path(self.cwd) / "KITE.md"
@@ -576,7 +576,7 @@ class ChatSession:
             self.model = session.meta.model
             self.state.model = session.meta.model
         self._print_session(session, tail=8)
-        self.console.print(f"[kite.success]opened[/] {session.id}  ·  type to continue")
+        self.console.print(f"[kite.success]opened[/] {session.id}  — type to pick up where you left off")
 
     def _handle_session(self, arg: str) -> None:
         from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
@@ -634,7 +634,7 @@ class ChatSession:
             if target.lower() == "all":
                 gone = delete_all_sessions()
                 self._reset_chat()
-                self.console.print(f"[kite.success]deleted[/] {len(gone)} session{'s' if len(gone) != 1 else ''}")
+                self.console.print(f"[kite.success]removed[/] {len(gone)} session{'s' if len(gone) != 1 else ''}")
                 return
             try:
                 gone = delete_session(target)
@@ -644,7 +644,7 @@ class ChatSession:
             if gone.id == self._session_id:
                 self._reset_chat()
             extra = " + trajectory" if gone.trajectory else ""
-            self.console.print(f"[kite.success]deleted[/] {gone.id}{extra}")
+            self.console.print(f"[kite.success]removed[/] {gone.id}{extra}")
             return
         # Bare id: /session 20260829-…
         self._open_session(raw)

@@ -19,11 +19,15 @@ def context_meter(pct: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
     return f"ctx {bar} {clamped:.0%}"
 
 
-def format_status_tail(state: SessionUiState) -> str:
-    """Everything after the kite brand — shared by render + composer toolbar."""
-    parts: list[str] = [state.mode.value, state.approval.value]
-    model = f"{state.provider}/{state.model}" if state.provider else (state.model or "—")
-    parts.append(model)
+def format_model_label(state: SessionUiState) -> str:
+    if state.provider:
+        return f"{state.provider}/{state.model}"
+    return state.model or "—"
+
+
+def status_context_parts(state: SessionUiState) -> list[str]:
+    """Model, context, cost — everything after mode and approval."""
+    parts: list[str] = [format_model_label(state)]
     if state.reasoning and state.reasoning != "auto":
         parts.append(state.reasoning)
     if state.pending_attach:
@@ -42,6 +46,12 @@ def format_status_tail(state: SessionUiState) -> str:
         parts.append(state.git_branch)
     if state.interrupted:
         parts.append("interrupted")
+    return parts
+
+
+def format_status_tail(state: SessionUiState) -> str:
+    """Everything after the kite brand — shared by render + composer toolbar."""
+    parts = [state.mode.value, state.approval.value, *status_context_parts(state)]
     return f" {SYMBOL_SEP} ".join(parts)
 
 

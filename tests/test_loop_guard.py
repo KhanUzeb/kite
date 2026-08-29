@@ -11,7 +11,7 @@ def test_bash_loops_warn_after_two_repeats() -> None:
     assert guard.record("bash", args) is None
     warning = guard.record("bash", args)
     assert warning is not None
-    assert "Loop detected" in warning
+    assert "same arguments" in warning
     assert "2 times" in warning
 
 

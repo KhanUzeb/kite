@@ -6,6 +6,8 @@ import hashlib
 import json
 from typing import Any
 
+BASH_REPEAT_THRESHOLD = 2
+
 
 def _tool_signature(tool: str, args: dict[str, Any]) -> str:
     """Stable hash for (tool, arguments) — ignores reason field."""
@@ -30,15 +32,14 @@ class LoopGuard:
             self._recent = self._recent[-self.window :]
 
         count = self._recent.count(sig)
-        threshold = 2 if tool == "bash" else self.repeat_threshold
+        threshold = BASH_REPEAT_THRESHOLD if tool == "bash" else self.repeat_threshold
         if count < threshold:
             return None
 
         return (
-            f"Loop detected: `{tool}` with the same arguments was called {count} times "
-            f"in the last {len(self._recent)} steps. Stop repeating this action. "
-            "Either change your approach, ask the user a clarifying question, "
-            "or submit what you have with an honest summary of what remains."
+            f"You've run `{tool}` with the same arguments {count} times in a row. "
+            "Try a different approach, ask the user a question, or submit what you have "
+            "with an honest note about what's left."
         )
 
     def reset(self) -> None:
