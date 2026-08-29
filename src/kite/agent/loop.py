@@ -274,15 +274,13 @@ class DefaultAgent:
                             },
                         }
                     )
-                    self.save(self.output_path)
                     self._emit("error", error=str(e), traceback=traceback.format_exc())
                     raise
-                finally:
-                    self.save(self.output_path)
 
                 if self.messages and self.messages[-1].get("role") == "exit":
                     break
         finally:
+            self.save(self.output_path)
             vsum = self.verification.summary()
             self._emit("artifact", **vsum)
             self._flush_task_commit()
@@ -557,5 +555,8 @@ class DefaultAgent:
         data = self.serialize()
         if path:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            path.write_text(
+                json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
         return data

@@ -68,6 +68,7 @@ class AgentRuntime:
     last_session: Session | None = field(default=None, init=False)
     last_resolved: ResolvedModel | None = field(default=None, init=False)
     runtime_config: AgentRuntimeConfig | None = field(default=None, init=False)
+    _prepared_skills: list[Any] = field(default_factory=list, init=False)
     approver: Callable | None = None
     checkpoints: Any = None
     todos: TodoStore = field(default_factory=TodoStore)
@@ -109,6 +110,7 @@ class AgentRuntime:
         self.last_resolved = resolved
 
         skills = load_skills(cwd, extra_dirs=rcfg.skills.dirs) if rcfg.skills.enabled else []
+        self._prepared_skills = skills
 
         project_ctx = None
         if not self.options.no_context:
@@ -197,7 +199,7 @@ class AgentRuntime:
                     )
 
         # Expand /skill, /commit, custom commands, plugin commands
-        skills = load_skills(cwd, extra_dirs=rcfg.skills.dirs) if rcfg.skills.enabled else []
+        skills = self._prepared_skills
         task = expand_prompt_slash(task, cwd, extra_skill_dirs=rcfg.skills.dirs)
         mem = self.slots.memory or MemoryStore.open(cwd)
         self.hooks.fire("before_run", task=task, cwd=cwd)
