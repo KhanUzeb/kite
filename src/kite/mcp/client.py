@@ -46,7 +46,7 @@ class McpClient:
             try:
                 self._proc.terminate()
                 self._proc.wait(timeout=3)
-            except Exception:
+            except (subprocess.TimeoutExpired, OSError):
                 self._proc.kill()
         self._proc = None
 

@@ -40,10 +40,10 @@ def render_tool_chip_done(tool: str, *, ok: bool = True, meta: str = "", warn: b
 
 def _status_badge(status: str) -> tuple[str, str]:
     if status == "completed":
-        return "Completed", "kite.success"
+        return "Done", "kite.success"
     if status == "in_progress":
-        return "Running", "kite.pending"
-    return "To do", "kite.muted"
+        return "In progress", "kite.pending"
+    return "Pending", "kite.muted"
 
 
 def render_task_row(item: TodoItem, *, tick: int = 0) -> Text:
