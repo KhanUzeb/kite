@@ -185,6 +185,8 @@ Home: `~/.kite/` (`sessions/`, `trajectories/`, `configs/`, `commands/`, `skills
 
 ## Architecture
 
+Overview: **[architecture.md](architecture.md)** — layers, lifecycle, context/compaction, extension points.
+
 ```
 CLI → AgentRuntime → DefaultAgent loop
          │               │
@@ -199,6 +201,7 @@ CLI → AgentRuntime → DefaultAgent loop
 
 Canonical markdown:
 
+- [`architecture.md`](architecture.md): system overview — layers, lifecycle, memory, extension points
 - `CONTEXT.md`: domain glossary (terms agents and humans share)
 - `AGENTS.md`: how to hack on this repo (map, conventions, tests)
 - `docs/kite-system-design.md`: architecture, atlas, tradeoffs
