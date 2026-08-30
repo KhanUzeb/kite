@@ -312,80 +312,10 @@ def cmd_providers(_args: argparse.Namespace) -> int:
 
 
 def _select_model_interactive(console, provider: str) -> int:
-    from rich.table import Table
+    from kite.providers.select import select_model_interactive
 
-    from kite.config import UserConfig
-    from kite.providers.catalog import load_catalog
-    from kite.providers.list_models import list_models_for_provider
-
-    cfg = UserConfig.load()
-    catalog = load_catalog()
-    try:
-        catalog.get(provider)
-    except KeyError as e:
-        console.print(f"[red]{e}[/]")
-        return 2
-
-    console.print(f"[dim]Fetching models for[/] [bold]{provider}[/]…")
-    result = list_models_for_provider(provider, config=cfg, catalog=catalog)
-    if result.error:
-        console.print(f"[red]{result.error}[/]")
-        return 1
-    if not result.models:
-        console.print("[red]No models available[/]")
-        return 1
-
-    table = Table(title=f"Select a {provider} model")
-    table.add_column("#", style="cyan", justify="right")
-    table.add_column("model")
-    table.add_column("context")
-    table.add_column("owned_by")
-    current = cfg.provider_defaults.get(provider) or (
-        cfg.default_model if cfg.default_provider == provider else None
-    )
-    for i, m in enumerate(result.models, start=1):
-        mark = " *" if current and m.id == current else ""
-        ctx = str(m.context_window) if m.context_window else "—"
-        table.add_row(str(i), m.id + mark, ctx, m.owned_by or "—")
-    console.print(table)
-    console.print("[dim]* = currently selected[/]")
-
-    try:
-        raw = console.input("Enter number (or model id): ").strip()
-    except (EOFError, KeyboardInterrupt):
-        console.print("\n[yellow]Cancelled[/]")
-        return 130
-
-    if not raw:
-        console.print("[yellow]Cancelled[/]")
-        return 130
-
-    chosen: str | None = None
-    if raw.isdigit():
-        idx = int(raw)
-        if 1 <= idx <= len(result.models):
-            chosen = result.models[idx - 1].id
-    else:
-        ids = {m.id for m in result.models}
-        if raw in ids:
-            chosen = raw
-        else:
-            # allow typing a known substring if unique
-            hits = [m.id for m in result.models if raw.lower() in m.id.lower()]
-            if len(hits) == 1:
-                chosen = hits[0]
-
-    if not chosen:
-        console.print("[red]Invalid selection[/]")
-        return 2
-
-    cfg.default_provider = provider
-    cfg.default_model = chosen
-    cfg.provider_defaults[provider] = chosen
-    path = cfg.save()
-    console.print(f"[green]Selected[/] {provider}/{chosen}")
-    console.print(f"[dim]Saved {path}[/]")
-    return 0
+    code, _, _ = select_model_interactive(console, provider, persist=True)
+    return code
 
 
 def cmd_models(args: argparse.Namespace) -> int:
@@ -840,6 +770,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     providers = sub.add_parser("providers", help="List providers + credential status")
     providers.set_defaults(func=cmd_providers)
+
+    from kite.cli.setup import cmd_keys, cmd_setup
+    from kite.cli.stats import cmd_maintainer_dashboard
+
+    setup = sub.add_parser("setup", help="First-run wizard — API key, provider, model")
+    setup.add_argument("-p", "--provider", help="Skip provider picker")
+    setup.set_defaults(func=cmd_setup)
+
+    keys = sub.add_parser("keys", help="Show API key status or set a provider key")
+    keys.add_argument("--set", metavar="PROVIDER", help="Paste a key for this provider (hidden input)")
+    keys.add_argument("--logout", metavar="PROVIDER", help="Remove a provider key from ~/.kite/.env")
+    keys.set_defaults(func=cmd_keys)
+
+    maintainer = sub.add_parser("maintainer", help=argparse.SUPPRESS)
+    maint_sub = maintainer.add_subparsers(dest="maintainer_cmd")
+    dashboard = maint_sub.add_parser("dashboard", help=argparse.SUPPRESS)
+    dashboard.add_argument("--json", action="store_true")
+    dashboard.set_defaults(func=cmd_maintainer_dashboard)
 
     models = sub.add_parser("models", help="List live models from provider APIs (uses your API key)")
     models.add_argument("-p", "--provider", help="Filter one provider")
