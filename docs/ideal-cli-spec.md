@@ -19,10 +19,25 @@ Mapping of the 14-category Ideal Coding CLI spec to Kite features.
 | 13 | Predictable cost | — | Pre-flight `cost_estimate` event; 80% `cost_warning`; footer meter; **`cache_hit`** ratio (pi-style prefix cache) |
 | 14 | Honest limits | — | Loop warnings, verification gaps, unverified submit banner |
 
+## Install
+
+**Any workstation** — clone and run the install script (creates `.venv`, editable install, seeds `~/.kite/.env`):
+
+```bash
+git clone https://github.com/KhanUzeb/kite.git && cd kite && ./scripts/install.sh
+# Windows: .\scripts\install.ps1
+```
+
+One-liner: `curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash`
+
+**Any project** — after install, activate the venv and run `kite` from whatever repo you are working in. Workspace defaults to the shell cwd; use `--cwd` on `run` / `chat` / `resume` / `context` / `skills` / `memory` to target another tree. Config and sessions are global (`~/.kite/`); optional per-repo overlays live in `<repo>/.kite/`.
+
+See [README.md](../README.md#use-kite-on-any-project-not-just-this-repo) for PATH setup and examples.
+
 ## Testing
 
 ```bash
-uv pip install -e ".[dev]"
+./scripts/install.sh          # or: uv pip install -e ".[dev]"
 pytest
 ```
 

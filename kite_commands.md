@@ -11,6 +11,8 @@ There are four surfaces:
 | **Markdown commands / skills / plugins** | `/explain`, `/commit`, `/skill debug`, plugin `/hello` | Yes — they become the user task |
 | **Agent tools** | During a turn (`read`, `edit`, `bash`, …) | Yes — the model calls them |
 
+**Install & workspace:** one-time setup via `scripts/install.sh` / `install.ps1` (see [§6](#6-install--development)). After that, run `kite` from any project directory; workspace defaults to shell cwd, or set `--cwd`.
+
 Prefix `//` if you need a natural-language line that starts with `/`.
 
 ---
@@ -215,11 +217,48 @@ Human commits are the source of truth for the project. Checkpoint `kite:` commit
 
 ---
 
-## 6. Development
+## 6. Install & development
+
+### Install (any workstation)
 
 ```bash
-uv pip install -e ".[dev]"
-pytest              # 32 tests
+git clone https://github.com/KhanUzeb/kite.git && cd kite
+./scripts/install.sh                    # macOS/Linux
+# .\scripts\install.ps1                 # Windows PowerShell
+```
+
+One-liner (default install dir `~/kite` or `%USERPROFILE%\kite`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
+```
+
+Custom dir: `KITE_INSTALL_DIR=~/tools/kite ./scripts/install.sh` or `.\scripts\install.ps1 -Dir C:\tools\kite`.
+
+Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. Then `kite providers` and `kite models --select`.
+
+### Use on any project (not the kite checkout)
+
+Install once. Activate the venv (install script prints the path; or add `.venv/bin` / `.venv\Scripts` to `PATH`).
+
+| What you do | Effect |
+|-------------|--------|
+| `cd /path/to/my-app` then `kite` | Workspace = `my-app` |
+| `kite run --cwd /path/to/my-app "…"` | Same workspace, no `cd` |
+| `kite context --cwd .` | Preview discovery for cwd |
+
+`--cwd` is on `run`, `chat`, `resume`, `context`, `skills`, `commands`, `plugins`, `memory`, `apply`, `import`, and `cloud apply`.
+
+Global: `~/.kite/` (sessions, config, user skills). Per-repo: `<repo>/.kite/commands`, `skills`, `plugins`, `memory`.
+
+### Tests
+
+```bash
+pytest              # after install.sh or uv pip install -e ".[dev]"
 pytest -v
 ```
 

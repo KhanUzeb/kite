@@ -1,11 +1,13 @@
 # Tests
 
-Run from the repo root:
+Run from the repo root after installing Kite:
 
 ```bash
-uv pip install -e ".[dev]"
+./scripts/install.sh          # macOS/Linux — or .\scripts\install.ps1 on Windows
 pytest
 ```
+
+Or manual install: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"` → `pytest`.
 
 ## Layout
 
