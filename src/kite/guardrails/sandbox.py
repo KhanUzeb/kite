@@ -31,6 +31,7 @@ DANGEROUS_BASH = (
     re.compile(r"(?i)powershell\s+(-enc|-encodedcommand)\b"),
     re.compile(r"(?i)\b(curl|wget|iwr|invoke-webrequest)\b.*\|\s*(sh|bash|powershell|iex)\b"),
     re.compile(r"(?i)\binvoke-expression\b|\biex\s*\("),
+    re.compile(r"(?i)\bgit\s+push\b"),
 )
 
 _ABS_PATH = re.compile(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from typing import Any, Callable, Literal
@@ -17,17 +18,31 @@ from kite.ui.style import GUTTER, SYMBOL_WARN
 
 Decision = Literal["allow", "session", "always", "deny", "stop"]
 
+# git status must not also authorize git push / git commit
+_GIT_WRITE = re.compile(
+    r"(?i)\bgit(?:\s+-[^\s]+)*\s+(commit|push|reset|rebase|filter-branch|update-ref)\b"
+)
+
 
 def action_pattern(tool: str, arguments: dict[str, Any]) -> str:
     """Stable pattern used for always-allow matching."""
     if tool == "bash":
         cmd = str(arguments.get("command") or "").strip()
-        head = cmd.split()[0] if cmd else "*"
+        parts = cmd.split()
+        if not parts:
+            return "bash:*"
+        head = parts[0]
+        if head.lower() in {"git", "gh"} and len(parts) >= 2:
+            return f"bash:{head} {parts[1]}*"
         return f"bash:{head}*"
     path = arguments.get("path") or arguments.get("root") or ""
     if path:
         return f"{tool}:{path}"
     return f"{tool}:*"
+
+
+def is_git_write(command: str) -> bool:
+    return bool(_GIT_WRITE.search(command or ""))
 
 
 def needs_approval(
@@ -45,6 +60,8 @@ def needs_approval(
     if mode is AgentMode.PLAN and tool != "todo_write":
         return True  # will be auto-denied by the agent; still surfaces
     if approval is ApprovalMode.READONLY:
+        return True
+    if tool == "bash" and is_git_write(command):
         return True
     if approval is ApprovalMode.AUTO:
         return False
@@ -96,8 +113,13 @@ class ApprovalPolicy:
 
     def remembered(self, pattern: str) -> bool:
         for stored in (*self.always_patterns, *self.session_patterns):
-            if pattern == stored or fnmatch(pattern, stored):
-                return True
+            if pattern != stored and not fnmatch(pattern, stored):
+                continue
+            # Approving `git status` used to match `bash:git*` and then allow push.
+            if re.search(r"(?i)bash:git\s+(commit|push|reset|rebase)", pattern):
+                if not re.search(r"(?i)git\s+(commit|push|reset|rebase)", stored):
+                    continue
+            return True
         return False
 
     def remember(self, pattern: str, *, always: bool) -> None:
@@ -220,8 +242,7 @@ def make_approver(
         if policy.remembered(pattern):
             return "allow"
         if not interactive:
-            # Non-TTY: fail closed on gated tools unless auto.
-            return "deny" if approval is ApprovalMode.APPROVE else "allow"
+            return "deny" if is_git_write(str(arguments.get("command") or "")) or approval is ApprovalMode.APPROVE else "allow"
         return prompt_approval(
             console,
             tool,

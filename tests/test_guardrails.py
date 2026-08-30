@@ -12,6 +12,10 @@ from kite.guardrails.sandbox import check_dangerous, cwd_in_trusted, workspace_r
 def test_blocks_dangerous_bash() -> None:
     assert check_dangerous("rm -rf /")
     assert not check_dangerous("ls -la")
+    assert check_dangerous("git push origin main")
+    assert check_dangerous("git push --force")
+    assert not check_dangerous("git status")
+    assert not check_dangerous("git commit -m 'ok'")
 
 
 def test_cwd_in_trusted_subtree(workspace: Path) -> None:

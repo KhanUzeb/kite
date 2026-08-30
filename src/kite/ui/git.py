@@ -45,8 +45,8 @@ def _short_task(text: str, limit: int = 72) -> str:
 class GitCheckpoints:
     cwd: Path
     shas: list[str] = field(default_factory=list)
+    auto_commit: bool = False
     _pending: list[str] = field(default_factory=list)
-    _pending_set: set[str] = field(default_factory=set)
     _bucket: str = ""
 
     @classmethod
@@ -61,13 +61,14 @@ class GitCheckpoints:
             flushed = self.flush()
         self._bucket = label
         resolved = str(path)
-        if resolved not in self._pending_set:
-            self._pending_set.add(resolved)
+        if resolved not in self._pending:
             self._pending.append(resolved)
         return flushed
 
-    def flush(self, message: str | None = None) -> dict | None:
-        """Commit all paths recorded for the current task. No-op if nothing pending."""
+    def flush(self, message: str | None = None, *, force: bool = False) -> dict | None:
+        """Commit pending paths only when auto_commit is on, or force=True (explicit /commit)."""
+        if not self.auto_commit and not force:
+            return None
         if not self._pending:
             self._bucket = ""
             return None
@@ -75,7 +76,6 @@ class GitCheckpoints:
         subject = _short_task(message or self._bucket or "agent edits")
         sha = self._commit_paths(files, subject)
         self._pending = []
-        self._pending_set.clear()
         self._bucket = ""
         if not sha:
             return None
@@ -113,13 +113,15 @@ class GitCheckpoints:
         """Immediate commit (tests / explicit). Prefer record()+flush() for task grouping."""
         for p in paths:
             self.record(p, message)
-        result = self.flush(message=message)
+        result = self.flush(message=message, force=True)
         return None if result is None else str(result["sha"])
 
     def undo(self) -> tuple[bool, str]:
-        """Revert the last kite commit. Refuses if HEAD is not ours."""
+        """Revert this turn's uncommitted edits, or the last kite commit if there is one."""
         if not is_repo(self.cwd):
             return False, "not a git repo — nothing to undo"
+        if self._pending:
+            return self._restore_pending()
         log = _run(self.cwd, "git", "log", "-1", "--pretty=%s")
         subject = (log.stdout or "").strip()
         if not subject.startswith(KITE_MARK):
@@ -130,3 +132,28 @@ class GitCheckpoints:
         if self.shas:
             self.shas.pop()
         return True, "reverted last kite commit"
+
+    def _restore_pending(self) -> tuple[bool, str]:
+        files = list(self._pending)
+        restored = 0
+        for raw in files:
+            path = Path(raw)
+            if not path.is_absolute():
+                path = self.cwd / raw
+            listed = _run(self.cwd, "git", "ls-files", "--", str(path))
+            tracked = listed.returncode == 0 and bool((listed.stdout or "").strip())
+            if tracked:
+                checkout = _run(self.cwd, "git", "checkout", "--", str(path))
+                if checkout.returncode == 0:
+                    restored += 1
+            elif path.is_file():
+                try:
+                    path.unlink()
+                    restored += 1
+                except OSError:
+                    pass
+        self._pending = []
+        self._bucket = ""
+        if not restored:
+            return False, "nothing to undo"
+        return True, f"reverted {restored} uncommitted edit(s)"
