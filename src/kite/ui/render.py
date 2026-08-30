@@ -16,21 +16,22 @@ from rich.text import Text
 
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode
+from kite.ui.chips import render_plan_tasks, render_tool_chip, render_tool_chip_done
 from kite.ui.diff import render_diff
 from kite.ui.spinner import WaitSpinner
-from kite.ui.state import SessionUiState, TodoItem
+from kite.ui.state import SessionUiState
+from kite.ui.status import approval_style, mode_style, status_context_parts
 from kite.ui.style import (
     CHANNEL_PREFIX,
     COLLAPSE_LINES,
     GUTTER,
     SYMBOL_COLLAPSE,
     SYMBOL_COMPACT,
+    SYMBOL_EXPAND,
     SYMBOL_FAIL,
     SYMBOL_OK,
     SYMBOL_REASON,
     SYMBOL_SEP,
-    SYMBOL_SPIN,
-    SYMBOL_TODO,
     SYMBOL_USER,
     SYMBOL_WARN,
     make_console,
@@ -45,29 +46,14 @@ def _format_duration(ms: int | None) -> str:
     return f"{ms / 1000:.1f}s"
 
 
-def _render_tool_block(tool: str, args: dict[str, Any], *, structured: dict[str, Any] | None = None) -> Text:
-    """Warp-style command block header — one scannable row."""
-    line = Text()
-    line.append(f"{SYMBOL_COLLAPSE} ", style="kite.tool")
-    line.append(tool, style="kite.tool bold")
-
-    s = structured or {}
-    target = s.get("command") or s.get("target") or _short_args(args)
-    if target:
-        line.append("  ")
-        line.append(str(target)[:100], style="kite.muted")
-
-    duration = _format_duration(s.get("duration_ms"))
-    exit_code = s.get("exit_code")
-    meta_bits: list[str] = []
+def _tool_meta(duration_ms: int | None, exit_code: int | None) -> str:
+    bits: list[str] = []
+    duration = _format_duration(duration_ms)
     if duration:
-        meta_bits.append(duration)
+        bits.append(duration)
     if exit_code is not None:
-        meta_bits.append(f"exit={exit_code}")
-    if meta_bits:
-        line.append("  ")
-        line.append(" ".join(meta_bits), style="kite.muted")
-    return line
+        bits.append(f"exit={exit_code}")
+    return " ".join(bits)
 
 
 def render_reasoning_block(text: str, *, step: int | None = None) -> Text:
@@ -85,7 +71,7 @@ def render_reasoning_block(text: str, *, step: int | None = None) -> Text:
 def render_loop_warning(message: str) -> Text:
     t = Text()
     t.append(f"{SYMBOL_WARN} ", style="kite.pending")
-    t.append("loop  ", style="kite.pending bold")
+    t.append("stuck in a loop  ", style="kite.pending bold")
     t.append(message.strip(), style="kite.pending")
     t.append("\n")
     return t
@@ -118,50 +104,34 @@ def _collapse_text(text: str, *, expanded: bool, limit: int = COLLAPSE_LINES) ->
         out.append(f"{GUTTER}{GUTTER}{line}\n", style="kite.muted")
     extra = len(lines) - len(shown)
     if extra > 0:
+        glyph = SYMBOL_EXPAND if expanded else SYMBOL_COLLAPSE
+        hint = "/collapse" if expanded else "/expand"
         out.append(
-            f"{GUTTER}{GUTTER}{SYMBOL_COLLAPSE} +{extra} lines  /expand\n",
+            f"{GUTTER}{GUTTER}{glyph} +{extra} lines  {hint}\n",
             style="kite.muted",
         )
     return out
 
 
-def render_plan(todos: list[TodoItem]) -> Text:
+def render_compact_boundary(before: int | str, after: int | str) -> Text:
     t = Text()
-    if not todos:
-        return t
-    t.append("plan\n", style="kite.plan")
-    for item in todos:
-        if item.status == "completed":
-            mark, style = SYMBOL_OK, "kite.success"
-        elif item.status == "in_progress":
-            mark, style = SYMBOL_SPIN, "kite.pending"
-        else:
-            mark, style = SYMBOL_TODO, "kite.muted"
-        t.append(f"{GUTTER}{mark} ", style=style)
-        t.append(f"{item.content}\n", style=style if item.status != "pending" else "kite.muted")
+    t.append(f"{GUTTER}{SYMBOL_COMPACT}  ", style="kite.muted")
+    t.append(f"{before} → {after}", style="kite.muted")
+    t.append("\n")
     return t
 
 
 def render_status(state: SessionUiState) -> Text:
     t = Text()
     t.append("kite", style="kite.brand")
-    t.append(f" {SYMBOL_SEP} ")
-    mode_style = "kite.plan" if state.mode is AgentMode.PLAN else "kite.build"
-    t.append(state.mode.value, style=mode_style)
-    t.append(f" {SYMBOL_SEP} ")
-    t.append(state.approval.value, style="kite.pending" if state.approval is ApprovalMode.APPROVE else "kite.muted")
-    model = f"{state.provider}/{state.model}" if state.provider else (state.model or "—")
-    t.append(f" {SYMBOL_SEP} {model}")
-    if state.reasoning and state.reasoning != "auto":
-        effort_style = "kite.pending" if state.reasoning == "thinking" else "kite.muted"
-        t.append(f" {SYMBOL_SEP} {state.reasoning}", style=effort_style)
-    if state.context_pct is not None:
-        t.append(f" {SYMBOL_SEP} ctx {state.context_pct:.0%}", style="kite.muted")
-    t.append(f" {SYMBOL_SEP} ${state.cost:.3f}", style="kite.muted")
-    if state.git_branch:
-        t.append(f" {SYMBOL_SEP} {state.git_branch}", style="kite.muted")
-    if state.interrupted:
-        t.append("  interrupted", style="kite.error")
+    t.append(f" {SYMBOL_SEP} ", style="kite.muted")
+    t.append(state.mode.value, style=mode_style(state))
+    t.append(f" {SYMBOL_SEP} ", style="kite.muted")
+    t.append(state.approval.value, style=approval_style(state))
+    ctx = status_context_parts(state)
+    if ctx:
+        t.append(f" {SYMBOL_SEP} ", style="kite.muted")
+        t.append(f" {SYMBOL_SEP} ".join(ctx), style="kite.muted")
     return t
 
 
@@ -207,6 +177,11 @@ class RunDisplay:
         self._saw_answer = False
         self._spinner = WaitSpinner(label="thinking")
         self._spinner_on = False
+        self._anim_tick = 0
+        self._thinking_open = False
+
+    def _touch_state(self) -> None:
+        self.state.touch()
 
     def _stdout_write(self, text: str) -> None:
         sys.stdout.write(text)
@@ -254,10 +229,12 @@ class RunDisplay:
 
     def _spin(self, on: bool, label: str = "thinking") -> None:
         if on and not self.quiet:
+            self._anim_tick += 1
+            fast = label.startswith(("working", "subagent"))
             if not self._spinner_on:
                 self._spinner.start()
                 self._spinner_on = True
-            self._spinner.kick(label)
+            self._spinner.kick(label, fast=fast)
         else:
             if self._spinner_on:
                 self._spinner.stop()
@@ -274,7 +251,7 @@ class RunDisplay:
     def print_plan(self) -> None:
         if self.quiet or not self.state.todos:
             return
-        self.console.print(render_plan(self.state.todos))
+        self.console.print(render_plan_tasks(self.state.todos, tick=self._anim_tick))
 
     def print_banner(self, task: str = "") -> None:
         if task:
@@ -301,13 +278,14 @@ class RunDisplay:
                     f"[kite.muted]vision  {p.get('provider')}/{p.get('model')}[/]"
                 )
             else:
-                self.console.print("[kite.muted]no vision model on selected providers — image noted, not sent[/]")
+                self.console.print("[kite.muted]no vision model configured — image noted but not sent[/]")
             return
 
         if kind == "agent_start":
             self.state.provider = str(p.get("provider") or self.state.provider)
             self.state.model = str(p.get("model") or self.state.model)
             self.state.interrupted = False
+            self._thinking_open = False
             self.print_banner(str(p.get("task") or "").strip())
             self.print_plan()
             self._channel = None
@@ -328,6 +306,9 @@ class RunDisplay:
         if kind == "stream_reasoning":
             text = p.get("text") or ""
             if text:
+                if not self._thinking_open:
+                    self.console.print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
+                    self._thinking_open = True
                 self._spin(False)
                 self._stream_write(text, channel="thinking")
             else:
@@ -351,9 +332,19 @@ class RunDisplay:
         if kind == "stream_end":
             self._end_stream_line()
             self._channel = None
+            self._thinking_open = False
             self._spin(True, "working")
-            if p.get("ok") is False:
-                self.console.print("[kite.muted](stream ended)[/]")
+            return
+
+        if kind == "turn_start":
+            self.state.turn += 1
+            self._touch_state()
+            return
+
+        if kind == "turn_end":
+            self._end_stream_line()
+            self._spin(True, "thinking")
+            self._touch_state()
             return
 
         if kind == "tool_start":
@@ -363,7 +354,8 @@ class RunDisplay:
             if not isinstance(args, dict):
                 args = {}
             reason = str(args.get("reason") or p.get("reason") or "")
-            self.console.print(_render_tool_block(tool, args))
+            detail = _short_args(args, limit=60)
+            self.console.print(render_tool_chip(tool, detail, running=True))
             if reason:
                 self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted"))
             if tool == "bash" and args.get("command"):
@@ -377,33 +369,14 @@ class RunDisplay:
             self._end_stream_line()
             self._spin(False)
             tool = str(p.get("tool") or "tool")
-            args_preview = p.get("structured") if isinstance(p.get("structured"), dict) else {}
             ok = p.get("ok", True)
             blocked = bool(p.get("blocked"))
-            if blocked:
-                mark, style = SYMBOL_WARN, "kite.pending"
-            elif ok:
-                mark, style = SYMBOL_OK, "kite.success"
-            else:
-                mark, style = SYMBOL_FAIL, "kite.error"
-            line = Text()
-            line.append(f"{mark} ", style=style)
-            line.append(tool, style=style)
-            duration = _format_duration(p.get("duration_ms"))
-            exit_code = p.get("structured", {}).get("exit_code") if isinstance(p.get("structured"), dict) else p.get("exit_code")
-            meta: list[str] = []
-            if duration:
-                meta.append(duration)
-            if exit_code is not None:
-                meta.append(f"exit={exit_code}")
-            if meta:
-                line.append("  ")
-                line.append(" ".join(meta), style="kite.muted")
-            preview = p.get("preview")
-            if preview and not duration:
-                line.append("  ")
-                line.append(str(preview)[:80], style="kite.muted")
-            self.console.print(line)
+            structured = p.get("structured") if isinstance(p.get("structured"), dict) else {}
+            exit_code = structured.get("exit_code", p.get("exit_code"))
+            meta = _tool_meta(p.get("duration_ms"), exit_code)
+            self.console.print(
+                render_tool_chip_done(tool, ok=ok, warn=blocked, meta=meta)
+            )
 
             diff = p.get("diff")
             if isinstance(diff, str) and diff.strip():
@@ -416,10 +389,59 @@ class RunDisplay:
                     self.console.print(render_error(err.splitlines()[0], show_trace_hint=False))
             else:
                 output = str(p.get("output") or "")
+                redacted = p.get("secrets_redacted")
                 expanded = self.verbose or self.state.expanded_all
                 collapsed = _collapse_text(output, expanded=expanded)
                 if collapsed.plain:
                     self.console.print(collapsed)
+                if redacted:
+                    self.console.print(Text(f"{GUTTER}{GUTTER}· {redacted} secret(s) hidden", style="kite.muted"))
+            return
+
+        if kind == "artifact":
+            self._end_stream_line()
+            self._spin(False)
+            status = str(p.get("status") or "unknown")
+            style = "kite.success" if status == "verified" else ("kite.pending" if status == "partial" else "kite.error")
+            line = Text()
+            line.append(f"{SYMBOL_OK if status == 'verified' else SYMBOL_WARN} ", style=style)
+            line.append(f"artifacts  {status}", style=style)
+            count = p.get("artifact_count")
+            if count:
+                line.append(f"  ({count})", style="kite.muted")
+            self.console.print(line)
+            for art in (p.get("artifacts") or [])[-5:]:
+                if isinstance(art, dict):
+                    mark = "✓" if art.get("ok", True) else "✗"
+                    self.console.print(
+                        Text(f"{GUTTER}{mark} [{art.get('kind', '?')}] {art.get('summary', '')}", style="kite.muted")
+                    )
+            for gap in p.get("gaps") or []:
+                self.console.print(Text(f"{GUTTER}⚠ {gap}", style="kite.pending"))
+            return
+
+        if kind == "cost_estimate":
+            note = str(p.get("note") or "")
+            if note:
+                self.console.print(Text(f"{GUTTER}{note}", style="kite.muted"))
+            return
+
+        if kind == "cost_warning":
+            msg = str(p.get("message") or "cost warning")
+            line = Text()
+            line.append(f"{SYMBOL_WARN} ", style="kite.pending")
+            line.append(msg, style="kite.pending")
+            ratio = p.get("ratio") or p.get("pct")
+            if ratio is not None:
+                try:
+                    pct = max(0.0, min(1.0, float(ratio)))
+                    filled = int(round(pct * 10))
+                    bar = "█" * filled + "░" * (10 - filled)
+                    line.append(f"  {bar} {pct:.0%}", style="kite.muted")
+                except (TypeError, ValueError):
+                    pass
+            line.append("\n")
+            self.console.print(line)
             return
 
         if kind == "loop_warning":
@@ -447,22 +469,22 @@ class RunDisplay:
         if kind == "context":
             total = p.get("total_tokens")
             window = p.get("window")
-            ratio = p.get("ratio")
             if isinstance(total, int):
                 self.state.tokens = total
             if isinstance(window, int):
                 self.state.window = window
-            bits = [f"ctx {total}/{window}"]
-            if ratio is not None:
-                bits.append(f"{ratio:.0%}" if isinstance(ratio, float) else str(ratio))
-            self.console.print(f"[kite.muted]{SYMBOL_SEP} {' '.join(str(b) for b in bits)}[/]")
+            self._touch_state()
+            if self.verbose:
+                ratio = p.get("ratio")
+                bits = [f"ctx {total}/{window}"]
+                if ratio is not None:
+                    bits.append(f"{ratio:.0%}" if isinstance(ratio, float) else str(ratio))
+                self.console.print(f"[kite.muted]{SYMBOL_SEP} {' '.join(str(b) for b in bits)}[/]")
             return
 
         if kind == "compact":
             self._end_stream_line()
-            self.console.print(
-                f"[kite.muted]{SYMBOL_COMPACT}  {p.get('before')} → {p.get('after')}[/]"
-            )
+            self.console.print(render_compact_boundary(p.get("before", "?"), p.get("after", "?")))
             return
 
         if kind == "commit":
@@ -487,12 +509,14 @@ class RunDisplay:
             self._end_stream_line()
             self._spin(False)
             self.state.interrupted = True
-            self.console.print(f"[kite.error]{SYMBOL_FAIL} stopped[/] [kite.muted]steer and resume[/]")
+            self.console.print(f"[kite.error]{SYMBOL_FAIL} stopped[/] [kite.muted]— steer with a follow-up to continue[/]")
             return
 
         if kind == "approval":
             self._end_stream_line()
             self._spin(False)
+            tool = str(p.get("tool") or "action")
+            self.console.print(Text(f"{SYMBOL_WARN}  waiting for your OK on {tool}", style="kite.pending"))
             return
 
         if kind == "agent_end":
@@ -504,6 +528,14 @@ class RunDisplay:
                 if submission and not self._saw_answer:
                     self._stream_write(submission, channel="answer")
                     self._end_stream_line()
+                vstatus = p.get("verification_status")
+                if vstatus in {"unverified", "failed", "partial"}:
+                    self.console.print(
+                        Text(
+                            f"{SYMBOL_WARN} couldn't fully verify — status: {vstatus}. Check the artifacts above.",
+                            style="kite.pending",
+                        )
+                    )
             elif status in {"Interrupted", "Denied"}:
                 self.console.print(Text(str(status).lower(), style="kite.pending"))
             else:
@@ -525,6 +557,52 @@ class RunDisplay:
                 self.state.cost = float(p.get("cost") or self.state.cost)
             except (TypeError, ValueError):
                 pass
+            self._touch_state()
+            return
+
+        if kind == "cache_hit":
+            session = p.get("session") if isinstance(p.get("session"), dict) else {}
+            hits = int(session.get("cache_hit_tokens") or p.get("cache_read") or p.get("cached") or 0)
+            if hits:
+                self.state.cache_hit_tokens = hits
+                try:
+                    self.state.cache_hit_ratio = float(session.get("hit_ratio") or 0.0)
+                except (TypeError, ValueError):
+                    pass
+                self._touch_state()
+                if self.verbose:
+                    self.console.print(
+                        f"[kite.muted]{GUTTER}cache hit  {hits} tokens ({self.state.cache_hit_ratio:.0%})[/]"
+                    )
+            return
+
+        if kind == "subagent_start":
+            self._end_stream_line()
+            label = str(p.get("label") or p.get("id") or "subagent")
+            self.state.active_subagents += 1
+            self._touch_state()
+            self.console.print(Text(f"{GUTTER}{SYMBOL_COLLAPSE} subagent  {label}", style="kite.plan"))
+            self._spin(True, f"subagent  {label}")
+            return
+
+        if kind == "subagent_end":
+            self._spin(False)
+            label = str(p.get("label") or p.get("id") or "subagent")
+            ok = p.get("ok", True)
+            mark = SYMBOL_OK if ok else SYMBOL_FAIL
+            style = "kite.success" if ok else "kite.error"
+            self.state.active_subagents = max(0, self.state.active_subagents - 1)
+            self._touch_state()
+            self.console.print(Text(f"{GUTTER}{mark} subagent  {label}", style=style))
+            preview = str(p.get("preview") or "")
+            if preview:
+                self.console.print(Text(f"{GUTTER}{GUTTER}{preview[:100]}", style="kite.muted"))
+            return
+
+        if kind == "warning":
+            msg = str(p.get("message") or "").strip()
+            if msg:
+                self.console.print(Text(f"{GUTTER}{SYMBOL_WARN} {msg}", style="kite.muted"))
             return
 
         if kind == "mode":

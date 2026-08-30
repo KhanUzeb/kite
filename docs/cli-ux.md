@@ -1,7 +1,7 @@
 # Kite CLI UX
 
 **Agent:** kite  
-**Version:** 0.5.0  
+**Version:** 0.6.5  
 **Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)  
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
@@ -26,9 +26,15 @@ Patterns stolen, not invented:
 
 Switch in the REPL with `/plan` and `/build`. One-shot: `kite run --mode plan "…"`.
 
-Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` · `readonly`.
+Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` · `trust` · `readonly`.
 
 Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning auto|off|fast|thinking`. Shown on the footer when not `auto`.
+
+**Loaders** (beautifului-inspired, TTY-only): default pixel-grid loader with shimmer label and elapsed time. Override with `KITE_LOADER=grid|dots|orbit|wave|spin`.
+
+**Tool chips:** `╭ edit · path · … ╮` while running; `✓ edit  1.2s` when done. **Task rows** show `Running` / `Completed` / `To do` badges.
+
+**Context meter** on footer: `ctx ████░░░░ 50%`. `/expand` toggles full tool output; `/collapse` resets.
 
 ---
 
@@ -127,7 +133,7 @@ Thinking and answer never share a block. The model id is not reprinted as a spee
 **Spacing**
 
 - 2-space gutter; subsequent lines of a cell align under the glyph
-- Tool output collapsed to 4 lines (`COLLAPSE_LINES`)
+- Tool output collapsed to 4 lines (`COLLAPSE_LINES`); `/expand` toggles, `/collapse` resets
 - Diffs: first 40 lines, then `▸ +N lines  /expand`
 - Footer: one line, `·` separators, includes effort when not `auto`
 - No panels around you / result / help
@@ -170,6 +176,13 @@ Interrupt: **Ctrl+C** stops the current turn without killing the process; type a
 kite                         # REPL; prompt is interactive before context loads
 kite chat --mode plan
 kite run --mode build --approval approve "add tests"
+```
+
+### Tests
+
+```bash
+uv pip install -e ".[dev]"
+pytest
 ```
 
 PDFs are generated from this file and `kite-system-design.md`:

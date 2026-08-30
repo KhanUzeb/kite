@@ -10,6 +10,7 @@ from typing import Any
 from kite.agent.events import Event
 from kite.agent.exceptions import FormatError
 from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, parse_mode
+from kite.models.cache import PromptCacheManager, parse_cache_usage
 from kite.providers.resolve import ResolvedModel
 from kite.tools import ToolRegistry
 
@@ -84,6 +85,7 @@ class LitellmModel:
         on_event: Callable[[Event], None] | None = None,
         stream: bool = True,
         reasoning: str = "auto",
+        prompt_cache: PromptCacheManager | None = None,
     ):
         self.resolved = resolved
         self.model_name = resolved.litellm_model
@@ -101,6 +103,7 @@ class LitellmModel:
         self._drop_reasoning = False
         self.cost = 0.0
         self.last_usage: dict[str, Any] = {}
+        self.prompt_cache = prompt_cache
         self.should_stop = lambda: False
 
     def _emit(self, kind: str, **payload: Any) -> None:
@@ -129,9 +132,12 @@ class LitellmModel:
         return api_messages
 
     def _completion_kwargs(self, messages: list[dict], *, stream: bool) -> dict[str, Any]:
+        api_messages = self._api_messages(messages)
+        if self.prompt_cache is not None:
+            api_messages = self.prompt_cache.prepare(api_messages)
         kwargs: dict[str, Any] = {
             **self.resolved.litellm_kwargs(),
-            "messages": self._api_messages(messages),
+            "messages": api_messages,
             "temperature": self.temperature,
             "num_retries": self.max_retries,
             "stream": stream,
@@ -145,6 +151,27 @@ class LitellmModel:
             self.reasoning_mode,
             drop_reasoning=self._drop_reasoning,
         )
+
+    def _record_usage(self, usage: Any, hidden: dict[str, Any] | None) -> None:
+        parsed = parse_cache_usage(usage, hidden)
+        self.last_usage = {
+            "prompt_tokens": parsed["prompt_tokens"],
+            "completion_tokens": parsed["completion_tokens"],
+            "total_tokens": parsed["prompt_tokens"] + parsed["completion_tokens"],
+            "cache_read_tokens": parsed["cache_read_tokens"],
+            "cache_creation_tokens": parsed["cache_creation_tokens"],
+            "cached_tokens": parsed["cached_tokens"],
+        }
+        if self.prompt_cache is not None:
+            self.prompt_cache.record(usage, hidden)
+            if self.prompt_cache.last_hit(parsed):
+                self._emit(
+                    "cache_hit",
+                    cache_read=parsed["cache_read_tokens"],
+                    cached=parsed["cached_tokens"],
+                    cache_creation=parsed["cache_creation_tokens"],
+                    session=self.prompt_cache.summary(),
+                )
 
     def _build_assistant(
         self,
@@ -228,11 +255,8 @@ class LitellmModel:
                     break
                 usage = getattr(chunk, "usage", None)
                 if usage is not None:
-                    self.last_usage = {
-                        "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
-                        "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
-                        "total_tokens": getattr(usage, "total_tokens", 0) or 0,
-                    }
+                    hidden_chunk = getattr(chunk, "_hidden_params", None) or {}
+                    self._record_usage(usage, hidden_chunk if isinstance(hidden_chunk, dict) else {})
                 hidden = getattr(chunk, "_hidden_params", None) or {}
                 if isinstance(hidden, dict) and hidden.get("response_cost") is not None:
                     cost = float(hidden.get("response_cost") or 0.0)
@@ -282,12 +306,8 @@ class LitellmModel:
         choice = response.choices[0]
         message = choice.message
         usage = getattr(response, "usage", None)
-        if usage is not None:
-            self.last_usage = {
-                "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
-                "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
-                "total_tokens": getattr(usage, "total_tokens", 0) or 0,
-            }
+        hidden_resp = getattr(response, "_hidden_params", None) or {}
+        self._record_usage(usage, hidden_resp if isinstance(hidden_resp, dict) else {})
         cost = float(getattr(response, "_hidden_params", {}).get("response_cost") or 0.0)
         self.cost += cost
 

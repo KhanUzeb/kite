@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
+import re
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
 from kite.config import kite_home
+from kite.util.cache import TtlCache
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 
@@ -116,8 +118,17 @@ def _load_from_dir(skills_dir: Path) -> list[Skill]:
     return skills
 
 
+_SKILLS_CACHE: TtlCache[tuple[str, tuple[str, ...]], list[Skill]] = TtlCache(45.0)
+
+
 def load_skills(cwd: str | Path = ".", extra_dirs: list[str] | None = None) -> list[Skill]:
     cwd_path = Path(cwd).expanduser().resolve()
+    extra_key = tuple(sorted(extra_dirs or []))
+    key = (str(cwd_path), extra_key)
+    return _SKILLS_CACHE.get_or_set(key, lambda: _load_skills_uncached(cwd_path, extra_dirs))
+
+
+def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -> list[Skill]:
     by_name: dict[str, Skill] = {}
     for d in _iter_skill_dirs(cwd_path, extra_dirs):
         # For packaged Traversable paths that aren't real Path dirs on disk,

@@ -7,7 +7,8 @@ You may call tools to inspect and change the workspace. Prefer:
 - `write` only for new files or full rewrites
 - `bash` for tests, git, builds, and one-off commands (gated; show the exact command)
 - `todo_write` / `todo_read` for the live plan checklist on multi-step work
-- `task` for a bounded search that returns a summary
+- `task` for a bounded search that returns a summary (glob+grep, no LLM)
+- `subagent` to spawn nested LLM worker(s) — pass `prompt` or `prompts` (parallel) for independent plan items
 - `websearch` for finding sources on the web (free, no API key)
 - `webfetch` for a single URL; `webcrawl` to follow links on a site
 - `skill` to load a named skill when the task matches its description

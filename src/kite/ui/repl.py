@@ -15,7 +15,7 @@ from kite.agent.harness import Harness, HarnessConfig
 from kite.memory.store import MemoryStore
 from kite.agent.mode import AgentMode, ApprovalMode, default_approval
 from kite.plugins.loader import project_plugins_dir, write_plugin_stub
-from kite.cli.slash import CommandIndex, help_text, resolve_slash
+from kite.cli.slash import CommandIndex, help_text, invalidate_command_index, resolve_slash
 from kite.tools.store import TodoStore
 from kite.ui.approval import ApprovalPolicy, make_approver
 from kite.ui.commands import parse_slash
@@ -77,12 +77,17 @@ class ChatSession:
         self._pending_open = session_id
 
     def _approver(self):
+        from kite.config import load_runtime_config
+
+        rcfg = load_runtime_config(self.config_name)
         return make_approver(
             self.console,
             mode=self.state.mode,
             approval=self.state.approval,
             policy=self.policy,
             interactive=sys.stdin.isatty(),
+            trusted_paths=rcfg.guardrails.trusted_paths,
+            workspace_cwd=self.cwd,
         )
 
     def _make_harness(self, *, resume: bool = False, follow_up: str | None = None) -> Harness:
@@ -309,13 +314,13 @@ class ChatSession:
         if cmd == "plan" or (cmd == "mode" and arg == "plan"):
             self.state.mode = AgentMode.PLAN
             self.state.approval = ApprovalMode.READONLY
-            self.console.print("[kite.plan]plan[/]  read-only · produce a checklist, then /build")
+            self.console.print("[kite.plan]plan mode[/]  read-only — I'll suggest, not edit")
             return True
         if cmd == "build" or (cmd == "mode" and arg == "build"):
             self.state.mode = AgentMode.BUILD
             if self.state.approval is ApprovalMode.READONLY:
                 self.state.approval = ApprovalMode.APPROVE
-            self.console.print("[kite.build]build[/]  edits on · approval=" + self.state.approval.value)
+            self.console.print("[kite.build]build mode[/]  edits are on")
             return True
         if cmd == "approve":
             try:
@@ -327,13 +332,21 @@ class ChatSession:
             return True
         if cmd == "cost":
             pct = f"{self.state.context_pct:.0%}" if self.state.context_pct is not None else "—"
+            cache = ""
+            if self.state.cache_hit_tokens:
+                cache = f"  ·  cache {self.state.cache_hit_ratio:.0%} ({self.state.cache_hit_tokens} tok)"
             self.console.print(
-                f"${self.state.cost:.4f}  ·  ctx {self.state.tokens}/{self.state.window or '—'} ({pct})  ·  calls {self.state.n_calls}"
+                f"${self.state.cost:.4f}  ·  ctx {self.state.tokens}/{self.state.window or '—'} ({pct}){cache}  ·  calls {self.state.n_calls}"
             )
             return True
         if cmd == "expand":
-            self.state.expanded_all = True
-            self.console.print("[kite.muted]next tool outputs will be expanded[/]")
+            self.state.expanded_all = not self.state.expanded_all
+            mode = "expanded" if self.state.expanded_all else "collapsed"
+            self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
+            return True
+        if cmd == "collapse":
+            self.state.expanded_all = False
+            self.console.print("[kite.muted]tool output collapsed[/]")
             return True
         if cmd == "trace":
             if self.state.last_trace:
@@ -341,7 +354,7 @@ class ChatSession:
             elif self.state.last_error:
                 self.console.print(self.state.last_error)
             else:
-                self.console.print("[kite.muted]no traceback[/]")
+                self.console.print("[kite.muted]no traceback saved yet[/]")
             return True
         if cmd == "undo":
             ok, msg = self.git.undo()
@@ -352,7 +365,7 @@ class ChatSession:
             cmd = "clear"
         if cmd == "clear":
             self._reset_chat()
-            self.console.print("[kite.muted]session cleared[/]")
+            self.console.print("[kite.muted]fresh start — conversation cleared[/]")
             return True
         if cmd == "init":
             path = Path(self.cwd) / "KITE.md"
@@ -563,7 +576,7 @@ class ChatSession:
             self.model = session.meta.model
             self.state.model = session.meta.model
         self._print_session(session, tail=8)
-        self.console.print(f"[kite.success]opened[/] {session.id}  ·  type to continue")
+        self.console.print(f"[kite.success]opened[/] {session.id}  — type to pick up where you left off")
 
     def _handle_session(self, arg: str) -> None:
         from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
@@ -621,7 +634,7 @@ class ChatSession:
             if target.lower() == "all":
                 gone = delete_all_sessions()
                 self._reset_chat()
-                self.console.print(f"[kite.success]deleted[/] {len(gone)} session{'s' if len(gone) != 1 else ''}")
+                self.console.print(f"[kite.success]removed[/] {len(gone)} session{'s' if len(gone) != 1 else ''}")
                 return
             try:
                 gone = delete_session(target)
@@ -631,7 +644,7 @@ class ChatSession:
             if gone.id == self._session_id:
                 self._reset_chat()
             extra = " + trajectory" if gone.trajectory else ""
-            self.console.print(f"[kite.success]deleted[/] {gone.id}{extra}")
+            self.console.print(f"[kite.success]removed[/] {gone.id}{extra}")
             return
         # Bare id: /session 20260829-…
         self._open_session(raw)
@@ -662,6 +675,7 @@ class ChatSession:
                 self.console.print(f"[kite.error]{e}[/]")
                 return
             self.console.print(f"[kite.success]wrote[/] {path}  ·  edit then /{Path(path).stem}")
+            invalidate_command_index()
             return
         index = self._index()
         table = kite_table("commands")
@@ -691,6 +705,7 @@ class ChatSession:
             self.console.print(
                 f"[kite.success]wrote[/] {path}  ·  add commands/*.md and skills/*/SKILL.md"
             )
+            invalidate_command_index()
             return
         plugins = self._index().plugins
         if arg:
@@ -810,7 +825,9 @@ class ChatSession:
         # Cold start: chrome first, no model/context I/O.
         banner = Text()
         banner.append("kite", style="kite.brand")
-        banner.append("  / commands", style="kite.muted")
+        banner.append("  ", style="kite.muted")
+        banner.append("›", style="kite.brand")
+        banner.append("  /help", style="kite.muted")
         self.console.print(banner)
         if self._pending_open:
             self._open_session(self._pending_open)
