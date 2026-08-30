@@ -7,6 +7,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import threading
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -214,38 +216,61 @@ def make_coding_tools(
         except Exception:
             workdir = root
         try:
-            proc = subprocess.run(
+            limit = int(args.get("timeout") or timeout)
+            proc = subprocess.Popen(
                 command,
                 shell=True,
                 cwd=workdir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                capture_output=True,
-                timeout=int(args.get("timeout") or timeout),
                 env=os.environ | {"PAGER": "cat", "GIT_PAGER": "cat"},
             )
-            output = proc.stdout + (("\n" + proc.stderr) if proc.stderr else "")
+            output_parts: list[str] = []
+
+            def _drain() -> None:
+                assert proc.stdout is not None
+                for line in iter(proc.stdout.readline, ""):
+                    output_parts.append(line)
+                    try:
+                        sys.stderr.write(line)
+                        sys.stderr.flush()
+                    except OSError:
+                        pass
+
+            reader = threading.Thread(target=_drain, daemon=True)
+            reader.start()
+            try:
+                rc = proc.wait(timeout=limit)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                reader.join(timeout=1.0)
+                partial = "".join(output_parts)
+                return {
+                    "ok": False,
+                    "returncode": -1,
+                    "output": partial,
+                    "error": f"timeout after {limit}s",
+                }
+            reader.join(timeout=2.0)
+            output = "".join(output_parts)
             lines = output.lstrip().splitlines(keepends=True)
             submitted = (
                 bool(lines)
                 and lines[0].strip() == "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
-                and proc.returncode == 0
+                and rc == 0
             )
             return {
-                "ok": proc.returncode == 0,
-                "returncode": proc.returncode,
+                "ok": rc == 0,
+                "returncode": rc,
                 "output": output,
                 "submitted": submitted,
                 "submission": "".join(lines[1:]) if submitted else "",
             }
-        except subprocess.TimeoutExpired as e:
-            return {
-                "ok": False,
-                "returncode": -1,
-                "output": (e.output or "") if isinstance(e.output, str) else "",
-                "error": f"timeout after {timeout}s",
-            }
+        except OSError as e:
+            return {"ok": False, "returncode": -1, "output": "", "error": str(e)}
 
     def grep_files(args: dict[str, Any]) -> dict[str, Any]:
         pattern = str(args["pattern"])

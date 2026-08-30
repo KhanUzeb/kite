@@ -18,6 +18,7 @@ EventKind = Literal[
     "stream_tool",
     "stream_end",
     "tool_start",
+    "tool_progress",
     "tool_end",
     "context",
     "compact",

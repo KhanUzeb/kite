@@ -302,6 +302,7 @@ class AgentRuntime:
                 on_event=self._on_event,
                 reasoning=self.options.reasoning,
                 prompt_cache=prompt_cache,
+                timeout_seconds=rcfg.model_timeout_seconds,
             )
 
         session: Session | None = None
@@ -374,6 +375,7 @@ class AgentRuntime:
             send_images=send_images,
             verification=verification,
             audit=audit,
+            tool_progress_interval_seconds=rcfg.tools.progress_interval_seconds,
         )
 
         def _audit_listener(event: Event) -> None:

@@ -365,6 +365,14 @@ class RunDisplay:
             self._spin(True, f"working  {tool}")
             return
 
+        if kind == "tool_progress":
+            tool = str(p.get("tool") or "?")
+            elapsed = int(p.get("elapsed_s") or 0)
+            hint = str(p.get("hint") or "")
+            label = f"working  {tool}  {elapsed}s{hint}"
+            self._spin(True, label)
+            return
+
         if kind == "tool_end":
             self._end_stream_line()
             self._spin(False)
