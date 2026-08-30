@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import traceback
 from collections.abc import Callable
@@ -87,6 +88,7 @@ class DefaultAgent:
         send_images: bool = True,
         verification: VerificationCollector | None = None,
         audit=None,
+        tool_progress_interval_seconds: float = 5.0,
     ):
         self.model = model
         self.env = env
@@ -118,6 +120,7 @@ class DefaultAgent:
         self._task = ""
         self.verification = verification or VerificationCollector()
         self.audit = audit
+        self.tool_progress_interval_seconds = tool_progress_interval_seconds
         self._cost_warned = False
 
         self.messages: list[dict] = []
@@ -475,7 +478,37 @@ class DefaultAgent:
                 return _blocked("stopped by user")
             if decision == "deny":
                 return _blocked("denied by user")
-        return self.env.execute(action)
+        return self._execute_with_progress(tool, action)
+
+    def _execute_with_progress(self, tool: str, action: dict) -> dict:
+        result: dict[str, dict] = {}
+        error: list[BaseException] = []
+        done = threading.Event()
+
+        def worker() -> None:
+            try:
+                result["out"] = self.env.execute(action)
+            except BaseException as e:
+                error.append(e)
+            finally:
+                done.set()
+
+        threading.Thread(target=worker, daemon=True).start()
+        start = time.monotonic()
+        interval = max(0.5, float(self.tool_progress_interval_seconds))
+        while not done.wait(timeout=interval):
+            elapsed = int(time.monotonic() - start)
+            hint = ""
+            if tool == "bash":
+                args = action.get("arguments") or {}
+                cmd = str(args.get("command") or "").strip().splitlines()
+                if cmd:
+                    preview = cmd[0][:48]
+                    hint = f" — {preview}{'…' if len(cmd[0]) > 48 else ''}"
+            self._emit("tool_progress", tool=tool, elapsed_s=elapsed, hint=hint)
+        if error:
+            raise error[0]
+        return result["out"]
 
     def _preview_diff(self, tool: str, args: dict) -> str:
         path = args.get("path")

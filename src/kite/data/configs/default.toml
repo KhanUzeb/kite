@@ -6,6 +6,7 @@ role = "auto"  # auto | architect | implementer | debugger
 step_limit = 40
 cost_limit = 5.0
 wall_time_limit_seconds = 0
+model_timeout_seconds = 180
 max_consecutive_format_errors = 3
 auto_compact = true
 compaction_reserve_tokens = 16384
@@ -17,7 +18,8 @@ instance = "instance"
 
 [tools]
 enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "subagent", "memory"]
-bash_timeout_seconds = 30
+bash_timeout_seconds = 120
+progress_interval_seconds = 5.0
 
 [guardrails]
 enabled = true

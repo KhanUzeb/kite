@@ -60,7 +60,8 @@ class ToolsConfig:
             "memory",
         ]
     )
-    bash_timeout_seconds: int = 30
+    bash_timeout_seconds: int = 120
+    progress_interval_seconds: float = 5.0
 
 
 @dataclass
@@ -93,6 +94,7 @@ class AgentRuntimeConfig:
     orchestrator_cost_limit: float = 1.0
     ui_theme: str = "auto"
     ui_font: str = "unicode"
+    model_timeout_seconds: int = 180
 
     def with_overrides(self, **kwargs: Any) -> AgentRuntimeConfig:
         return replace(self, **{k: v for k, v in kwargs.items() if v is not None})
@@ -122,6 +124,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         step_limit=int(agent.get("step_limit", 40)),
         cost_limit=float(agent.get("cost_limit", 5.0)),
         wall_time_limit_seconds=int(agent.get("wall_time_limit_seconds", 0)),
+        model_timeout_seconds=int(agent.get("model_timeout_seconds", 180)),
         max_consecutive_format_errors=int(agent.get("max_consecutive_format_errors", 3)),
         auto_compact=bool(agent.get("auto_compact", True)),
         compaction_reserve_tokens=int(agent.get("compaction_reserve_tokens", 16_384)),
@@ -149,7 +152,8 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
                     "memory",
                 ]
             ),
-            bash_timeout_seconds=int(tools.get("bash_timeout_seconds", 30)),
+            bash_timeout_seconds=int(tools.get("bash_timeout_seconds", 120)),
+            progress_interval_seconds=float(tools.get("progress_interval_seconds", 5.0)),
         ),
         guardrails=GuardrailConfig(
             enabled=bool(guard.get("enabled", True)),

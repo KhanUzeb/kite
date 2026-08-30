@@ -86,6 +86,7 @@ class LitellmModel:
         stream: bool = True,
         reasoning: str = "auto",
         prompt_cache: PromptCacheManager | None = None,
+        timeout_seconds: int = 180,
     ):
         self.resolved = resolved
         self.model_name = resolved.litellm_model
@@ -104,6 +105,7 @@ class LitellmModel:
         self.cost = 0.0
         self.last_usage: dict[str, Any] = {}
         self.prompt_cache = prompt_cache
+        self.timeout_seconds = timeout_seconds
         self.should_stop = lambda: False
 
     def _emit(self, kind: str, **payload: Any) -> None:
@@ -145,6 +147,8 @@ class LitellmModel:
         if self.registry is not None:
             kwargs["tools"] = self.registry.openai_schemas()
             kwargs["tool_choice"] = "auto"
+        if self.timeout_seconds > 0:
+            kwargs["timeout"] = float(self.timeout_seconds)
         return apply_reasoning(
             kwargs,
             self.reasoning_support,
