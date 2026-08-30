@@ -324,6 +324,40 @@ def _wants_include_reasoning(provider: str, params: set[str], *, can_reason: boo
     return bool(can_reason and provider in _INCLUDE_REASONING_PROVIDERS)
 
 
+_REASONING_MODEL_HINTS = (
+    "nemotron",
+    "deepseek-r1",
+    "deepseek_r1",
+    "qwq",
+    "reasoner",
+    "thinking",
+    "o1",
+    "o3",
+)
+
+
+def _infer_reasoning(provider: str, model: str) -> ReasoningSupport | None:
+    """Fallback when live/LiteLLM metadata is empty but the model id is a known reasoner."""
+    low = (model or "").lower()
+    if not any(h in low for h in _REASONING_MODEL_HINTS):
+        return None
+    high, low_eff = "high", "low"
+    thinking = {"reasoning_effort": high}
+    fast = {"reasoning_effort": low_eff}
+    off: dict[str, Any] = {"reasoning_effort": "none"}
+    return ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs=thinking,
+        fast_kwargs=fast,
+        off_kwargs=off,
+        source="heuristic",
+        efforts=("none", low_eff, "medium", high),
+    )
+
+
 def _unsupported(key: tuple[str, str]) -> ReasoningSupport:
     support = ReasoningSupport(False, False, False, False, source="none")
     _cache[key] = support
@@ -388,6 +422,10 @@ def detect_reasoning(
         params.discard("include_reasoning")
 
     if not (params & _REASONING_PARAMS):
+        inferred = _infer_reasoning(provider, model)
+        if inferred is not None:
+            _cache[key] = inferred
+            return inferred
         return _unsupported(key)
 
     thinking, fast, off, can_t, can_f, can_off = _kwargs_from_params(

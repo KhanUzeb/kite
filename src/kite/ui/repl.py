@@ -17,7 +17,7 @@ from kite.cli.slash import CommandIndex, help_text, invalidate_command_index, re
 from kite.tools.store import TodoStore
 from kite.ui.commands import parse_slash
 from kite.ui.git import GitCheckpoints
-from kite.ui.complete import SlashCompleter, make_prompt_session, read_repl_line
+from kite.ui.complete import SlashCompleter, make_prompt_session, make_repl_key_bindings, read_repl_line
 from kite.ui.render import RunDisplay, render_status
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_COMPACT, SYMBOL_PROMPT, make_console
@@ -71,6 +71,73 @@ class ChatSession:
         self._prompt = None
         self._model_cache: list[str] = []
         self._pending_open = session_id
+        self._flash: str = ""
+        self._sync_from_config()
+
+    def _sync_from_config(self) -> None:
+        from kite.providers.resolve import resolve_model
+
+        cfg = UserConfig.load()
+        if not self.provider:
+            self.provider = cfg.default_provider or self.provider
+        if not self.model:
+            try:
+                resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
+                self.provider = resolved.provider
+                self.model = resolved.model
+            except Exception:
+                self.model = cfg.default_model or self.model
+        self.state.provider = self.provider or self.state.provider
+        self.state.model = self.model or self.state.model
+
+    def _effective_model_pair(self) -> tuple[str, str]:
+        provider = self.provider or self.state.provider
+        model = self.model or self.state.model
+        if provider and model:
+            return provider, model
+        try:
+            from kite.providers.resolve import resolve_model
+
+            resolved = resolve_model(provider=provider, model=model)
+            return resolved.provider, resolved.model
+        except Exception:
+            return provider or "", model or ""
+
+    def _startup_banner(self) -> None:
+        from kite.providers.resolve import missing_credentials, resolve_model
+
+        cfg = UserConfig.load()
+        try:
+            resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
+            cred = missing_credentials(resolved)
+            model_line = f"{resolved.provider}/{resolved.model}"
+        except Exception as e:
+            cred = str(e)
+            model_line = f"{self.provider or cfg.default_provider or '—'}/{self.model or cfg.default_model or '—'}"
+
+        banner = Text()
+        banner.append("kite", style="kite.brand")
+        banner.append("  ", style="kite.muted")
+        banner.append(model_line, style="kite.muted")
+        banner.append("  ·  ", style="kite.muted")
+        banner.append("/help", style="kite.muted")
+        banner.append("  ·  ", style="kite.muted")
+        banner.append("Ctrl+O tools", style="kite.muted")
+        banner.append("  ·  ", style="kite.muted")
+        banner.append("/login", style="kite.muted")
+        self.console.print(banner)
+
+        if cred:
+            self.console.print(
+                f"[kite.pending]⚠[/]  [kite.muted]No API key — [kite.brand]/login {resolved.provider if 'resolved' in locals() else cfg.default_provider}[/] "
+                f"or [kite.brand]kite setup[/][/]"
+            )
+        elif not cfg.default_model:
+            self.console.print("[kite.muted]Tip:[/]  [kite.brand]/select[/] or [kite.brand]kite models -p groq --select[/]")
+
+    def _flash_note(self, text: str) -> None:
+        self.state.flash = text
+        self.state.touch()
 
     @property
     def memory(self):
@@ -127,7 +194,7 @@ class ChatSession:
     def _model_ids(self) -> list[str]:
         if self._model_cache:
             return self._model_cache
-        provider = self.provider or self.state.provider
+        provider, _ = self._effective_model_pair()
         if not provider:
             return []
         try:
@@ -143,8 +210,7 @@ class ChatSession:
     def _reasoning_info(self):
         from kite.models.reasoning import detect_reasoning
 
-        provider = self.provider or self.state.provider
-        model = self.model or self.state.model
+        provider, model = self._effective_model_pair()
         if not provider or not model:
             return None
         try:
@@ -335,7 +401,35 @@ class ChatSession:
             providers_factory=self._provider_names,
             reasoning_info=self._reasoning_info,
         )
-        self._prompt = make_prompt_session(completer)
+
+        def _toggle_expand() -> str:
+            self.state.expanded_all = not self.state.expanded_all
+            mode = "expanded" if self.state.expanded_all else "collapsed"
+            return f"tool output {mode}"
+
+        def _plan() -> str:
+            self.state.mode = AgentMode.PLAN
+            self.state.approval = ApprovalMode.READONLY
+            return "plan mode"
+
+        def _build() -> str:
+            self.state.mode = AgentMode.BUILD
+            if self.state.approval is ApprovalMode.READONLY:
+                self.state.approval = ApprovalMode.APPROVE
+            return "build mode"
+
+        def _status() -> str:
+            from kite.ui.status import format_status_tail
+
+            return format_status_tail(self.state)
+
+        bindings = make_repl_key_bindings(
+            on_toggle_expand=lambda: self._flash_note(_toggle_expand()),
+            on_plan=lambda: self._flash_note(_plan()),
+            on_build=lambda: self._flash_note(_build()),
+            on_status=lambda: self._flash_note(_status()),
+        )
+        self._prompt = make_prompt_session(completer, key_bindings=bindings)
         return self._prompt
 
     def _read_input_rich(self) -> str | None:
@@ -351,6 +445,55 @@ class ChatSession:
             self.console.print("\n[kite.muted]bye[/]")
             return None
         return line
+
+    def _show_keys(self) -> None:
+        from kite.providers.credentials import configured_providers, env_file_path
+
+        rows = configured_providers()
+        for name, ok, env in rows:
+            if env == "local":
+                status = "local"
+            elif env == "—":
+                status = "n/a"
+            else:
+                status = "set" if ok else "missing"
+            self.console.print(f"  {name:<14}{status:<8}{env}")
+        self.console.print(f"[kite.muted]file[/]  {env_file_path()}  ·  /login provider  ·  /logout provider")
+
+    def _login_provider(self, arg: str) -> None:
+        from kite.providers.credentials import login_provider
+        from kite.providers.select import select_provider_interactive
+
+        provider = arg.strip()
+        if not provider:
+            picked = select_provider_interactive(self.console)
+            if not picked:
+                return
+            provider = picked
+        code, msg, resolved = login_provider(provider, set_default=True, console=self.console)
+        if code == 130:
+            self.console.print("[kite.muted]cancelled[/]")
+            return
+        if code != 0:
+            self.console.print(f"[kite.error]{msg}[/]")
+            return
+        self.console.print(f"[kite.success]{msg}[/]")
+        if resolved:
+            self.provider = resolved
+            self.state.provider = resolved
+            self._model_cache = []
+            self.console.print("[kite.muted]Tip:[/]  /select to pick a model")
+
+    def _logout_provider(self, arg: str) -> None:
+        from kite.providers.credentials import logout_provider
+
+        provider = arg.strip()
+        if not provider:
+            self.console.print("[kite.error]/logout provider[/]")
+            return
+        code, msg = logout_provider(provider)
+        style = "kite.success" if code == 0 else "kite.error"
+        self.console.print(f"[{style}]{msg}[/]")
 
     def _read_input(self) -> str | None:
         session = self._ensure_prompt()
@@ -446,20 +589,49 @@ class ChatSession:
             path.write_text(KITE_MD_STUB, encoding="utf-8")
             self.console.print(f"[kite.success]wrote[/] {path}")
             return True
+        if cmd in {"login", "signin"}:
+            self._login_provider(arg)
+            return True
+        if cmd in {"logout", "signout"}:
+            self._logout_provider(arg)
+            return True
+        if cmd == "keys":
+            self._show_keys()
+            return True
         if cmd == "model":
             if arg:
-                if "/" in arg:
-                    self.provider, self.model = arg.split("/", 1)
+                save = False
+                token = arg.strip()
+                for suffix in (" --save", " --persist"):
+                    if token.endswith(suffix):
+                        save = True
+                        token = token[: -len(suffix)].strip()
+                        break
+                if "/" in token:
+                    self.provider, self.model = token.split("/", 1)
                 else:
-                    self.model = arg
+                    self.model = token
                 self.state.provider = self.provider or self.state.provider
                 self.state.model = self.model or self.state.model
                 self._model_cache = []
-                self.console.print(f"[kite.success]model[/] {self.state.provider}/{self.state.model}")
+                if save:
+                    cfg = UserConfig.load()
+                    cfg.default_provider = self.provider or cfg.default_provider
+                    cfg.default_model = self.model or cfg.default_model
+                    if self.provider:
+                        cfg.provider_defaults[self.provider] = self.model or cfg.default_model
+                    cfg.save()
+                    self.console.print(f"[kite.success]saved[/] {self.state.provider}/{self.state.model}")
+                else:
+                    self.console.print(
+                        f"[kite.success]model[/] {self.state.provider}/{self.state.model}  "
+                        "[kite.muted](session — add --save to persist)[/]"
+                    )
                 return True
+            provider, model = self._effective_model_pair()
             cfg = UserConfig.load()
             self.console.print(
-                f"{cfg.default_provider}/{cfg.default_model or '—'}  ·  /model provider/id"
+                f"session {provider}/{model or '—'}  ·  config {cfg.default_provider}/{cfg.default_model or '—'}  ·  /select"
             )
             return True
         if cmd == "provider":
@@ -497,6 +669,25 @@ class ChatSession:
             extra = len(result.models) - len(shown)
             if extra > 0:
                 self.console.print(f"[kite.muted]  … {extra} more[/]")
+            self.console.print("[kite.muted]  /select for interactive picker[/]")
+            return True
+        if cmd == "select":
+            from kite.providers.select import select_model_interactive, select_provider_interactive
+
+            provider = (arg or self.provider or self.state.provider or "").strip()
+            if not provider:
+                picked = select_provider_interactive(self.console)
+                if not picked:
+                    return True
+                provider = picked
+            code, picked_provider, model = select_model_interactive(self.console, provider, persist=True)
+            if code == 0 and picked_provider and model:
+                self.provider = picked_provider
+                self.model = model
+                self.state.provider = picked_provider
+                self.state.model = model
+                self._model_cache = []
+                self._sync_from_config()
             return True
         if cmd == "thinking":
             self._set_reasoning(arg, command="thinking")
@@ -932,16 +1123,10 @@ class ChatSession:
         self.state.set_todos(self.todos.read())
 
     def run(self) -> int:
-        # Cold start: chrome first, no model/context I/O.
-        banner = Text()
-        banner.append("kite", style="kite.brand")
-        banner.append("  ", style="kite.muted")
-        banner.append("›", style="kite.brand")
-        banner.append("  /help", style="kite.muted")
-        self.console.print(banner)
         from kite.ui.git import git_branch
 
         self.state.git_branch = git_branch(self.cwd)
+        self._startup_banner()
         if self._pending_open:
             self._open_session(self._pending_open)
             self._pending_open = None

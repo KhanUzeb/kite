@@ -54,6 +54,7 @@ class SessionUiState:
     cache_hit_ratio: float = 0.0
     active_subagents: int = 0
     turn: int = 0
+    flash: str = ""
     _refresh: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
     def touch(self) -> None:
