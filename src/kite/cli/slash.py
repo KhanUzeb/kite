@@ -19,7 +19,7 @@ from kite.ui.commands import SlashResult, parse_slash
 from kite.util.cache import TtlCache
 
 
-_INDEX_CACHE: TtlCache[tuple[str, tuple[str, ...]], "CommandIndex"] = TtlCache(30.0)
+_INDEX_CACHE: TtlCache[tuple[str, tuple[str, ...]], "CommandIndex"] = TtlCache(120.0)
 
 
 def invalidate_command_index() -> None:
@@ -150,6 +150,8 @@ def resolve_slash(raw: str, index: CommandIndex) -> SlashResult:
     if parsed.kind == "handled":
         if parsed.command == "skill" and parsed.arg:
             name, _, extra = parsed.arg.partition(" ")
+            if name.lower() in {"add", "install"}:
+                return SlashResult("handled", command="skills", arg=f"add {extra}".strip())
             prompt = index.expand(f"skill:{name}", extra.strip()) or index.expand(name, extra.strip())
             if prompt is None:
                 # /skill name — try skill loader aliases
@@ -228,16 +230,23 @@ def help_text(index: CommandIndex) -> str:
     lines.extend(["", "skills & commands"])
     seen: set[str] = set()
     rows = sorted(index.prompt_specs(), key=lambda s: (s.source, s.name))
+    from kite.ui.theme import glyph
+
     for spec in rows:
         if spec.name in seen:
             continue
         seen.add(spec.name)
         tag = spec.plugin or spec.source
+        mark = ""
+        if spec.source == "skill":
+            skill = next((s for s in index.skills if s.name.lower() == spec.name), None)
+            if skill is not None and skill.source == "user":
+                mark = f" {glyph('home')}"
         hint = f" {spec.hint}" if spec.hint else ""
         desc = (spec.description or "").strip()
         if len(desc) > 56:
             desc = desc[:55] + "…"
-        lines.append(f"  /{spec.name:<14} ({tag}){hint}  {desc}".rstrip())
+        lines.append(f"  /{(spec.name + mark):<16} ({tag}){hint}  {desc}".rstrip())
         if len(seen) >= 40:
             lines.append("  …  /skills  /commands  /plugins")
             break

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import re
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -21,6 +20,7 @@ class Skill:
     content: str
     description: str | None = None
     disable_model_invocation: bool = False
+    source: str = "bundled"  # bundled | user | project | plugin
 
 
 def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
@@ -44,7 +44,7 @@ def _derive_description(content: str) -> str:
     return "No description"
 
 
-def _load_skill(name: str, path: Path) -> Skill:
+def _load_skill(name: str, path: Path, *, source: str) -> Skill:
     raw = path.read_text(encoding="utf-8")
     meta, body = _parse_frontmatter(raw)
     return Skill(
@@ -53,15 +53,38 @@ def _load_skill(name: str, path: Path) -> Skill:
         content=body.strip() or raw.strip(),
         description=meta.get("description") or _derive_description(body or raw),
         disable_model_invocation=meta.get("disable-model-invocation", "").lower() == "true",
+        source=source,
     )
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def classify_skill_dir(directory: Path, cwd: Path) -> str:
+    try:
+        resolved = directory.resolve() if directory.exists() else directory
+    except OSError:
+        resolved = directory
+    home_skills = kite_home() / "skills"
+    if _is_under(resolved, home_skills) or resolved == home_skills:
+        return "user"
+    if _is_under(resolved, cwd / ".kite" / "skills") or _is_under(resolved, cwd / ".agents" / "skills"):
+        return "project"
+    text = str(resolved).replace("\\", "/")
+    if "/data/skills" in text or text.endswith("data/skills"):
+        return "bundled"
+    return "plugin"
 
 
 def _iter_skill_dirs(cwd: Path, extra: list[str] | None = None) -> list[Path]:
     dirs: list[Path] = []
-    # bundled
     try:
         bundled = resources.files("kite").joinpath("data/skills")
-        # importlib may return Traversable; convert via str if needed
         dirs.append(Path(str(bundled)))
     except Exception:
         pass
@@ -76,7 +99,6 @@ def _iter_skill_dirs(cwd: Path, extra: list[str] | None = None) -> list[Path]:
     dirs.append(cwd / ".agents" / "skills")
     for e in extra or []:
         dirs.append(Path(e).expanduser())
-    # dedupe existing-or-not (loader skips missing)
     seen: set[Path] = set()
     out: list[Path] = []
     for d in dirs:
@@ -91,7 +113,7 @@ def _iter_skill_dirs(cwd: Path, extra: list[str] | None = None) -> list[Path]:
     return out
 
 
-def _load_from_dir(skills_dir: Path) -> list[Skill]:
+def _load_from_dir(skills_dir: Path, *, source: str) -> list[Skill]:
     if not skills_dir.exists() or not skills_dir.is_dir():
         return []
     skills: list[Skill] = []
@@ -112,13 +134,17 @@ def _load_from_dir(skills_dir: Path) -> list[Skill]:
             continue
         seen.add(name)
         try:
-            skills.append(_load_skill(name, skill_path))
+            skills.append(_load_skill(name, skill_path, source=source))
         except OSError:
             continue
     return skills
 
 
 _SKILLS_CACHE: TtlCache[tuple[str, tuple[str, ...]], list[Skill]] = TtlCache(45.0)
+
+
+def invalidate_skills() -> None:
+    _SKILLS_CACHE.clear()
 
 
 def load_skills(cwd: str | Path = ".", extra_dirs: list[str] | None = None) -> list[Skill]:
@@ -131,13 +157,13 @@ def load_skills(cwd: str | Path = ".", extra_dirs: list[str] | None = None) -> l
 def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -> list[Skill]:
     by_name: dict[str, Skill] = {}
     for d in _iter_skill_dirs(cwd_path, extra_dirs):
-        # For packaged Traversable paths that aren't real Path dirs on disk,
-        # try listing via importlib when under kite/data/skills
         if not d.exists():
             continue
-        for skill in _load_from_dir(d):
-            by_name[skill.name] = skill  # later dirs override
-    # Also load bundled via importlib even if Path(str(bundled)) is weird on zip
+        source = classify_skill_dir(d, cwd_path)
+        for skill in _load_from_dir(d, source=source):
+            by_name[skill.name] = skill
+    if any(s.source == "bundled" for s in by_name.values()):
+        return sorted(by_name.values(), key=lambda s: s.name)
     try:
         bundled = resources.files("kite").joinpath("data/skills")
         if hasattr(bundled, "iterdir"):
@@ -147,8 +173,8 @@ def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -
                     raw = skill_file.read_bytes().decode("utf-8")
                     meta, body = _parse_frontmatter(raw)
                     name = meta.get("name") or child.name
-                    # Don't override project/user skills already loaded
-                    if name in by_name and "data/skills" not in str(by_name[name].path).replace("\\", "/"):
+                    existing = by_name.get(name)
+                    if existing is not None and existing.source != "bundled":
                         continue
                     if name not in by_name:
                         by_name[name] = Skill(
@@ -158,6 +184,7 @@ def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -
                             description=meta.get("description") or _derive_description(body or raw),
                             disable_model_invocation=meta.get("disable-model-invocation", "").lower()
                             == "true",
+                            source="bundled",
                         )
     except Exception:
         pass

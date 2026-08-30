@@ -12,7 +12,7 @@ from kite.ui.attach import IMAGE_EXTS
 from kite.models.reasoning import ReasoningSupport
 from kite.ui.commands import ALIASES, ARG_CHOICES
 from kite.ui.status import format_status_tail
-from kite.ui.style import SYMBOL_PROMPT
+from kite.ui.theme import brand_ansi, glyph, is_dark
 from kite.ui.state import SessionUiState
 
 try:
@@ -52,20 +52,8 @@ def _pt_style(*, dark: bool) -> Any:
     )
 
 
-def _terminal_is_light() -> bool:
-    import os
-
-    colorfgbg = os.environ.get("COLORFGBG", "")
-    if ";" in colorfgbg:
-        try:
-            return int(colorfgbg.split(";")[-1]) >= 8
-        except ValueError:
-            pass
-    return False
-
-
 def prompt_style() -> Any:
-    return _pt_style(dark=not _terminal_is_light())
+    return _pt_style(dark=is_dark())
 
 
 _LEVEL_META = {
@@ -144,7 +132,7 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                 yield Completion(
                     spec.name,
                     start_position=-len(cmd),
-                    display=f"/{spec.name}",
+                    display=_slash_display(spec, index),
                     display_meta=meta[:72],
                 )
             return
@@ -170,8 +158,13 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             for name in self._providers_factory():
                 choices.append((str(name), "provider"))
         elif cmd in {"skills", "skill"}:
-            for skill in index.skills:
-                choices.append((skill.name, (skill.description or "")[:60]))
+            bits = rest.split()
+            first = bits[0].lower() if bits else ""
+            if first not in {"add", "install"}:
+                choices.append(("add", "install from npm, npx, or GitHub"))
+                for skill in index.skills:
+                    mark = f"{glyph('home')}  " if skill.source == "user" else ""
+                    choices.append((skill.name, f"{mark}{(skill.description or '')[:56]}".strip()))
         elif cmd in {"plugins", "plugin"}:
             choices.append(("init", "scaffold .kite/plugins/name"))
             for plugin in index.plugins:
@@ -210,6 +203,15 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             if needle and needle not in value.lower():
                 continue
             yield Completion(value, start_position=start, display=value, display_meta=meta[:60])
+
+
+def _slash_display(spec: SlashSpec, index: CommandIndex) -> str:
+    mark = ""
+    if spec.source == "skill":
+        skill = next((s for s in index.skills if s.name.lower() == spec.name), None)
+        if skill is not None and skill.source == "user":
+            mark = f" {glyph('home')}"
+    return f"/{spec.name}{mark}"
 
 
 def _session_rows() -> list[tuple[str, str]]:
@@ -269,9 +271,11 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
 
 def _toolbar_html(state: SessionUiState) -> Any:
     tail = format_status_tail(state)
+    brand = brand_ansi()
+    muted = "#888888" if not is_dark() else "#6e6e6e"
     return HTML(
-        f"<style fg='ansicyan'>kite</style>"
-        f"<style fg='#6e6e6e'> · {_escape_html(tail)}</style>"
+        f"<style fg='{brand}'>kite</style>"
+        f"<style fg='{muted}'> {glyph('sep')} {_escape_html(tail)}</style>"
     )
 
 
@@ -322,10 +326,11 @@ def read_repl_line(
             pass
 
     state._refresh = _invalidate
-    placeholder_fg = "#888888" if _terminal_is_light() else "#555555"
+    placeholder_fg = "#888888" if not is_dark() else "#555555"
+    brand = brand_ansi()
     try:
         return session.prompt(
-            HTML(f"<style fg='ansicyan'>{SYMBOL_PROMPT}</style> "),
+            HTML(f"<style fg='{brand}'>{glyph('prompt')}</style> "),
             placeholder=HTML(f"<style fg='{placeholder_fg}'>/ commands · @file attach</style>"),
             bottom_toolbar=lambda: _toolbar_html(state),
         )
