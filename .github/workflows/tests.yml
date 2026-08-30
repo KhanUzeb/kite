@@ -28,7 +28,7 @@ jobs:
       - name: Count commits in this push or PR
         id: count
         env:
-          PUSH_COMMITS: ${{ github.event.commits && length(github.event.commits) || 0 }}
+          COMMITS_JSON: ${{ toJson(github.event.commits) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -44,11 +44,15 @@ jobs:
           else
             BEFORE="${{ github.event.before }}"
             AFTER="${{ github.sha }}"
+            PUSH_COMMITS=0
+            if [ -n "${COMMITS_JSON:-}" ] && [ "${COMMITS_JSON}" != "null" ]; then
+              PUSH_COMMITS="$(python3 -c "import json, os; d=json.loads(os.environ['COMMITS_JSON']); print(len(d) if isinstance(d, list) else 0)")"
+            fi
             if [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ]; then
               COUNT=1
             elif git merge-base --is-ancestor "${BEFORE}" "${AFTER}" 2>/dev/null; then
               COUNT="$(git rev-list --count "${BEFORE}..${AFTER}")"
-            elif [ "${PUSH_COMMITS:-0}" -gt 0 ]; then
+            elif [ "${PUSH_COMMITS}" -gt 0 ]; then
               # Rebase/force-push: before..after is invalid; use webhook payload size.
               COUNT="${PUSH_COMMITS}"
             else
