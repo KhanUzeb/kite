@@ -175,6 +175,49 @@ Interrupt: **Ctrl+C** stops the current turn without killing the process; type a
 
 ## 5. How to run
 
+### Install (any workstation)
+
+From the repo (or after cloning):
+
+```bash
+git clone https://github.com/KhanUzeb/kite.git && cd kite
+./scripts/install.sh          # macOS/Linux
+# .\scripts\install.ps1         # Windows PowerShell
+```
+
+One-liner (installs to `~/kite` or `%USERPROFILE%\kite`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
+```
+
+Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. Full options: [README.md](../README.md#setup).
+
+### Workspace (any project directory)
+
+Install once. Activate the venv (or add `.venv/bin` / `.venv\Scripts` to `PATH`). Then `cd` into any repo — Kite treats **current directory** as the workspace (tools, git, `.kite/` overlays, `AGENTS.md`).
+
+```bash
+cd ~/projects/my-app
+kite
+kite run "add tests"
+```
+
+Or pass `--cwd` without changing shell directory:
+
+```bash
+kite run --cwd ~/projects/my-app "review auth"
+kite chat --cwd /path/to/other-repo
+```
+
+Global state: `~/.kite/` (sessions, config, skills). Per-repo overlays: `<repo>/.kite/commands`, `plugins`, `memory`.
+
+### Session
+
 ```
 kite                         # REPL; prompt is interactive before context loads
 kite chat --mode plan
@@ -184,7 +227,7 @@ kite run --mode build --approval approve "add tests"
 ### Tests
 
 ```bash
-uv pip install -e ".[dev]"
+./scripts/install.sh          # or manual uv pip install -e ".[dev]"
 pytest
 ```
 

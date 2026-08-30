@@ -6,12 +6,50 @@ Slim hybrid coding-agent harness: **mini-swe-agent** control flow + **tau**-styl
 
 ## Setup
 
+### Quick install (any workstation)
+
+Clone and run the install script once. It creates a venv, installs Kite in editable mode, and seeds `~/.kite/.env` from `.env.example` if needed.
+
+**macOS / Linux**
+
+```bash
+git clone https://github.com/KhanUzeb/kite.git
+cd kite
+./scripts/install.sh
+```
+
+Or download and install in one step (installs to `~/kite` by default):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell)**
+
+```powershell
+git clone https://github.com/KhanUzeb/kite.git
+cd kite
+.\scripts\install.ps1
+```
+
+Or:
+
+```powershell
+irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
+```
+
+Custom location: `KITE_INSTALL_DIR=~/tools/kite ./scripts/install.sh` or `.\scripts\install.ps1 -Dir C:\tools\kite`.
+
+### Manual install
+
 ```bash
 uv venv --python 3.12
 .venv\Scripts\activate          # Windows
 # source .venv/bin/activate     # macOS/Linux
 uv pip install -e ".[dev]"
 ```
+
+### First run
 
 ```bash
 # Copy .env.example → .env (or ~/.kite/.env) and set your key(s)
@@ -22,6 +60,30 @@ kite models -p go --select           # OpenCode Go
 kite models -p nvidia --select       # NVIDIA NIM (NVIDIA_API_KEY)
 kite runtime-config
 ```
+
+### Use Kite on any project (not just this repo)
+
+Install Kite once (script or manual install above). After that you do **not** need to be inside the kite checkout.
+
+1. **Activate the venv** (or add its `bin` / `Scripts` folder to your `PATH` — the install script prints the exact path).
+2. **`cd` into the project you want to work on.** Kite uses your current directory as the workspace (tools, git status, `.kite/` overlays, `AGENTS.md`, etc.).
+3. Run `kite`, `kite chat`, or `kite run "…"` from there.
+
+```bash
+cd ~/projects/my-app
+kite                          # REPL in my-app
+kite run "add error handling"
+```
+
+To work on a directory **without** changing shell cwd, pass `--cwd`:
+
+```bash
+kite run --cwd ~/projects/my-app "review auth module"
+kite chat --cwd C:\dev\other-repo
+kite context --cwd .
+```
+
+Global config and sessions live in `~/.kite/`. Per-project overlays (optional) go in the target repo: `.kite/commands`, `.kite/plugins`, `.kite/memory`.
 
 ## Tests
 
@@ -85,6 +147,8 @@ kite config --select-model
 
 UX notes: `docs/cli-ux.md` · spec coverage: `docs/ideal-cli-spec.md` · command map: `kite_commands.md`
 
+Install on a new machine: `scripts/install.sh` (macOS/Linux) or `scripts/install.ps1` (Windows). See [Setup](#setup).
+
 Home: `~/.kite/` (`sessions/`, `trajectories/`, `configs/`, `commands/`, `skills/`, `plugins/`, `memory/`, `catalog.toml`, `config.toml`, `.env`). Project overlays: `.kite/commands`, `.kite/plugins`, `.kite/memory`.
 
 ## Architecture
@@ -126,6 +190,8 @@ src/kite/
   memory/
   skills/ commands/ plugins/
   mcp/                     # stdio MCP client
+scripts/
+  install.sh install.ps1   # clone + venv + editable install (any workstation)
 tests/                     # pytest suite
   data/configs/default.toml
   data/prompts/{system,instance}.md

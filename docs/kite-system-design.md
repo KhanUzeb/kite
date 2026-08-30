@@ -4,6 +4,7 @@
 **Stack:** Python 3.12 · LiteLLM · Rich · uv  
 **Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)  
 **Companion UX spec:** [cli-ux.md](cli-ux.md) (PDF: `docs/cli-ux.pdf`)  
+**Install:** [README.md](../README.md#setup) · `scripts/install.sh` / `scripts/install.ps1`  
 **Generated for:** weekend hybrid slim coding-agent harness
 
 ---
@@ -471,9 +472,21 @@ REPL slash commands: builtins (`/plan` `/build` `/undo` `/memory` `/remember` `/
 ### Running tests
 
 ```bash
-uv pip install -e ".[dev]"
+./scripts/install.sh          # macOS/Linux — or .\scripts\install.ps1 on Windows
 pytest
 ```
+
+Manual: `uv venv --python 3.12` → `uv pip install -e ".[dev]"` → `pytest`. See [README.md](../README.md#setup).
+
+### Install once, run anywhere
+
+Kite is installed as a CLI (`kite` on `PATH` when the venv is active). You do not run agents from inside the kite source tree unless you are hacking on Kite itself.
+
+1. Run `scripts/install.sh` or `scripts/install.ps1` once per machine.
+2. `cd` into any git repo (or pass `--cwd`).
+3. Workspace = that directory: sandboxed tools, `AGENTS.md` / `KITE.md`, git status, `.kite/` overlays.
+
+Global home: `~/.kite/` (`KITE_HOME` override). Sessions and provider prefs are shared across projects; project-specific commands/skills/memory merge from `<repo>/.kite/`.
 
 | Module | Tests |
 |--------|-------|
@@ -493,6 +506,8 @@ kite/
   pyproject.toml
   requirements.txt
   README.md
+  scripts/
+    install.sh install.ps1   # workstation bootstrap
   tests/                   # pytest (guardrails, agent, sessions, ui)
   .python-version
   src/kite/
