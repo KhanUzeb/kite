@@ -208,7 +208,7 @@ def login_provider(
 
     saved = write_api_key(primary, secret)
     for alias in env_names[1:]:
-        os.environ.pop(alias, None)
+        remove_api_key(alias)
 
     msg = f"saved {primary} → {saved}"
     if set_default:

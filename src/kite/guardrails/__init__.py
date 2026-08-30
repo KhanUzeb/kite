@@ -25,6 +25,40 @@ SECRET_PATTERNS = [
     re.compile(r"(?i)\b(sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|xox[baprs]-[a-zA-Z0-9-]{20,})\b"),
 ]
 
+_ENV_DUMP_PATTERNS = (
+    re.compile(r"(?i)^\s*env\s*$"),
+    re.compile(r"(?i)^\s*printenv\b"),
+    re.compile(r"(?i)^\s*export\s*$"),
+    re.compile(r"(?i)^\s*set\s*$"),
+    re.compile(r"(?i)(Get-ChildItem|gci)\s+Env:"),
+    re.compile(r"(?i)\bdir\s+env:"),
+)
+
+
+def redact_secrets(text: str) -> tuple[str, int]:
+    """Return (redacted_text, count_of_redactions). Usable without a policy instance."""
+    if not text:
+        return text, 0
+    count = 0
+    out = text
+    for rx in SECRET_PATTERNS:
+        new, n = rx.subn("[REDACTED_SECRET]", out)
+        count += n
+        out = new
+    return out, count
+
+
+def env_dump_blocked(command: str) -> str:
+    """Non-empty reason when bash would dump the process environment."""
+    for line in command.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        for rx in _ENV_DUMP_PATTERNS:
+            if rx.search(stripped):
+                return "refusing to dump process environment via bash"
+    return ""
+
 
 @dataclass(frozen=True)
 class GuardrailVerdict:
@@ -74,6 +108,9 @@ class GuardrailPolicy:
                 return GuardrailVerdict(False, f"bash command blocked by guardrail pattern: {rx.pattern}")
         if re.search(r"(?i)(cat|type|Get-Content)\s+[^\n]*\.env\b", command):
             return GuardrailVerdict(False, "refusing to dump .env via bash; use careful read if needed")
+        blocked = env_dump_blocked(command)
+        if blocked:
+            return GuardrailVerdict(False, blocked)
         if self.config.sandbox_to_cwd and not self.config.allow_paths_outside_cwd:
             escaped = check_command_paths(command, self.cwd)
             if escaped:
@@ -85,15 +122,7 @@ class GuardrailPolicy:
 
     def redact_secrets(self, text: str) -> tuple[str, int]:
         """Return (redacted_text, count_of_redactions)."""
-        if not text:
-            return text, 0
-        count = 0
-        out = text
-        for rx in SECRET_PATTERNS:
-            new, n = rx.subn("[REDACTED_SECRET]", out)
-            count += n
-            out = new
-        return out, count
+        return redact_secrets(text)
 
     def check_tool_call(self, tool: str, arguments: dict[str, Any]) -> GuardrailVerdict:
         if not self.config.enabled:

@@ -46,3 +46,13 @@ def test_redact_secrets_masks_api_keys(workspace: Path) -> None:
     assert count >= 1
     assert "REDACTED" in redacted
     assert "sk-abc" not in redacted
+
+
+def test_blocks_env_dump_commands(workspace: Path) -> None:
+    policy = GuardrailPolicy(GuardrailConfig(), workspace)
+    for cmd in ("env", "printenv", "export", "set", "Get-ChildItem Env:", "dir env:"):
+        verdict = policy.check_bash(cmd)
+        assert not verdict.allowed, cmd
+        assert "environment" in verdict.reason.lower()
+    assert policy.check_bash("echo hello").allowed
+    assert policy.check_bash("npm test").allowed

@@ -14,7 +14,7 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from kite.guardrails import GuardrailPolicy
+from kite.guardrails import GuardrailPolicy, redact_secrets
 from kite.memory.store import MemoryStore
 from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
@@ -229,16 +229,23 @@ def make_coding_tools(
                 env=os.environ | {"PAGER": "cat", "GIT_PAGER": "cat"},
             )
             output_parts: list[str] = []
+            stream_redactions = 0
+
+            def _emit_line(raw_line: str) -> None:
+                nonlocal stream_redactions
+                safe, n = redact_secrets(raw_line)
+                stream_redactions += n
+                output_parts.append(safe)
+                try:
+                    sys.stderr.write(safe)
+                    sys.stderr.flush()
+                except OSError:
+                    pass
 
             def _drain() -> None:
                 assert proc.stdout is not None
                 for line in iter(proc.stdout.readline, ""):
-                    output_parts.append(line)
-                    try:
-                        sys.stderr.write(line)
-                        sys.stderr.flush()
-                    except OSError:
-                        pass
+                    _emit_line(line)
 
             reader = threading.Thread(target=_drain, daemon=True)
             reader.start()
@@ -262,13 +269,16 @@ def make_coding_tools(
                 and lines[0].strip() == "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
                 and rc == 0
             )
-            return {
+            result: dict[str, Any] = {
                 "ok": rc == 0,
                 "returncode": rc,
                 "output": output,
                 "submitted": submitted,
                 "submission": "".join(lines[1:]) if submitted else "",
             }
+            if stream_redactions:
+                result["secrets_redacted"] = stream_redactions
+            return result
         except OSError as e:
             return {"ok": False, "returncode": -1, "output": "", "error": str(e)}
 
