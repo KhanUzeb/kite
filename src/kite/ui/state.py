@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -49,6 +50,16 @@ class SessionUiState:
     expanded_all: bool = False
     reasoning: str = "auto"
     pending_attach: int = 0
+    cache_hit_tokens: int = 0
+    cache_hit_ratio: float = 0.0
+    active_subagents: int = 0
+    turn: int = 0
+    _refresh: Callable[[], None] | None = field(default=None, repr=False, compare=False)
+
+    def touch(self) -> None:
+        """Notify live composer toolbar (prompt_toolkit) to redraw."""
+        if self._refresh:
+            self._refresh()
 
     @property
     def context_pct(self) -> float | None:

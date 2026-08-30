@@ -46,6 +46,7 @@ class GitCheckpoints:
     cwd: Path
     shas: list[str] = field(default_factory=list)
     _pending: list[str] = field(default_factory=list)
+    _pending_set: set[str] = field(default_factory=set)
     _bucket: str = ""
 
     @classmethod
@@ -60,7 +61,8 @@ class GitCheckpoints:
             flushed = self.flush()
         self._bucket = label
         resolved = str(path)
-        if resolved not in self._pending:
+        if resolved not in self._pending_set:
+            self._pending_set.add(resolved)
             self._pending.append(resolved)
         return flushed
 
@@ -73,6 +75,7 @@ class GitCheckpoints:
         subject = _short_task(message or self._bucket or "agent edits")
         sha = self._commit_paths(files, subject)
         self._pending = []
+        self._pending_set.clear()
         self._bucket = ""
         if not sha:
             return None

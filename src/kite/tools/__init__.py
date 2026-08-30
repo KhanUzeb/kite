@@ -37,11 +37,13 @@ class Tool:
 class ToolRegistry:
     def __init__(self, tools: list[Tool] | None = None):
         self._tools: dict[str, Tool] = {}
+        self._schema_cache: list[dict[str, Any]] | None = None
         for tool in tools or []:
             self.register(tool)
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
+        self._schema_cache = None
 
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
@@ -50,4 +52,6 @@ class ToolRegistry:
         return list(self._tools.values())
 
     def openai_schemas(self) -> list[dict[str, Any]]:
-        return [t.schema() for t in self._tools.values()]
+        if self._schema_cache is None:
+            self._schema_cache = [t.schema() for t in self._tools.values()]
+        return self._schema_cache

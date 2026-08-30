@@ -2,6 +2,7 @@
 
 [agent]
 name = "kite-default"
+role = "auto"  # auto | architect | implementer | debugger
 step_limit = 40
 cost_limit = 5.0
 wall_time_limit_seconds = 0
@@ -15,13 +16,14 @@ system = "system"
 instance = "instance"
 
 [tools]
-enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "memory"]
+enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "subagent", "memory"]
 bash_timeout_seconds = 30
 
 [guardrails]
 enabled = true
 sandbox_to_cwd = true
 allow_paths_outside_cwd = false
+trusted_paths = []  # relative subtrees with elevated trust (e.g. "src/", "tests/")
 deny_bash_patterns = [
   "rm -rf /",
   "rm -rf /*",
@@ -53,3 +55,25 @@ include_git_status = true
 include_tree_snippet = true
 tree_max_entries = 80
 max_context_chars = 24000
+
+[github]
+enabled = true
+
+[cache]
+enabled = true  # pi-style prefix caching; Anthropic cache_control + usage tracking
+
+[orchestrator]
+max_workers = 3
+step_limit = 10
+cost_limit = 1.0
+
+# Terminal UI — loader style via KITE_LOADER=grid|dots|orbit|wave|spin
+[ui]
+loader = "grid"  # pixel-grid default (beautifului-inspired); override with KITE_LOADER
+
+# MCP servers — portable JSON-RPC tools (stdio). Example:
+# [[mcp]]
+# name = "filesystem"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed"]
+# enabled = true

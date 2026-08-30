@@ -196,3 +196,24 @@ def check_dangerous(command: str) -> str:
         if rx.search(command):
             return f"bash command blocked by sandbox: {rx.pattern}"
     return ""
+
+
+def cwd_in_trusted(cwd: Path, workspace: Path, trusted: list[str]) -> bool:
+    """True when cwd sits inside a configured trusted subtree."""
+    if not trusted:
+        return False
+    try:
+        resolved = cwd.expanduser().resolve()
+    except OSError:
+        return False
+    for rel in trusted:
+        token = rel.strip().strip("/\\")
+        if not token:
+            continue
+        try:
+            root = (workspace / token).resolve()
+            if is_inside(resolved, root) or resolved == root:
+                return True
+        except OSError:
+            continue
+    return False
