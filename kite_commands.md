@@ -49,6 +49,9 @@ Housekeeping (no model):
 kite sessions [--limit N] [--show id] [--tail N]
 kite sessions --delete <id> [<id> ...]
 kite sessions --delete-all -y
+kite setup [-p provider]       # first-run wizard: key + model
+kite keys [--set provider]     # show or paste API keys (hidden input)
+kite keys --logout provider    # remove a stored key
 kite providers
 kite models [-p provider] [--select]
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
@@ -74,8 +77,13 @@ These never go to the model.
 | `/build` `/b` | Apply edits; approval stays unless it was readonly |
 | `/approve auto\|approve\|trust\|readonly` | Autonomy for this session |
 | `/model [provider/id]` | Show or set model |
+| `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
+| `/select [provider]` | Interactive model picker (saved to config) |
 | `/models [provider]` | List live models for the current (or named) provider |
 | `/provider [name]` | Show or set provider |
+| `/login [provider]` | Save API key to `~/.kite/.env` (hidden input, owner-only file) |
+| `/logout provider` | Remove that provider's key from `~/.kite/.env` |
+| `/keys` | Show which provider keys are set |
 | `/thinking` `/fast` | Effort: extended thinking, or low-latency (if the model supports it) |
 | `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort; shown on the footer |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
@@ -113,6 +121,18 @@ These never go to the model.
 | `/quit` `/q` `/exit` | Leave the REPL |
 
 Ctrl+C stops the **current turn**, not the process.
+
+### Keyboard shortcuts (composer)
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+O` | Toggle expanded tool output (`/expand`) |
+| `Ctrl+P` | Plan mode |
+| `Ctrl+B` | Build mode |
+| `Ctrl+S` | Flash status on the footer |
+| `Tab` / `/` | Slash command menu with descriptions |
+
+`/thinking` and `/fast` appear in the menu only when the current model’s API advertises both effort modes (e.g. OpenRouter, Groq, Nemotron). Use `/reasoning` when only one mode exists.
 
 ---
 
@@ -239,7 +259,11 @@ irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | i
 
 Custom dir: `KITE_INSTALL_DIR=~/tools/kite ./scripts/install.sh` or `.\scripts\install.ps1 -Dir C:\tools\kite`.
 
-Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. Then `kite providers` and `kite models --select`.
+Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. Then `kite setup` (or `kite providers` + `kite models --select`).
+
+### CI
+
+GitHub Actions (`.github/workflows/tests.yml`) runs `pytest` on push/PR to `main` when the batch has **5+ commits**. Fewer commits skip CI; run `pytest` locally or use **Actions → Tests → Run workflow**. See [CONTRIBUTING.md](../CONTRIBUTING.md#ci-github-actions).
 
 ### Use on any project (not the kite checkout)
 

@@ -133,6 +133,7 @@ Make kite available in every new shell (add to ~/.bashrc or ~/.zshrc):
   export PATH="${VENV_BIN}:\$PATH"
 
 Next steps:
+  kite setup                 # guided API key + model picker
   kite providers
   kite models -p groq --select
   kite runtime-config

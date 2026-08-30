@@ -428,6 +428,8 @@ See [kite_commands.md](../kite_commands.md) for the full map (CLI, REPL slashes,
 
 ```
 kite                         # interactive REPL (plan/build)
+kite setup                   # first-run wizard: API key + model
+kite keys [--set provider]   # show or paste keys into ~/.kite/.env
 kite chat --mode plan
 kite chat --approval approve
 kite config --set-provider openai --set-model gpt-4.1-mini
@@ -452,7 +454,7 @@ kite resume <session-id> "also write tests"
 kite sessions --show <id>
 ```
 
-REPL slash commands: builtins (`/plan` `/build` `/undo` `/memory` `/remember` `/commands` `/plugins` `/skills` …) plus `/commit`-style skills and markdown commands. Ctrl+C stops the current turn.
+REPL slash commands: builtins (`/plan` `/build` `/select` `/thinking` `/fast` `/undo` `/memory` `/remember` `/commands` `/plugins` `/skills` …) plus `/commit`-style skills and markdown commands. Composer shortcuts: Ctrl+O expand tools, Ctrl+P plan, Ctrl+B build. Ctrl+C stops the current turn.
 
 ---
 
@@ -476,6 +478,8 @@ REPL slash commands: builtins (`/plan` `/build` `/undo` `/memory` `/remember` `/
 pytest
 ```
 
+**CI:** GitHub Actions runs `pytest` when a push or PR to `main` batches **5+ commits** (see `.github/workflows/tests.yml`). Always run `pytest` locally before opening a PR.
+
 Manual: `uv venv --python 3.12` → `uv pip install -e ".[dev]"` → `pytest`. See [README.md](../README.md#setup).
 
 ### Install once, run anywhere
@@ -495,6 +499,6 @@ Global home: `~/.kite/` (`KITE_HOME` override). Sessions and provider prefs are 
 | `memory/` | session append + meta timestamp |
 | `mcp/` | startup warning on bad server |
 | `context/` `skills/` | TTL caches |
-| `ui/` | loaders, status meter, chips, warning events |
+| `ui/` | loaders, status meter, chips, reasoning/setup, warning events |
 
 ---

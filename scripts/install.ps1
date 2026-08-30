@@ -120,6 +120,7 @@ Write-Host "Make kite available in every new PowerShell session (add to `$PROFIL
 Write-Host "  `$env:Path = `"$venvScripts;`" + `$env:Path"
 Write-Host ""
 Write-Host "Next steps:"
+Write-Host "  kite setup                 # guided API key + model picker"
 Write-Host "  kite providers"
 Write-Host "  kite models -p groq --select"
 Write-Host "  kite runtime-config"

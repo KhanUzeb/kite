@@ -69,10 +69,13 @@ def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
     candidates = [
         root / "KITE.md",
         root / "AGENTS.md",
+        root / "CONTEXT.md",
         root / ".kite" / "AGENTS.md",
         root / ".kite" / "KITE.md",
+        root / ".kite" / "CONTEXT.md",
         root / ".agents" / "AGENTS.md",
         cwd / "AGENTS.md",
+        cwd / "CONTEXT.md",
         cwd / "KITE.md",
     ]
     # ancestor chain from root → cwd
