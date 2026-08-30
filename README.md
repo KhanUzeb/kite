@@ -2,7 +2,23 @@
 
 A slim hybrid coding-agent harness: the **mini-swe-agent** control flow plus **tau**-style tools, providers, context, sessions, skills, and guardrails.
 
+[![Tests](https://github.com/KhanUzeb/kite/actions/workflows/tests.yml/badge.svg)](https://github.com/KhanUzeb/kite/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
+[![Version](https://img.shields.io/badge/version-0.6.6-cyan.svg)](CHANGELOG.md)
+
 **Version:** 0.6.6
+
+## Features
+
+- **Tight agent loop** — a mini-swe-agent style sync loop (query → tools → observe → repeat) with budgeted turns and resumable sessions.
+- **Multi-provider** — LiteLLM-backed model resolution across OpenAI, Anthropic, Groq, OpenCode Zen/Go, NVIDIA NIM, Ollama, and OpenAI-compatible endpoints.
+- **Real coding tools** — read, write, edit, bash, grep, glob, ls, web fetch/search/crawl, todo tracking, and a `subagent` orchestrator.
+- **Skills & plugins** — `SKILL.md` packs (installable from npm, npx, or GitHub), prompt commands, and plugins.
+- **Guardrails** — path sandboxing, bash danger checks, secret redaction, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
+- **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, git-stat diffs, theme/font switching, and a context-usage meter.
+- **MCP-native** — stdio MCP servers become regular tools.
+- **Portable** — install once, then run `kite` from any project directory via `--cwd`.
 
 ## Setup
 
