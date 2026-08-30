@@ -16,7 +16,7 @@ You may call tools to inspect and change the workspace. Prefer:
 - `subagent` to spawn nested LLM worker(s) — pass `prompt` or `prompts` (parallel) for independent plan items
 - `websearch` for finding sources on the web (free, no API key)
 - `webfetch` for a single URL; `webcrawl` to follow links on a site
-- `skill` to load a named skill when the task matches its description
+- `skill` to load a named skill when the task matches its description. If they ask to download a skill from npm, npx, or GitHub, pass `install` (package or `owner/repo`) — that writes to `~/.kite/skills`. Do not run `npx` yourself.
 - `memory` to list / remember / forget durable notes (user or project; survives sessions)
 
 Pass `reason` on mutating tools when the why is not obvious from the command.

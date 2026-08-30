@@ -339,14 +339,46 @@ def make_coding_tools(
         return {"ok": True, "output": "\n".join(lines) if lines else "(empty)", "count": len(lines)}
 
     def load_skill(args: dict[str, Any]) -> dict[str, Any]:
-        name = str(args["name"])
-        skill = skill_by_name.get(name)
+        install = args.get("install")
+        installed: list[str] = []
+        if install:
+            try:
+                from kite.skills.install import install_skill
+                from kite.skills.loader import load_skills
+
+                installed = install_skill(str(install))
+                for skill in load_skills(root):
+                    skill_by_name[skill.name] = skill
+            except (ValueError, RuntimeError, OSError) as e:
+                return {"ok": False, "error": str(e), "output": str(e)}
+        name = str(args.get("name") or "").strip()
+        if not name and len(installed) == 1:
+            name = installed[0]
+        if not name:
+            if installed:
+                listed = ", ".join(installed)
+                return {
+                    "ok": True,
+                    "output": f"installed {listed} into ~/.kite/skills. Load with skill name=…",
+                    "installed": installed,
+                }
+            return {"ok": False, "error": "need name or install", "output": "need name or install"}
+        skill = skill_by_name.get(name) or next(
+            (s for s in skill_by_name.values() if s.name.lower() == name.lower()),
+            None,
+        )
         if skill is None:
             known = ", ".join(sorted(skill_by_name)) or "(none)"
-            return {"ok": False, "error": f"unknown skill: {name}", "output": f"unknown skill: {name}. known: {known}"}
+            extra = f" installed {', '.join(installed)}." if installed else ""
+            return {
+                "ok": False,
+                "error": f"unknown skill: {name}",
+                "output": f"unknown skill: {name}.{extra} known: {known}",
+            }
         extra = args.get("instructions")
         text = format_skill_invocation(skill, str(extra) if extra else None)
-        return {"ok": True, "output": text, "skill": name}
+        prefix = f"installed {', '.join(installed)}.\n\n" if installed else ""
+        return {"ok": True, "output": prefix + text, "skill": skill.name, "installed": installed}
 
     def todo_write(args: dict[str, Any]) -> dict[str, Any]:
         items = args.get("todos") or args.get("items") or []
@@ -592,14 +624,18 @@ def make_coding_tools(
             "skill",
             Tool(
                 name="skill",
-                description="Load a named skill's full instructions into context.",
+                description="Load a named skill, or download one from npm/npx/GitHub into ~/.kite/skills.",
                 parameters={
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string"},
+                        "name": {"type": "string", "description": "Skill to load"},
                         "instructions": {"type": "string", "description": "Optional extra user instructions"},
+                        "install": {
+                            "type": "string",
+                            "description": "npm/npx package or GitHub owner/repo to download into ~/.kite/skills",
+                        },
                     },
-                    "required": ["name"],
+                    "required": [],
                 },
                 execute_fn=lambda a: gated("skill", a, load_skill),
             ),
