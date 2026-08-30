@@ -5,6 +5,7 @@ from __future__ import annotations
 from kite.agent.mode import AgentMode, ApprovalMode
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_SEP
+from kite.ui.theme import glyph
 from kite.models.reasoning import reasoning_badge
 
 _CONTEXT_BAR_WIDTH = 8
@@ -16,7 +17,7 @@ def context_meter(pct: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
         return ""
     clamped = max(0.0, min(1.0, pct))
     filled = int(round(clamped * width))
-    bar = "█" * filled + "░" * (width - filled)
+    bar = glyph("bar_fill") * filled + glyph("bar_empty") * (width - filled)
     return f"ctx {bar} {clamped:.0%}"
 
 

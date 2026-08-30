@@ -49,48 +49,66 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rich.console import Console
-from rich.theme import Theme
 
-KITE_THEME = Theme(
-    {
-        "kite.brand": "cyan",
-        "kite.thinking": "italic dim",
-        "kite.reasoning": "italic dim",  # alias — UI language is "thinking"
-        "kite.answer": "default",
-        "kite.assistant": "default",
-        "kite.user": "default",
-        "kite.success": "green",
-        "kite.pending": "yellow",
-        "kite.error": "bold red",
-        "kite.muted": "dim",
-        "kite.tool": "cyan",
-        "kite.diff.add": "green",
-        "kite.diff.del": "red",
-        "kite.diff.hunk": "cyan",
-        "kite.diff.meta": "dim",
-        "kite.plan": "yellow",
-        "kite.build": "green",
-    }
-)
+from kite.ui.theme import glyph, rich_theme, syntax_name
 
-SYMBOL_OK = "✓"
-SYMBOL_FAIL = "✗"
-SYMBOL_WARN = "⚠"
-SYMBOL_SPIN = "●"
-SYMBOL_TODO = "○"
-SYMBOL_COLLAPSE = "▸"
-SYMBOL_EXPAND = "▾"
-SYMBOL_PROMPT = "›"
-SYMBOL_USER = "›"
-SYMBOL_AGENT = "•"
-SYMBOL_COMPACT = "↻"
-SYMBOL_SEP = "·"
-SYMBOL_REASON = "…"
 
-CHANNEL_PREFIX = {
-    "thinking": SYMBOL_REASON + " ",
-    "answer": SYMBOL_AGENT + " ",
-}
+class _Glyph:
+    """Reads the active /font pack so f-strings stay live after /font."""
+
+    __slots__ = ("_key",)
+
+    def __init__(self, key: str) -> None:
+        self._key = key
+
+    def __str__(self) -> str:
+        return glyph(self._key)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __add__(self, other: object) -> str:
+        return str(self) + str(other)
+
+    def __radd__(self, other: object) -> str:
+        return str(other) + str(self)
+
+    def __eq__(self, other: object) -> bool:
+        return str(self) == other
+
+    def __hash__(self) -> int:
+        return hash(self._key)
+
+    def __format__(self, spec: str) -> str:
+        return format(str(self), spec)
+
+
+class _ChannelPrefix:
+    def get(self, channel: str, default: str = "  ") -> str:
+        if channel == "thinking":
+            return f"{glyph('reason')} "
+        if channel == "answer":
+            return f"{glyph('agent')} "
+        return default
+
+
+KITE_THEME = rich_theme("kite")
+
+SYMBOL_OK = _Glyph("ok")
+SYMBOL_FAIL = _Glyph("fail")
+SYMBOL_WARN = _Glyph("warn")
+SYMBOL_SPIN = _Glyph("spin")
+SYMBOL_TODO = _Glyph("todo")
+SYMBOL_COLLAPSE = _Glyph("collapse")
+SYMBOL_EXPAND = _Glyph("expand")
+SYMBOL_PROMPT = _Glyph("prompt")
+SYMBOL_USER = _Glyph("user")
+SYMBOL_AGENT = _Glyph("agent")
+SYMBOL_COMPACT = _Glyph("compact")
+SYMBOL_SEP = _Glyph("sep")
+SYMBOL_REASON = _Glyph("reason")
+
+CHANNEL_PREFIX = _ChannelPrefix()
 
 COLLAPSE_LINES = 4
 DIFF_PREVIEW_LINES = 40
@@ -111,28 +129,19 @@ BUILD = ModeChrome(name="build", style="kite.build", label="build")
 
 
 def make_console(*, stderr: bool = False, quiet: bool = False) -> Console:
+    from kite.ui.theme import ensure_prefs
+
+    ensure_prefs()
     return Console(
         stderr=stderr,
         quiet=quiet,
-        theme=KITE_THEME,
+        theme=rich_theme(),
         highlight=False,
         soft_wrap=False,
     )
 
 
 def syntax_theme(console: Console) -> str:
-    """Respect the terminal: light backgrounds get ansi_light."""
     if console.color_system is None:
         return "ansi_dark"
-    # Rich cannot reliably know bg; prefer env, else dark (most terminals).
-    import os
-
-    colorfgbg = os.environ.get("COLORFGBG", "")
-    if ";" in colorfgbg:
-        try:
-            bg = int(colorfgbg.split(";")[-1])
-            if bg >= 8:  # light-ish xterm bg index
-                return "ansi_light"
-        except ValueError:
-            pass
-    return "ansi_dark"
+    return syntax_name()

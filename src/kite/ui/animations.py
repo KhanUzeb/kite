@@ -70,6 +70,10 @@ def default_loader_style() -> LoaderStyle:
 
 
 def loader_glyph(style: str, tick: int) -> str:
+    from kite.ui.theme import current_font
+
+    if current_font() == "ascii":
+        return "|/-\\"[tick % 4]
     fn = _LOADER.get(style, _frame_grid)
     return fn(tick)
 

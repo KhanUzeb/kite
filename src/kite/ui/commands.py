@@ -32,6 +32,8 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("home", "Show ~/.kite paths", group="session"),
     BuiltinCommand("help", "This map", aliases=("h",), group="session"),
     BuiltinCommand("quit", "Leave the REPL", aliases=("q", "exit"), group="session"),
+    BuiltinCommand("theme", "Color palette", hint="auto|kite|dark|light|dim|mono", group="session"),
+    BuiltinCommand("font", "Glyphs for this terminal", hint="unicode|ascii", group="session"),
     BuiltinCommand("model", "Show or set provider/model", hint="provider/id", group="model"),
     BuiltinCommand("models", "List live models for the current provider", group="model"),
     BuiltinCommand("provider", "Show or set provider", hint="name", group="model"),
@@ -43,7 +45,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("episodic", "Show sqlite episode log", group="memory"),
     BuiltinCommand("remember", "Append a semantic note", hint="[user|project] text", group="memory"),
     BuiltinCommand("forget", "Drop matching notes or episodes", hint="id|substring", group="memory"),
-    BuiltinCommand("skills", "List skills, or show one", hint="name", group="extensions"),
+    BuiltinCommand("skills", "List, show, or install a skill", hint="[add pkg]|name", group="extensions"),
     BuiltinCommand("skill", "Run a skill as this turn", hint="name [args]", group="extensions"),
     BuiltinCommand("commands", "List markdown slash prompts", hint="new name", aliases=("cmd", "cmds"), group="extensions"),
     BuiltinCommand("plugins", "List plugins, or scaffold one", hint="init name", aliases=("plugin",), group="extensions"),
@@ -75,6 +77,18 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "mode": [
         ("plan", "read-only checklist"),
         ("build", "apply edits"),
+    ],
+    "theme": [
+        ("auto", "follow the terminal"),
+        ("kite", "cyan brand on dark"),
+        ("dark", "cyan brand, dark composer"),
+        ("light", "blue brand on light terminals"),
+        ("dim", "low-contrast"),
+        ("mono", "no color, bold errors only"),
+    ],
+    "font": [
+        ("unicode", "✓ ⚠ › — default"),
+        ("ascii", "+ ! > — plain ASCII"),
     ],
 }
 
