@@ -402,6 +402,12 @@ class RunDisplay:
             self._end_stream_line()
             self._spin(False)
             status = str(p.get("status") or "unknown")
+            if status == "idle" or (
+                status == "unverified"
+                and not p.get("artifact_count")
+                and not p.get("diff_count")
+            ):
+                return
             style = "kite.success" if status == "verified" else ("kite.pending" if status == "partial" else "kite.error")
             line = Text()
             line.append(f"{SYMBOL_OK if status == 'verified' else SYMBOL_WARN} ", style=style)
@@ -529,7 +535,9 @@ class RunDisplay:
                     self._stream_write(submission, channel="answer")
                     self._end_stream_line()
                 vstatus = p.get("verification_status")
-                if vstatus in {"unverified", "failed", "partial"}:
+                vsum = p.get("verification") if isinstance(p.get("verification"), dict) else {}
+                had_work = bool(vsum.get("artifact_count") or vsum.get("diff_count") or vsum.get("gaps"))
+                if vstatus in {"failed", "partial"} or (vstatus == "unverified" and had_work):
                     self.console.print(
                         Text(
                             f"{SYMBOL_WARN} couldn't fully verify — status: {vstatus}. Check the artifacts above.",

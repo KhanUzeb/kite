@@ -26,3 +26,10 @@ def test_failed_test_marks_gap() -> None:
     )
     assert vc.status() == "failed"
     assert vc.gaps
+
+
+def test_empty_run_is_idle() -> None:
+    vc = VerificationCollector()
+    assert vc.status() == "idle"
+    assert vc.has_work() is False
+    assert vc.summary()["status"] == "idle"
