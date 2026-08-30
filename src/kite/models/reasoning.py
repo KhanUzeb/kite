@@ -32,6 +32,7 @@ _REASONING_PARAMS = frozenset(
 
 # Effort order as advertised by OpenRouter / OpenAI-style APIs.
 _EFFORT_RANK = ("none", "disable", "disabled", "minimal", "min", "low", "medium", "high", "xhigh", "max")
+_OFF_EFFORTS = frozenset({"none", "disable", "disabled"})
 
 _cache: dict[tuple[str, str], "ReasoningSupport"] = {}
 
@@ -57,6 +58,10 @@ class ReasoningSupport:
     include_reasoning: bool = False
 
     @property
+    def can_both(self) -> bool:
+        return bool(self.can_thinking and self.can_fast)
+
+    @property
     def label(self) -> str:
         if not self.supported:
             return ""
@@ -67,24 +72,95 @@ class ReasoningSupport:
             bits.append("fast")
         return "/".join(bits) or "reasoning"
 
+    def usable_efforts(self) -> tuple[str, ...]:
+        return tuple(e for e in self.efforts if e.lower() not in _OFF_EFFORTS)
+
+    def thinking_levels(self) -> tuple[str, ...]:
+        return self.levels_for("thinking")
+
+    def fast_levels(self) -> tuple[str, ...]:
+        return self.levels_for("fast")
+
+    def levels_for(self, mode: str) -> tuple[str, ...]:
+        if mode == "thinking" and self.can_thinking:
+            return _split_levels(self.usable_efforts(), high=True)
+        if mode == "fast" and self.can_fast:
+            return _split_levels(self.usable_efforts(), high=False)
+        return ()
+
+    def default_effort(self, mode: str) -> str:
+        levels = self.levels_for(mode)
+        if not levels:
+            return ""
+        if mode == "thinking":
+            return levels[-1]
+        return levels[0]
+
+    def kwargs_for(self, mode: ReasoningMode, effort: str = "") -> dict[str, Any]:
+        if mode == "thinking":
+            if not self.can_thinking:
+                return {}
+            base = dict(self.thinking_kwargs)
+        elif mode == "fast":
+            if not self.can_fast:
+                return {}
+            base = dict(self.fast_kwargs)
+        elif mode == "off":
+            return dict(self.off_kwargs) if self.can_disable else {}
+        else:
+            return {}
+        if effort and effort.lower() not in {"", "on"}:
+            return _overlay_effort(base, effort)
+        return base
+
+
+_MODE_ALIASES = {
+    "think": "thinking",
+    "reason": "thinking",
+    "none": "off",
+    "disable": "off",
+    "disabled": "off",
+}
+
+_THINKING_EFFORTS = frozenset({"medium", "high", "xhigh", "max"})
+_FAST_EFFORTS = frozenset({"minimal", "min", "low"})
+
 
 def parse_mode(raw: str | None) -> ReasoningMode:
+    mode, _effort = split_reasoning(raw)
+    return mode
+
+
+def split_reasoning(raw: str | None) -> tuple[ReasoningMode, str]:
+    """`thinking:high` → ('thinking', 'high'). Bare `high` is thinking at that level."""
     text = (raw or "auto").strip().lower()
-    aliases = {
-        "think": "thinking",
-        "reason": "thinking",
-        "high": "thinking",
-        "low": "fast",
-        "minimal": "fast",
-        "min": "fast",
-        "none": "off",
-        "disable": "off",
-        "disabled": "off",
-    }
-    text = aliases.get(text, text)
-    if text in MODES:
-        return text  # type: ignore[return-value]
-    return "auto"
+    mode_s, sep, effort = text.partition(":")
+    effort = effort.strip()
+    if not sep:
+        mode_s, effort = text, ""
+    mode_s = _MODE_ALIASES.get(mode_s, mode_s)
+    if mode_s in MODES:
+        return mode_s, effort  # type: ignore[return-value]
+    if mode_s in _THINKING_EFFORTS:
+        return "thinking", mode_s
+    if mode_s in _FAST_EFFORTS:
+        return "fast", mode_s
+    return "auto", ""
+
+
+def encode_reasoning(mode: str, effort: str = "") -> str:
+    if mode in {"thinking", "fast"} and effort and effort.lower() not in {"", "on"}:
+        return f"{mode}:{effort}"
+    return mode or "auto"
+
+
+def reasoning_badge(raw: str | None) -> str:
+    mode, effort = split_reasoning(raw)
+    if mode == "auto":
+        return ""
+    if effort and effort.lower() != "on":
+        return f"{mode} {effort}"
+    return mode
 
 
 def _norm_params(values: Any) -> set[str]:
@@ -107,13 +183,42 @@ def _effort_rank(name: str) -> int:
         return len(_EFFORT_RANK) // 2
 
 
+def _split_levels(usable: tuple[str, ...], *, high: bool) -> tuple[str, ...]:
+    if not usable:
+        return ("on",)
+    ordered = tuple(sorted(usable, key=_effort_rank))
+    if high:
+        picked = tuple(e for e in ordered if _effort_rank(e) >= _effort_rank("medium"))
+        return picked or (ordered[-1],)
+    picked = tuple(e for e in ordered if _effort_rank(e) <= _effort_rank("low"))
+    return picked or (ordered[0],)
+
+
 def _pick_efforts(supported: list[str]) -> tuple[str | None, str | None]:
     """thinking = highest advertised effort, fast = lowest (excluding off)."""
-    usable = [e for e in supported if e.lower() not in {"none", "disable", "disabled"}]
+    usable = [e for e in supported if e.lower() not in _OFF_EFFORTS]
     if not usable:
         return None, None
     ordered = sorted(usable, key=_effort_rank)
     return ordered[-1], ordered[0]
+
+
+def _put_extra(blob: dict[str, Any], key: str, value: Any) -> None:
+    extra = dict(blob.get("extra_body") or {})
+    extra[key] = value
+    blob["extra_body"] = extra
+
+
+def _overlay_effort(blob: dict[str, Any], effort: str) -> dict[str, Any]:
+    out = dict(blob)
+    if "reasoning_effort" in out:
+        out["reasoning_effort"] = effort
+    extra = dict(out.get("extra_body") or {})
+    reasoning = extra.get("reasoning")
+    if isinstance(reasoning, dict):
+        extra["reasoning"] = {**reasoning, "effort": effort}
+        out["extra_body"] = extra
+    return out
 
 
 def _params_from_remote(raw: dict[str, Any]) -> tuple[set[str], list[str], bool]:
@@ -141,25 +246,22 @@ def _params_from_litellm(provider: str, model: str, litellm_model: str) -> set[s
     `include_reasoning` — NVIDIA NIM rejects both even when LiteLLM says
     the model supports reasoning.
     """
-    found: set[str] = set()
     try:
         import litellm
     except Exception:
-        return found
+        return set()
     mid = litellm_model or model
-    try:
-        extra: dict[str, Any] = {}
-        if provider:
-            extra["custom_llm_provider"] = provider
-        params = litellm.get_supported_openai_params(model=mid, **extra)
-        found |= _norm_params(params) & (_REASONING_PARAMS | {"reasoning_effort", "thinking"})
-    except Exception:
+    attempts: list[dict[str, Any]] = []
+    if provider:
+        attempts.append({"custom_llm_provider": provider})
+    attempts.append({})
+    for kwargs in attempts:
         try:
-            params = litellm.get_supported_openai_params(model=mid)
-            found |= _norm_params(params) & (_REASONING_PARAMS | {"reasoning_effort", "thinking"})
+            params = litellm.get_supported_openai_params(model=mid, **kwargs)
+            return _norm_params(params) & _REASONING_PARAMS
         except Exception:
-            pass
-    return found
+            continue
+    return set()
 
 
 def _kwargs_from_params(
@@ -190,16 +292,10 @@ def _kwargs_from_params(
         can_off = can_off or (not mandatory)
         # extra_body.reasoning is OpenRouter-style; NIM/Groq/Ollama reject it.
         if provider not in _NO_INCLUDE_REASONING:
-            extra_t = dict(thinking.get("extra_body") or {})
-            extra_f = dict(fast.get("extra_body") or {})
-            extra_o = dict(off.get("extra_body") or {})
-            extra_t["reasoning"] = {"effort": high or "high"}
-            extra_f["reasoning"] = {"effort": low or "low", "exclude": True}
-            thinking["extra_body"] = extra_t
-            fast["extra_body"] = extra_f
+            _put_extra(thinking, "reasoning", {"effort": high or "high"})
+            _put_extra(fast, "reasoning", {"effort": low or "low", "exclude": True})
             if not mandatory:
-                extra_o["reasoning"] = {"enabled": False}
-                off["extra_body"] = extra_o
+                _put_extra(off, "reasoning", {"enabled": False})
             if provider == "openrouter":
                 thinking.setdefault("reasoning_effort", high or "high")
                 fast.setdefault("reasoning_effort", low or "low")
@@ -209,15 +305,12 @@ def _kwargs_from_params(
         fast["thinking"] = {"type": "disabled"}
         if not mandatory:
             off["thinking"] = {"type": "disabled"}
-        can_t = True
-        can_f = True
+        can_t = can_f = True
         can_off = can_off or (not mandatory)
 
     if "include_reasoning" in params:
         for blob in (thinking, fast):
-            extra = dict(blob.get("extra_body") or {})
-            extra["include_reasoning"] = True
-            blob["extra_body"] = extra
+            _put_extra(blob, "include_reasoning", True)
 
     return thinking, fast, off, can_t, can_f, can_off
 
@@ -229,6 +322,12 @@ def _wants_include_reasoning(provider: str, params: set[str], *, can_reason: boo
     if "include_reasoning" in params:
         return True
     return bool(can_reason and provider in _INCLUDE_REASONING_PROVIDERS)
+
+
+def _unsupported(key: tuple[str, str]) -> ReasoningSupport:
+    support = ReasoningSupport(False, False, False, False, source="none")
+    _cache[key] = support
+    return support
 
 
 def detect_reasoning(
@@ -288,18 +387,14 @@ def detect_reasoning(
     if provider in _NO_INCLUDE_REASONING:
         params.discard("include_reasoning")
 
-    if not (params & _REASONING_PARAMS) and "reasoning" not in params:
-        support = ReasoningSupport(False, False, False, False, source="none")
-        _cache[key] = support
-        return support
+    if not (params & _REASONING_PARAMS):
+        return _unsupported(key)
 
     thinking, fast, off, can_t, can_f, can_off = _kwargs_from_params(
         params, efforts=efforts, mandatory=mandatory, provider=provider
     )
     if not (can_t or can_f):
-        support = ReasoningSupport(False, False, False, False, source="none")
-        _cache[key] = support
-        return support
+        return _unsupported(key)
 
     support = ReasoningSupport(
         supported=True,
@@ -322,6 +417,7 @@ def apply_reasoning(
     support: ReasoningSupport,
     mode: ReasoningMode,
     *,
+    effort: str = "",
     drop_reasoning: bool = False,
 ) -> dict[str, Any]:
     """Merge thinking/fast params into LiteLLM completion kwargs. `auto` sends nothing.
@@ -333,12 +429,7 @@ def apply_reasoning(
     out = dict(kwargs)
     extra: dict[str, Any] = {}
     if not drop_reasoning and mode != "auto" and support.supported:
-        if mode == "thinking" and support.can_thinking:
-            extra = dict(support.thinking_kwargs)
-        elif mode == "fast" and support.can_fast:
-            extra = dict(support.fast_kwargs)
-        elif mode == "off" and support.can_disable:
-            extra = dict(support.off_kwargs)
+        extra = support.kwargs_for(mode, effort)
     body = dict(out.get("extra_body") or {})
     extra_body = extra.pop("extra_body", None) if extra else None
     if extra:
