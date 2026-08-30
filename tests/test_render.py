@@ -44,6 +44,24 @@ def test_idle_verification_is_silent() -> None:
     assert "couldn't fully verify" not in out
 
 
+def test_edit_tool_end_shows_diff_stat() -> None:
+    buf, display = _display()
+    display(
+        Event(
+            "tool_end",
+            payload={
+                "tool": "edit",
+                "ok": True,
+                "diff": "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1,2 @@\n-old\n+new\n+extra\n",
+                "duration_ms": 400,
+            },
+        )
+    )
+    out = buf.getvalue()
+    assert "edit" in out
+    assert "+2,-1" in out
+
+
 def test_failed_verification_still_warns() -> None:
     buf, display = _display()
     display(

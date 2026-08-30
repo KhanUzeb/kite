@@ -125,6 +125,60 @@ def preview_mutating_diff(
     return ""
 
 
+def count_diff_lines(diff: str) -> tuple[int, int]:
+    """Count added/deleted lines the way `git diff --numstat` does."""
+    added = deleted = 0
+    for line in diff.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            deleted += 1
+    return added, deleted
+
+
+def diff_path(diff: str) -> str:
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            return line[6:].strip()
+        if line.startswith("+++ "):
+            return line[4:].lstrip("b/").strip()
+    return ""
+
+
+def render_diff_stat(
+    added: int,
+    deleted: int,
+    *,
+    path: str = "",
+    bar: bool = True,
+) -> Text:
+    """GitHub-style `+125,-21` with optional `++++----` histogram."""
+    t = Text()
+    if path:
+        t.append(path.replace("\\", "/"), style="kite.muted")
+        t.append("  ", style="")
+    t.append(f"+{added}", style="kite.diff.add")
+    t.append(",", style="kite.muted")
+    t.append(f"-{deleted}", style="kite.diff.del")
+    total = added + deleted
+    if bar and total:
+        width = min(24, max(6, total if total < 24 else 24))
+        pluses = round(width * added / total) if added else 0
+        minuses = width - pluses
+        if added and pluses == 0:
+            pluses, minuses = 1, max(0, minuses - 1)
+        if deleted and minuses == 0:
+            minuses, pluses = 1, max(0, pluses - 1)
+        t.append("  ")
+        if pluses:
+            t.append("+" * pluses, style="kite.diff.add")
+        if minuses:
+            t.append("-" * minuses, style="kite.diff.del")
+    return t
+
+
 def render_diff(
     diff: str,
     *,
@@ -139,6 +193,11 @@ def render_diff(
     lines = diff.splitlines()
     shown = lines if not collapsed else lines[:DIFF_PREVIEW_LINES]
     body = Text()
+    added, deleted = count_diff_lines(diff)
+    if added or deleted:
+        body.append(GUTTER + GUTTER)
+        body.append_text(render_diff_stat(added, deleted, path=diff_path(diff)))
+        body.append("\n")
     for line in shown:
         style = "kite.diff.meta"
         if line.startswith("+++") or line.startswith("---"):
@@ -192,11 +251,14 @@ def syntax_block(code: str, path: str, console) -> Syntax:
 
 __all__ = [
     "make_unified_diff",
+    "count_diff_lines",
+    "diff_path",
     "preview_mutating_diff",
     "preview_patch_diff",
     "preview_write_diff",
     "file_contains",
     "render_diff",
+    "render_diff_stat",
     "guess_lexer",
     "syntax_block",
 ]

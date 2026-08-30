@@ -17,7 +17,7 @@ from rich.text import Text
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode
 from kite.ui.chips import render_plan_tasks, render_tool_chip, render_tool_chip_done
-from kite.ui.diff import render_diff
+from kite.ui.diff import count_diff_lines, render_diff
 from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState
 from kite.ui.status import approval_style, mode_style, status_context_parts
@@ -374,11 +374,23 @@ class RunDisplay:
             structured = p.get("structured") if isinstance(p.get("structured"), dict) else {}
             exit_code = structured.get("exit_code", p.get("exit_code"))
             meta = _tool_meta(p.get("duration_ms"), exit_code)
+            diff = p.get("diff")
+            added = deleted = None
+            if isinstance(diff, str) and diff.strip():
+                counted = count_diff_lines(diff)
+                if counted[0] or counted[1]:
+                    added, deleted = counted
             self.console.print(
-                render_tool_chip_done(tool, ok=ok, warn=blocked, meta=meta)
+                render_tool_chip_done(
+                    tool,
+                    ok=ok,
+                    warn=blocked,
+                    meta=meta,
+                    added=added,
+                    deleted=deleted,
+                )
             )
 
-            diff = p.get("diff")
             if isinstance(diff, str) and diff.strip():
                 self.console.print(
                     render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all))

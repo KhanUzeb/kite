@@ -20,6 +20,13 @@ def test_tool_chip_done_warn() -> None:
     assert "bash" in text.plain
 
 
+def test_tool_chip_done_shows_diff_stat() -> None:
+    text = render_tool_chip_done("edit", ok=True, meta="0.4s", added=125, deleted=21)
+    assert "+125,-21" in text.plain
+    assert "edit" in text.plain
+
+
+
 def test_plan_tasks_shows_progress_and_badges() -> None:
     todos = [
         TodoItem("1", "write tests", "completed"),

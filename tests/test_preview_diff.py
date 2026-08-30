@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kite.ui.diff import preview_mutating_diff, preview_patch_diff
+from kite.ui.diff import (
+    count_diff_lines,
+    make_unified_diff,
+    preview_mutating_diff,
+    preview_patch_diff,
+    render_diff,
+    render_diff_stat,
+)
 
 
 def test_preview_patch_diff_from_args_only() -> None:
@@ -54,3 +61,34 @@ def test_preview_write_large_file_uses_size_hint(tmp_path, monkeypatch) -> None:
     )
     assert "replaces entire file" in diff
     assert "+hello" in diff
+
+
+def test_count_diff_lines_skips_headers() -> None:
+    diff = make_unified_diff("src/foo.py", "a\nb\nc\n", "a\nB\nc\nD\n")
+    added, deleted = count_diff_lines(diff)
+    assert added == 2
+    assert deleted == 1
+
+
+def test_render_diff_stat_is_color_coded() -> None:
+    text = render_diff_stat(125, 21, bar=False)
+    assert text.plain == "+125,-21"
+    styles = [span.style for span in text.spans]
+    assert "kite.diff.add" in styles
+    assert "kite.diff.del" in styles
+
+
+def test_render_diff_leads_with_stat() -> None:
+    diff = (
+        "--- a/src/foo.py\n"
+        "+++ b/src/foo.py\n"
+        "@@ -1,3 +1,3 @@\n"
+        " keep\n"
+        "-old\n"
+        "+new\n"
+        "+extra\n"
+    )
+    plain = render_diff(diff).plain
+    assert "+2,-1" in plain
+    assert "src/foo.py" in plain
+    assert "+new" in plain

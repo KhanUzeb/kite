@@ -14,6 +14,7 @@ from rich.text import Text
 
 from kite.config import kite_home
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
+from kite.ui.diff import count_diff_lines, diff_path, render_diff_stat
 from kite.ui.style import GUTTER, SYMBOL_WARN
 
 Decision = Literal["allow", "session", "always", "deny", "stop"]
@@ -150,6 +151,11 @@ def render_approval_panel(tool: str, arguments: dict[str, Any], *, diff: str = "
             if arguments.get(key):
                 body.append(f"{GUTTER}{key}={arguments[key]}\n")
         if diff:
+            added, deleted = count_diff_lines(diff)
+            if added or deleted:
+                body.append(GUTTER)
+                body.append_text(render_diff_stat(added, deleted, path=diff_path(diff)))
+                body.append("\n")
             preview = "\n".join(diff.splitlines()[:80])
             body.append("\n")
             for line in preview.splitlines():
