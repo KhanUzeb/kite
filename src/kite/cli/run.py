@@ -37,11 +37,6 @@ def _console() -> Console:
     return make_console(stderr=True)
 
 
-def _event_printer(console: Console, *, quiet: bool, verbose: bool):
-    """Backward-compatible name — delegates to the streaming RunDisplay. """
-    return make_run_display(console, quiet=quiet, verbose=verbose)
-
-
 def _parse_mode(raw: str | None) -> AgentMode:
     try:
         return AgentMode((raw or "build").lower())
