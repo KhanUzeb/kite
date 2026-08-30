@@ -172,7 +172,7 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 
 ## 4. Agent tools (model-called, not typed by you)
 
-Plan mode: `read` `grep` `glob` `ls` `task` `webfetch` `skill` `memory` `todo_read` `todo_write`.
+Plan mode: `read` `grep` `glob` `ls` `task` `webfetch` `websearch` `webcrawl` `skill` `memory` `todo_read` `todo_write`.
 
 Build mode adds: `write` `edit` `bash`.
 

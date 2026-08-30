@@ -21,7 +21,7 @@ class ApprovalMode(str, Enum):
 # Cheap, read-only tools — unrestricted in both modes.
 # Cheap, read-only tools — unrestricted in both modes.
 READONLY_TOOLS = frozenset(
-    {"read", "grep", "glob", "ls", "skill", "todo_read", "webfetch", "websearch", "memory"}
+    {"read", "grep", "glob", "ls", "skill", "todo_read", "webfetch", "websearch", "webcrawl", "memory"}
 )
 
 # Mutating / side-effecting — gated, and blocked entirely in plan mode.

@@ -1,6 +1,6 @@
 # Kite — System Design, Code Atlas & Engineering Notes
 
-**Version:** 0.4.0  
+**Version:** 0.5.0  
 **Stack:** Python 3.12 · LiteLLM · Rich · uv  
 **Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)  
 **Companion UX spec:** [cli-ux.md](cli-ux.md) (PDF: `docs/cli-ux.pdf`)  
@@ -19,7 +19,7 @@ Kite is a **slim coding-agent harness**: a mini-swe-agent–style sync loop (que
 ### Goals
 - Hackable in one sitting; every layer readable alone
 - Multi-provider models via a **config catalog** (not hardcoded SDKs)
-- Real coding tools (`read` / `write` / `edit` / `bash` / `grep` / `glob` / `ls` / `todo_*` / `task` / `webfetch` / `skill`)
+- Real coding tools (`read` / `write` / `edit` / `bash` / `grep` / `glob` / `ls` / `todo_*` / `task` / `webfetch` / `websearch` / `webcrawl` / `skill`)
 - Context engineering: KITE.md + AGENTS.md, git status, tree sketch, token estimate, compaction
 - Durable sessions + trajectories for debug / resume
 - Guardrails that fail closed on path escape & destructive bash
@@ -95,7 +95,8 @@ Kite is a **slim coding-agent harness**: a mini-swe-agent–style sync loop (que
 ┌───────────────────────────┐   ┌─────────────────────────────────┐
 │ LitellmModel              │   │ LocalEnvironment + ToolRegistry │
 │ streaming + should_stop   │   │ read write edit bash grep glob  │
-│ tool_calls → actions[]    │   │ ls todo task webfetch skill     │
+│ tool_calls → actions[]    │   │ ls todo task webfetch websearch │
+│                           │   │ webcrawl skill memory           │
 └───────────────────────────┘   └─────────────────────────────────┘
 ```
 
@@ -241,6 +242,8 @@ DefaultAgent.run
 - `todo_write` / `todo_read` — live plan checklist (auditable tool, not client-only UI state)
 - `task` — bounded glob+grep investigation, returns a summary
 - `webfetch` — http(s) fetch, size-capped
+- `websearch` — free DuckDuckGo search (no API key)
+- `webcrawl` — follow links on a site, extract text (stdlib, no API key)
 - `skill` — inject full SKILL.md
 - `memory` — list / remember / forget durable notes (`~/.kite/memory` or `.kite/memory`)
 
