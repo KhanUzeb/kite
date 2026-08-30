@@ -1,4 +1,4 @@
-# Ideal CLI spec coverage (Kite 0.6.6)
+# Ideal CLI spec coverage (Kite 0.6.7)
 
 How Kite maps onto the 14-category Ideal Coding CLI spec.
 
