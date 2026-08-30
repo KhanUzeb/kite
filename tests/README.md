@@ -23,7 +23,10 @@ pytest
 | `test_status.py` | context meter, footer tail |
 | `test_chips.py` | tool chips, task row badges |
 | `test_animations.py` | loader glyphs, elapsed format |
-| `test_render.py` | warning event rendering |
+| `test_render.py` | warning events, git-stat `+N,-M` on edit |
+| `test_preview_diff.py` | approval previews, `+125,-21` counts |
+| `test_skill_install.py` | npm/npx/git spec parse, user-skill `~` mark |
+| `test_theme.py` | `/theme` palettes, `/font` glyphs |
 | `test_config.py` | default runtime TOML load |
 
 Fixtures in `conftest.py`: isolated `KITE_HOME`, sample workspace with `src/`.

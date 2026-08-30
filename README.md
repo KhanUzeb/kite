@@ -2,7 +2,7 @@
 
 Slim hybrid coding-agent harness: **mini-swe-agent** control flow + **tau**-style tools, providers, context, sessions, skills, and guardrails.
 
-**Version:** 0.6.5
+**Version:** 0.6.6
 
 ## Setup
 
@@ -26,7 +26,7 @@ kite runtime-config
 ## Tests
 
 ```bash
-pytest                    # 32 tests — guardrails, agent, sessions, UI helpers
+pytest                    # guardrails, agent, sessions, git-stat diffs, skills, UI helpers
 pytest -v                 # verbose
 ```
 
@@ -55,7 +55,7 @@ kite resume <session-id>
 kite resume <session-id> "also update the README"
 ```
 
-In the REPL: `/plan` `/build` `/undo` `/expand` `/collapse` `/thinking` `/fast` `/effort` `/attach` `/clip` `/skills` `/commit` `/explain` `/commands` `/plugins` `/memory` `/help`. Type `/` for the command menu. Ctrl+C stops the current turn.
+In the REPL: `/plan` `/build` `/undo` `/expand` `/collapse` `/thinking` `/fast` `/effort` `/theme` `/font` `/attach` `/clip` `/skills` `/skills add` `/commit` `/explain` `/commands` `/plugins` `/memory` `/help`. Type `/` for the command menu. User skills show `~`. Ctrl+C stops the current turn.
 
 Approval modes: `auto` · `approve` · `trust` · `readonly`. Set `KITE_LOADER=grid|dots|orbit|wave|spin` for terminal loader style.
 
@@ -69,6 +69,7 @@ kite sessions --show <session-id>
 kite sessions --delete <session-id>
 kite sessions --delete-all -y
 kite skills --show commit
+kite skills --add @scope/pkg
 kite commands
 kite plugins
 kite memory
@@ -106,7 +107,7 @@ Canonical markdown:
 - `docs/cli-ux.md` — plan/build TUI, style guide, render loop
 - `kite_commands.md` — CLI, REPL slashes, skills, plugins, tools
 
-Generated PDFs (gitignored): `docs/kite-system-design.pdf`, `docs/cli-ux.pdf`
+Generated PDFs (gitignored): `docs/kite-system-design.pdf`, `docs/cli-ux.pdf`, `docs/ideal-cli-spec.pdf`, `docs/kite_commands.pdf`
 
 ```bash
 uv pip install fpdf2

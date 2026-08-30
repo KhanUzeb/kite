@@ -1,7 +1,7 @@
 # Kite CLI UX
 
 **Agent:** kite  
-**Version:** 0.6.5  
+**Version:** 0.6.6  
 **Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)  
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
@@ -61,10 +61,11 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 │                                                                  │
 │  ▸ edit  path=src/auth.py                                        │
 │  ⚠  approve edit                                                 │
+│      src/auth.py  +125,-21  +++++++++++++++++++++-----               │
 │      --- a/src/auth.py                                           │
 │      +++ b/src/auth.py                                           │
 │      [a] once  [s] session  [p] always  [n] deny  [q] stop       │
-│  ✓ edit                                                          │
+│  ✓ edit  +125,-21                                                │
 │                                                                  │
 │  ↻  48 → 12              ← compaction boundary                      │
 └──────────────────────────────────────────────────────────────────┘
@@ -125,6 +126,8 @@ Thinking and answer never share a block. The model id is not reprinted as a spee
 | pending | yellow | approval, in-progress, effort badge |
 | error | red | blocked, fail, interrupt |
 | muted | dim | collapsed output, meta |
+| kite.diff.add | green | insertions, `+125` |
+| kite.diff.del | red | deletions, `-21` |
 
 **Symbols (never color alone)**
 
@@ -134,7 +137,7 @@ Thinking and answer never share a block. The model id is not reprinted as a spee
 
 - 2-space gutter; subsequent lines of a cell align under the glyph
 - Tool output collapsed to 4 lines (`COLLAPSE_LINES`); `/expand` toggles, `/collapse` resets
-- Diffs: first 40 lines, then `▸ +N lines  /expand`
+- Diffs: `+125,-21` (green/red) then a `++++----` bar, then the first 40 hunk lines (`▸ +N lines  /expand`)
 - Footer: one line, `·` separators, includes effort when not `auto`
 - No panels around you / result / help
 
@@ -147,7 +150,7 @@ Implemented in `src/kite/ui/render.py` (`RunDisplay.__call__`):
 1. Spinner says **thinking** until tokens arrive (~1s). Tool calls switch it to **working**.
 2. `stream_reasoning` writes the `…` cell (italic dim). `stream_delta` writes the `•` cell (normal). They never mix.
 3. `tool_start` prints `▸ tool  key=value  [reason]`. Output is not shown yet.
-4. `tool_end` prints `✓/✗/⚠`, then a collapsed body or a colored unified diff (never a full-file reprint).
+4. `tool_end` prints `✓/✗/⚠` plus git-stat `+125,-21` (green/red) on write/edit, then a collapsed body or a colored unified diff (never a full-file reprint).
 5. Mutating tools hit `ApprovalPolicy` (`once / session / always this pattern`) with the **exact** command or diff — compact, not a rainbow panel.
 6. `todo_write` rewrites the plan checklist in place. Completing a todo (or ending the turn) flushes one `kite:` commit of that step's files.
 7. Compaction prints `↻  before → after` as a boundary, then continues.
@@ -164,7 +167,7 @@ Interrupt: **Ctrl+C** stops the current turn without killing the process; type a
 - Silent commands with no spinner after ~1s
 - Mixing thinking tokens into the answer cell
 - Shouting `REASONING` / `ANSWER` labels or boxing the user turn
-- Applying edits without showing a unified diff first
+- Applying edits without a unified diff and `+N,-M` counts first
 - Burying "what changed" under a huge log
 - Approval prompts that truncate or vague-out the command
 
