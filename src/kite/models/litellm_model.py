@@ -9,7 +9,7 @@ from typing import Any
 
 from kite.agent.events import Event
 from kite.agent.exceptions import FormatError
-from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, parse_mode
+from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, split_reasoning
 from kite.models.cache import PromptCacheManager, parse_cache_usage
 from kite.providers.resolve import ResolvedModel
 from kite.tools import ToolRegistry
@@ -94,7 +94,7 @@ class LitellmModel:
         self.max_retries = max_retries
         self.on_event = on_event
         self.stream = stream
-        self.reasoning_mode = parse_mode(reasoning)
+        self.reasoning_mode, self.reasoning_effort = split_reasoning(reasoning)
         self.reasoning_support = detect_reasoning(
             resolved.provider,
             resolved.model,
@@ -149,6 +149,7 @@ class LitellmModel:
             kwargs,
             self.reasoning_support,
             self.reasoning_mode,
+            effort=self.reasoning_effort,
             drop_reasoning=self._drop_reasoning,
         )
 

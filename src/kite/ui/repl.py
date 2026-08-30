@@ -131,38 +131,63 @@ class ChatSession:
             return []
         return self._model_cache
 
-    def _reasoning_ok(self) -> bool:
+    def _reasoning_info(self):
         from kite.models.reasoning import detect_reasoning
 
         provider = self.provider or self.state.provider
         model = self.model or self.state.model
         if not provider or not model:
-            return False
-        return detect_reasoning(provider, model).supported
+            return None
+        try:
+            return detect_reasoning(provider, model)
+        except Exception:
+            return None
 
-    def _set_reasoning(self, raw: str) -> None:
-        from kite.models.reasoning import detect_reasoning, parse_mode
+    def _set_reasoning(self, raw: str, *, command: str = "") -> None:
+        from kite.models.reasoning import encode_reasoning, reasoning_badge, split_reasoning
 
-        mode = parse_mode(raw)
-        provider = self.provider or self.state.provider
-        model = self.model or self.state.model
-        if mode != "auto" and provider and model:
-            try:
-                info = detect_reasoning(provider, model)
-            except Exception:
-                info = None
-            if info is not None and mode != "off":
-                if not info.supported:
-                    self.console.print("[kite.muted]this model does not advertise thinking/fast[/]")
+        info = self._reasoning_info()
+        if command in {"thinking", "fast"}:
+            if info is None or not info.can_both:
+                self.console.print("[kite.muted]this API does not advertise both thinking and fast[/]")
+                return
+            token = raw.strip().lower()
+            if token == command:
+                token = ""
+            match = self._match_effort(info, command, token)
+            if match is None:
+                return
+            self.state.reasoning = encode_reasoning(command, match)
+            self.console.print(f"[kite.muted]effort[/]  {reasoning_badge(self.state.reasoning)}")
+            return
+
+        mode, effort = split_reasoning(raw)
+        if mode not in {"auto", "off"} and info is not None:
+            if not info.supported:
+                self.console.print("[kite.muted]this model does not advertise thinking/fast[/]")
+                return
+            if mode == "thinking" and not info.can_thinking:
+                self.console.print("[kite.muted]no extended thinking on this model[/]")
+                return
+            if mode == "fast" and not info.can_fast:
+                self.console.print("[kite.muted]no fast/low-effort on this model[/]")
+                return
+            if info.can_both and mode in {"thinking", "fast"}:
+                match = self._match_effort(info, mode, effort)
+                if match is None:
                     return
-                if mode == "thinking" and not info.can_thinking:
-                    self.console.print("[kite.muted]no extended thinking on this model[/]")
-                    return
-                if mode == "fast" and not info.can_fast:
-                    self.console.print("[kite.muted]no fast/low-effort on this model[/]")
-                    return
-        self.state.reasoning = mode
-        self.console.print(f"[kite.muted]effort[/]  {mode}")
+                effort = match
+        encoded = encode_reasoning(mode, effort) if mode in {"thinking", "fast"} else mode
+        self.state.reasoning = encoded
+        self.console.print(f"[kite.muted]effort[/]  {reasoning_badge(encoded) or mode}")
+
+    def _match_effort(self, info, mode: str, token: str) -> str | None:
+        effort = info.default_effort(mode) if not token else token
+        levels = info.levels_for(mode)
+        match = next((lv for lv in levels if lv.lower() == effort.lower()), None)
+        if match is None:
+            self.console.print(f"[kite.muted]/{mode} {'|'.join(levels) or '—'}[/]")
+        return match
 
     def _compact_now(self) -> None:
         if not self._session_id:
@@ -262,7 +287,7 @@ class ChatSession:
             self._index,
             models_factory=self._model_ids,
             providers_factory=self._provider_names,
-            reasoning_ok=self._reasoning_ok,
+            reasoning_info=self._reasoning_info,
         )
         self._prompt = make_prompt_session(completer)
         return self._prompt
@@ -428,14 +453,23 @@ class ChatSession:
                 self.console.print(f"[kite.muted]  … {extra} more[/]")
             return True
         if cmd == "thinking":
-            self._set_reasoning("thinking")
+            self._set_reasoning(arg, command="thinking")
             return True
         if cmd == "fast":
-            self._set_reasoning("fast")
+            self._set_reasoning(arg, command="fast")
             return True
         if cmd in {"reasoning", "effort"}:
             if not arg:
-                self.console.print(f"[kite.muted]effort[/]  {self.state.reasoning}  ·  /reasoning auto|off|fast|thinking")
+                from kite.models.reasoning import reasoning_badge
+
+                badge = reasoning_badge(self.state.reasoning) or self.state.reasoning
+                info = self._reasoning_info()
+                extra = ""
+                if info is not None and info.can_both:
+                    think = "|".join(info.thinking_levels())
+                    fast = "|".join(info.fast_levels())
+                    extra = f"  ·  /thinking {think}  /fast {fast}"
+                self.console.print(f"[kite.muted]effort[/]  {badge}{extra}")
                 return True
             self._set_reasoning(arg)
             return True

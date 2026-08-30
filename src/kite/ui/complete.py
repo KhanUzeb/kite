@@ -9,6 +9,7 @@ from typing import Any
 from kite.cli.slash import CommandIndex, SlashSpec
 from kite.config import ensure_home, kite_home
 from kite.ui.attach import IMAGE_EXTS
+from kite.models.reasoning import ReasoningSupport
 from kite.ui.commands import ALIASES, ARG_CHOICES
 from kite.ui.status import format_status_tail
 from kite.ui.style import SYMBOL_PROMPT
@@ -32,43 +33,23 @@ except Exception:  # pragma: no cover
     _PT = False
 
 
-PROMPT_STYLE_DARK = (
-    Style.from_dict(
+def _pt_style(*, dark: bool) -> Any:
+    if not _PT:
+        return None
+    return Style.from_dict(
         {
-            "prompt": "ansicyan",
-            "placeholder": "#5a5a5a",
-            "bottom-toolbar": "noreverse #6e6e6e bg:#121212",
-            "completion-menu": "bg:#141414 #c8c8c8",
-            "completion-menu.completion": "bg:#141414 #c8c8c8",
-            "completion-menu.completion.current": "bg:#1a2e2e #e8ffff",
-            "completion-menu.meta.completion": "#6e6e6e",
-            "completion-menu.meta.completion.current": "#9aa8a8",
-            "scrollbar.background": "bg:#1a1a1a",
-            "scrollbar.button": "bg:#3a3a3a",
+            "prompt": "ansicyan" if dark else "ansiblue",
+            "placeholder": "#5a5a5a" if dark else "#888888",
+            "bottom-toolbar": "noreverse #6e6e6e bg:#121212" if dark else "noreverse #555555 bg:#f4f4f4",
+            "completion-menu": "bg:#141414 #c8c8c8" if dark else "bg:#ffffff #222222",
+            "completion-menu.completion": "bg:#141414 #c8c8c8" if dark else "bg:#ffffff #222222",
+            "completion-menu.completion.current": "bg:#1a2e2e #e8ffff" if dark else "bg:#e0f0ff #000000",
+            "completion-menu.meta.completion": "#6e6e6e" if dark else "#777777",
+            "completion-menu.meta.completion.current": "#9aa8a8" if dark else "#555555",
+            "scrollbar.background": "bg:#1a1a1a" if dark else "bg:#eeeeee",
+            "scrollbar.button": "bg:#3a3a3a" if dark else "bg:#cccccc",
         }
     )
-    if _PT
-    else None
-)
-
-PROMPT_STYLE_LIGHT = (
-    Style.from_dict(
-        {
-            "prompt": "ansiblue",
-            "placeholder": "#888888",
-            "bottom-toolbar": "noreverse #555555 bg:#f4f4f4",
-            "completion-menu": "bg:#ffffff #222222",
-            "completion-menu.completion": "bg:#ffffff #222222",
-            "completion-menu.completion.current": "bg:#e0f0ff #000000",
-            "completion-menu.meta.completion": "#777777",
-            "completion-menu.meta.completion.current": "#555555",
-            "scrollbar.background": "bg:#eeeeee",
-            "scrollbar.button": "bg:#cccccc",
-        }
-    )
-    if _PT
-    else None
-)
 
 
 def _terminal_is_light() -> bool:
@@ -84,12 +65,23 @@ def _terminal_is_light() -> bool:
 
 
 def prompt_style() -> Any:
-    if not _PT:
-        return None
-    return PROMPT_STYLE_LIGHT if _terminal_is_light() else PROMPT_STYLE_DARK
+    return _pt_style(dark=not _terminal_is_light())
 
 
-PROMPT_STYLE = prompt_style()
+_LEVEL_META = {
+    "on": "this API has no extra levels",
+    "minimal": "least thinking",
+    "min": "low latency",
+    "low": "low effort / low latency",
+    "medium": "balanced",
+    "high": "extended thinking",
+    "xhigh": "max thinking",
+    "max": "max thinking",
+}
+
+
+def effort_menu(support: ReasoningSupport, mode: str) -> list[tuple[str, str]]:
+    return [(level, _LEVEL_META.get(level.lower(), f"{mode} level")) for level in support.levels_for(mode)]
 
 
 class SlashCompleter(Completer):  # type: ignore[misc]
@@ -101,12 +93,22 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         *,
         models_factory: Callable[[], Iterable[str]] | None = None,
         providers_factory: Callable[[], Iterable[str]] | None = None,
-        reasoning_ok: Callable[[], bool] | None = None,
+        reasoning_info: Callable[[], ReasoningSupport | None] | None = None,
     ) -> None:
         self._index_factory = index_factory
         self._models_factory = models_factory or (lambda: ())
         self._providers_factory = providers_factory or (lambda: ())
-        self._reasoning_ok = reasoning_ok or (lambda: True)
+        self._reasoning_info = reasoning_info
+
+    def _support(self) -> ReasoningSupport:
+        if self._reasoning_info is not None:
+            try:
+                info = self._reasoning_info()
+                if info is not None:
+                    return info
+            except Exception:
+                pass
+        return ReasoningSupport(False, False, False, False, source="none")
 
     def get_completions(self, document: Any, complete_event: Any):  # noqa: ANN401
         if not _PT:
@@ -120,11 +122,12 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         body = raw[1:]
         cmd, sep, rest = body.partition(" ")
         index = self._index_factory()
+        support = self._support()
 
         if not sep:
             prefix = cmd.lower()
             seen: set[str] = set()
-            for spec in _visible_specs(index, reasoning_ok=self._reasoning_ok()):
+            for spec in _visible_specs(index, support=support):
                 name = spec.name
                 if name in seen:
                     continue
@@ -134,6 +137,10 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                 meta = (spec.description or spec.source or "").strip()
                 if spec.hint:
                     meta = f"{spec.hint}  {meta}".strip()
+                if spec.name in {"thinking", "fast"}:
+                    levels = " ".join(support.levels_for(spec.name))
+                    if levels:
+                        meta = f"{levels}  {meta}".strip()
                 yield Completion(
                     spec.name,
                     start_position=-len(cmd),
@@ -152,7 +159,9 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         start = -len(prefix) if prefix else 0
         choices: list[tuple[str, str]] = []
 
-        if cmd in ARG_CHOICES:
+        if cmd in {"thinking", "fast"}:
+            choices = effort_menu(self._support(), cmd)
+        elif cmd in ARG_CHOICES:
             choices = list(ARG_CHOICES[cmd])
         elif cmd in {"model", "models"}:
             for mid in self._models_factory():
@@ -185,29 +194,28 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                 "open": "continue this chat",
                 "delete": "remove a session",
             }
-            if cmd == "resume" or (
+            listing = cmd == "resume" or (
                 first in {"delete", "open", "show", "resume"}
                 and (rest.endswith(" ") or len(bits) > 1)
-            ):
-                choices = []
+            )
+            if listing:
                 if first == "delete":
                     choices.append(("all", "every saved session"))
-                from kite.memory.session import list_sessions
-
-                for meta in list_sessions(limit=30):
-                    choices.append((meta.id, (meta.label or meta.task)[:50]))
+                choices.extend(_session_rows())
             elif not bits or (len(bits) == 1 and not rest.endswith(" ")):
-                choices = list(verbs.items())
-                from kite.memory.session import list_sessions
-
-                for meta in list_sessions(limit=30):
-                    choices.append((meta.id, (meta.label or meta.task)[:50]))
+                choices = list(verbs.items()) + _session_rows()
 
         needle = prefix.lower()
         for value, meta in choices:
             if needle and needle not in value.lower():
                 continue
             yield Completion(value, start_position=start, display=value, display_meta=meta[:60])
+
+
+def _session_rows() -> list[tuple[str, str]]:
+    from kite.memory.session import list_sessions
+
+    return [(meta.id, (meta.label or meta.task)[:50]) for meta in list_sessions(limit=30)]
 
 
 def _path_completions(prefix: str, start: int):
@@ -241,13 +249,15 @@ def _path_completions(prefix: str, start: int):
             return
 
 
-def _visible_specs(index: CommandIndex, *, reasoning_ok: bool) -> list[SlashSpec]:
+def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[SlashSpec]:
     rows: list[SlashSpec] = []
     seen: set[str] = set()
     for spec in index.specs.values():
         if spec.name in seen:
             continue
-        if spec.name in {"thinking", "fast", "reasoning", "effort"} and not reasoning_ok:
+        if spec.name in {"thinking", "fast"} and not support.can_both:
+            continue
+        if spec.name in {"reasoning", "effort"} and not support.supported:
             continue
         if ":" in spec.name and spec.source == "skill":
             continue

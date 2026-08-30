@@ -35,8 +35,8 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("model", "Show or set provider/model", hint="provider/id", group="model"),
     BuiltinCommand("models", "List live models for the current provider", group="model"),
     BuiltinCommand("provider", "Show or set provider", hint="name", group="model"),
-    BuiltinCommand("thinking", "Extended thinking (if this model supports it)", group="model"),
-    BuiltinCommand("fast", "Low effort / low latency (if supported)", group="model"),
+    BuiltinCommand("thinking", "Thinking level (only if this API has thinking and fast)", hint="level", group="model"),
+    BuiltinCommand("fast", "Fast level (only if this API has thinking and fast)", hint="level", group="model"),
     BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
     BuiltinCommand("memory", "Semantic markdown + episodic sqlite", hint="semantic|episodic", aliases=("mem",), group="memory"),
     BuiltinCommand("semantic", "Show markdown semantic memory", group="memory"),
@@ -72,22 +72,13 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("fast", "low effort / low latency"),
         ("thinking", "extended thinking"),
     ],
-    "effort": [
-        ("auto", "provider default"),
-        ("off", "disable extended thinking"),
-        ("fast", "low effort / low latency"),
-        ("thinking", "extended thinking"),
-    ],
     "mode": [
         ("plan", "read-only checklist"),
         ("build", "apply edits"),
     ],
 }
 
-HELP = "\n".join(
-    f"/{b.name:<16} {b.hint + '  ' if b.hint else ''}{b.description}".rstrip()
-    for b in BUILTINS
-)
+ARG_CHOICES["effort"] = ARG_CHOICES["reasoning"]
 
 
 @dataclass(frozen=True)

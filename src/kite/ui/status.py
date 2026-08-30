@@ -5,6 +5,7 @@ from __future__ import annotations
 from kite.agent.mode import AgentMode, ApprovalMode
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_SEP
+from kite.models.reasoning import reasoning_badge
 
 _CONTEXT_BAR_WIDTH = 8
 
@@ -29,7 +30,7 @@ def status_context_parts(state: SessionUiState) -> list[str]:
     """Model, context, cost — everything after mode and approval."""
     parts: list[str] = [format_model_label(state)]
     if state.reasoning and state.reasoning != "auto":
-        parts.append(state.reasoning)
+        parts.append(reasoning_badge(state.reasoning) or state.reasoning)
     if state.pending_attach:
         parts.append(f"+{state.pending_attach}")
     if state.active_subagents:
