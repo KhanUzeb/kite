@@ -9,6 +9,10 @@ pytest
 
 Or manual install: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"` → `pytest`.
 
+## CI
+
+GitHub Actions runs `pytest` on **push/PR to `main` when the batch has 5+ commits**. Smaller pushes skip automatically; use **Actions → Tests → Run workflow** to force a run. See [CONTRIBUTING.md](../CONTRIBUTING.md#ci-github-actions).
+
 ## Layout
 
 | File | Covers |
@@ -30,6 +34,14 @@ Or manual install: `uv venv --python 3.12` → activate → `uv pip install -e "
 | `test_skill_install.py` | npm/npx/git spec parse, user-skill `~` mark |
 | `test_theme.py` | `/theme` palettes, `/font` glyphs |
 | `test_config.py` | default runtime TOML load |
+| `test_reasoning.py` | `/thinking` `/fast` levels, effort detection |
+| `test_setup.py` | `kite setup` / `kite keys` env writer |
+| `test_maintainer_dashboard.py` | maintainer-only dashboard gate |
+| `test_git.py` | git checkpoints, `/undo` |
+| `test_prompts.py` | prompt assembly, greeting handling |
+| `test_session_list.py` | session list/delete |
+| `test_cache.py` | prompt cache stats |
+| `test_cli_import.py` | session import formats |
 
 Fixtures in `conftest.py`: isolated `KITE_HOME`, sample workspace with `src/`.
 

@@ -30,6 +30,8 @@ Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` 
 
 Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning auto|off|fast|thinking`. Shown on the footer when not `auto`.
 
+**Keyboard shortcuts** (composer): `Ctrl+O` toggle tool output expand · `Ctrl+P` plan · `Ctrl+B` build · `Ctrl+S` flash status on footer · `Ctrl+C` stop turn · `Tab` slash menu.
+
 **Loaders** (beautifului-inspired, TTY-only): default pixel-grid loader with shimmer label and elapsed time. Override with `KITE_LOADER=grid|dots|orbit|wave|spin`.
 
 **Tool chips:** `╭ edit · path · … ╮` while running; `✓ edit  1.2s` when done. **Task rows** show `Running` / `Completed` / `To do` badges.
@@ -156,7 +158,7 @@ Implemented in `src/kite/ui/render.py` (`RunDisplay.__call__`):
 7. Compaction prints `↻  before → after` as a boundary, then continues.
 8. Footer updates model, mode, approval, effort, ctx %, cost, git branch.
 
-Slash commands are parsed before any natural-language turn. Builtins (`/plan`, `/build`, `/undo`, `/memory`, `/effort`, …) never hit the model. Skills (`/commit`), bundled prompts (`/explain` `/fix` `/pr`), `.kite/commands/*.md`, `~/.kite/commands/*.md`, and plugin commands expand into the turn. Full map: [kite_commands.md](../kite_commands.md). Type `/` for the dropdown (name + one-line description).
+Slash commands are parsed before any natural-language turn. Builtins (`/plan`, `/build`, `/select`, `/thinking`, `/fast`, `/undo`, `/memory`, `/effort`, …) never hit the model. Skills (`/commit`), bundled prompts (`/explain` `/fix` `/pr`), `.kite/commands/*.md`, `~/.kite/commands/*.md`, and plugin commands expand into the turn. Full map: [kite_commands.md](../kite_commands.md). Type `/` for the dropdown (name + one-line description).
 
 Interrupt: **Ctrl+C** stops the current turn without killing the process; type a correction and continue. `/undo` resets the last `kite:` task commit.
 
@@ -195,7 +197,15 @@ curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.
 irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
 ```
 
-Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. Full options: [README.md](../README.md#setup).
+Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. Then `kite setup` (recommended) or `kite providers` + `kite models --select`. Full options: [README.md](../README.md#setup).
+
+### Tests & CI
+
+```bash
+pytest
+```
+
+GitHub Actions (`.github/workflows/tests.yml`) runs `pytest` on push/PR to `main` when the batch has **5+ commits**. Smaller pushes skip; use **Actions → Tests → Run workflow** to force a run. See [CONTRIBUTING.md](../CONTRIBUTING.md#ci-github-actions).
 
 ### Workspace (any project directory)
 
@@ -224,12 +234,7 @@ kite chat --mode plan
 kite run --mode build --approval approve "add tests"
 ```
 
-### Tests
-
-```bash
-./scripts/install.sh          # or manual uv pip install -e ".[dev]"
-pytest
-```
+### PDFs
 
 PDFs are generated from this file and `kite-system-design.md`:
 

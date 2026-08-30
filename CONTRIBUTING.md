@@ -20,9 +20,31 @@ pytest
 pytest -v
 ```
 
+## CI (GitHub Actions)
+
+Workflow: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
+
+| Trigger | pytest |
+|---------|--------|
+| Push or PR to `main` with **5+ commits** in the batch | runs on Python 3.11 and 3.12 |
+| Push or PR with **fewer than 5** commits | skipped (saves minutes on small fixes) |
+| **Actions → Tests → Run workflow** | always runs (manual) |
+
+Count a batch locally before pushing:
+
+```bash
+# commits you are about to push (vs upstream main)
+git rev-list --count origin/main..HEAD
+
+# commits in the last push on the remote (after push)
+git rev-list --count HEAD@{1}..HEAD
+```
+
+Always run `pytest` locally before opening a PR, even when CI skips.
+
 ## Ways to contribute
 
-- **Documentation** — `README.md`, `docs/`, and `kite_commands.md` are the sources of truth. The design docs are generated into PDFs (`uv pip install fpdf2 && python scripts/build_design_pdf.py`) but the markdown is what we edit.
+- **Documentation** — `README.md`, `CONTEXT.md`, `AGENTS.md`, `docs/`, and `kite_commands.md` are the sources of truth. The design docs are generated into PDFs (`uv pip install fpdf2 && python scripts/build_design_pdf.py`) but the markdown is what we edit.
 - **Skills** — drop a `SKILL.md` into `src/kite/data/skills/` or install packs via `kite skills --add <npm|npx|owner/repo>`.
 - **Tools / providers** — `tools/`, `providers/`, and `models/` are the extension points.
 - **Bug fixes** — add or extend a test in `tests/`.
@@ -51,3 +73,5 @@ Be respectful. Assume good intent. Keep discussion about the code, not the perso
 ## Releasing
 
 Maintainers only: bump `version` in `pyproject.toml` and `src/kite/__init__.py`, tag `vX.Y.Z`, and let the release notes capture what changed.
+
+Private maintainer dashboard (not in public docs): set `KITE_MAINTAINER_KEY` in `~/.kite/.env`, then run `kite maintainer dashboard`.

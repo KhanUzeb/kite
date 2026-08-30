@@ -68,14 +68,25 @@ uv pip install -e ".[dev]"
 ### First run
 
 ```bash
+kite setup                    # guided API key + model picker (recommended)
+kite providers                # or check keys manually
+kite models -p groq --select
+```
+
+Or edit keys manually:
+
+```bash
 # Copy .env.example to .env (or ~/.kite/.env) and set your key(s)
-kite providers
+kite keys                     # show which keys are set
+kite keys --set groq          # paste a key into ~/.kite/.env
 kite models -p groq --select
 kite models -p zen --select          # OpenCode Zen (OPENCODE_API_KEY)
 kite models -p go --select           # OpenCode Go
 kite models -p nvidia --select       # NVIDIA NIM (NVIDIA_API_KEY)
 kite runtime-config
 ```
+
+**REPL shortcuts:** `Ctrl+O` expand tool output · `Ctrl+P` plan · `Ctrl+B` build · `Ctrl+S` status · type `/` for commands
 
 ### Use Kite on any project (not just this repo)
 
@@ -108,7 +119,9 @@ pytest                    # guardrails, agent, sessions, git-stat diffs, skills,
 pytest -v                 # verbose
 ```
 
-Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, MCP warnings, orchestrator dispatch, and status/chip renderers. It is not a full integration suite against live LLM APIs.
+Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, MCP warnings, orchestrator dispatch, reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
+
+**CI:** GitHub Actions runs `pytest` when a push or PR to `main` contains **5+ commits** in the batch; smaller pushes skip. Run locally before every PR, or trigger **Actions → Tests → Run workflow** manually. Details in [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
 
 ## CLI
 
@@ -133,7 +146,7 @@ kite resume <session-id>
 kite resume <session-id> "also update the README"
 ```
 
-In the REPL: `/plan` `/build` `/undo` `/expand` `/collapse` `/thinking` `/fast` `/effort` `/theme` `/font` `/attach` `/clip` `/skills` `/skills add` `/commit` `/explain` `/commands` `/plugins` `/memory` `/help`. Type `/` for the command menu. User skills show `~`. Ctrl+C stops the current turn.
+In the REPL: `/plan` `/build` `/login` `/keys` `/logout` `/undo` `/expand` `/collapse` `/select` `/thinking` `/fast` `/effort` `/theme` `/font` `/attach` `/clip` `/skills` `/skills add` `/commit` `/explain` `/commands` `/plugins` `/memory` `/help`. Type `/` for the command menu. User skills show `~`. Ctrl+C stops the current turn. Shortcuts: Ctrl+O expand tools · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
 
 Approval modes: `auto` · `approve` · `trust` · `readonly`. Set `KITE_LOADER=grid|dots|orbit|wave|spin` for terminal loader style.
 
@@ -154,6 +167,9 @@ kite memory
 kite memory --remember "prefer ruff"
 kite context
 kite runtime-config
+kite setup                    # first-run: key + model wizard
+kite keys [--set provider]    # show or paste API keys (hidden)
+kite keys --logout provider   # remove a stored key
 kite providers
 kite models -p groq
 kite models --select
@@ -183,6 +199,8 @@ CLI → AgentRuntime → DefaultAgent loop
 
 Canonical markdown:
 
+- `CONTEXT.md`: domain glossary (terms agents and humans share)
+- `AGENTS.md`: how to hack on this repo (map, conventions, tests)
 - `docs/kite-system-design.md`: architecture, atlas, tradeoffs
 - `docs/cli-ux.md`: plan/build TUI, style guide, render loop
 - `kite_commands.md`: CLI, REPL slashes, skills, plugins, tools

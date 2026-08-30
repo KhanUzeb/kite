@@ -41,7 +41,9 @@ See [README.md](../README.md#use-kite-on-any-project-not-just-this-repo) for PAT
 pytest
 ```
 
-84 unit tests in `tests/` cover guardrails, `trusted_paths` approval, loop guard, session append, verification heuristics, MCP startup warnings, orchestrator dispatch, context/skills caches, git-stat diffs, skill install, and UI helpers.
+**CI:** `.github/workflows/tests.yml` runs the full suite on push/PR to `main` when the batch has **5+ commits** (Python 3.11 + 3.12). Smaller pushes skip; maintainers can re-run from the Actions tab.
+
+Unit tests in `tests/` cover guardrails, `trusted_paths` approval, loop guard, session append, verification heuristics, MCP startup warnings, orchestrator dispatch, context/skills caches, git-stat diffs, skill install, reasoning/setup UX, and UI helpers.
 
 ## Commands
 
