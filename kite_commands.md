@@ -51,7 +51,7 @@ kite providers
 kite models [-p provider] [--select]
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
 kite context [--json]
-kite skills [--show name]
+kite skills [--show name] [--add pkg]
 kite commands
 kite plugins
 kite memory [--remember text] [--forget query] [--project]
@@ -90,7 +90,10 @@ These never go to the model.
 | `/expand` | Toggle expanded tool output |
 | `/collapse` | Collapse tool output (default) |
 | `/trace` | Last traceback |
-| `/skills [name]` | List skills, or print one |
+| `/theme [auto\|kite|dark|light|dim|mono]` | Color palette (saved in `~/.kite/config.toml`) |
+| `/font [unicode\|ascii]` | Glyph pack for this terminal |
+| `/skills [name]` | List skills, or print one. User-home skills show `~` |
+| `/skills add pkg` | Install from npm, npx, or GitHub `owner/repo` into `~/.kite/skills` |
 | `/commands` | List markdown slash prompts |
 | `/commands new name` | Write `.kite/commands/name.md` |
 | `/plugins` | List plugins |
@@ -139,6 +142,12 @@ If a project command is also named `commit`, `/commit` runs the markdown file; `
 ### Add your own
 
 ```
+# Install from the web into ~/.kite/skills (shows as /name ~)
+/skills add @scope/pkg
+/skills add npx some-skill
+/skills add owner/repo
+kite skills --add owner/repo
+
 # Project prompt  →  /ship
 .kite/commands/ship.md
 

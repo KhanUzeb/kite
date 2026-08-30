@@ -1,6 +1,6 @@
 # Kite — System Design, Code Atlas & Engineering Notes
 
-**Version:** 0.6.5  
+**Version:** 0.6.6  
 **Stack:** Python 3.12 · LiteLLM · Rich · uv  
 **Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)  
 **Companion UX spec:** [cli-ux.md](cli-ux.md) (PDF: `docs/cli-ux.pdf`)  
@@ -23,7 +23,7 @@ Kite is a **slim coding-agent harness**: a mini-swe-agent–style sync loop (que
 - Context engineering: KITE.md + AGENTS.md, git status, tree sketch, token estimate, compaction
 - Durable sessions + trajectories for debug / resume
 - Guardrails that fail closed on path escape & destructive bash
-- CLI-first Rich TUI: streaming, collapsed tools, live plan, diffs, approval, plan/build modes
+- CLI-first Rich TUI: streaming, collapsed tools, live plan, git-stat diffs (`+125,-21`), approval, plan/build modes
 
 ### Non-goals (deliberately deferred)
 - Full-screen Textual TUI (we shipped a single-column Rich REPL instead)
@@ -233,8 +233,8 @@ DefaultAgent.run
 ### 4.9 `tools/` — Tool + ToolRegistry + coding tools
 **Tools:**
 - `read` — numbered lines, offset/limit; huge files auto-truncate
-- `write` — create/overwrite; returns a unified diff
-- `edit` — exact string replace (unique or replace_all); returns a unified diff
+- `write` — create/overwrite; returns a unified diff; UI shows git-stat `+N,-M`
+- `edit` — exact string replace (unique or replace_all); returns a unified diff; UI shows git-stat `+N,-M`
 - `bash` — fresh subprocess; submit magic string; highest-privilege, gated
 - `grep` — ripgrep (`rg`) when installed, Python walk otherwise
 - `glob` — path patterns
@@ -258,7 +258,7 @@ Optional `reason` on mutating tools is shown in the UI. Every call goes through 
 ### 4.12 `skills/` — loader
 **Spec:** directory with `SKILL.md` (+ optional YAML frontmatter).  
 **Discovery order (later wins):** bundled → `~/.kite/skills` → plugins → `.kite/skills` → `.agents/skills` → config extra dirs.  
-**Invocation:** tool `skill`, prompt `/skill:name …` / `/skill name …`, or `/name` when no markdown command took that name.
+**Invocation:** tool `skill` (load, or `install` from npm/npx/GitHub into `~/.kite/skills`), prompt `/skill:name …` / `/skill name …`, `/skills add pkg`, or `/name` when no markdown command took that name. User-home skills show `~` in the `/` menu.
 
 ### 4.12b `commands/` + `plugins/` + `cli/slash.py`
 Markdown slash prompts (`--- name / description ---` + `$ARGUMENTS`) live in `data/commands`, `~/.kite/commands`, `.kite/commands`, and `plugins/*/commands`.  
@@ -293,7 +293,7 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 
 ### 4.20 `ui/` — Rich terminal front-end
 **Job:** All rendering. Core still never imports Rich.  
-**Modules:** `style` (palette/symbols), `state`, `render` (stream → collapse → diff → footer), `approval` (once/session/always), `git` (checkpoint + `/undo`), `commands` (slash parser), `repl` (cold-start chat), `spinner`, `diff`.  
+**Modules:** `style` (palette/symbols), `theme` (`/theme` palettes, `/font` glyph packs), `state`, `render` (stream → collapse → git-stat diff → footer), `approval` (once/session/always), `git` (checkpoint + `/undo`), `commands` (slash parser), `repl` (cold-start chat), `spinner`, `diff` (`+N,-M` + colored hunks).  
 **Spec:** [cli-ux.md](cli-ux.md).
 
 ---
@@ -309,7 +309,7 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 7. Tools built with guardrails; plan mode drops write/edit/bash from the schema
 8. Session JSONL created under `~/.kite/sessions/`
 9. Agent adds system + user instance messages
-10. Loop: compact measure → streamed LLM tool calls → approval (if gated) → tool exec → diffs/todos rendered → tool messages
+10. Loop: compact measure → streamed LLM tool calls → approval (if gated) → tool exec → git-stat `+N,-M` diffs/todos rendered → tool messages
 11. Successful write/edit → staged under the current todo; **one `kite:` commit per todo/task** (not per file). `/undo` reverts the last of those.
 12. Model eventually `bash` with `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` (or a text-only reply in chat/plan)
 13. Environment raises `Submitted` → exit message → trajectory saved
@@ -349,7 +349,7 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 
 ### Nits (fix or watch)
 1. ~~Session rewrite-on-append is O(n) per message~~ **improved (0.6.3):** append-only message lines + meta timestamp patch; full rewrite still on compaction/replace.
-2. ~~Add tests for guardrails, approval, loop guard~~ **partial (0.6.5):** 32 pytest cases in `tests/`; expand catalog resolve and compaction next.
+2. ~~Add tests for guardrails, approval, loop guard~~ **partial (0.6.6):** pytest in `tests/`; expand catalog resolve and compaction next.
 3. Tree snippet can be large on monorepos — already capped; consider ripgrep-based file list.
 4. No retry taxonomy beyond LiteLLM `num_retries` — tau’s provider retry events are richer.
 5. `Harress`/`Runtime` duplication of options fields — could collapse to one dataclass.
@@ -462,9 +462,11 @@ REPL slash commands: builtins (`/plan` `/build` `/undo` `/memory` `/remember` `/
 3. ~~Append-only session log~~ **partial (0.6.3):** message append; compaction still rewrites  
 4. ~~Streaming + Textual TUI consuming events~~ **done (0.4):** Rich linear TUI — see [cli-ux.md](cli-ux.md)  
 5. ~~ripgrep-backed grep tool~~ **done (0.4)**  
-6. ~~Tests for guardrails, approval, loop guard~~ **partial (0.6.5):** `pytest` in `tests/` — expand catalog resolve + compaction  
+6. ~~Tests for guardrails, approval, loop guard~~ **partial (0.6.6):** `pytest` in `tests/` — expand catalog resolve + compaction  
 7. ~~Optional nested LLM `subagent` tool~~ **done (0.6)**  
 8. Click-to-expand tool blocks (needs a full-screen TUI if we ever want it)  
+9. ~~Git-stat `+N,-M` on write/edit~~ **done (0.6.6)**  
+10. ~~npm/npx/GitHub skill install into `~/.kite/skills`~~ **done (0.6.6)**  
 
 ### Running tests
 

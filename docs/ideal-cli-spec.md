@@ -1,4 +1,4 @@
-# Ideal CLI Spec Coverage (Kite 0.6.5)
+# Ideal CLI Spec Coverage (Kite 0.6.6)
 
 Mapping of the 14-category Ideal Coding CLI spec to Kite features.
 
@@ -26,7 +26,7 @@ uv pip install -e ".[dev]"
 pytest
 ```
 
-32 unit tests in `tests/` cover guardrails, `trusted_paths` approval, loop guard, session append, verification heuristics, MCP startup warnings, orchestrator dispatch, context/skills caches, and UI status/chip helpers.
+84 unit tests in `tests/` cover guardrails, `trusted_paths` approval, loop guard, session append, verification heuristics, MCP startup warnings, orchestrator dispatch, context/skills caches, git-stat diffs, skill install, and UI helpers.
 
 ## Commands
 

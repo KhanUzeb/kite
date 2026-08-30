@@ -18,6 +18,11 @@ from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
 from kite.prompts import load_prompt_template
 
 try:
+    from kite import __version__
+except Exception:  # pragma: no cover
+    __version__ = "0.6.6"
+
+try:
     SYSTEM_PROMPT = load_prompt_template("system")
 except Exception:  # pragma: no cover
     SYSTEM_PROMPT = "You are a coding agent. Use tools. Submit with COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT."
@@ -501,7 +506,7 @@ class DefaultAgent:
                     "estimated_tokens": usage.total_tokens if usage else None,
                     "ratio": round(usage.ratio, 3) if usage else None,
                 },
-                "kite_version": "0.6.0",
+                "kite_version": __version__,
                 "verification": self.verification.summary(),
             },
             "messages": self.messages,

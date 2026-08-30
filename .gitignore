@@ -13,4 +13,3 @@ trajectory.json
 # Generated design docs (source markdown is kept)
 *.pdf
 docs/*.pdf
-scripts/build_design_pdf.py
