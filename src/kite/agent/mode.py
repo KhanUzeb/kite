@@ -20,7 +20,6 @@ class ApprovalMode(str, Enum):
 
 
 # Cheap, read-only tools — unrestricted in both modes.
-# Cheap, read-only tools — unrestricted in both modes.
 READONLY_TOOLS = frozenset(
     {
         "read", "grep", "glob", "ls", "skill", "todo_read", "webfetch", "websearch", "webcrawl",

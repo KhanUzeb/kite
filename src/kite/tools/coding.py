@@ -35,6 +35,11 @@ def _io_fail(path: Path, exc: BaseException) -> dict[str, Any]:
     return {"ok": False, "error": msg, "path": str(path), "output": msg}
 
 
+def _todo_view(items: list[Any]) -> dict[str, Any]:
+    lines = [f"{x['status']:12} {x['content']}" for x in items]
+    return {"ok": True, "output": "\n".join(lines) or "(empty plan)", "items": items}
+
+
 def _list_dir_names(path: Path) -> tuple[list[str], str | None]:
     try:
         entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
@@ -348,13 +353,10 @@ def make_coding_tools(
         if not isinstance(items, list):
             return {"ok": False, "error": "todos must be a list", "output": "todos must be a list"}
         written = store.write(items)
-        lines = [f"{x['status']:12} {x['content']}" for x in written]
-        return {"ok": True, "output": "\n".join(lines) or "(empty plan)", "items": written}
+        return _todo_view(written)
 
     def todo_read(_args: dict[str, Any]) -> dict[str, Any]:
-        items = store.read()
-        lines = [f"{x['status']:12} {x['content']}" for x in items]
-        return {"ok": True, "output": "\n".join(lines) or "(empty plan)", "items": items}
+        return _todo_view(store.read())
 
     def _single_task(prompt: str, glob_pat: str, pattern: Any, root_path: Path) -> str:
         matches = glob_files({"pattern": glob_pat, "root": str(root_path), "max": 40})
