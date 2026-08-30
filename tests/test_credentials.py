@@ -72,3 +72,23 @@ def test_logout_provider(tmp_path, monkeypatch) -> None:
         assert "NVIDIA_API_KEY" not in env.read_text(encoding="utf-8")
     else:
         assert not env.exists()
+
+
+def test_login_provider_removes_alias_keys_from_env_file(tmp_path, monkeypatch) -> None:
+    env = tmp_path / ".env"
+    env.write_text("NGC_API_KEY=old-alias\nOTHER=1\n", encoding="utf-8")
+    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
+    monkeypatch.setattr(
+        "kite.providers.credentials.read_secret",
+        lambda _prompt: "new-primary-key",
+    )
+
+    from kite.providers.credentials import login_provider
+
+    code, msg, name = login_provider("nvidia", set_default=False, console=None)
+    assert code == 0
+    assert name == "nvidia"
+    text = env.read_text(encoding="utf-8")
+    assert "NVIDIA_API_KEY=new-primary-key" in text
+    assert "NGC_API_KEY" not in text
+    assert "OTHER=1" in text

@@ -115,6 +115,7 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 - Adding Textual/full-screen TUI without an explicit design decision
 - Changing default prompts to wrap casual chat (`hi`) as “solve this task” — chat stays literal
 - Skipping `pytest` when touching guardrails, sessions, approval, or render
+- Running with `--no-guardrails` on untrusted tasks (disables path/bash/secret protections)
 
 ---
 
