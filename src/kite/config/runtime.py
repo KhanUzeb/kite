@@ -91,6 +91,8 @@ class AgentRuntimeConfig:
     orchestrator_max_workers: int = 3
     orchestrator_step_limit: int = 10
     orchestrator_cost_limit: float = 1.0
+    ui_theme: str = "auto"
+    ui_font: str = "unicode"
 
     def with_overrides(self, **kwargs: Any) -> AgentRuntimeConfig:
         return replace(self, **{k: v for k, v in kwargs.items() if v is not None})
@@ -114,6 +116,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
     context = data.get("context") or {}
     cache = data.get("cache") or {}
     orch = data.get("orchestrator") or {}
+    ui = data.get("ui") or {}
     return AgentRuntimeConfig(
         name=str(agent.get("name", "kite-default")),
         step_limit=int(agent.get("step_limit", 40)),
@@ -176,6 +179,8 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         orchestrator_max_workers=int(orch.get("max_workers", 3)),
         orchestrator_step_limit=int(orch.get("step_limit", 10)),
         orchestrator_cost_limit=float(orch.get("cost_limit", 1.0)),
+        ui_theme=str(ui.get("theme") or "auto"),
+        ui_font=str(ui.get("font") or "unicode"),
     )
 
 
@@ -198,11 +203,31 @@ def _read_packaged(name: str) -> dict[str, Any]:
     return tomllib.loads(pkg.read_bytes().decode("utf-8"))
 
 
+def _file_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime if path.is_file() else 0.0
+    except OSError:
+        return 0.0
+
+
+_RUNTIME_CACHE: dict[tuple[str, str, float, float], AgentRuntimeConfig] = {}
+
+
 def load_runtime_config(name_or_path: str | Path | None = None) -> AgentRuntimeConfig:
     """Load packaged default, merge user overlay, then optional named/path config."""
+    user_default = kite_home() / "configs" / "default.toml"
+    extra = Path(name_or_path) if name_or_path else None
+    key = (
+        str(name_or_path or ""),
+        str(kite_home()),
+        _file_mtime(user_default),
+        _file_mtime(extra) if extra is not None else 0.0,
+    )
+    hit = _RUNTIME_CACHE.get(key)
+    if hit is not None:
+        return hit
     data = _read_packaged("default")
 
-    user_default = kite_home() / "configs" / "default.toml"
     if user_default.is_file():
         data = _merge_dict(data, _read_toml(user_default))
 
@@ -221,4 +246,6 @@ def load_runtime_config(name_or_path: str | Path | None = None) -> AgentRuntimeC
                 except (FileNotFoundError, OSError):
                     pass
 
-    return _from_dict(data)
+    cfg = _from_dict(data)
+    _RUNTIME_CACHE[key] = cfg
+    return cfg

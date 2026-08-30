@@ -13,6 +13,9 @@ except ImportError:  # pragma: no cover
     tomli_w = None  # type: ignore
 
 
+_ensured: set[str] = set()
+
+
 def kite_home() -> Path:
     override = os.getenv("KITE_HOME")
     if override:
@@ -22,8 +25,12 @@ def kite_home() -> Path:
 
 def ensure_home() -> Path:
     home = kite_home()
+    key = str(home)
+    if key in _ensured:
+        return home
     for name in ("sessions", "trajectories", "skills", "commands", "plugins", "memory", "configs", "extensions", "attachments"):
         (home / name).mkdir(parents=True, exist_ok=True)
+    _ensured.add(key)
     return home
 
 
@@ -47,6 +54,8 @@ class UserConfig:
     compaction_model: str | None = None  # None = first live free-tier model
     compaction_use_llm: bool = True
     reasoning: str = "auto"
+    theme: str = ""
+    font: str = ""
 
     @classmethod
     def load(cls) -> UserConfig:
@@ -73,6 +82,8 @@ class UserConfig:
             compaction_model=data.get("compaction_model") or None,
             compaction_use_llm=bool(data.get("compaction_use_llm", True)),
             reasoning=str(data.get("reasoning") or "auto"),
+            theme=str(data.get("theme") or ""),
+            font=str(data.get("font") or ""),
         )
 
     def save(self) -> Path:
@@ -96,6 +107,8 @@ class UserConfig:
             "compaction_model": self.compaction_model,
             "compaction_use_llm": self.compaction_use_llm,
             "reasoning": self.reasoning,
+            "theme": self.theme,
+            "font": self.font,
         }
         # tomli_w cannot serialize None; omit null optional fields
         payload = {k: v for k, v in payload.items() if v is not None}
