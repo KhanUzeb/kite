@@ -157,6 +157,11 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         elif cmd in {"provider"}:
             for name in self._providers_factory():
                 choices.append((str(name), "provider"))
+        elif cmd in {"login", "logout", "signin", "signout"}:
+            from kite.providers.credentials import loginable_providers
+
+            for name, display, env in loginable_providers():
+                choices.append((name, f"{env}  {display[:40]}"))
         elif cmd in {"skills", "skill"}:
             bits = rest.split()
             first = bits[0].lower() if bits else ""
@@ -273,9 +278,12 @@ def _toolbar_html(state: SessionUiState) -> Any:
     tail = format_status_tail(state)
     brand = brand_ansi()
     muted = "#888888" if not is_dark() else "#6e6e6e"
+    flash = ""
+    if state.flash:
+        flash = f"  {glyph('sep')} {_escape_html(state.flash)}"
     return HTML(
         f"<style fg='{brand}'>kite</style>"
-        f"<style fg='{muted}'> {glyph('sep')} {_escape_html(tail)}</style>"
+        f"<style fg='{muted}'> {glyph('sep')} {_escape_html(tail)}{flash}</style>"
     )
 
 
@@ -288,7 +296,11 @@ def history_path() -> Path:
     return kite_home() / "history"
 
 
-def make_prompt_session(completer: SlashCompleter) -> Any:
+def make_prompt_session(
+    completer: SlashCompleter,
+    *,
+    key_bindings: Any | None = None,
+) -> Any:
     if not _PT:
         return None
     path = history_path()
@@ -302,9 +314,52 @@ def make_prompt_session(completer: SlashCompleter) -> Any:
         "mouse_support": False,
         "reserve_space_for_menu": 5,
     }
+    if key_bindings is not None:
+        kwargs["key_bindings"] = key_bindings
     if CompleteStyle is not None:
         kwargs["complete_style"] = CompleteStyle.COLUMN
     return PromptSession(**kwargs)
+
+
+def make_repl_key_bindings(
+    *,
+    on_toggle_expand: Callable[[], str] | None = None,
+    on_plan: Callable[[], str] | None = None,
+    on_build: Callable[[], str] | None = None,
+    on_status: Callable[[], str] | None = None,
+) -> Any:
+    """Keyboard shortcuts while the composer is focused."""
+    if not _PT:
+        return None
+    from prompt_toolkit.key_binding import KeyBindings
+
+    bindings = KeyBindings()
+
+    @bindings.add("c-o")
+    def _expand(event) -> None:  # noqa: ANN001
+        if on_toggle_expand:
+            on_toggle_expand()
+        event.app.invalidate()
+
+    @bindings.add("c-p")
+    def _plan(event) -> None:  # noqa: ANN001
+        if on_plan:
+            on_plan()
+        event.app.invalidate()
+
+    @bindings.add("c-b")
+    def _build(event) -> None:  # noqa: ANN001
+        if on_build:
+            on_build()
+        event.app.invalidate()
+
+    @bindings.add("c-s")
+    def _status(event) -> None:  # noqa: ANN001
+        if on_status:
+            on_status()
+        event.app.invalidate()
+
+    return bindings
 
 
 def read_repl_line(

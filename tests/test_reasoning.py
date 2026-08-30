@@ -11,7 +11,7 @@ from kite.models.reasoning import (
     reasoning_badge,
     split_reasoning,
 )
-from kite.ui.complete import SlashCompleter, _visible_specs, effort_menu
+from kite.ui.complete import SlashCompleter, _PT, _visible_specs, effort_menu
 from kite.ui.state import SessionUiState
 from kite.ui.status import format_status_tail
 
@@ -63,6 +63,15 @@ def test_apply_reasoning_uses_picked_level() -> None:
     assert out["extra_body"]["reasoning"]["effort"] == "medium"
 
 
+def test_nemotron_heuristic_enables_thinking_fast() -> None:
+    from kite.models.reasoning import detect_reasoning
+
+    info = detect_reasoning("nvidia", "nvidia/nemotron-3.5-lightning-30b-a3b", refresh=True)
+    assert info.supported
+    assert info.can_both
+    assert info.thinking_levels()
+
+
 def test_thinking_fast_hidden_unless_api_has_both() -> None:
     specs = {
         "thinking": SlashSpec("thinking", "control", "builtin", "t"),
@@ -84,6 +93,15 @@ def test_thinking_fast_hidden_unless_api_has_both() -> None:
 
 def test_thinking_dropdown_lists_thinking_levels() -> None:
     info = _both()
+    levels = [name for name, _ in effort_menu(info, "thinking")]
+    assert "high" in levels
+    assert "medium" in levels
+    assert "low" not in levels
+
+    from kite.ui.complete import _PT
+
+    if not _PT:
+        return
     completer = SlashCompleter(lambda: CommandIndex(), reasoning_info=lambda: info)
 
     class _Doc:
@@ -94,7 +112,6 @@ def test_thinking_dropdown_lists_thinking_levels() -> None:
     values = [c.text for c in hits]
     assert "high" in values
     assert "medium" in values
-    assert "low" not in values
 
 
 def test_footer_shows_thinking_level() -> None:
