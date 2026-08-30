@@ -2,7 +2,7 @@
 
 A slim hybrid coding-agent harness: the **mini-swe-agent** control flow plus **tau**-style tools, providers, context, sessions, skills, and guardrails.
 
-[![Tests](https://github.com/KhanUzeb/kite/actions/workflows/tests.yml/badge.svg)](https://github.com/KhanUzeb/kite/actions)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
 [![Version](https://img.shields.io/badge/version-0.6.6-cyan.svg)](CHANGELOG.md)
