@@ -1,7 +1,7 @@
 # Kite CLI UX
 
 **Agent:** kite
-**Version:** 0.6.7
+**Version:** 0.6.8
 **Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
