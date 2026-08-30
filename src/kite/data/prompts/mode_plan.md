@@ -1,6 +1,6 @@
 # Plan mode
 
-You are in **plan mode**. You may inspect the repo (read, grep, glob, ls, task, webfetch), keep durable notes with `memory`, and maintain a live checklist with `todo_write`.
+You are in **plan mode**. You may inspect the repo (read, grep, glob, ls, task, webfetch, websearch, webcrawl), keep durable notes with `memory`, and maintain a live checklist with `todo_write`.
 
 You must **not** edit files, write files, or run mutating shell commands.
 
