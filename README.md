@@ -1,6 +1,6 @@
 # Kite
 
-Slim hybrid coding-agent harness: **mini-swe-agent** control flow + **tau**-style tools, providers, context, sessions, skills, and guardrails.
+A slim hybrid coding-agent harness: the **mini-swe-agent** control flow plus **tau**-style tools, providers, context, sessions, skills, and guardrails.
 
 **Version:** 0.6.6
 
@@ -52,7 +52,7 @@ uv pip install -e ".[dev]"
 ### First run
 
 ```bash
-# Copy .env.example → .env (or ~/.kite/.env) and set your key(s)
+# Copy .env.example to .env (or ~/.kite/.env) and set your key(s)
 kite providers
 kite models -p groq --select
 kite models -p zen --select          # OpenCode Zen (OPENCODE_API_KEY)
@@ -92,14 +92,14 @@ pytest                    # guardrails, agent, sessions, git-stat diffs, skills,
 pytest -v                 # verbose
 ```
 
-Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, MCP warnings, orchestrator dispatch, and status/chip renderers. Not a full integration suite against live LLM APIs.
+Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, MCP warnings, orchestrator dispatch, and status/chip renderers. It is not a full integration suite against live LLM APIs.
 
 ## CLI
 
 Interactive (plan/build, slash commands, live plan, diffs, approval):
 
 ```bash
-kite                         # REPL — prompt is ready immediately
+kite                         # REPL, prompt is ready immediately
 kite chat --mode plan
 kite chat --approval approve
 ```
@@ -167,9 +167,9 @@ CLI → AgentRuntime → DefaultAgent loop
 
 Canonical markdown:
 
-- `docs/kite-system-design.md` — architecture, atlas, tradeoffs
-- `docs/cli-ux.md` — plan/build TUI, style guide, render loop
-- `kite_commands.md` — CLI, REPL slashes, skills, plugins, tools
+- `docs/kite-system-design.md`: architecture, atlas, tradeoffs
+- `docs/cli-ux.md`: plan/build TUI, style guide, render loop
+- `kite_commands.md`: CLI, REPL slashes, skills, plugins, tools
 
 Generated PDFs (gitignored): `docs/kite-system-design.pdf`, `docs/cli-ux.pdf`, `docs/ideal-cli-spec.pdf`, `docs/kite_commands.pdf`
 

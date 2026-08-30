@@ -1,13 +1,13 @@
 # Kite CLI UX
 
-**Agent:** kite  
-**Version:** 0.6.6  
-**Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)  
+**Agent:** kite
+**Version:** 0.6.6
+**Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
-Optimize for **trust, legibility, and speed of comprehension**. The user should always know what the agent is doing, why, and be able to stop or steer it in under a second.
+Optimize for **trust, legibility, and speed of comprehension**. The user should always know what the agent is doing and why, and be able to stop or steer it in under a second.
 
-Patterns stolen, not invented:
+Patterns we took, not invented:
 
 | Harness | What we took |
 |---------|----------------|
@@ -42,7 +42,7 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  STREAM PANE  (scrollback, single column — history cells)          │
+│  STREAM PANE  (scrollback, single column, history cells)          │
 │                                                                  │
 │  ›  task text                                                    │
 │                                                                  │
@@ -51,7 +51,7 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 │    ● add tests          ← live; rewritten on todo_write          │
 │    ○ run pytest                                                  │
 │                                                                  │
-│  …  thinking (italic dim — never mixed into the answer)           │
+│  …  thinking (italic dim, never mixed into the answer)           │
 │  •  the actual reply                                             │
 │                                                                  │
 │  ▸ grep  pattern=login                                            │
@@ -82,7 +82,7 @@ State
   SessionUiState.todos[]         pending | in_progress | completed
   SessionUiState.cost / tokens   running totals
   ApprovalPolicy                 session + ~/.kite/approvals.json
-  GitCheckpoints                 one kite: commit per todo/task → /undo
+  GitCheckpoints                 one kite: commit per todo/task -> /undo
   CommandIndex                   builtins + markdown commands + plugins + skills
   MemoryStore                    MEMORY.md (semantic) + episodes.sqlite (episodic)
 
@@ -92,9 +92,9 @@ Event loop (core never renders)
        → context → compact? → agent_end | error | interrupt
 ```
 
-Cold start: the REPL prints chrome and the prompt immediately. Model resolve, KITE.md, and the repo map load on the first task — not before the prompt is interactive.
+Cold start: the REPL prints chrome and the prompt immediately. Model resolve, `KITE.md`, and the repo map load on the first task, not before the prompt is interactive.
 
-**Sandbox.** File tools and bash `cwd` are locked to the project workspace. Absolute paths that leave it, system directories, SSH keys, `.env`, and `.git/hooks|config` are blocked. User-initiated `/attach` / `/clip` can still read files from anywhere — the agent cannot.
+**Sandbox.** File tools and bash `cwd` are locked to the project workspace. Absolute paths that leave it, system directories, SSH keys, `.env`, and `.git/hooks|config` are blocked. User-initiated `/attach` / `/clip` can still read files from anywhere, the agent cannot.
 
 **Attach.** `/attach path`, `/clip`, or `@file.png` in the prompt. Images are sent as `image_url` parts and **routed to a live multimodal model** on the current provider, or another selected provider that has a key, if the current model cannot see.
 
@@ -114,7 +114,7 @@ See `src/kite/ui/style.py` (source of truth).
 | `▸` | tool start | cyan row |
 | `⚠` | approve | yellow, no box |
 
-Thinking and answer never share a block. The model id is not reprinted as a speech label — it lives on the footer.
+Thinking and answer never share a block. The model id is not reprinted as a speech label, it lives on the footer.
 
 **Palette**
 
@@ -151,7 +151,7 @@ Implemented in `src/kite/ui/render.py` (`RunDisplay.__call__`):
 2. `stream_reasoning` writes the `…` cell (italic dim). `stream_delta` writes the `•` cell (normal). They never mix.
 3. `tool_start` prints `▸ tool  key=value  [reason]`. Output is not shown yet.
 4. `tool_end` prints `✓/✗/⚠` plus git-stat `+125,-21` (green/red) on write/edit, then a collapsed body or a colored unified diff (never a full-file reprint).
-5. Mutating tools hit `ApprovalPolicy` (`once / session / always this pattern`) with the **exact** command or diff — compact, not a rainbow panel.
+5. Mutating tools hit `ApprovalPolicy` (`once / session / always this pattern`) with the **exact** command or diff, compact, not a rainbow panel.
 6. `todo_write` rewrites the plan checklist in place. Completing a todo (or ending the turn) flushes one `kite:` commit of that step's files.
 7. Compaction prints `↻  before → after` as a boundary, then continues.
 8. Footer updates model, mode, approval, effort, ctx %, cost, git branch.
@@ -199,7 +199,7 @@ Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. F
 
 ### Workspace (any project directory)
 
-Install once. Activate the venv (or add `.venv/bin` / `.venv\Scripts` to `PATH`). Then `cd` into any repo — Kite treats **current directory** as the workspace (tools, git, `.kite/` overlays, `AGENTS.md`).
+Install once. Activate the venv (or add `.venv/bin` / `.venv\Scripts` to `PATH`). Then `cd` into any repo, Kite treats **current directory** as the workspace (tools, git, `.kite/` overlays, `AGENTS.md`).
 
 ```bash
 cd ~/projects/my-app

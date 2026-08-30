@@ -1,6 +1,6 @@
 # Kite commands
 
-Kite is a coding agent. **What lands in git is still yours.** Commands below are how you steer the process, not a second commit stream.
+Kite is a coding agent. **What lands in git is still yours.** These commands steer the process, not a second commit stream.
 
 There are four surfaces:
 
@@ -8,8 +8,8 @@ There are four surfaces:
 |---------|------|-----------------|
 | **CLI** (`kite …`) | Outside a session, or to start one | Only `run` / `chat` / `resume` |
 | **REPL slash** (`/…`) | Inside `kite` / `kite chat` | Control slashes never. Prompt slashes expand into the next turn. |
-| **Markdown commands / skills / plugins** | `/explain`, `/commit`, `/skill debug`, plugin `/hello` | Yes — they become the user task |
-| **Agent tools** | During a turn (`read`, `edit`, `bash`, …) | Yes — the model calls them |
+| **Markdown commands / skills / plugins** | `/explain`, `/commit`, `/skill debug`, plugin `/hello` | Yes, they become the user task |
+| **Agent tools** | During a turn (`read`, `edit`, `bash`, …) | Yes, the model calls them |
 
 **Install & workspace:** one-time setup via `scripts/install.sh` / `install.ps1` (see [§6](#6-install--development)). After that, run `kite` from any project directory; workspace defaults to shell cwd, or set `--cwd`.
 
@@ -150,10 +150,10 @@ If a project command is also named `commit`, `/commit` runs the markdown file; `
 /skills add owner/repo
 kite skills --add owner/repo
 
-# Project prompt  →  /ship
+# Project prompt  ->  /ship
 .kite/commands/ship.md
 
-# User prompt     →  /ship  (unless the project file exists)
+# User prompt     ->  /ship  (unless the project file exists)
 ~/.kite/commands/ship.md
 
 # Plugin
