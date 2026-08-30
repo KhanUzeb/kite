@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-VerificationStatus = Literal["verified", "partial", "unverified", "failed"]
+VerificationStatus = Literal["verified", "partial", "unverified", "failed", "idle"]
 
 
 @dataclass
@@ -56,9 +56,7 @@ class VerificationCollector:
             diff = str(result.get("diff") or "")
             if diff:
                 self.diffs.append(diff)
-                self.artifacts.append(
-                    Artifact(kind="diff", summary=f"edited {path}", path=path, ok=True, detail=diff[:400])
-                )
+                self._add("diff", f"edited {path}", path=path, ok=True, detail=diff[:400])
         if tool == "bash":
             cmd = str(args.get("command") or "")
             self.last_bash_command = cmd
@@ -67,25 +65,14 @@ class VerificationCollector:
                 self.last_bash_exit = int(rc)
             ok = bool(result.get("ok"))
             preview = (str(result.get("output") or "")[:200]).replace("\n", " ")
-            self.artifacts.append(
-                Artifact(
-                    kind="command",
-                    summary=cmd[:120],
-                    ok=ok,
-                    detail=preview,
-                )
-            )
+            self._add("command", cmd[:120], ok=ok, detail=preview)
             if any(h in cmd.lower() for h in self._TEST_HINTS):
-                self.artifacts.append(
-                    Artifact(
-                        kind="test",
-                        summary=f"exit={rc}  {cmd[:80]}",
-                        ok=ok and rc == 0,
-                        detail=preview,
-                    )
-                )
+                self._add("test", f"exit={rc}  {cmd[:80]}", ok=ok and rc == 0, detail=preview)
                 if not ok or rc != 0:
                     self.gaps.append(f"test command failed (exit {rc}): {cmd[:80]}")
+
+    def _add(self, kind: str, summary: str, **kw: Any) -> None:
+        self.artifacts.append(Artifact(kind=kind, summary=summary, **kw))
 
     def status(self) -> VerificationStatus:
         if self.gaps:
@@ -95,7 +82,12 @@ class VerificationCollector:
             return "verified"
         if self.diffs or any(a.kind == "command" and a.ok for a in self.artifacts):
             return "partial"
-        return "unverified"
+        if self.artifacts:
+            return "unverified"
+        return "idle"
+
+    def has_work(self) -> bool:
+        return bool(self.artifacts or self.diffs or self.gaps)
 
     def summary(self) -> dict[str, Any]:
         st = self.status()
