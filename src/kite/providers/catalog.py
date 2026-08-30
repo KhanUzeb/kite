@@ -122,13 +122,24 @@ def _merge_provider(base: ProviderSpec, overlay: ProviderSpec) -> ProviderSpec:
     )
 
 
+_CATALOG_CACHE: dict[tuple[str, float], Catalog] = {}
+
+
 def load_catalog() -> Catalog:
     """Load packaged catalog, then overlay ~/.kite/catalog.toml."""
+    user_path = kite_home() / "catalog.toml"
+    try:
+        mtime = user_path.stat().st_mtime if user_path.is_file() else 0.0
+    except OSError:
+        mtime = 0.0
+    key = (str(kite_home()), mtime)
+    hit = _CATALOG_CACHE.get(key)
+    if hit is not None:
+        return hit
     pkg = resources.files("kite").joinpath("data/catalog.toml")
     data = _load_toml_bytes(pkg.read_bytes())
     providers = _parse_providers(data)
 
-    user_path = kite_home() / "catalog.toml"
     if user_path.is_file():
         user = _parse_providers(_load_toml_bytes(user_path.read_bytes()))
         for name, spec in user.items():
@@ -137,7 +148,9 @@ def load_catalog() -> Catalog:
             else:
                 providers[name] = spec
 
-    return Catalog(providers=providers)
+    catalog = Catalog(providers=providers)
+    _CATALOG_CACHE[key] = catalog
+    return catalog
 
 
 def load_builtin_catalog_path() -> Path:
