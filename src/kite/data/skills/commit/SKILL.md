@@ -17,6 +17,6 @@ Use when the user asks to commit changes.
 
 ## Do not
 - Update git config
-- Force-push
+- Push, force-push, or amend
 - Commit unless the user asked
 - Use `--no-verify` unless explicitly requested
