@@ -11,15 +11,12 @@ from rich.text import Text
 
 from kite.commands.loader import project_commands_dir, write_command_stub
 from kite.config import UserConfig, kite_home
-from kite.agent.harness import Harness, HarnessConfig
-from kite.memory.store import MemoryStore
 from kite.agent.mode import AgentMode, ApprovalMode, default_approval
 from kite.plugins.loader import project_plugins_dir, write_plugin_stub
 from kite.cli.slash import CommandIndex, help_text, invalidate_command_index, resolve_slash
 from kite.tools.store import TodoStore
-from kite.ui.approval import ApprovalPolicy, make_approver
 from kite.ui.commands import parse_slash
-from kite.ui.git import GitCheckpoints, git_branch
+from kite.ui.git import GitCheckpoints
 from kite.ui.complete import SlashCompleter, make_prompt_session, read_repl_line
 from kite.ui.render import RunDisplay, render_status
 from kite.ui.state import SessionUiState
@@ -64,21 +61,31 @@ class ChatSession:
             approval=approval or default_approval(mode),
         )
         self.display = RunDisplay(self.console, verbose=verbose, state=self.state)
-        self.policy = ApprovalPolicy.load()
+        self.policy = None
         self.git = GitCheckpoints.open(cwd)
         self.todos = TodoStore()
-        self.memory = MemoryStore.open(cwd)
+        self._memory = None
         self.attachments: list = []
-        self.state.git_branch = git_branch(cwd)
         self._session_id: str | None = None
-        self._harness: Harness | None = None
+        self._harness = None
         self._prompt = None
         self._model_cache: list[str] = []
         self._pending_open = session_id
 
+    @property
+    def memory(self):
+        if self._memory is None:
+            from kite.memory.store import MemoryStore
+
+            self._memory = MemoryStore.open(self.cwd)
+        return self._memory
+
     def _approver(self):
         from kite.config import load_runtime_config
+        from kite.ui.approval import ApprovalPolicy, make_approver
 
+        if self.policy is None:
+            self.policy = ApprovalPolicy.load()
         rcfg = load_runtime_config(self.config_name)
         return make_approver(
             self.console,
@@ -90,7 +97,9 @@ class ChatSession:
             workspace_cwd=self.cwd,
         )
 
-    def _make_harness(self, *, resume: bool = False, follow_up: str | None = None) -> Harness:
+    def _make_harness(self, *, resume: bool = False, follow_up: str | None = None):
+        from kite.agent.harness import Harness, HarnessConfig
+
         h = Harness(
             HarnessConfig(
                 provider=self.provider,
@@ -188,6 +197,43 @@ class ChatSession:
         if match is None:
             self.console.print(f"[kite.muted]/{mode} {'|'.join(levels) or '—'}[/]")
         return match
+
+    def _apply_appearance(self) -> None:
+        from kite.ui.complete import prompt_style
+        from kite.ui.theme import rich_theme
+
+        self.console.use_theme(rich_theme())
+        if self._prompt is not None:
+            self._prompt.style = prompt_style()
+
+    def _set_theme(self, raw: str) -> None:
+        from kite.ui.theme import THEME_NAMES, set_theme, theme_label
+
+        if not raw.strip():
+            self.console.print(f"[kite.muted]theme[/]  {theme_label()}  ·  /theme {'|'.join(THEME_NAMES)}")
+            return
+        name = set_theme(raw, persist=True)
+        if name is None:
+            self.console.print(f"[kite.muted]/theme {'|'.join(THEME_NAMES)}[/]")
+            return
+        self._apply_appearance()
+        self.console.print(f"[kite.muted]theme[/]  {theme_label()}")
+        self.console.print("[kite.brand]kite[/]  [kite.success]ok[/]  [kite.pending]wait[/]  [kite.error]err[/]  [kite.muted]muted[/]")
+
+    def _set_font(self, raw: str) -> None:
+        from kite.ui.theme import FONT_NAMES, glyph_preview, set_font
+
+        if not raw.strip():
+            from kite.ui.theme import current_font
+
+            self.console.print(f"[kite.muted]font[/]  {current_font()}  ·  /font {'|'.join(FONT_NAMES)}")
+            return
+        name = set_font(raw, persist=True)
+        if name is None:
+            self.console.print(f"[kite.muted]/font {'|'.join(FONT_NAMES)}[/]")
+            return
+        self._apply_appearance()
+        self.console.print(f"[kite.muted]font[/]  {name}  {glyph_preview()}")
 
     def _compact_now(self) -> None:
         if not self._session_id:
@@ -527,11 +573,14 @@ class ChatSession:
                     self.console.print(f"[kite.success]forgot[/] {note.scope}/{note.id}  {note.text}")
             return True
         if cmd == "status":
+            from kite.ui.theme import current_font, theme_label
+
             sid = self._session_id or "—"
             self.console.print(
                 f"{self.state.mode.value} · {self.state.approval.value} · "
                 f"{self.state.provider or '—'}/{self.state.model or '—'} · "
                 f"effort {self.state.reasoning} · "
+                f"theme {theme_label()} · font {current_font()} · "
                 f"${self.state.cost:.4f} · session {sid}"
             )
             return True
@@ -552,6 +601,12 @@ class ChatSession:
             for name in ("commands", "skills", "plugins", "memory", "sessions"):
                 self.console.print(f"  {home / name}")
             self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")
+            return True
+        if cmd == "theme":
+            self._set_theme(arg)
+            return True
+        if cmd == "font":
+            self._set_font(arg)
             return True
         return True
 
@@ -684,20 +739,41 @@ class ChatSession:
         self._open_session(raw)
 
     def _show_skills(self, name: str) -> None:
-        index = self._index()
-        if name:
-            skill = next((s for s in index.skills if s.name.lower() == name.lower()), None)
-            if skill is None:
-                self.console.print(f"[kite.error]unknown skill {name}[/]  — /skills")
+        raw = (name or "").strip()
+        verb, _, rest = raw.partition(" ")
+        if verb.lower() in {"add", "install"}:
+            spec = rest.strip()
+            if not spec:
+                self.console.print("[kite.muted]/skills add @scope/pkg[/]  or  /skills add owner/repo")
                 return
-            self.console.print(f"[kite.muted]/{skill.name}[/]  {skill.path}")
+            try:
+                from kite.skills.install import install_skill
+
+                names = install_skill(spec)
+            except (ValueError, RuntimeError, OSError) as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            listed = ", ".join(f"/{n}" for n in names)
+            self.console.print(f"[kite.success]installed[/] {listed}  ·  ~/.kite/skills")
+            return
+        from kite.ui.theme import glyph
+
+        index = self._index()
+        if raw:
+            skill = next((s for s in index.skills if s.name.lower() == raw.lower()), None)
+            if skill is None:
+                self.console.print(f"[kite.error]unknown skill {raw}[/]  — /skills")
+                return
+            mark = f" {glyph('home')}" if skill.source == "user" else ""
+            self.console.print(f"[kite.muted]/{skill.name}{mark}[/]  {skill.path}")
             self.console.print(skill.content)
             return
         table = kite_table("skills")
         table.add_column("name")
         table.add_column("description")
         for skill in index.skills:
-            table.add_row(f"/{skill.name}", (skill.description or "")[:70])
+            mark = f" {glyph('home')}" if skill.source == "user" else ""
+            table.add_row(f"/{skill.name}{mark}", (skill.description or "")[:70])
         self.console.print(table)
 
     def _handle_commands(self, arg: str) -> None:
@@ -863,6 +939,9 @@ class ChatSession:
         banner.append("›", style="kite.brand")
         banner.append("  /help", style="kite.muted")
         self.console.print(banner)
+        from kite.ui.git import git_branch
+
+        self.state.git_branch = git_branch(self.cwd)
         if self._pending_open:
             self._open_session(self._pending_open)
             self._pending_open = None

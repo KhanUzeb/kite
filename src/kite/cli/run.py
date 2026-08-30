@@ -8,32 +8,12 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
-
-from kite.cli.display import make_run_display
-from kite.config import UserConfig, ensure_home, kite_home
-from kite.context.discovery import gather_project_context
-from kite.context.window import estimate_usage
-from kite.agent.harness import Harness, HarnessConfig
-from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
 from kite.agent.mode import AgentMode, ApprovalMode, default_approval
-from kite.providers.catalog import load_catalog
-from kite.providers.keys import api_key_for
-from kite.providers.list_models import list_models_for_provider
-from kite.providers.resolve import missing_credentials, missing_model, resolve_model
-from kite.tools import ToolRegistry
-from kite.tools.coding import make_coding_tools
-from kite.ui.approval import make_approver
-from kite.ui.git import GitCheckpoints, git_branch
-from kite.ui.repl import ChatSession
-from kite.ui.state import SessionUiState
-from kite.ui.style import make_console
 
 
-def _console() -> Console:
+def _console():
+    from kite.ui.style import make_console
+
     return make_console(stderr=True)
 
 
@@ -63,7 +43,12 @@ def _load_attachments(paths: list[str], task: str, cwd: str):
     return leftover, bundled
 
 
-def _wire_display(harness: Harness, console: Console, args: argparse.Namespace) -> SessionUiState:
+def _wire_display(harness, console, args: argparse.Namespace):
+    from kite.cli.display import make_run_display
+    from kite.agent.mode import ApprovalMode
+    from kite.ui.git import GitCheckpoints, git_branch
+    from kite.ui.state import SessionUiState
+
     mode = _parse_mode(getattr(args, "mode", None))
     approval = _parse_approval(getattr(args, "approval", None), mode)
     state = SessionUiState(
@@ -80,6 +65,7 @@ def _wire_display(harness: Harness, console: Console, args: argparse.Namespace) 
     harness.subscribe(display)
     if approval is not ApprovalMode.AUTO or mode is AgentMode.PLAN:
         from kite.config import load_runtime_config
+        from kite.ui.approval import make_approver
 
         rcfg = load_runtime_config(getattr(args, "config", None))
         harness.approver = make_approver(
@@ -96,6 +82,9 @@ def _wire_display(harness: Harness, console: Console, args: argparse.Namespace) 
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    from kite.agent.harness import Harness, HarnessConfig
+    from kite.config import ensure_home
+
     console = _console()
     task = args.task
     if args.stdin:
@@ -168,6 +157,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
+    from kite.ui.repl import ChatSession
+
     mode = _parse_mode(getattr(args, "mode", None))
     approval = _parse_approval(getattr(args, "approval", None), mode)
     if getattr(args, "approval", None) is None:
@@ -186,6 +177,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
+    from kite.agent.harness import Harness, HarnessConfig
+
     follow = args.message or args.task
     if not follow:
         return cmd_chat(args)
@@ -232,6 +225,12 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 
 def cmd_sessions(args: argparse.Namespace) -> int:
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from kite.config import kite_home
+    from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
+
     console = _console()
     if args.delete_all:
         rows = list_sessions(limit=10_000)
@@ -278,6 +277,12 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 
 
 def cmd_providers(_args: argparse.Namespace) -> int:
+    from rich.table import Table
+
+    from kite.config import UserConfig
+    from kite.providers.catalog import load_catalog
+    from kite.providers.keys import api_key_for
+
     console = _console()
     catalog = load_catalog()
     cfg = UserConfig.load()
@@ -306,7 +311,13 @@ def cmd_providers(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _select_model_interactive(console: Console, provider: str) -> int:
+def _select_model_interactive(console, provider: str) -> int:
+    from rich.table import Table
+
+    from kite.config import UserConfig
+    from kite.providers.catalog import load_catalog
+    from kite.providers.list_models import list_models_for_provider
+
     cfg = UserConfig.load()
     catalog = load_catalog()
     try:
@@ -378,6 +389,12 @@ def _select_model_interactive(console: Console, provider: str) -> int:
 
 
 def cmd_models(args: argparse.Namespace) -> int:
+    from rich.table import Table
+
+    from kite.config import UserConfig
+    from kite.providers.catalog import load_catalog
+    from kite.providers.list_models import list_models_for_provider
+
     console = _console()
     cfg = UserConfig.load()
     catalog = load_catalog()
@@ -426,6 +443,11 @@ def cmd_models(args: argparse.Namespace) -> int:
 
 
 def cmd_config(args: argparse.Namespace) -> int:
+    from rich.panel import Panel
+
+    from kite.config import UserConfig, kite_home
+    from kite.providers.resolve import missing_credentials, missing_model, resolve_model
+
     console = _console()
     cfg = UserConfig.load()
     if args.select_model:
@@ -480,6 +502,15 @@ def cmd_config(args: argparse.Namespace) -> int:
 
 
 def cmd_context(args: argparse.Namespace) -> int:
+    from rich.panel import Panel
+
+    from kite.config import UserConfig
+    from kite.context.discovery import gather_project_context
+    from kite.context.window import estimate_usage
+    from kite.providers.resolve import resolve_model
+    from kite.tools import ToolRegistry
+    from kite.tools.coding import make_coding_tools
+
     console = _console()
     cfg = UserConfig.load()
     ctx = gather_project_context(
@@ -519,7 +550,20 @@ def cmd_context(args: argparse.Namespace) -> int:
 
 
 def cmd_skills(args: argparse.Namespace) -> int:
+    from rich.panel import Panel
+    from rich.table import Table
+
     console = _console()
+    if getattr(args, "add", None):
+        from kite.skills.install import install_skill
+
+        try:
+            names = install_skill(args.add)
+        except (ValueError, RuntimeError, OSError) as e:
+            console.print(f"[red]{e}[/]")
+            return 1
+        console.print(f"installed {', '.join(names)} → ~/.kite/skills")
+        return 0
     from kite.skills.loader import load_skills
 
     skills = load_skills(args.cwd)
@@ -535,14 +579,18 @@ def cmd_skills(args: argparse.Namespace) -> int:
     table.add_column("description")
     table.add_column("path")
     for s in skills:
-        table.add_row(s.name, (s.description or "")[:60], str(s.path))
+        label = f"{s.name} ~" if s.source == "user" else s.name
+        table.add_row(label, (s.description or "")[:60], str(s.path))
     console.print(table)
     return 0
 
 
 def cmd_commands(args: argparse.Namespace) -> int:
-    console = _console()
+    from rich.table import Table
+
     from kite.cli.slash import CommandIndex
+
+    console = _console()
 
     index = CommandIndex.load(args.cwd)
     table = Table(title="Slash commands")
@@ -560,8 +608,11 @@ def cmd_commands(args: argparse.Namespace) -> int:
 
 
 def cmd_plugins(args: argparse.Namespace) -> int:
-    console = _console()
+    from rich.table import Table
+
     from kite.plugins.loader import load_plugins
+
+    console = _console()
 
     plugins = load_plugins(args.cwd)
     if not plugins:
@@ -606,10 +657,13 @@ def cmd_memory(args: argparse.Namespace) -> int:
 
 
 def cmd_runtime_config(args: argparse.Namespace) -> int:
-    console = _console()
     from dataclasses import asdict
 
+    from rich.panel import Panel
+
     from kite.config import load_runtime_config
+
+    console = _console()
 
     rcfg = load_runtime_config(args.config)
     console.print(Panel(json.dumps(asdict(rcfg), indent=2), title="runtime config"))
@@ -673,6 +727,8 @@ def cmd_audit(args: argparse.Namespace) -> int:
 
 
 def cmd_cloud(args: argparse.Namespace) -> int:
+    from kite.config import kite_home
+
     console = _console()
     cloud_dir = kite_home() / "cloud"
     if args.action == "list":
@@ -813,9 +869,10 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--json", action="store_true")
     context.set_defaults(func=cmd_context)
 
-    skills = sub.add_parser("skills", help="List or show markdown skills")
+    skills = sub.add_parser("skills", help="List, show, or install markdown skills")
     skills.add_argument("--cwd", default=os.getcwd())
     skills.add_argument("--show", help="Show skill body by name")
+    skills.add_argument("--add", help="Install from npm, npx, or GitHub owner/repo")
     skills.set_defaults(func=cmd_skills)
 
     commands = sub.add_parser("commands", help="List markdown slash commands + skills")
@@ -872,8 +929,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw in (["--version"], ["-V"]):
+        from kite import __version__
+
+        print(__version__)
+        return 0
+
+    from dotenv import load_dotenv
+
+    from kite.config import kite_home
+
     load_dotenv()
-    # also load ~/.kite/.env if present
     env_file = kite_home() / ".env"
     if env_file.is_file():
         load_dotenv(env_file)

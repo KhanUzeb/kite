@@ -10,7 +10,7 @@ from pathlib import Path
 KITE_MARK = "kite:"
 
 
-def _run(cwd: str | Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run(cwd: str | Path, *args: str, timeout: int = 20) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         list(args),
         cwd=str(cwd),
@@ -18,15 +18,30 @@ def _run(cwd: str | Path, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=20,
+        timeout=timeout,
     )
 
 
+_BRANCH_TTL = 4.0
+_branch_cache: dict[str, tuple[float, str]] = {}
+
+
 def git_branch(cwd: str | Path) -> str:
-    proc = _run(cwd, "git", "rev-parse", "--abbrev-ref", "HEAD")
-    if proc.returncode != 0:
+    import time
+
+    key = str(cwd)
+    hit = _branch_cache.get(key)
+    now = time.monotonic()
+    if hit is not None and now - hit[0] < _BRANCH_TTL:
+        return hit[1]
+    try:
+        proc = _run(cwd, "git", "rev-parse", "--abbrev-ref", "HEAD", timeout=2)
+    except subprocess.TimeoutExpired:
+        _branch_cache[key] = (now, "")
         return ""
-    return (proc.stdout or "").strip()
+    branch = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+    _branch_cache[key] = (now, branch)
+    return branch
 
 
 def is_repo(cwd: str | Path) -> bool:
