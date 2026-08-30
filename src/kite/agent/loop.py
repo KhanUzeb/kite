@@ -25,7 +25,28 @@ except Exception:  # pragma: no cover
 try:
     INSTANCE_PROMPT = load_prompt_template("instance")
 except Exception:  # pragma: no cover
-    INSTANCE_PROMPT = "Please solve this task:\n\n{task}\n"
+    INSTANCE_PROMPT = "{task}\n"
+
+
+def _exit_msg(status: str, *, content: str | None = None, submission: str = "", **extra) -> dict:
+    return {
+        "role": "exit",
+        "content": status if content is None else content,
+        "extra": {"exit_status": status, "submission": submission, **extra},
+    }
+
+
+def _user_interrupt() -> Interrupted:
+    return Interrupted(
+        {
+            "role": "user",
+            "content": "The user interrupted generation. Wait for their next message.",
+        }
+    )
+
+
+def _blocked(error: str, output: str | None = None) -> dict:
+    return {"ok": False, "blocked": True, "error": error, "output": output or error}
 
 
 class DefaultAgent:
@@ -148,6 +169,13 @@ class DefaultAgent:
             return self.system_prompt
         return f"{self.system_prompt}\n\n# Active project context\n{self.project_context}"
 
+    def _user_turn_text(self, task: str, *, follow: str, kwargs: dict) -> str:
+        """In chat, send what the user typed. One-shot `kite run` still formats through instance.md."""
+        if self.resume_messages or self.interactive:
+            return follow
+        extra = {k: v for k, v in kwargs.items() if k not in {"follow_up", "attachments"}}
+        return self.instance_prompt.format(task=task, **extra)
+
     def _ensure_compactor(self) -> LoopCompactor:
         if self._compactor is None:
             schemas = []
@@ -206,13 +234,10 @@ class DefaultAgent:
 
         user_text = follow = kwargs.get("follow_up") or task
         content: object = user_text
+        prompt = self._user_turn_text(task, follow=follow, kwargs=kwargs)
         if self.attachments:
             from kite.ui.attach import user_content_with_attachments
 
-            if self.resume_messages:
-                prompt = follow
-            else:
-                prompt = self.instance_prompt.format(task=task, **{k: v for k, v in kwargs.items() if k not in {"follow_up", "attachments"}})
             content = user_content_with_attachments(prompt, self.attachments, images=self.send_images)
 
         if self.resume_messages:
@@ -223,7 +248,7 @@ class DefaultAgent:
         else:
             self.messages = []
             if not self.attachments:
-                content = self.instance_prompt.format(task=task, **{k: v for k, v in kwargs.items() if k not in {"follow_up", "attachments"}})
+                content = prompt
             self.add_messages(
                 self.model.format_message(role="system", content=self._full_system()),
                 self.model.format_message(role="user", content=content),
@@ -241,38 +266,16 @@ class DefaultAgent:
                     self.cost += e.messages[0].get("extra", {}).get("cost", 0.0) if e.messages else 0.0
                     self.n_consecutive_format_errors += 1
                     if 0 < self.max_consecutive_format_errors <= self.n_consecutive_format_errors:
-                        self.add_messages(
-                            *e.messages,
-                            {
-                                "role": "exit",
-                                "content": "RepeatedFormatError",
-                                "extra": {"exit_status": "RepeatedFormatError", "submission": ""},
-                            },
-                        )
+                        self.add_messages(*e.messages, _exit_msg("RepeatedFormatError"))
                     else:
                         self.add_messages(*e.messages)
                 except Interrupted as e:
-                    self.add_messages(*e.messages)
-                    self.add_messages(
-                        {
-                            "role": "exit",
-                            "content": "Interrupted",
-                            "extra": {"exit_status": "Interrupted", "submission": ""},
-                        }
-                    )
+                    self.add_messages(*e.messages, _exit_msg("Interrupted"))
                 except InterruptAgentFlow as e:
                     self.add_messages(*e.messages)
                 except Exception as e:
                     self.add_messages(
-                        {
-                            "role": "exit",
-                            "content": str(e),
-                            "extra": {
-                                "exit_status": type(e).__name__,
-                                "submission": "",
-                                "traceback": traceback.format_exc(),
-                            },
-                        }
+                        _exit_msg(type(e).__name__, content=str(e), traceback=traceback.format_exc())
                     )
                     self._emit("error", error=str(e), traceback=traceback.format_exc())
                     raise
@@ -298,21 +301,9 @@ class DefaultAgent:
 
     def query(self) -> dict:
         if 0 < self.step_limit <= self.n_calls or 0 < self.cost_limit <= self.cost:
-            raise LimitsExceeded(
-                {
-                    "role": "exit",
-                    "content": "LimitsExceeded",
-                    "extra": {"exit_status": "LimitsExceeded", "submission": ""},
-                }
-            )
+            raise LimitsExceeded(_exit_msg("LimitsExceeded"))
         if 0 < self.wall_time_limit_seconds <= int(time.time() - self._start_time):
-            raise TimeExceeded(
-                {
-                    "role": "exit",
-                    "content": "TimeExceeded",
-                    "extra": {"exit_status": "TimeExceeded", "submission": ""},
-                }
-            )
+            raise TimeExceeded(_exit_msg("TimeExceeded"))
         self.n_calls += 1
         try:
             messages = self.messages
@@ -324,19 +315,9 @@ class DefaultAgent:
                 message = self.hooks.call("after_query", message)
         except KeyboardInterrupt:
             self.request_interrupt()
-            raise Interrupted(
-                {
-                    "role": "user",
-                    "content": "The user interrupted generation. Wait for their next message.",
-                }
-            ) from None
+            raise _user_interrupt() from None
         if self._interrupt:
-            raise Interrupted(
-                {
-                    "role": "user",
-                    "content": "The user interrupted generation. Wait for their next message.",
-                }
-            )
+            raise _user_interrupt()
         self.cost += message.get("extra", {}).get("cost", 0.0)
         self._emit("cost", cost=self.cost)
         if (
@@ -359,13 +340,7 @@ class DefaultAgent:
         if not actions:
             content = (message.get("content") or "").strip()
             if (self.interactive or self.mode is AgentMode.PLAN) and content:
-                raise Submitted(
-                    {
-                        "role": "exit",
-                        "content": content,
-                        "extra": {"exit_status": "Submitted", "submission": content},
-                    }
-                )
+                raise Submitted(_exit_msg("Submitted", content=content, submission=content))
             return self.add_messages(
                 {
                     "role": "user",
@@ -390,18 +365,23 @@ class DefaultAgent:
             self._tool_started_at = time.time()
 
             try:
-                if self.mode is AgentMode.PLAN and tool in MUTATING_TOOLS and tool != "todo_write":
-                    cmd = str(args.get("command") or "").strip()
-                    submit_ok = tool == "bash" and "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in cmd and "&&" not in cmd
-                    if not submit_ok:
-                        out = {
-                            "ok": False,
-                            "blocked": True,
-                            "error": "blocked in plan mode — /build to apply edits",
-                            "output": "blocked in plan mode — switch to build to mutate the workspace",
-                        }
-                    else:
-                        out = self._run_gated(tool, args, action)
+                cmd = str(args.get("command") or "").strip()
+                submit_ok = (
+                    tool == "bash"
+                    and "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in cmd
+                    and "&&" not in cmd
+                )
+                plan_block = (
+                    self.mode is AgentMode.PLAN
+                    and tool in MUTATING_TOOLS
+                    and tool != "todo_write"
+                    and not submit_ok
+                )
+                if plan_block:
+                    out = _blocked(
+                        "blocked in plan mode — /build to apply edits",
+                        "blocked in plan mode — switch to build to mutate the workspace",
+                    )
                 else:
                     out = self._run_gated(tool, args, action)
             except Submitted:
@@ -413,13 +393,14 @@ class DefaultAgent:
             if self._tool_started_at is not None:
                 duration_ms = int((time.time() - self._tool_started_at) * 1000)
                 self._tool_started_at = None
+            flat = preview.replace("\n", " ")
             structured = {
                 "tool": tool,
                 "ok": out.get("ok", True),
                 "blocked": out.get("blocked", False),
                 "duration_ms": duration_ms,
                 "exit_code": out.get("returncode"),
-                "preview": preview.replace("\n", " "),
+                "preview": flat,
             }
             if tool == "bash":
                 structured["command"] = str(args.get("command") or "")
@@ -432,7 +413,7 @@ class DefaultAgent:
                 tool=tool,
                 ok=out.get("ok", True),
                 blocked=out.get("blocked", False),
-                preview=preview.replace("\n", " "),
+                preview=flat,
                 output=out.get("output") or "",
                 error=out.get("error") or "",
                 diff=out.get("diff") or "",
@@ -474,12 +455,7 @@ class DefaultAgent:
             outputs.append(out)
         obs = self.add_messages(*self.model.format_observation_messages(message, outputs))
         if self._interrupt:
-            raise Interrupted(
-                {
-                    "role": "user",
-                    "content": "The user interrupted generation. Wait for their next message.",
-                }
-            )
+            raise _user_interrupt()
         return obs
 
     def _run_gated(self, tool: str, args: dict, action: dict) -> dict:
@@ -491,14 +467,9 @@ class DefaultAgent:
             decision = self.approver(tool, args, extra)
             if decision == "stop":
                 self.request_interrupt()
-                return {"ok": False, "blocked": True, "error": "stopped by user", "output": "stopped by user"}
+                return _blocked("stopped by user")
             if decision == "deny":
-                return {
-                    "ok": False,
-                    "blocked": True,
-                    "error": "denied by user",
-                    "output": "denied by user",
-                }
+                return _blocked("denied by user")
         return self.env.execute(action)
 
     def _preview_diff(self, tool: str, args: dict) -> str:
