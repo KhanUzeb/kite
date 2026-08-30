@@ -1,17 +1,17 @@
-# Kite — System Design, Code Atlas & Engineering Notes
+# Kite — System design, code atlas & engineering notes
 
-**Version:** 0.6.6  
-**Stack:** Python 3.12 · LiteLLM · Rich · uv  
-**Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)  
-**Companion UX spec:** [cli-ux.md](cli-ux.md) (PDF: `docs/cli-ux.pdf`)  
-**Install:** [README.md](../README.md#setup) · `scripts/install.sh` / `scripts/install.ps1`  
-**Generated for:** weekend hybrid slim coding-agent harness
+**Version:** 0.6.6
+**Stack:** Python 3.12 · LiteLLM · Rich · uv
+**Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)
+**Companion UX spec:** [cli-ux.md](cli-ux.md) (PDF: `docs/cli-ux.pdf`)
+**Install:** [README.md](../README.md#setup) · `scripts/install.sh` / `scripts/install.ps1`
+**Generated for:** a weekend hybrid slim coding-agent harness
 
 ---
 
 ## 0. One-sentence pitch
 
-Kite is a **slim coding-agent harness**: a mini-swe-agent–style sync loop (query → tools → observe → repeat) wrapped in tau-inspired **runtime assembly** (providers, prompts, skills, guardrails, compaction, JSONL memory).
+Kite is a **slim coding-agent harness**: a mini-swe-agent style sync loop (query → tools → observe → repeat) wrapped in tau-inspired **runtime assembly** (providers, prompts, skills, guardrails, compaction, JSONL memory).
 
 ---
 
@@ -30,7 +30,7 @@ Kite is a **slim coding-agent harness**: a mini-swe-agent–style sync loop (que
 - Full-screen Textual TUI (we shipped a single-column Rich REPL instead)
 - OAuth login flows, extension marketplace
 - Session tree branching / leaf replay (tau has this; we stay linear)
-- Benchmark runners (SWE-bench batch) — env swap later is enough
+- Benchmark runners (SWE-bench batch), env swap later is enough
 - Persistent shell sessions
 - ~~Nested LLM sub-agents~~ — **`subagent` tool** (0.6) spawns bounded nested harness runs; `task` remains the cheaper glob+grep fan-out
 
@@ -61,8 +61,8 @@ Kite is a **slim coding-agent harness**: a mini-swe-agent–style sync loop (que
 | Slash commands + session memory | Session tree / leaf replay |
 
 ### Hybrid thesis
-> **mini’s loop is the engine; tau’s assembly is the cockpit.**  
-> Don’t port tau’s product surface. Port the *boundaries*.
+> **mini's loop is the engine; tau's assembly is the cockpit.**
+> Don't port tau's product surface. Port the *boundaries*.
 
 ---
 
@@ -196,39 +196,39 @@ DefaultAgent.run
 ## 4. Module atlas (every package)
 
 ### 4.1 `agent/runtime.py` — AgentRuntime
-**Job:** One façade that wires the world before the loop.  
-**Owns:** options, listeners, last_session, last_resolved, runtime_config, approver, checkpoints, todos.  
-**Does:** `prepare()` → resolve model, load skills, gather context, assemble system prompt (+ mode + memory); `run()` → expand slash commands/skills, filter tools by plan/build, build guardrails+tools, session, DefaultAgent.  
+**Job:** One façade that wires the world before the loop.
+**Owns:** options, listeners, last_session, last_resolved, runtime_config, approver, checkpoints, todos.
+**Does:** `prepare()` → resolve model, load skills, gather context, assemble system prompt (+ mode + memory); `run()` → expand slash commands/skills, filter tools by plan/build, build guardrails+tools, session, DefaultAgent.
 **Does not:** render UI, know Rich, parse CLI argv.
 
 ### 4.2 `agent/harness.py` — Harness
-**Job:** Thin CLI adapter mapping `HarnessConfig` → `RuntimeOptions`. Forwards approver, git checkpoints, and the shared `TodoStore` so a REPL can reuse them across turns.  
+**Job:** Thin CLI adapter mapping `HarnessConfig` → `RuntimeOptions`. Forwards approver, git checkpoints, and the shared `TodoStore` so a REPL can reuse them across turns.
 **Why it exists:** Keep `cli/run.py` ignorant of runtime internals; allow library use.
 
 ### 4.3 `agent/loop.py` — DefaultAgent
-**Job:** The mini loop, plus plan/build gating, approval callback, interrupt, git checkpoints.  
-**Key methods:** `run`, `step`, `query`, `execute_actions`, `_run_gated`, `request_interrupt`, `add_messages`, `_maybe_compact`, `serialize`/`save`.  
-**Interactive / plan:** a text-only assistant reply (no tool calls) ends the turn via `Submitted`. Ctrl+C / `should_stop` raises `Interrupted` without killing the process.  
+**Job:** The mini loop, plus plan/build gating, approval callback, interrupt, git checkpoints.
+**Key methods:** `run`, `step`, `query`, `execute_actions`, `_run_gated`, `request_interrupt`, `add_messages`, `_maybe_compact`, `serialize`/`save`.
+**Interactive / plan:** a text-only assistant reply (no tool calls) ends the turn via `Submitted`. Ctrl+C / `should_stop` raises `Interrupted` without killing the process.
 **Nit:** System prompt already includes project context when built by runtime; `project_context` field remains for standalone agent use.
 
 ### 4.4 `agent/compaction.py` — LoopCompactor
-**Job:** Before each query, estimate tokens; if `total >= window - reserve`, replace older body with a deterministic summary user message; keep recent tail by token budget.  
-**Pick:** Deterministic summary first (no extra LLM spend). LLM summarization can plug in later like tau’s compaction prompts.
+**Job:** Before each query, estimate tokens; if `total >= window - reserve`, replace older body with a deterministic summary user message; keep recent tail by token budget.
+**Pick:** Deterministic summary first (no extra LLM spend). LLM summarization can plug in later like tau's compaction prompts.
 
 ### 4.5 `config/runtime.py` — AgentRuntimeConfig
-**Job:** TOML schema for agent limits, tools enable-list, guardrails, skills, context.  
+**Job:** TOML schema for agent limits, tools enable-list, guardrails, skills, context.
 **Merge order:** packaged `default.toml` → `~/.kite/configs/default.toml` → `--config` path/name.
 
 ### 4.6 `prompts/` — assemble_system_prompt / assemble_instance_prompt
-**Job:** Load `data/prompts/*.md` (system, instance, `mode_plan`, `mode_build`), append project context + skill index.  
+**Job:** Load `data/prompts/*.md` (system, instance, `mode_plan`, `mode_build`), append project context + skill index.
 **Pick:** Prompt text lives in markdown files (editable without Python PRs). Mode extra-section is injected by runtime.
 
 ### 4.7 `providers/` — catalog + resolve
-**Job:** tau-style catalog; map `(provider, model)` → LiteLLM id + api_base + key env + context window.  
+**Job:** tau-style catalog; map `(provider, model)` → LiteLLM id + api_base + key env + context window.
 **Providers shipped:** openai, anthropic, openrouter, huggingface, ollama, gemini, groq, opencode-zen, opencode-go, nvidia (NIM), openai-compatible.
 
 ### 4.8 `models/litellm_model.py`
-**Job:** `completion()` with tools; parse `tool_calls` into `extra.actions`; format tool-role observations; track cost/usage; stream deltas; honor `should_stop` for interrupt.  
+**Job:** `completion()` with tools; parse `tool_calls` into `extra.actions`; format tool-role observations; track cost/usage; stream deltas; honor `should_stop` for interrupt.
 **Nit:** Strips kite-only fields (`extra`, `exit`) before API call.
 
 ### 4.9 `tools/` — Tool + ToolRegistry + coding tools
@@ -257,21 +257,21 @@ Optional `reason` on mutating tools is shown in the UI. Every call goes through 
 **Checks:** path sandbox to cwd; deny-list bash regexes; block sensitive filenames / secret-shaped writes; redact secret-like strings in outputs; truncate huge outputs.
 
 ### 4.12 `skills/` — loader
-**Spec:** directory with `SKILL.md` (+ optional YAML frontmatter).  
-**Discovery order (later wins):** bundled → `~/.kite/skills` → plugins → `.kite/skills` → `.agents/skills` → config extra dirs.  
+**Spec:** directory with `SKILL.md` (+ optional YAML frontmatter).
+**Discovery order (later wins):** bundled → `~/.kite/skills` → plugins → `.kite/skills` → `.agents/skills` → config extra dirs.
 **Invocation:** tool `skill` (load, or `install` from npm/npx/GitHub into `~/.kite/skills`), prompt `/skill:name …` / `/skill name …`, `/skills add pkg`, or `/name` when no markdown command took that name. User-home skills show `~` in the `/` menu.
 
 ### 4.12b `commands/` + `plugins/` + `cli/slash.py`
-Markdown slash prompts (`--- name / description ---` + `$ARGUMENTS`) live in `data/commands`, `~/.kite/commands`, `.kite/commands`, and `plugins/*/commands`.  
-A plugin is a folder with `plugin.toml` (or `plugin.json`) plus optional `commands/` and `skills/`.  
+Markdown slash prompts (`--- name / description ---` + `$ARGUMENTS`) live in `data/commands`, `~/.kite/commands`, `.kite/commands`, and `plugins/*/commands`.
+A plugin is a folder with `plugin.toml` (or `plugin.json`) plus optional `commands/` and `skills/`.
 `CommandIndex` overlay: bundled → user commands → plugins → project commands → skills fill unused names. Builtins always win. `/commands new` and `/plugins init` scaffold project files.
 
 ### 4.13 `context/` — discovery + window
-**Discovery:** project root markers, ancestor `KITE.md` + `AGENTS.md`, git status --short --branch, tree sketch (skip venv/node_modules).  
+**Discovery:** project root markers, ancestor `KITE.md` + `AGENTS.md`, git status --short --branch, tree sketch (skip venv/node_modules).
 **Window:** ~4 chars/token estimate; `should_compact`; `compact_messages`.
 
 ### 4.14 `memory/`
-**Sessions:** JSONL transcript (`session.py`); first line `type=meta`, then `type=message`.  
+**Sessions:** JSONL transcript (`session.py`); first line `type=meta`, then `type=message`.
 **Notes:** `store.py` JSONL + optional `MEMORY.md`. `/remember` / `/forget` / `memory` tool. Injected into the system prompt each run. Distinct from `KITE.md` (repo instructions).
 
 ### 4.15 `config/` — UserConfig + runtime TOML
@@ -284,17 +284,17 @@ A plugin is a folder with `plugin.toml` (or `plugin.json`) plus optional `comman
 Duck-typed contracts + thin Event dataclass for CLI printers.
 
 ### 4.18 `cli/run.py` — CLI
-Subcommands: `chat` (default when invoked as bare `kite`), `run`, `resume`, `sessions`, `providers`, `models`, `config`, `context`, `skills`, `commands`, `plugins`, `memory`, `runtime-config`.  
+Subcommands: `chat` (default when invoked as bare `kite`), `run`, `resume`, `sessions`, `providers`, `models`, `config`, `context`, `skills`, `commands`, `plugins`, `memory`, `runtime-config`.
 Flags: `--mode plan|build`, `--approval auto|approve|readonly`. Full map: [kite_commands.md](../kite_commands.md).
 
 ### 4.19 `agent/mode.py` — plan vs build
-**Plan:** read-only tools + `todo_write`; approval defaults to `readonly`; text-only reply finishes with a plan.  
-**Build:** full tool set; chat defaults to `approve`, one-shot `kite run` defaults to `auto`.  
+**Plan:** read-only tools + `todo_write`; approval defaults to `readonly`; text-only reply finishes with a plan.
+**Build:** full tool set; chat defaults to `approve`, one-shot `kite run` defaults to `auto`.
 Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 
 ### 4.20 `ui/` — Rich terminal front-end
-**Job:** All rendering. Core still never imports Rich.  
-**Modules:** `style` (palette/symbols), `theme` (`/theme` palettes, `/font` glyph packs), `state`, `render` (stream → collapse → git-stat diff → footer), `approval` (once/session/always), `git` (checkpoint + `/undo`), `commands` (slash parser), `repl` (cold-start chat), `spinner`, `diff` (`+N,-M` + colored hunks).  
+**Job:** All rendering. Core still never imports Rich.
+**Modules:** `style` (palette/symbols), `theme` (`/theme` palettes, `/font` glyph packs), `state`, `render` (stream → collapse → git-stat diff → footer), `approval` (once/session/always), `git` (checkpoint + `/undo`), `commands` (slash parser), `repl` (cold-start chat), `spinner`, `diff` (`+N,-M` + colored hunks).
 **Spec:** [cli-ux.md](cli-ux.md).
 
 ---
@@ -343,24 +343,24 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 1. **Boundary over features** — Runtime assembles; Agent loops; CLI prints.
 2. **Data-driven providers/prompts/skills** — Prefer TOML/MD over Python constants.
 3. **Fail closed on sandbox** — Path escape is an error, not a warning.
-4. **Trajectory == messages** — Debugging is “open the JSON”.
+4. **Trajectory == messages** — Debugging is "open the JSON".
 5. **uv for envs** — Reproducible, fast; pin `.python-version`.
 6. **Skill index in system + full body on demand** — Cheap index, expensive body only when needed (tau lesson).
-7. **Guardrail clamp on outputs** — Secrets shouldn’t echo back into the next prompt.
+7. **Guardrail clamp on outputs** — Secrets shouldn't echo back into the next prompt.
 
 ### Nits (fix or watch)
 1. ~~Session rewrite-on-append is O(n) per message~~ **improved (0.6.3):** append-only message lines + meta timestamp patch; full rewrite still on compaction/replace.
 2. ~~Add tests for guardrails, approval, loop guard~~ **partial (0.6.6):** pytest in `tests/`; expand catalog resolve and compaction next.
 3. Tree snippet can be large on monorepos — already capped; consider ripgrep-based file list.
-4. No retry taxonomy beyond LiteLLM `num_retries` — tau’s provider retry events are richer.
+4. No retry taxonomy beyond LiteLLM `num_retries` — tau's provider retry events are richer.
 5. `Harress`/`Runtime` duplication of options fields — could collapse to one dataclass.
 6. Grep uses ripgrep when `rg` is on PATH; Python walk is the fallback for small repos.
-7. Frontmatter parser is line-split YAML-ish — not full YAML; keep skills’ frontmatter simple.
+7. Frontmatter parser is line-split YAML-ish — not full YAML; keep skills' frontmatter simple.
 8. Cost accounting depends on LiteLLM hidden params — may be 0 for some providers.
 9. Windows shell + `shell=True` — document PowerShell vs cmd differences.
 10. Packaged skill path via `importlib.resources` can look ugly in prompts — still readable to the model.
 11. REPL builds a new harness per turn so `/plan`/`/build` can swap the tool schema — **mitigated (0.6.3):** 30s context cache + 45s skills cache on repeat `prepare()`.
-12. Approval “always” patterns live in `~/.kite/approvals.json` — treat that file as a credential-adjacent allowlist.
+12. Approval "always" patterns live in `~/.kite/approvals.json` — treat that file as a credential-adjacent allowlist.
 
 ### Footguns
 - Forgetting API keys → runtime raises before loop (good).
@@ -374,9 +374,9 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 1. **SWE-agent → mini** taught that as models improve, scaffold weight should fall. Bash-only + linear history is a strong baseline for evals.
 2. **tau** taught that *product* agents need assembly: catalogs, skills, sessions, context files, events. The mistake is copying the product wholesale into a weekend harness.
 3. **Hybrid rule:** steal *interfaces* (Environment.execute, Event listener, SKILL.md, catalog.toml), not *implementation volume*.
-4. **Context engineering > prompt poetry:** AGENTS.md + git status + tree + compaction moves needle more than a longer system prompt.
-5. **Memory is two layers:** (a) active context window for the model, (b) durable JSONL for humans/resume. Don’t conflate them — compaction changes (a) while (b) can rewrite or later keep full history.
-6. **Guardrails aren’t security theater if scoped honestly:** they protect against model mistakes (rm -rf, path escape), not against a hostile operator on the same machine.
+4. **Context engineering > prompt poetry:** AGENTS.md + git status + tree + compaction moves the needle more than a longer system prompt.
+5. **Memory is two layers:** (a) active context window for the model, (b) durable JSONL for humans/resume. Don't conflate them — compaction changes (a) while (b) can rewrite or later keep full history.
+6. **Guardrails aren't security theater if scoped honestly:** they protect against model mistakes (rm -rf, path escape), not against a hostile operator on the same machine.
 7. **Skills beat mega-prompts:** index in system; load full playbook when relevant — same idea as progressive disclosure.
 
 ---
@@ -393,7 +393,7 @@ Empty assistant with no tool_calls, or invalid tool JSON → `FormatError` user 
 `should_compact` iff `total_tokens >= context_window - reserve` (default reserve 16_384). Keep recent ~20_000 tokens of tail.
 
 ### 9.4 Provider resolution precedence
-CLI `--provider/--model` → user `provider_defaults` / `default_model` → catalog `default_model`.  
+CLI `--provider/--model` → user `provider_defaults` / `default_model` → catalog `default_model`.
 `api_bases` in user config override catalog `base_url`.
 
 ### 9.5 Tool gating
@@ -458,16 +458,16 @@ REPL slash commands: builtins (`/plan` `/build` `/undo` `/memory` `/remember` `/
 
 ## 11. Roadmap (sorted by leverage)
 
-1. DockerEnvironment (`docker exec`) — unlocks eval sandboxes  
-2. LLM-backed compaction (tau prompts) when deterministic summary loses too much  
-3. ~~Append-only session log~~ **partial (0.6.3):** message append; compaction still rewrites  
-4. ~~Streaming + Textual TUI consuming events~~ **done (0.4):** Rich linear TUI — see [cli-ux.md](cli-ux.md)  
-5. ~~ripgrep-backed grep tool~~ **done (0.4)**  
-6. ~~Tests for guardrails, approval, loop guard~~ **partial (0.6.6):** `pytest` in `tests/` — expand catalog resolve + compaction  
-7. ~~Optional nested LLM `subagent` tool~~ **done (0.6)**  
-8. Click-to-expand tool blocks (needs a full-screen TUI if we ever want it)  
-9. ~~Git-stat `+N,-M` on write/edit~~ **done (0.6.6)**  
-10. ~~npm/npx/GitHub skill install into `~/.kite/skills`~~ **done (0.6.6)**  
+1. DockerEnvironment (`docker exec`) — unlocks eval sandboxes
+2. LLM-backed compaction (tau prompts) when deterministic summary loses too much
+3. ~~Append-only session log~~ **partial (0.6.3):** message append; compaction still rewrites
+4. ~~Streaming + Textual TUI consuming events~~ **done (0.4):** Rich linear TUI — see [cli-ux.md](cli-ux.md)
+5. ~~ripgrep-backed grep tool~~ **done (0.4)**
+6. ~~Tests for guardrails, approval, loop guard~~ **partial (0.6.6):** `pytest` in `tests/` — expand catalog resolve + compaction
+7. ~~Optional nested LLM `subagent` tool~~ **done (0.6)**
+8. Click-to-expand tool blocks (needs a full-screen TUI if we ever want it)
+9. ~~Git-stat `+N,-M` on write/edit~~ **done (0.6.6)**
+10. ~~npm/npx/GitHub skill install into `~/.kite/skills`~~ **done (0.6.6)**
 
 ### Running tests
 
@@ -498,57 +498,3 @@ Global home: `~/.kite/` (`KITE_HOME` override). Sessions and provider prefs are 
 | `ui/` | loaders, status meter, chips, warning events |
 
 ---
-
-## 12. File tree (source of truth)
-
-```
-kite/
-  pyproject.toml
-  requirements.txt
-  README.md
-  scripts/
-    install.sh install.ps1   # workstation bootstrap
-  tests/                   # pytest (guardrails, agent, sessions, ui)
-  .python-version
-  src/kite/
-    __init__.py
-    __main__.py
-    agent/              # loop, runtime, harness, mode, events, exceptions
-    cli/                # argparse + slash index
-    config/             # ~/.kite prefs + runtime TOML
-    ui/                 # Rich TUI
-    prompts/
-    providers/
-    models/litellm_model.py
-    tools/
-    env/local.py
-    guardrails/
-    commands/           # markdown slash prompts
-    plugins/
-    skills/
-    context/
-    memory/
-    data/
-      catalog.toml
-      configs/default.toml
-      prompts/{system,instance,mode_plan,mode_build}.md
-      commands/{explain,fix,pr}.md
-      skills/{commit,debug,test,review}/SKILL.md
-docs/
-  kite-system-design.md
-  cli-ux.md
-kite_commands.md
-```
-
----
-
-## 13. Closing design rule
-
-> If a change requires the agent loop to import Rich, Textual, or filesystem layout policy, **put it in Runtime/CLI/`ui/` instead**.  
-> If a change requires the catalog to know about tool schemas, **you’ve crossed a layer — stop**.
-
-That single rule is how Kite stays a hybrid *slim* harness instead of a second tau.
-
----
-
-*End of design document.*

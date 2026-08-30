@@ -1,15 +1,15 @@
-# Ideal CLI Spec Coverage (Kite 0.6.6)
+# Ideal CLI spec coverage (Kite 0.6.6)
 
-Mapping of the 14-category Ideal Coding CLI spec to Kite features.
+How Kite maps onto the 14-category Ideal Coding CLI spec.
 
 | # | Category | Bar | Kite implementation |
 |---|----------|-----|---------------------|
-| 1 | Verifiability | Antigravity | `VerificationCollector` → `artifact` events; diffs, test commands, verification status on submit |
+| 1 | Verifiability | Antigravity | `VerificationCollector` -> `artifact` events; diffs, test commands, verification status on submit |
 | 2 | Graduated autonomy | Codex CLI | `auto` / `trust` / `approve` / `readonly`; sandbox on by default; **`trusted_paths`** relaxes trust-mode bash inside subtrees |
 | 3 | Transparent context | Warp | Exact `$ command` rows; `secrets_redacted` count in tool output |
 | 4 | Parallel + legible | Claude/Antigravity | `task` tool `prompts[]` parallel fan-out; **`subagent`** LLM orchestrator with manager events |
 | 5 | Model-agnostic | OpenCode | LiteLLM + Ollama catalog; `kite import <format>` for Cursor/Claude/Aider/Codex sessions |
-| 6 | MCP-native | Claude Code | `[[mcp]]` servers in TOML → stdio JSON-RPC → `mcp_<server>_<tool>` registry |
+| 6 | MCP-native | Claude Code | `[[mcp]]` servers in TOML -> stdio JSON-RPC -> `mcp_<server>_<tool>` registry |
 | 7 | Long-horizon context | Claude Code | Auto-compaction, sessions/resume, image token budgeting in `estimate_message_tokens` |
 | 8 | Cloud/local parity | Codex CLI | `kite cloud list|apply`, `kite apply <trajectory>` |
 | 9 | Terminal-native | Aider/Warp | `kite run`, `kite exec`, `--json`, `--stdin`, exit codes |
@@ -21,7 +21,7 @@ Mapping of the 14-category Ideal Coding CLI spec to Kite features.
 
 ## Install
 
-**Any workstation** — clone and run the install script (creates `.venv`, editable install, seeds `~/.kite/.env`):
+**Any workstation**: clone and run the install script (creates `.venv`, editable install, seeds `~/.kite/.env`):
 
 ```bash
 git clone https://github.com/KhanUzeb/kite.git && cd kite && ./scripts/install.sh
@@ -30,7 +30,7 @@ git clone https://github.com/KhanUzeb/kite.git && cd kite && ./scripts/install.s
 
 One-liner: `curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash`
 
-**Any project** — after install, activate the venv and run `kite` from whatever repo you are working in. Workspace defaults to the shell cwd; use `--cwd` on `run` / `chat` / `resume` / `context` / `skills` / `memory` to target another tree. Config and sessions are global (`~/.kite/`); optional per-repo overlays live in `<repo>/.kite/`.
+**Any project**: after install, activate the venv and run `kite` from whatever repo you are working in. Workspace defaults to the shell cwd; use `--cwd` on `run` / `chat` / `resume` / `context` / `skills` / `memory` to target another tree. Config and sessions are global (`~/.kite/`); optional per-repo overlays live in `<repo>/.kite/`.
 
 See [README.md](../README.md#use-kite-on-any-project-not-just-this-repo) for PATH setup and examples.
 
@@ -58,7 +58,7 @@ kite run  # footer shows cache hit % when provider returns cached tokens
 ## Orchestrator
 
 The `subagent` tool spawns bounded nested agent runs (default: 10 steps, $1 budget each).
-Pass multiple `prompts` for parallel workers — the TUI shows `▸ subagent` / `✓ subagent` rows.
+Pass multiple `prompts` for parallel workers, and the TUI shows `▸ subagent` / `✓ subagent` rows.
 
 ```toml
 [orchestrator]
@@ -69,7 +69,7 @@ cost_limit = 1.0
 
 ## Prompt cache
 
-Pi-style prefix caching: stable system prompt gets `cache_control` breakpoints on Anthropic.
+Pi-style prefix caching: the stable system prompt gets `cache_control` breakpoints on Anthropic.
 OpenAI cached_tokens and Anthropic cache_read are tracked and shown in the footer.
 
 ```toml
@@ -82,7 +82,7 @@ enabled = true
 Terminal loaders inspired by [beautifului.dev](https://www.beautifului.dev/) (TTY-only subset):
 
 ```bash
-KITE_LOADER=grid   # default — pixel strip + shimmer + elapsed time
+KITE_LOADER=grid   # default, pixel strip + shimmer + elapsed time
 KITE_LOADER=dots   # dot chase
 ```
 
