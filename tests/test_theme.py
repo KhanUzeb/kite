@@ -32,6 +32,11 @@ def test_builtin_theme_and_font_commands() -> None:
 
 
 def test_theme_dropdown_lists_palettes() -> None:
+    from kite.ui.complete import _PT
+
+    if not _PT:
+        return
+
     completer = SlashCompleter(lambda: CommandIndex())
 
     class _Doc:

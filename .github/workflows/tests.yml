@@ -27,6 +27,8 @@ jobs:
 
       - name: Count commits in this push or PR
         id: count
+        env:
+          PUSH_COMMITS: ${{ github.event.commits && length(github.event.commits) || 0 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -44,8 +46,14 @@ jobs:
             AFTER="${{ github.sha }}"
             if [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ]; then
               COUNT=1
-            else
+            elif git merge-base --is-ancestor "${BEFORE}" "${AFTER}" 2>/dev/null; then
               COUNT="$(git rev-list --count "${BEFORE}..${AFTER}")"
+            elif [ "${PUSH_COMMITS:-0}" -gt 0 ]; then
+              # Rebase/force-push: before..after is invalid; use webhook payload size.
+              COUNT="${PUSH_COMMITS}"
+            else
+              # Unknown push shape — prefer running tests over silently skipping.
+              COUNT=5
             fi
           fi
 
@@ -71,12 +79,13 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
       - name: Install Kite + dev deps
         run: uv pip install -e ".[dev]"
 
       - name: pytest
-        run: pytest -q
+        run: uv run pytest -q
 
   skipped:
     needs: commit-count
