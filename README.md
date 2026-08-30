@@ -5,9 +5,9 @@ A slim hybrid coding-agent harness: the **mini-swe-agent** control flow plus **t
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
-[![Version](https://img.shields.io/badge/version-0.6.7-cyan.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.8-cyan.svg)](CHANGELOG.md)
 
-**Version:** 0.6.7
+**Version:** 0.6.8
 
 ## Features
 
