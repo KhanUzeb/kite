@@ -490,7 +490,7 @@ REPL slash commands: builtins (`/plan` `/build` `/select` `/thinking` `/fast` `/
 pytest
 ```
 
-**CI:** GitHub Actions runs `pytest` when a push or PR to `main` batches **5+ commits** (see `.github/workflows/tests.yml`). Always run `pytest` locally before opening a PR.
+**CI:** GitHub Actions runs `pytest` on every push and pull request to `main` (Python 3.11 + 3.12; see `.github/workflows/tests.yml`). Always run `pytest` locally before opening a PR.
 
 Manual: `uv venv --python 3.12` → `uv pip install -e ".[dev]"` → `pytest`. See [README.md](../README.md#setup).
 
@@ -509,7 +509,6 @@ Global home: `~/.kite/` (`KITE_HOME` override). Sessions and provider prefs are 
 | `guardrails/` | path sandbox, secrets redaction, `trusted_paths` |
 | `agent/` | loop guard, verification, orchestrator |
 | `memory/` | session append + meta timestamp |
-| `mcp/` | startup warning on bad server |
 | `context/` `skills/` | TTL caches |
 | `ui/` | loaders, status meter, chips, reasoning/setup, warning events |
 

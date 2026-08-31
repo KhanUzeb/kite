@@ -9,7 +9,7 @@ How Kite maps onto the 14-category Ideal Coding CLI spec.
 | 3 | Transparent context | Warp | Exact `$ command` rows; `secrets_redacted` count in tool output |
 | 4 | Parallel + legible | Claude/Antigravity | `task` tool `prompts[]` parallel fan-out; **`subagent`** LLM orchestrator with manager events |
 | 5 | Model-agnostic | OpenCode | LiteLLM + Ollama catalog; `kite import <format>` for Cursor/Claude/Aider/Codex sessions |
-| 6 | MCP-native | Claude Code | `[[mcp]]` servers in TOML -> stdio JSON-RPC -> `mcp_<server>_<tool>` registry |
+| 6 | Custom tools | Kite | `Harness.extra_tools`, `.kite/extensions/` via `ExtensionAPI.register_tool` |
 | 7 | Long-horizon context | Claude Code | Preserved-fact compaction; auto-checkpoint ~72%; `/checkpoint` + `/handoff`; sessions/resume; image token budgeting |
 | 8 | Cloud/local parity | Codex CLI | `kite cloud list|apply`, `kite apply <trajectory>` |
 | 9 | Terminal-native | Aider/Warp | `kite run`, `kite exec`, `--json`, `--stdin`, exit codes |
@@ -41,9 +41,9 @@ See [README.md](../README.md#use-kite-on-any-project-not-just-this-repo) for PAT
 pytest
 ```
 
-**CI:** `.github/workflows/tests.yml` runs the full suite on push/PR to `main` when the batch has **5+ commits** (Python 3.11 + 3.12). Smaller pushes skip; maintainers can re-run from the Actions tab.
+**CI:** `.github/workflows/tests.yml` runs the full suite on every push and pull request to `main` (Python 3.11 + 3.12). Maintainers can re-run from the Actions tab.
 
-Unit tests in `tests/` cover guardrails, `trusted_paths` approval, loop guard, session append, verification heuristics, MCP startup warnings, orchestrator dispatch, context/skills caches, git-stat diffs, skill install, reasoning/setup UX, and UI helpers.
+Unit tests in `tests/` cover guardrails, `trusted_paths` approval, loop guard, session append, verification heuristics, orchestrator dispatch, context/skills caches, git-stat diffs, skill install, reasoning/setup UX, and UI helpers.
 
 ## Commands
 
@@ -96,6 +96,5 @@ loader = "grid"
 ## Config (`~/.kite/configs/default.toml`)
 
 - `[github] enabled = true`
-- `[[mcp]]` server blocks
 - `[guardrails] trusted_paths = ["src/"]`
 - `[agent] role = "auto"`

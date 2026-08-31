@@ -57,7 +57,7 @@ Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (ful
 ## Request lifecycle
 
 1. **Parse** — `cli/run.py` builds args; REPL or one-shot task string.
-2. **Assemble** — `AgentRuntime.run()` loads user + runtime TOML, resolves provider/model, gathers project context (`context/discovery.py`), builds tool registry (coding tools + optional MCP + GitHub).
+2. **Assemble** — `AgentRuntime.run()` loads user + runtime TOML, resolves provider/model, gathers project context (`context/discovery.py`), builds tool registry (coding tools + optional GitHub + `Harness.extra_tools` / `.kite/extensions`).
 3. **Prompt** — System prompt from `data/prompts/system.md` + project overlay (`AGENTS.md`, `KITE.md`, git status, tree). Instance prompt wraps the user task.
 4. **Loop** — Each turn in `DefaultAgent`:
    - `_maybe_compact()` — shrink transcript if near context limit
@@ -90,7 +90,6 @@ Exit paths: task submitted via bash magic line, step/cost/time limits, user inte
 | `memory/compaction_ops.py` | Shared compaction + auto-checkpoint |
 | `bench/` | `kite bench` timing suite |
 | `skills/` | Load `SKILL.md` packs; install from npm/git |
-| `mcp/client.py` | Stdio MCP servers → extra tools in registry |
 | `ui/repl.py` | prompt_toolkit REPL, slash expansion, keybindings |
 
 ---
@@ -142,8 +141,6 @@ Tools implement a common `Tool.run(args) → {ok, output, …}` contract. `Local
 - **Approval** — `auto` / `approve` / `trust` / `readonly`; preview diffs for write/edit
 - **Guardrails** — paths clamped to workspace; bash deny patterns; secret write blocking
 
-**MCP** — Declared in runtime TOML; stdio servers register additional tool schemas at startup.
-
 **Subagent** — `subagent` tool spawns a bounded nested harness run; `task` is a lighter glob+grep fan-out.
 
 ---
@@ -183,9 +180,9 @@ Streaming uses stderr for loaders; stdout stays clean for copy/paste.
 ## Testing & CI
 
 - **Local:** `pytest` from repo root (no live LLM calls; `KITE_HOME` isolated in fixtures).
-- **CI:** `.github/workflows/tests.yml` — pytest on Python 3.11/3.12 when a push/PR batch has ≥5 commits; manual workflow dispatch always runs.
+- **CI:** `.github/workflows/tests.yml` — pytest on Python 3.11/3.12 on every push and PR to `main`; `workflow_dispatch` for manual re-runs.
 
-Focus areas: guardrails, approval, loop detection, sessions, render helpers, credentials, MCP warnings.
+Focus areas: guardrails, approval, loop detection, sessions, render helpers, credentials.
 
 ---
 

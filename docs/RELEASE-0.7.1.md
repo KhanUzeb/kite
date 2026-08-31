@@ -77,7 +77,8 @@ kite bench --compare /tmp/before.json
 
 ## Breaking changes
 
-None intended. Host mode is opt-in via `[guardrails] execution_mode = "host"`.
+- **MCP removed** — `[[mcp]]` / `mcp_servers` in runtime TOML no longer spawn stdio servers. Register custom tools via `Harness.extra_tools` or `.kite/extensions/*.py` (`ExtensionAPI.register_tool`).
+- Host mode remains opt-in via `[guardrails] execution_mode = "host"`.
 
 ---
 

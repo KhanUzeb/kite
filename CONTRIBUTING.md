@@ -29,7 +29,7 @@ Workflow: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
 | **Push** or **pull request** to `main` | always runs (Python 3.11 and 3.12) |
 | **Actions → Tests → Run workflow** | manual re-run anytime |
 
-CI sets `KITE_HOME` to an isolated temp directory and `KITE_SKIP_SETUP=1` so tests never prompt for onboarding. An `install-smoke` job also runs `./scripts/install.sh --no-clone` on Ubuntu.
+CI sets `KITE_HOME` to an isolated temp directory and `KITE_SKIP_SETUP=1` so tests never prompt for onboarding.
 
 Always run `pytest` locally before opening a PR.
 
@@ -37,7 +37,7 @@ Always run `pytest` locally before opening a PR.
 
 - **Documentation** — `README.md`, `CONTEXT.md`, `AGENTS.md`, `docs/`, `kite_commands.md`, and bundled prompts (`src/kite/data/prompts/`, `data/commands/`) are the sources of truth. The design docs are generated into PDFs (`uv pip install fpdf2 && python scripts/build_design_pdf.py`) but the markdown is what we edit.
 - **Skills** — drop a `SKILL.md` into `src/kite/data/skills/` or install packs via `kite skills --add <npm|npx|owner/repo>`.
-- **Tools / providers** — `tools/`, `providers/`, and `models/` are the extension points.
+- **Tools / providers** — `tools/`, `providers/`, and `models/` are the extension points. Custom tools: `Harness.extra_tools` or `.kite/extensions/*.py` via `ExtensionAPI.register_tool`.
 - **Bug fixes** — add or extend a test in `tests/`.
 
 ## Before you open a PR

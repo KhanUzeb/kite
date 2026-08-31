@@ -22,7 +22,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Execution cwd** — The active working directory for file tools and bash. Defaults to the launch cwd; may change via `set_cwd` or bash `cwd`.
 
-**Execution mode** — `restricted` (default) or `host`. Restricted mode sandboxes file/bash paths to the session. Host mode allows explicit access outside the session cwd; protected paths remain blocked.
+**Execution mode** — `host` (default) or `restricted`. Host mode allows paths outside the session cwd (protected paths still blocked). Restricted mode sandboxes file/bash paths to the session. Toggle in the REPL with `/restricted on|off` (alias `/sandbox`).
 
 **Sandbox** — Guardrail policy on paths and bash — not a fake “unrestricted” label. The model is told the real mode.
 
@@ -92,7 +92,9 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Markdown command** — A user-authored prompt file (`.kite/commands/*.md`) invoked as `/name` and expanded into the turn.
 
-**MCP server** — External tool process wired via config; exposes tools as `mcp_<server>_<tool>`.
+**Custom tool** — A programmatic tool registered via `Harness.extra_tools` or `.kite/extensions/*.py` (`ExtensionAPI.register_tool`). Replaces the removed MCP stdio integration; legacy `[[mcp]]` keys in runtime TOML are ignored.
+
+**Execution cwd** — Session working directory for file tools and bash. `set_cwd` can move outside the project root when asked; the sandbox then follows that directory (protected system paths still blocked). Default is **host** mode; use `/restricted on` for a tighter sandbox.
 
 ---
 
