@@ -17,7 +17,7 @@ system = "system"
 instance = "instance"
 
 [tools]
-enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "subagent", "memory"]
+enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "set_cwd", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "subagent", "memory"]
 bash_timeout_seconds = 120
 progress_interval_seconds = 5.0
 
@@ -25,6 +25,7 @@ progress_interval_seconds = 5.0
 enabled = true
 sandbox_to_cwd = true
 allow_paths_outside_cwd = false
+execution_mode = "restricted"  # restricted | host — host allows paths outside session cwd
 trusted_paths = []  # relative subtrees with elevated trust (e.g. "src/", "tests/")
 deny_bash_patterns = [
   "git\\s+push",
