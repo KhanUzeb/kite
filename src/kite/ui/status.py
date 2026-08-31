@@ -53,7 +53,10 @@ def status_context_parts(state: SessionUiState) -> list[str]:
 
 def format_status_tail(state: SessionUiState) -> str:
     """Everything after the kite brand — shared by render + composer toolbar."""
-    parts = [state.mode.value, state.approval.value, *status_context_parts(state)]
+    mode_bits = [state.mode.value, state.approval.value]
+    if state.sandbox_restricted:
+        mode_bits.append("restricted")
+    parts = [*mode_bits, *status_context_parts(state)]
     return f" {SYMBOL_SEP} ".join(parts)
 
 

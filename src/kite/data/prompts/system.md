@@ -34,7 +34,7 @@ The **Execution context** section below shows `project_root`, `execution_cwd`, a
 
 - **project_root** — repository context (instructions, tree, git). Default mental model for the codebase.
 - **execution_cwd** — where file tools and bash resolve relative paths. May differ from project_root after `set_cwd`.
-- **execution_mode** — `restricted` (default) or `host`. In restricted mode, file/bash paths stay inside the session sandbox. In host mode, the user has opted into broader filesystem access; protected paths (`.ssh`, system dirs, `.env`) are still blocked.
+- **execution_mode** — `host` (default) or `restricted`. In host mode, use `set_cwd` to work in other directories; protected paths (`.ssh`, system dirs, `.env`) stay blocked. In restricted mode, file/bash paths stay inside the session sandbox unless you `set_cwd` there first.
 
 Do not claim you cannot access a path the runtime permits. Do not pretend host access exists when mode is restricted.
 

@@ -14,6 +14,16 @@ from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
 
 
+def test_workspace_default_execution_mode_is_host(workspace: Path):
+    ctx = WorkspaceContext.discover(workspace)
+    assert ctx.execution_mode is ExecutionMode.HOST
+
+
+def test_guardrail_config_default_is_host():
+    assert GuardrailConfig().execution_mode == "host"
+    assert GuardrailConfig().host_access() is True
+
+
 def test_workspace_context_discovers_project_root(workspace: Path):
     nested = workspace / "pkg"
     nested.mkdir()
@@ -79,3 +89,27 @@ def test_set_cwd_tool_updates_session(workspace: Path, tmp_path: Path):
     out = env.execute({"tool": "set_cwd", "arguments": {"path": "pkg"}})
     assert out["ok"] is True
     assert session.execution_cwd == sub.resolve()
+
+
+def test_set_cwd_restricted_moves_outside_project_then_read(workspace: Path, tmp_path: Path):
+    """set_cwd may leave the repo; subsequent tools use the new execution cwd."""
+    external = tmp_path / "desktop_sim"
+    external.mkdir()
+    note = external / "note.txt"
+    note.write_text("outside project\n", encoding="utf-8")
+    ctx = WorkspaceContext.discover(workspace, execution_mode=ExecutionMode.RESTRICTED)
+    session = ExecutionSession(ctx)
+    guard = GuardrailPolicy(GuardrailConfig(execution_mode="restricted"), workspace, execution=session)
+    tools = make_coding_tools(
+        cwd=str(workspace),
+        guardrails=guard,
+        execution=session,
+        enabled=["set_cwd", "read"],
+    )
+    env = LocalEnvironment(registry=ToolRegistry(tools))
+    out = env.execute({"tool": "set_cwd", "arguments": {"path": str(external)}})
+    assert out["ok"] is True
+    assert session.execution_cwd == external.resolve()
+    out = env.execute({"tool": "read", "arguments": {"path": "note.txt"}})
+    assert out["ok"] is True
+    assert "outside project" in out["output"]

@@ -20,9 +20,9 @@ def _display() -> tuple[StringIO, RunDisplay]:
 
 def test_warning_event_prints_muted_line() -> None:
     buf, display = _display()
-    display(Event("warning", payload={"message": "MCP filesystem failed"}))
+    display(Event("warning", payload={"message": "filesystem mount failed"}))
     out = buf.getvalue()
-    assert "MCP filesystem failed" in out
+    assert "filesystem mount failed" in out
 
 
 def test_idle_verification_is_silent() -> None:
@@ -106,6 +106,29 @@ def test_stream_coalescing_batches_answer_deltas() -> None:
     display(Event("stream_end", payload={}))
     out = buf.getvalue()
     assert "Hello world" in out
+
+
+def test_compact_event_updates_context_meter() -> None:
+    buf, display = _display()
+    display(
+        Event(
+            "compact",
+            payload={"before": 42, "after": 12, "total_tokens": 24_000, "window": 128_000},
+        )
+    )
+    assert display.state.tokens == 24_000
+    assert display.state.window == 128_000
+    out = buf.getvalue()
+    assert "42 → 12" in out
+    assert "ctx" in out.lower()
+
+
+def test_context_event_updates_state() -> None:
+    _, display = _display()
+    display(Event("context", payload={"total_tokens": 50_000, "window": 100_000}))
+    assert display.state.tokens == 50_000
+    assert display.state.window == 100_000
+    assert display.state.context_pct == 0.5
 
 
 def test_failed_verification_still_warns() -> None:

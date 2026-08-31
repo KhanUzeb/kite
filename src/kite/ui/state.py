@@ -54,6 +54,7 @@ class SessionUiState:
     cache_hit_ratio: float = 0.0
     active_subagents: int = 0
     turn: int = 0
+    sandbox_restricted: bool = False  # False = host (default); True = restricted sandbox
     flash: str = ""
     _refresh: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
@@ -61,6 +62,12 @@ class SessionUiState:
         """Notify live composer toolbar (prompt_toolkit) to redraw."""
         if self._refresh:
             self._refresh()
+
+    def set_context_usage(self, *, total_tokens: int, window: int) -> None:
+        """Update ctx meter from a compaction measure or estimate."""
+        self.tokens = total_tokens
+        self.window = window
+        self.touch()
 
     @property
     def context_pct(self) -> float | None:

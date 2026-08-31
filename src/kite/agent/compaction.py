@@ -127,8 +127,15 @@ class LoopCompactor:
         after = result.after
         did = result.compacted
         if did:
-            self._emit("compact", before=before, after=after)
             usage = self.measure(result.messages)
+            self._emit(
+                "compact",
+                before=before,
+                after=after,
+                total_tokens=usage.total_tokens,
+                window=usage.window,
+                ratio=round(usage.ratio, 3),
+            )
         return CompactionResult(
             messages=result.messages,
             usage=usage,

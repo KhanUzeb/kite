@@ -124,10 +124,17 @@ def _collapse_text(text: str, *, expanded: bool, limit: int = COLLAPSE_LINES) ->
     return out
 
 
-def render_compact_boundary(before: int | str, after: int | str) -> Text:
+def render_compact_boundary(
+    before: int | str,
+    after: int | str,
+    *,
+    context_pct: float | None = None,
+) -> Text:
     t = Text()
     t.append(f"{GUTTER}{SYMBOL_COMPACT}  ", style="kite.muted")
     t.append(f"{before} → {after}", style="kite.muted")
+    if context_pct is not None:
+        t.append(f"  · ctx {context_pct:.0%}", style="kite.muted")
     t.append("\n")
     return t
 
@@ -563,11 +570,14 @@ class RunDisplay:
         if kind == "context":
             total = p.get("total_tokens")
             window = p.get("window")
-            if isinstance(total, int):
+            if isinstance(total, int) and isinstance(window, int):
+                self.state.set_context_usage(total_tokens=total, window=window)
+            elif isinstance(total, int):
                 self.state.tokens = total
-            if isinstance(window, int):
+                self._touch_state()
+            elif isinstance(window, int):
                 self.state.window = window
-            self._touch_state()
+                self._touch_state()
             if self.verbose:
                 ratio = p.get("ratio")
                 bits = [f"ctx {total}/{window}"]
@@ -578,7 +588,19 @@ class RunDisplay:
 
         if kind == "compact":
             self._end_stream_line()
-            self.console.print(render_compact_boundary(p.get("before", "?"), p.get("after", "?")))
+            total = p.get("total_tokens")
+            window = p.get("window")
+            context_pct: float | None = None
+            if isinstance(total, int) and isinstance(window, int) and window > 0:
+                self.state.set_context_usage(total_tokens=total, window=window)
+                context_pct = min(1.0, total / window)
+            self.console.print(
+                render_compact_boundary(
+                    p.get("before", "?"),
+                    p.get("after", "?"),
+                    context_pct=context_pct,
+                )
+            )
             return
 
         if kind == "checkpoint":
