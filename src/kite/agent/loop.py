@@ -205,6 +205,10 @@ class DefaultAgent:
                 tool_schemas=schemas,
                 on_event=self.on_event,
                 summarizer=self.summarizer,
+                session_id=self.session.id if self.session else None,
+                cwd=str(getattr(self.env, "cwd", "") or ""),
+                todos=self.todos.read() if self.todos is not None else None,
+                session_meta=self.session.meta.to_dict() if self.session else None,
             )
         return self._compactor
 

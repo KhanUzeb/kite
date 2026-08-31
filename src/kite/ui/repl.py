@@ -306,7 +306,7 @@ class ChatSession:
             self.console.print("[kite.muted]no session yet[/]")
             return
         from kite.agent.summarize import make_summarizer
-        from kite.context.window import compact_messages
+        from kite.memory.compaction_ops import run_compaction
         from kite.memory.session import load_session
 
         try:
@@ -318,17 +318,137 @@ class ChatSession:
         before = len(session.messages)
         summarizer = make_summarizer(cfg) if cfg.compaction_use_llm else None
         self.console.print("[kite.muted]compacting…[/]")
-        compacted = compact_messages(
+        result = run_compaction(
             session.messages,
             keep_recent_tokens=cfg.compaction_keep_recent_tokens,
+            reserve_tokens=cfg.compaction_reserve_tokens,
             summarizer=summarizer,
             force=True,
+            session_id=session.id,
+            cwd=self.cwd,
+            todos=self.todos.read(),
+            meta=session.meta.to_dict(),
         )
-        if compacted == session.messages:
+        if not result.compacted:
             self.console.print("[kite.muted]already compact[/]")
             return
-        session.replace_messages(compacted)
-        self.console.print(f"[kite.muted]{SYMBOL_COMPACT}  {before} → {len(compacted)}[/]")
+        session.replace_messages(result.messages)
+        if result.checkpoint is not None:
+            session.record_context_checkpoint(result.checkpoint.id, label=result.checkpoint.label, reason="pre_compact")
+            self.console.print(f"[kite.muted]◇ saved {result.checkpoint.id}[/]")
+        self.console.print(f"[kite.muted]{SYMBOL_COMPACT}  {before} → {result.after}[/]")
+
+    def _checkpoint_cmd(self, raw: str) -> None:
+        if not self._session_id:
+            self.console.print("[kite.muted]no session yet[/]")
+            return
+        from kite.memory.context_checkpoint import list_checkpoints, load_checkpoint, save_checkpoint
+        from kite.memory.session import load_session
+
+        parts = raw.strip().split(maxsplit=1)
+        sub = (parts[0] if parts else "list").lower()
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
+        try:
+            session = load_session(self._session_id)
+        except (OSError, ValueError) as e:
+            self.console.print(f"[kite.error]{e}[/]")
+            return
+
+        if sub in {"", "list"}:
+            rows = list_checkpoints(session.id)
+            if not rows:
+                self.console.print("[kite.muted]no checkpoints[/]")
+                return
+            for cp in rows:
+                ratio = cp.context_usage.get("ratio")
+                pct = f"{float(ratio):.0%}" if ratio is not None else "—"
+                self.console.print(
+                    f"[kite.muted]{cp.id}[/]  {cp.label}  ctx {pct}  "
+                    f"{len(cp.messages)} msgs  {cp.reason}"
+                )
+            return
+
+        if sub == "save":
+            label = arg or "manual"
+            cp = save_checkpoint(
+                session_id=session.id,
+                messages=session.messages,
+                cwd=self.cwd,
+                label=label,
+                reason="manual",
+                todos=self.todos.read(),
+                meta=session.meta.to_dict(),
+            )
+            session.record_context_checkpoint(cp.id, label=cp.label, reason="manual")
+            self.console.print(f"[kite.muted]◇ saved {cp.id}[/]  {label}")
+            return
+
+        if sub == "restore":
+            if not arg:
+                self.console.print("[kite.error]/checkpoint restore <id>[/]")
+                return
+            try:
+                cp = load_checkpoint(session.id, arg)
+            except (OSError, ValueError) as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            session.replace_messages(cp.messages)
+            self.console.print(
+                f"[kite.muted]◇ restored {cp.id}[/]  {len(cp.messages)} messages  ({cp.label})"
+            )
+            return
+
+        if sub == "show":
+            if not arg:
+                self.console.print("[kite.error]/checkpoint show <id>[/]")
+                return
+            try:
+                cp = load_checkpoint(session.id, arg)
+            except (OSError, ValueError) as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            usage = cp.context_usage
+            self.console.print(
+                f"[kite.muted]{cp.id}[/]  {cp.label}\n"
+                f"  {len(cp.messages)} messages  ·  ctx {usage.get('total_tokens', '?')} tok  "
+                f"({usage.get('ratio', '?')})\n"
+                f"  cwd {cp.cwd}  ·  {cp.reason}"
+            )
+            return
+
+        self.console.print("[kite.error]/checkpoint save|list|restore|show[/]")
+
+    def _handoff_cmd(self, raw: str) -> None:
+        if not self._session_id:
+            self.console.print("[kite.muted]no session yet[/]")
+            return
+        from kite.memory.handoff import write_handoff
+        from kite.memory.session import load_session
+
+        try:
+            session = load_session(self._session_id)
+        except (OSError, ValueError) as e:
+            self.console.print(f"[kite.error]{e}[/]")
+            return
+
+        out = raw.strip()
+        out_dir = Path(out).parent if out and (Path(out).suffix or "/" in out) else self.cwd
+        if out and Path(out).suffix:
+            out_dir = Path(out).parent
+
+        bundle = write_handoff(
+            session=session,
+            cwd=self.cwd,
+            todos=self.todos.read(),
+            out_dir=out_dir,
+            provider=self.provider or "",
+            model=self.model or "",
+        )
+        session.record_context_checkpoint(bundle.checkpoint_id, label="handoff", reason="manual")
+        self.console.print(f"[kite.muted]handoff[/]  {bundle.markdown_path}")
+        self.console.print(f"[kite.muted]json[/]     {bundle.json_path}")
+        self.console.print(f"[kite.muted]resume[/]  kite resume {bundle.session_id}")
 
     def _sync_attach_count(self) -> None:
         self.state.pending_attach = len(self.attachments)
@@ -712,6 +832,12 @@ class ChatSession:
             return True
         if cmd == "compact":
             self._compact_now()
+            return True
+        if cmd == "checkpoint":
+            self._checkpoint_cmd(arg)
+            return True
+        if cmd == "handoff":
+            self._handoff_cmd(arg)
             return True
         if cmd == "attach":
             self._attach_path(arg)

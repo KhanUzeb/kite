@@ -14,6 +14,54 @@ DEFAULT_RESERVE = 16_384
 DEFAULT_KEEP_RECENT = 20_000
 
 COMPACTION_PREFIX = "Previous conversation summary:\n"
+FACTS_PREFIX = "## Preserved facts\n"
+
+
+def extract_compaction_facts(messages: list[dict]) -> list[str]:
+    """Deterministic bullets to keep across compaction — paths, failures, constraints."""
+    paths: list[str] = []
+    failures: list[str] = []
+    tools: list[str] = []
+    for m in messages:
+        role = str(m.get("role") or "")
+        content = str(m.get("content") or "")
+        if isinstance(m.get("content"), list):
+            content = " ".join(
+                str(p.get("text") or "") for p in m["content"] if isinstance(p, dict)
+            )
+        extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
+        if extra.get("path"):
+            paths.append(str(extra["path"]))
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") if isinstance(tc, dict) else {}
+            name = str(fn.get("name") or "") if isinstance(fn, dict) else ""
+            if name:
+                tools.append(name)
+        if role == "user" and any(w in content.lower() for w in ("must", "never", "don't", "do not", "important")):
+            line = " ".join(content.split())
+            if len(line) > 20:
+                failures.append(f"constraint: {line[:240]}")
+        if any(tok in content.lower() for tok in ("error", "failed", "traceback", "exception")):
+            line = " ".join(content.split())
+            if len(line) > 30:
+                failures.append(line[:280])
+    facts: list[str] = []
+    if paths:
+        uniq = list(dict.fromkeys(paths))[:24]
+        facts.append("files: " + ", ".join(uniq))
+    if tools:
+        uniq_tools = list(dict.fromkeys(tools))[-16:]
+        facts.append("tools used: " + ", ".join(uniq_tools))
+    for line in failures[:12]:
+        facts.append(line)
+    return facts
+
+
+def format_facts_block(facts: list[str]) -> str:
+    if not facts:
+        return ""
+    body = "\n".join(f"- {f}" for f in facts)
+    return f"{FACTS_PREFIX}{body}\n\n"
 
 
 @dataclass(frozen=True)
@@ -161,6 +209,8 @@ def compact_messages(
     if not dropped:
         return messages
 
+    facts = extract_compaction_facts(dropped)
+    facts_block = format_facts_block(facts)
     body_text = summarizer(dropped) if summarizer else deterministic_summary(dropped)
-    summary = COMPACTION_PREFIX + body_text
-    return [*head, {"role": "user", "content": summary, "extra": {"compacted": True}}, *kept]
+    summary = COMPACTION_PREFIX + facts_block + body_text
+    return [*head, {"role": "user", "content": summary, "extra": {"compacted": True, "facts": facts}}, *kept]
