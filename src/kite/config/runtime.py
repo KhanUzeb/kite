@@ -16,7 +16,7 @@ class GuardrailConfig:
     enabled: bool = True
     sandbox_to_cwd: bool = True
     allow_paths_outside_cwd: bool = False
-    execution_mode: str = "restricted"  # restricted | host
+    execution_mode: str = "host"  # restricted | host
     trusted_paths: list[str] = field(default_factory=list)  # relative subtrees with elevated bash trust
     deny_bash_patterns: list[str] = field(default_factory=list)
     block_secret_writes: bool = True
@@ -93,7 +93,6 @@ class AgentRuntimeConfig:
     guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
-    mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     github_tools: bool = True
     role: str = "auto"
     prompt_cache_enabled: bool = True
@@ -106,15 +105,6 @@ class AgentRuntimeConfig:
 
     def with_overrides(self, **kwargs: Any) -> AgentRuntimeConfig:
         return replace(self, **{k: v for k, v in kwargs.items() if v is not None})
-
-
-def _deep_get(data: dict, *keys: str, default: Any = None) -> Any:
-    cur: Any = data
-    for k in keys:
-        if not isinstance(cur, dict) or k not in cur:
-            return default
-        cur = cur[k]
-    return cur
 
 
 def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
@@ -142,24 +132,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             instance=str(prompts.get("instance", "instance")),
         ),
         tools=ToolsConfig(
-            enabled=list(
-                tools.get("enabled")
-                or [
-                    "read",
-                    "write",
-                    "edit",
-                    "bash",
-                    "grep",
-                    "glob",
-                    "ls",
-                    "skill",
-                    "todo_write",
-                    "todo_read",
-                    "task",
-                    "webfetch",
-                    "memory",
-                ]
-            ),
+            enabled=list(tools.get("enabled") or ToolsConfig().enabled),
             bash_timeout_seconds=int(tools.get("bash_timeout_seconds", 120)),
             progress_interval_seconds=float(tools.get("progress_interval_seconds", 5.0)),
         ),
@@ -167,7 +140,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             enabled=bool(guard.get("enabled", True)),
             sandbox_to_cwd=bool(guard.get("sandbox_to_cwd", True)),
             allow_paths_outside_cwd=bool(guard.get("allow_paths_outside_cwd", False)),
-            execution_mode=str(guard.get("execution_mode", "restricted")),
+            execution_mode=str(guard.get("execution_mode", "host")),
             trusted_paths=list(guard.get("trusted_paths") or []),
             deny_bash_patterns=list(guard.get("deny_bash_patterns") or []),
             block_secret_writes=bool(guard.get("block_secret_writes", True)),
@@ -185,9 +158,8 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             tree_max_entries=int(context.get("tree_max_entries", 80)),
             max_context_chars=int(context.get("max_context_chars", 24_000)),
         ),
-        mcp_servers=list(data.get("mcp") or data.get("mcp_servers") or []),
         github_tools=bool((data.get("github") or {}).get("enabled", True)),
-        role=str((data.get("agent") or {}).get("role", "auto")),
+        role=str(agent.get("role", "auto")),
         prompt_cache_enabled=bool(cache.get("enabled", True)),
         orchestrator_max_workers=int(orch.get("max_workers", 3)),
         orchestrator_step_limit=int(orch.get("step_limit", 10)),

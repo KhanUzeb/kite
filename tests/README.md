@@ -23,7 +23,6 @@ GitHub Actions runs `pytest` on **every push and pull request to `main`** (Pytho
 | `test_loop_guard.py` | repetitive tool detection |
 | `test_session.py` | append-only JSONL, meta `updated_at` |
 | `test_verification.py` | test-command artifact detection |
-| `test_mcp.py` | MCP startup warnings |
 | `test_orchestrator.py` | parallel subagent dispatch |
 | `test_context_cache.py` | 30s project-context TTL |
 | `test_skills_cache.py` | 45s skills TTL |

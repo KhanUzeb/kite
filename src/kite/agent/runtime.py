@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +58,7 @@ class RuntimeOptions:
     reasoning: str = "auto"
     role: str = "auto"
     attachments: list | None = None
+    execution_mode: str | None = None  # restricted | host — overrides runtime TOML
 
 
 @dataclass
@@ -78,6 +79,7 @@ class AgentRuntime:
     hooks: HookBus = field(default_factory=HookBus)
     extra_tools: list[Any] = field(default_factory=list)
     last_agent: DefaultAgent | None = field(default=None, init=False)
+    _audit_listener_attached: bool = field(default=False, init=False)
 
     def request_interrupt(self) -> None:
         if self.last_agent is not None:
@@ -166,6 +168,11 @@ class AgentRuntime:
     def run(self, task: str) -> dict:
         ucfg = self.user_config or UserConfig.load()
         rcfg, resolved, system = self.prepare()
+        if self.options.execution_mode in ("restricted", "host"):
+            rcfg = replace(
+                rcfg,
+                guardrails=replace(rcfg.guardrails, execution_mode=self.options.execution_mode),
+            )
         cwd = str(Path(self.options.cwd or ".").resolve())
         attachments = list(self.options.attachments or [])
         send_images = True
@@ -231,7 +238,7 @@ class AgentRuntime:
         except ValueError:
             approval = ApprovalMode.AUTO
 
-        enabled = tools_for_mode(mode, list(rcfg.tools.enabled))
+        enabled = tools_for_mode(mode, rcfg.tools.enabled)
         role = parse_role(self.options.role or rcfg.role, mode=mode.value)
         enabled = tools_for_role(role, enabled)
 
@@ -284,20 +291,13 @@ class AgentRuntime:
                 execution=execution,
                 cancel=cancel,
             )
-        if self.extra_tools:
-            tools = list(tools) + list(self.extra_tools)
+        extras = list(self.extra_tools)
         if rcfg.github_tools:
             from kite.tools.github import make_github_tools
 
-            tools = list(tools) + make_github_tools(enabled=True)
-        mcp_clients = []
-        if rcfg.mcp_servers:
-            from kite.mcp.client import load_mcp_tools
-
-            mcp_tools, mcp_clients, mcp_warnings = load_mcp_tools(rcfg.mcp_servers)
-            tools = list(tools) + mcp_tools
-            for note in mcp_warnings:
-                self._on_event(Event("warning", payload={"message": note}))
+            extras.extend(make_github_tools())
+        if extras:
+            tools = [*tools, *extras]
         registry = ToolRegistry(tools)
         if self.slots.env is not None:
             env = self.slots.env(cwd=cwd, registry=registry)
@@ -363,7 +363,7 @@ class AgentRuntime:
             env,
             system_prompt=system,
             instance_prompt=instance,
-            project_context="",  # already folded into system by assemble_system_prompt
+            project_context="",
             step_limit=self.options.step_limit if self.options.step_limit is not None else rcfg.step_limit,
             cost_limit=self.options.cost_limit if self.options.cost_limit is not None else rcfg.cost_limit,
             wall_time_limit_seconds=(
@@ -397,24 +397,25 @@ class AgentRuntime:
         )
         self.last_agent = agent
 
-        def _audit_listener(event: Event) -> None:
-            if event.kind == "approval":
-                p = event.payload
-                audit.log_approval(
-                    str(p.get("tool") or ""),
-                    str(p.get("pattern") or ""),
-                    str(p.get("decision") or ""),
-                )
+        if not self._audit_listener_attached:
 
-        self._listeners.append(_audit_listener)
+            def _audit_listener(event: Event) -> None:
+                if event.kind == "approval":
+                    p = event.payload
+                    audit.log_approval(
+                        str(p.get("tool") or ""),
+                        str(p.get("pattern") or ""),
+                        str(p.get("decision") or ""),
+                    )
+
+            self._listeners.append(_audit_listener)
+            self._audit_listener_attached = True
 
         follow = self.options.follow_up
         if resume_messages is not None:
             result = agent.run(task if not follow else "", follow_up=follow or task)
         else:
             result = agent.run(task)
-        for client in mcp_clients:
-            client.close()
         if session is not None:
             audit.log_run(session.id, str(result.get("exit_status") or ""), verification=verification.summary())
         self.hooks.fire("after_run", result=result, task=task)
