@@ -124,7 +124,7 @@ pytest -v                 # verbose
 
 Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, MCP warnings, orchestrator dispatch, reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
 
-**CI:** GitHub Actions runs `pytest` when a push or PR to `main` contains **5+ commits** in the batch; smaller pushes skip. Run locally before every PR, or trigger **Actions → Tests → Run workflow** manually. Details in [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
+**CI:** GitHub Actions runs `pytest` on every push and pull request to `main` (Python 3.11 + 3.12). Details in [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
 
 ## CLI
 
