@@ -325,8 +325,8 @@ def make_prompt_session(
         "complete_while_typing": True,
         "auto_suggest": AutoSuggestFromHistory(),
         "style": prompt_style(),
-        "mouse_support": False,
-        "reserve_space_for_menu": 5,
+        "mouse_support": True,
+        "reserve_space_for_menu": 8,
     }
     if key_bindings is not None:
         kwargs["key_bindings"] = key_bindings
@@ -372,6 +372,23 @@ def make_repl_key_bindings(
         if on_status:
             on_status()
         event.app.invalidate()
+
+    def _scroll_completions(event, *, forward: bool) -> None:  # noqa: ANN001
+        buff = event.app.current_buffer
+        if buff.complete_state is None:
+            return
+        if forward:
+            buff.complete_next()
+        else:
+            buff.complete_previous()
+
+    @bindings.add("<scroll-up>")
+    def _scroll_up(event) -> None:  # noqa: ANN001
+        _scroll_completions(event, forward=False)
+
+    @bindings.add("<scroll-down>")
+    def _scroll_down(event) -> None:  # noqa: ANN001
+        _scroll_completions(event, forward=True)
 
     return bindings
 

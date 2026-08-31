@@ -22,14 +22,14 @@ class WorkspaceContext:
     execution_cwd: Path
     initial_cwd: Path
     roots: tuple[Path, ...] = ()
-    execution_mode: ExecutionMode = ExecutionMode.RESTRICTED
+    execution_mode: ExecutionMode = ExecutionMode.HOST
 
     @classmethod
     def discover(
         cls,
         cwd: str | Path,
         *,
-        execution_mode: ExecutionMode | str = ExecutionMode.RESTRICTED,
+        execution_mode: ExecutionMode | str = ExecutionMode.HOST,
         extra_roots: list[str] | None = None,
     ) -> WorkspaceContext:
         resolved = Path(cwd).expanduser().resolve()
@@ -58,7 +58,7 @@ class WorkspaceContext:
             f"- execution_cwd: {self.execution_cwd}",
         ]
         if self.execution_cwd != self.project_root:
-            lines.append("- note: execution cwd differs from project root")
+            lines.append("- note: execution cwd differs from project root; use set_cwd to work elsewhere")
         if len(self.roots) > 1:
             lines.append("- workspace_roots:")
             for root in self.roots:

@@ -7,6 +7,15 @@ from kite.ui.status import context_meter, format_status_tail
 from kite.ui.render import render_status
 
 
+def test_set_context_usage_updates_meter() -> None:
+    state = SessionUiState(window=100_000)
+    state.set_context_usage(total_tokens=25_000, window=100_000)
+    assert state.tokens == 25_000
+    assert state.context_pct == 0.25
+    meter = context_meter(state.context_pct)
+    assert "25%" in meter
+
+
 def test_context_meter_renders_bar() -> None:
     text = context_meter(0.5)
     assert "ctx" in text

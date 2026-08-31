@@ -14,14 +14,13 @@ from kite.commands.loader import project_commands_dir, write_command_stub
 from kite.config import UserConfig, kite_home
 from kite.agent.mode import AgentMode, ApprovalMode, default_approval
 from kite.plugins.loader import project_plugins_dir, write_plugin_stub
-from kite.cli.slash import CommandIndex, help_text, invalidate_command_index, resolve_slash
+from kite.cli.slash import CommandIndex, SlashResult, help_text, invalidate_command_index, resolve_slash
 from kite.tools.store import TodoStore
-from kite.ui.commands import parse_slash
 from kite.ui.git import GitCheckpoints
 from kite.ui.complete import SlashCompleter, make_prompt_session, make_repl_key_bindings, read_repl_line
-from kite.ui.render import RunDisplay, render_status
+from kite.ui.render import RunDisplay, render_compact_boundary, render_status
 from kite.ui.state import SessionUiState
-from kite.ui.style import SYMBOL_COMPACT, SYMBOL_PROMPT, make_console
+from kite.ui.style import SYMBOL_PROMPT, make_console
 from kite.ui.tables import kite_table
 
 
@@ -75,6 +74,7 @@ class ChatSession:
         self._model_cache: list[str] = []
         self._pending_open = session_id
         self._flash: str = ""
+        self._slash_handler_map: dict[str, Callable[[str], None]] | None = None
         self._sync_from_config()
 
     def _sync_from_config(self) -> None:
@@ -199,10 +199,14 @@ class ChatSession:
             self.model,
             self.state.mode.value,
             self.state.approval.value,
+            self.state.sandbox_restricted,
             self._session_id,
             self.config_name,
             self.state.reasoning or "auto",
         )
+
+    def _execution_mode(self) -> str:
+        return "restricted" if self.state.sandbox_restricted else "host"
 
     def _make_harness(self, *, resume: bool = False, follow_up: str | None = None):
         from kite.agent.harness import Harness, HarnessConfig
@@ -230,6 +234,7 @@ class ChatSession:
                 interactive=True,
                 reasoning=self.state.reasoning or "auto",
                 attachments=list(self.attachments),
+                execution_mode=self._execution_mode(),
             )
         )
         h.subscribe(self.display)
@@ -359,6 +364,7 @@ class ChatSession:
         from kite.agent.summarize import make_summarizer
         from kite.memory.compaction_ops import run_compaction
         from kite.memory.session import load_session
+        from kite.providers.resolve import resolve_model
 
         try:
             session = load_session(self._session_id)
@@ -366,6 +372,8 @@ class ChatSession:
             self.console.print(f"[kite.error]{e}[/]")
             return
         cfg = UserConfig.load()
+        self._ensure_model_resolved()
+        resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
         before = len(session.messages)
         summarizer = make_summarizer(cfg) if cfg.compaction_use_llm else None
         self.console.print("[kite.muted]compacting…[/]")
@@ -375,10 +383,15 @@ class ChatSession:
             reserve_tokens=cfg.compaction_reserve_tokens,
             summarizer=summarizer,
             force=True,
+            window=resolved.context_window,
             session_id=session.id,
             cwd=self.cwd,
             todos=self.todos.read(),
             meta=session.meta.to_dict(),
+        )
+        self.state.set_context_usage(
+            total_tokens=result.usage.total_tokens,
+            window=result.usage.window,
         )
         if not result.compacted:
             self.console.print("[kite.muted]already compact[/]")
@@ -387,7 +400,9 @@ class ChatSession:
         if result.checkpoint is not None:
             session.record_context_checkpoint(result.checkpoint.id, label=result.checkpoint.label, reason="pre_compact")
             self.console.print(f"[kite.muted]◇ saved {result.checkpoint.id}[/]")
-        self.console.print(f"[kite.muted]{SYMBOL_COMPACT}  {before} → {result.after}[/]")
+        pct = self.state.context_pct
+        boundary = render_compact_boundary(before, result.after, context_pct=pct)
+        self.console.print(boundary)
 
     def _checkpoint_cmd(self, raw: str) -> None:
         if not self._session_id:
@@ -699,16 +714,11 @@ class ChatSession:
             return f"tool output {mode}"
 
         def _plan() -> str:
-            self.state.mode = AgentMode.PLAN
-            self.state.approval = ApprovalMode.READONLY
-            self._invalidate_harness()
+            self._apply_plan_mode()
             return "plan mode"
 
         def _build() -> str:
-            self.state.mode = AgentMode.BUILD
-            if self.state.approval is ApprovalMode.READONLY:
-                self.state.approval = ApprovalMode.APPROVE
-            self._invalidate_harness()
+            self._apply_build_mode()
             return "build mode"
 
         def _status() -> str:
@@ -812,14 +822,18 @@ class ChatSession:
         return cmd, arg
 
     def _slash_handlers(self) -> dict[str, Callable[[str], None]]:
+        if self._slash_handler_map is not None:
+            return self._slash_handler_map
         login = self._login_provider
         logout = self._logout_provider
         clip = self._attach_clipboard
-        return {
+        handlers = {
             "help": self._slash_help,
             "plan": self._slash_plan,
             "build": self._slash_build,
             "approve": self._slash_approve,
+            "restricted": self._slash_restricted,
+            "sandbox": self._slash_restricted,
             "cost": self._slash_cost,
             "expand": self._slash_expand,
             "collapse": self._slash_collapse,
@@ -865,21 +879,29 @@ class ChatSession:
             "theme": self._set_theme,
             "font": self._set_font,
         }
+        self._slash_handler_map = handlers
+        return handlers
+
+    def _apply_plan_mode(self) -> None:
+        self.state.mode = AgentMode.PLAN
+        self.state.approval = ApprovalMode.READONLY
+        self._invalidate_harness()
+
+    def _apply_build_mode(self) -> None:
+        self.state.mode = AgentMode.BUILD
+        if self.state.approval is ApprovalMode.READONLY:
+            self.state.approval = ApprovalMode.APPROVE
+        self._invalidate_harness()
 
     def _slash_help(self, _arg: str) -> None:
         self.console.print(help_text(self._index()), style="kite.muted")
 
     def _slash_plan(self, _arg: str) -> None:
-        self.state.mode = AgentMode.PLAN
-        self.state.approval = ApprovalMode.READONLY
-        self._invalidate_harness()
+        self._apply_plan_mode()
         self.console.print("[kite.plan]plan mode[/]  read-only — I'll suggest, not edit")
 
     def _slash_build(self, _arg: str) -> None:
-        self.state.mode = AgentMode.BUILD
-        if self.state.approval is ApprovalMode.READONLY:
-            self.state.approval = ApprovalMode.APPROVE
-        self._invalidate_harness()
+        self._apply_build_mode()
         self.console.print("[kite.build]build mode[/]  edits are on")
 
     def _slash_approve(self, arg: str) -> None:
@@ -890,6 +912,24 @@ class ChatSession:
             return
         self._invalidate_harness()
         self.console.print(f"[kite.pending]approval[/] {self.state.approval.value}")
+
+    def _slash_restricted(self, arg: str) -> None:
+        token = (arg or "").strip().lower()
+        if token in ("", "toggle"):
+            self.state.sandbox_restricted = not self.state.sandbox_restricted
+        elif token in ("on", "true", "1", "yes"):
+            self.state.sandbox_restricted = True
+        elif token in ("off", "false", "0", "no"):
+            self.state.sandbox_restricted = False
+        else:
+            self.console.print("[kite.error]use /restricted on|off[/]  (default: off / host mode)")
+            return
+        self._invalidate_harness()
+        if self.state.sandbox_restricted:
+            self.console.print("[kite.pending]restricted sandbox[/]  paths clamped to session cwd")
+        else:
+            self.console.print("[kite.success]host mode[/]  use set_cwd to work elsewhere; protected paths still blocked")
+        self.state.touch()
 
     def _slash_cost(self, _arg: str) -> None:
         pct = f"{self.state.context_pct:.0%}" if self.state.context_pct is not None else "—"
@@ -998,6 +1038,7 @@ class ChatSession:
         sid = self._session_id or "—"
         self.console.print(
             f"{self.state.mode.value} · {self.state.approval.value} · "
+            f"sandbox {'restricted' if self.state.sandbox_restricted else 'host'} · "
             f"{self.state.provider or '—'}/{self.state.model or '—'} · "
             f"effort {self.state.reasoning} · "
             f"theme {theme_label()} · font {current_font()} · "
@@ -1017,9 +1058,9 @@ class ChatSession:
             self.console.print(f"  {home / name}")
         self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")
 
-    def _handle_slash(self, raw: str) -> bool:
+    def _handle_slash(self, raw: str, parsed: SlashResult | None = None) -> bool:
         """Return False to quit."""
-        parsed = resolve_slash(raw, self._index())
+        parsed = parsed or resolve_slash(raw, self._index())
         if parsed.kind == "prompt":
             tag = parsed.source or "command"
             self.console.print(f"[kite.muted]/{parsed.command}[/]  {tag}")
@@ -1383,9 +1424,9 @@ class ChatSession:
             line = line.strip()
             if not line:
                 continue
-            parsed = parse_slash(line)
+            parsed = resolve_slash(line, self._index())
             if parsed.kind != "not_slash":
-                if not self._handle_slash(line):
+                if not self._handle_slash(line, parsed):
                     return 0
                 continue
             self._run_task(line)

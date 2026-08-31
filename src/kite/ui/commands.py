@@ -18,6 +18,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("plan", "Read-only mode — produce a checklist", aliases=("p",), group="session"),
     BuiltinCommand("build", "Apply edits, gated bash", aliases=("b",), group="session"),
     BuiltinCommand("approve", "Autonomy for this session", hint="auto|approve|readonly", group="session"),
+    BuiltinCommand("restricted", "Path sandbox — off by default (host mode)", hint="on|off", aliases=("sandbox",), group="session"),
     BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
     BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),
     BuiltinCommand("compact", "Summarize older turns now (OpenRouter free)", group="session"),
@@ -89,6 +90,10 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("approve", "ask before mutating"),
         ("readonly", "block writes and bash"),
     ],
+    "restricted": [
+        ("on", "clamp paths to session cwd"),
+        ("off", "host mode (default)"),
+    ],
     "reasoning": [
         ("auto", "provider default"),
         ("off", "disable extended thinking"),
@@ -128,6 +133,7 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
 }
 
 ARG_CHOICES["effort"] = ARG_CHOICES["reasoning"]
+ARG_CHOICES["sandbox"] = ARG_CHOICES["restricted"]
 
 
 @dataclass(frozen=True)
