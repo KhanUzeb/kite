@@ -184,6 +184,24 @@ class Session:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         self._touch_meta_timestamp(path)
 
+    def record_context_checkpoint(self, checkpoint_id: str, *, label: str = "", reason: str = "manual") -> None:
+        """Append checkpoint metadata to the session audit trail."""
+        path = self._session_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.is_file() or path.stat().st_size == 0:
+            self._write_meta()
+        row = {
+            "type": "context_checkpoint",
+            "checkpoint_id": checkpoint_id,
+            "label": label,
+            "reason": reason,
+            "updated_at": time.time(),
+        }
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        self.meta.updated_at = time.time()
+        self._touch_meta_timestamp(path)
+
     def _write_meta_sidecar(self, path: Path) -> None:
         _meta_sidecar(path).write_text(
             json.dumps({"updated_at": self.meta.updated_at}, ensure_ascii=False) + "\n",

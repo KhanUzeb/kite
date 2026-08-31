@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
+
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    return ANSI_ESCAPE.sub("", text)
 
 
 @pytest.fixture

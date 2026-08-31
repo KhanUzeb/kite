@@ -1,6 +1,6 @@
 # Kite architecture
 
-**Version:** 0.6.8 · Python 3.11+ · Entry: `kite.cli.run:main`
+**Version:** 0.7.1 · Python 3.11+ · Entry: `kite.cli.run:main`
 
 Kite is a **slim hybrid coding-agent harness**: a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) style control loop wrapped in tau-inspired **runtime assembly** (providers, tools, guardrails, compaction, sessions). The brain never renders UI; the CLI never calls LiteLLM directly.
 
@@ -84,7 +84,11 @@ Exit paths: task submitted via bash magic line, step/cost/time limits, user inte
 | `guardrails/` | Path sandbox, bash deny patterns, secret redaction |
 | `context/window.py` | Token estimate, `compact_messages`, deterministic summary |
 | `context/discovery.py` | Workspace tree, git status, agent instruction files |
-| `memory/session.py` | JSONL sessions + `compact_snapshot` for resume |
+| `memory/session.py` | JSONL sessions + `compact_snapshot` + `context_checkpoint` audit rows |
+| `memory/context_checkpoint.py` | Named transcript snapshots |
+| `memory/handoff.py` | Handoff markdown + JSON export |
+| `memory/compaction_ops.py` | Shared compaction + auto-checkpoint |
+| `bench/` | `kite bench` timing suite |
 | `skills/` | Load `SKILL.md` packs; install from npm/git |
 | `mcp/client.py` | Stdio MCP servers → extra tools in registry |
 | `ui/repl.py` | prompt_toolkit REPL, slash expansion, keybindings |
@@ -95,16 +99,20 @@ Exit paths: task submitted via bash magic line, step/cost/time limits, user inte
 
 Two separate systems:
 
-**Project context (once per run)** — Injected into the system prompt: repo tree, git status, `AGENTS.md` / `KITE.md`. Cached briefly; not re-summarized each turn.
+**Project context (once per run)** — Injected into the system prompt: repo tree, git status, `AGENTS.md` / `KITE.md`, plus **execution context** (`project_root`, `execution_cwd`, `execution_mode`). Cached briefly; not re-summarized each turn.
 
 **Transcript compaction (each turn)** — When estimated tokens ≥ `context_window - reserve` (default reserve 16k):
 
-1. Keep the system message and a recent tail (~20k tokens from the end).
-2. Summarize dropped middle turns (LLM via OpenRouter free tier, or deterministic fallback).
-3. Inject a synthetic user message: `Previous conversation summary:\n…`
-4. Persist a `compact_snapshot` row in the session JSONL so `kite resume` continues from the compacted view.
+1. **Soft checkpoint** (~72% context) — auto-save full transcript to `~/.kite/checkpoints/<session>/` (once per size).
+2. Keep the system message and a recent tail (~20k tokens from the end).
+3. Extract **preserved facts** (constraints, errors, paths, tools) from dropped turns.
+4. Summarize dropped middle turns (LLM via OpenRouter free tier, or deterministic fallback).
+5. Inject a synthetic user message: `Previous conversation summary:` + facts block + summary.
+6. Persist a `compact_snapshot` row in the session JSONL so `kite resume` continues from the compacted view.
 
-Config: `~/.kite/config.toml` — `auto_compact`, `compaction_reserve_tokens`, `compaction_keep_recent_tokens`, `compaction_use_llm`.
+**Manual:** `/compact` uses the same `run_compaction()` path as the loop. `/checkpoint save|restore` for named snapshots. `/handoff` exports `.kite/handoff-*` for another agent.
+
+Config: `~/.kite/config.toml` — `auto_compact`, `compaction_*`, `[guardrails] execution_mode = restricted|host`.
 
 ---
 
@@ -149,7 +157,8 @@ The agent emits events; the UI never polls internal state.
 | `stream_delta` / `stream_reasoning` | Live assistant text |
 | `tool_start` / `tool_progress` / `tool_end` | Tool chips, spinner, collapsed output |
 | `context` | Footer token meter |
-| `compact` | Compaction notice |
+| `compact` | Compaction notice (`↻ before → after`) |
+| `checkpoint` | Context snapshot saved (`◇ checkpoint`) |
 | `approval` | Inline approve/deny prompt |
 | `todo` | Live plan checklist |
 

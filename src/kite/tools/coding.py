@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -20,6 +21,16 @@ from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
 from kite.tools.store import TodoStore
 from kite.tools.web import webcrawl, websearch
+
+try:
+    from kite.context.workspace import ExecutionSession
+except ImportError:  # pragma: no cover
+    ExecutionSession = None  # type: ignore[misc, assignment]
+
+try:
+    from kite.agent.cancel import CancelToken
+except ImportError:  # pragma: no cover
+    CancelToken = None  # type: ignore[misc, assignment]
 
 
 _SKIP_NAMES = frozenset({".git", ".venv", "node_modules", "__pycache__"})
@@ -79,8 +90,16 @@ def make_coding_tools(
     todos: TodoStore | None = None,
     memory: MemoryStore | None = None,
     orchestrator=None,
+    execution: ExecutionSession | None = None,
+    cancel: CancelToken | None = None,
 ) -> list[Tool]:
-    root = cwd or os.getcwd()
+    def _root() -> str:
+        if execution is not None:
+            return str(execution.execution_cwd)
+        return cwd or os.getcwd()
+
+    root = _root()
+    project_root = str(execution.project_root) if execution is not None else (cwd or os.getcwd())
     allow = set(
         enabled
         or [
@@ -91,6 +110,7 @@ def make_coding_tools(
             "grep",
             "glob",
             "ls",
+            "set_cwd",
             "skill",
             "todo_write",
             "todo_read",
@@ -104,7 +124,7 @@ def make_coding_tools(
     )
     skill_by_name = {s.name: s for s in (skills or [])}
     store = todos or TodoStore()
-    mem = memory or MemoryStore.open(root)
+    mem = memory or MemoryStore.open(project_root)
 
     def gated(tool_name: str, arguments: dict[str, Any], fn):
         if guardrails is not None:
@@ -119,7 +139,7 @@ def make_coding_tools(
         return result
 
     def read_file(args: dict[str, Any]) -> dict[str, Any]:
-        path = _resolve(str(args["path"]), root)
+        path = _resolve(str(args["path"]), _root())
         if not path.exists():
             msg = f"not found: {path}"
             return {"ok": False, "error": msg, "path": str(path), "output": msg}
@@ -152,7 +172,7 @@ def make_coding_tools(
         return {"ok": True, "path": str(path), "output": numbered, "truncated": truncated}
 
     def write_file(args: dict[str, Any]) -> dict[str, Any]:
-        path = _resolve(str(args["path"]), root)
+        path = _resolve(str(args["path"]), _root())
         if path.exists() and path.is_dir():
             msg = f"cannot write: {path} is a directory"
             return {"ok": False, "error": msg, "path": str(path), "output": msg}
@@ -173,7 +193,7 @@ def make_coding_tools(
         }
 
     def edit_file(args: dict[str, Any]) -> dict[str, Any]:
-        path = _resolve(str(args["path"]), root)
+        path = _resolve(str(args["path"]), _root())
         if path.is_dir():
             msg = f"cannot edit: {path} is a directory"
             return {"ok": False, "error": msg, "path": str(path), "output": msg}
@@ -204,17 +224,21 @@ def make_coding_tools(
 
     def bash(args: dict[str, Any]) -> dict[str, Any]:
         command = str(args["command"])
-        workdir = str(args.get("cwd") or root)
+        workdir = str(args.get("cwd") or _root())
         # Last-line sandbox: never launch a shell outside the workspace root.
         try:
             from kite.guardrails.sandbox import clamp_cwd, workspace_root
 
-            clamped, reason = clamp_cwd(workdir, workspace_root(root))
+            clamped, reason = clamp_cwd(
+                workdir,
+                workspace_root(_root()),
+                allow_outside=bool(guardrails and guardrails.config.host_access()),
+            )
             if clamped is None:
                 return {"ok": False, "error": reason, "output": reason, "blocked": True}
             workdir = str(clamped)
         except Exception:
-            workdir = root
+            workdir = _root()
         try:
             limit = int(args.get("timeout") or timeout)
             proc = subprocess.Popen(
@@ -249,18 +273,36 @@ def make_coding_tools(
 
             reader = threading.Thread(target=_drain, daemon=True)
             reader.start()
+            deadline = time.monotonic() + limit
+            rc: int | None = None
             try:
-                rc = proc.wait(timeout=limit)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                reader.join(timeout=1.0)
-                partial = "".join(output_parts)
-                return {
-                    "ok": False,
-                    "returncode": -1,
-                    "output": partial,
-                    "error": f"timeout after {limit}s",
-                }
+                while rc is None:
+                    if cancel is not None and cancel.is_set():
+                        proc.kill()
+                        reader.join(timeout=1.0)
+                        partial = "".join(output_parts)
+                        return {
+                            "ok": False,
+                            "returncode": -1,
+                            "output": partial,
+                            "error": "cancelled",
+                            "cancelled": True,
+                        }
+                    try:
+                        rc = proc.wait(timeout=0.15)
+                    except subprocess.TimeoutExpired:
+                        if time.monotonic() >= deadline:
+                            proc.kill()
+                            reader.join(timeout=1.0)
+                            partial = "".join(output_parts)
+                            return {
+                                "ok": False,
+                                "returncode": -1,
+                                "output": partial,
+                                "error": f"timeout after {limit}s",
+                            }
+            except OSError:
+                raise
             reader.join(timeout=2.0)
             output = "".join(output_parts)
             lines = output.lstrip().splitlines(keepends=True)
@@ -284,7 +326,7 @@ def make_coding_tools(
 
     def grep_files(args: dict[str, Any]) -> dict[str, Any]:
         pattern = str(args["pattern"])
-        root_path = _resolve(str(args.get("path") or "."), root)
+        root_path = _resolve(str(args.get("path") or "."), _root())
         glob_pat = str(args.get("glob") or "")
         max_hits = int(args.get("max_hits") or 50)
         rg = shutil.which("rg")
@@ -301,7 +343,7 @@ def make_coding_tools(
                     encoding="utf-8",
                     errors="replace",
                     timeout=20,
-                    cwd=root,
+                    cwd=_root(),
                 )
             except (OSError, subprocess.TimeoutExpired) as e:
                 return {"ok": False, "error": str(e), "output": str(e)}
@@ -344,7 +386,7 @@ def make_coding_tools(
 
     def glob_files(args: dict[str, Any]) -> dict[str, Any]:
         pattern = str(args["pattern"])
-        root_path = _resolve(str(args.get("root") or "."), root)
+        root_path = _resolve(str(args.get("root") or "."), _root())
         matches = []
         for p in sorted(root_path.glob(pattern)):
             if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in p.parts):
@@ -356,7 +398,7 @@ def make_coding_tools(
         return {"ok": True, "output": "\n".join(matches) if matches else "(no matches)", "count": len(matches)}
 
     def ls_dir(args: dict[str, Any]) -> dict[str, Any]:
-        path = _resolve(str(args.get("path") or "."), root)
+        path = _resolve(str(args.get("path") or "."), _root())
         if not path.exists():
             return {"ok": False, "error": f"not found: {path}", "output": f"not found: {path}"}
         if path.is_file():
@@ -382,7 +424,7 @@ def make_coding_tools(
                 from kite.skills.loader import load_skills
 
                 installed = install_skill(str(install))
-                for skill in load_skills(root):
+                for skill in load_skills(project_root):
                     skill_by_name[skill.name] = skill
             except (ValueError, RuntimeError, OSError) as e:
                 return {"ok": False, "error": str(e), "output": str(e)}
@@ -440,7 +482,7 @@ def make_coding_tools(
 
         glob_pat = str(args.get("glob") or "**/*.{py,ts,tsx,js,go,rs,md}")
         pattern = args.get("pattern")
-        root_path = _resolve(str(args.get("path") or "."), root)
+        root_path = _resolve(str(args.get("path") or "."), _root())
         prompts = args.get("prompts") or args.get("tasks")
         if isinstance(prompts, list) and prompts:
             sections: list[str] = [f"parallel tasks: {len(prompts)}"]
@@ -503,6 +545,16 @@ def make_coding_tools(
         if len(text) > 40_000:
             text = text[:20_000] + "\n...<truncated>...\n" + text[-8_000:]
         return {"ok": True, "output": text, "url": url}
+
+    def set_working_directory(args: dict[str, Any]) -> dict[str, Any]:
+        if execution is None:
+            msg = "execution session unavailable"
+            return {"ok": False, "error": msg, "output": msg}
+        target, err = execution.set_cwd(str(args.get("path") or ""))
+        if err:
+            return {"ok": False, "error": err, "output": err}
+        assert target is not None
+        return {"ok": True, "cwd": str(target), "output": f"cwd → {target}"}
 
     def memory_op(args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "list").lower()
@@ -653,6 +705,22 @@ def make_coding_tools(
                     "required": [],
                 },
                 execute_fn=lambda a: gated("ls", a, ls_dir),
+            ),
+        ),
+        (
+            "set_cwd",
+            Tool(
+                name="set_cwd",
+                description="Change the session working directory for file tools and bash (default cwd).",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Directory path (~, relative, or absolute)"},
+                        **reason_prop,
+                    },
+                    "required": ["path"],
+                },
+                execute_fn=lambda a: gated("set_cwd", a, set_working_directory),
             ),
         ),
         (

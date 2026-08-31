@@ -279,13 +279,14 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 def cmd_providers(_args: argparse.Namespace) -> int:
     from rich.table import Table
 
-    from kite.config import UserConfig
+    from kite.config import UserConfig, assess_setup_status
     from kite.providers.catalog import load_catalog
     from kite.providers.keys import api_key_for
 
     console = _console()
     catalog = load_catalog()
     cfg = UserConfig.load()
+    status = assess_setup_status()
     table = Table(title="Providers")
     table.add_column("name")
     table.add_column("selected model")
@@ -308,6 +309,12 @@ def cmd_providers(_args: argparse.Namespace) -> int:
         table.add_row(p.name + mark, selected, p.api_key_env or "-", key_ok, p.docs_url[:40])
     console.print(table)
     console.print("[dim]* = default provider · models fetched live via API key[/]")
+    if status.ready:
+        console.print(f"[green]Ready[/]  {status.default_provider}/{status.default_model}")
+    else:
+        console.print("[yellow]Not ready[/] — run [cyan]kite setup[/] or [cyan]/setup[/] in the REPL")
+        for hint in status.hints[:2]:
+            console.print(f"[dim]{hint}[/]")
     return 0
 
 
@@ -728,21 +735,35 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--json", action="store_true", help="Emit final trajectory JSON on stdout (CI-friendly)")
 
 
+def cmd_help(_args: argparse.Namespace) -> int:
+    from kite.cli.help_map import cli_help_text
+
+    print(cli_help_text())
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
+    from kite.cli.help_map import CLI_EPILOG
+
     parser = argparse.ArgumentParser(
         prog="kite",
-        description="Kite coding agent - plan or build in the terminal",
+        description="Kite coding agent — plan or build in the terminal",
+        epilog=CLI_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="store_true", help="Print version")
     sub = parser.add_subparsers(dest="command")
 
-    run = sub.add_parser("run", help="Start a new agent session")
+    help_p = sub.add_parser("help", help="Print CLI quick reference")
+    help_p.set_defaults(func=cmd_help)
+
+    run = sub.add_parser("run", help="One-shot task")
     run.add_argument("task", nargs="?", help="Task prompt")
     run.add_argument("--stdin", action="store_true", help="Read task from stdin")
     _add_run_flags(run)
     run.set_defaults(func=cmd_run)
 
-    chat = sub.add_parser("chat", help="Interactive session (plan/build, slash commands)")
+    chat = sub.add_parser("chat", help="Interactive REPL (default when bare `kite`)")
     _add_run_flags(chat)
     chat.add_argument("--session", help="Open an existing session id")
     chat.set_defaults(func=cmd_chat)
@@ -754,7 +775,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_run_flags(resume)
     resume.set_defaults(func=cmd_resume)
 
-    sessions = sub.add_parser("sessions", help="List, inspect, or delete sessions")
+    sessions = sub.add_parser("sessions", help="List or inspect saved sessions")
     sessions.add_argument("--limit", type=int, default=20)
     sessions.add_argument("--show", help="Show session id")
     sessions.add_argument("--tail", type=int, default=12, help="Messages to show with --show")
@@ -789,7 +810,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--json", action="store_true")
     dashboard.set_defaults(func=cmd_maintainer_dashboard)
 
-    models = sub.add_parser("models", help="List live models from provider APIs (uses your API key)")
+    models = sub.add_parser("models", help="List models for a provider")
     models.add_argument("-p", "--provider", help="Filter one provider")
     models.add_argument(
         "--select",
@@ -838,7 +859,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory.add_argument("--project", action="store_true", help="With --remember, store on the project")
     memory.set_defaults(func=cmd_memory)
 
-    rt = sub.add_parser("runtime-config", help="Show merged agent runtime TOML config")
+    rt = sub.add_parser("runtime-config", help="Show merged runtime TOML (advanced)")
     rt.add_argument("--config", help="Named config or path")
     rt.set_defaults(func=cmd_runtime_config)
 
@@ -873,6 +894,10 @@ def build_parser() -> argparse.ArgumentParser:
     cloud.add_argument("--dry-run", action="store_true")
     cloud.set_defaults(func=cmd_cloud)
 
+    from kite.cli.bench import add_bench_parser
+
+    add_bench_parser(sub)
+
     return parser
 
 
@@ -904,6 +929,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # Bare `kite` → interactive chat (cold-start REPL). `kite --help` still works.
     if args.command is None:
+        from kite.ui.style import make_console
+
+        from kite.cli.setup import maybe_run_first_setup
+
+        console = make_console(stderr=True)
+        setup_code = maybe_run_first_setup(console)
+        if setup_code is not None:
+            if setup_code != 0:
+                return setup_code
         return cmd_chat(
             argparse.Namespace(
                 provider=None,

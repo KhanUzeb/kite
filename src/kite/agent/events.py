@@ -40,6 +40,7 @@ EventKind = Literal[
     "subagent_end",
     "cache_hit",
     "warning",
+    "checkpoint",
 ]
 
 

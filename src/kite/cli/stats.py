@@ -24,7 +24,7 @@ def _http_json(url: str, *, timeout: float = 12.0) -> dict | list | None:
         url,
         headers={
             "Accept": "application/json",
-            "User-Agent": "kite-stats/0.6.8",
+            "User-Agent": "kite-stats/0.7.1",
         },
     )
     try:

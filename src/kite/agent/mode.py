@@ -22,11 +22,14 @@ class ApprovalMode(str, Enum):
 # Cheap, read-only tools — unrestricted in both modes.
 READONLY_TOOLS = frozenset(
     {
-        "read", "grep", "glob", "ls", "skill", "todo_read", "webfetch", "websearch", "webcrawl",
+        "read", "grep", "glob", "ls", "set_cwd", "skill", "todo_read", "webfetch", "websearch", "webcrawl",
         "subagent", "task",
         "memory", "gh_issue", "gh_pr", "gh_prs", "gh_runs", "gh_run",
     }
 )
+
+# Read-only tools safe to run concurrently in one model turn (deterministic order preserved).
+PARALLEL_SAFE_TOOLS = frozenset({"read", "grep", "glob", "ls"})
 
 # Mutating / side-effecting — gated, and blocked entirely in plan mode.
 MUTATING_TOOLS = frozenset({"write", "edit", "bash"})

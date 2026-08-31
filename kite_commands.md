@@ -263,7 +263,7 @@ Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. T
 
 ### CI
 
-GitHub Actions (`.github/workflows/tests.yml`) runs `pytest` on push/PR to `main` when the batch has **5+ commits**. Fewer commits skip CI; run `pytest` locally or use **Actions → Tests → Run workflow**. See [CONTRIBUTING.md](../CONTRIBUTING.md#ci-github-actions).
+GitHub Actions (`.github/workflows/tests.yml`) runs `pytest` on every push and pull request to `main` (Python 3.11 + 3.12). See [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
 
 ### Use on any project (not the kite checkout)
 

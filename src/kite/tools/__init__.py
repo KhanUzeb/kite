@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from kite.tools.metadata import ToolMetadata, metadata_for
+
 
 class Tool:
     """A tool is a name + JSON schema + sync executor returning a result dict."""
@@ -14,11 +16,14 @@ class Tool:
         description: str,
         parameters: dict[str, Any],
         execute_fn: Callable[[dict[str, Any]], dict[str, Any]],
+        *,
+        metadata: ToolMetadata | None = None,
     ):
         self.name = name
         self.description = description
         self.parameters = parameters
         self._execute_fn = execute_fn
+        self.metadata = metadata or metadata_for(name)
 
     def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return self._execute_fn(arguments)

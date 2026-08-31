@@ -128,6 +128,20 @@ class CommandIndex:
             for alias in builtin.aliases:
                 put(spec, alias=alias)
 
+        from kite.ui.commands import LEGACY_ALIASES
+
+        for legacy_name, target in LEGACY_ALIASES.items():
+            if legacy_name in specs:
+                continue
+            put(
+                SlashSpec(
+                    name=legacy_name,
+                    kind="control",
+                    source="builtin",
+                    description=f"legacy alias for /{target}",
+                )
+            )
+
         return cls(specs=specs, skills=skills, plugins=plugins, commands=overlay)
 
     def expand(self, name: str, arg: str = "") -> str | None:
@@ -214,20 +228,28 @@ def expand_prompt_slash(
 def help_text(index: CommandIndex) -> str:
     from kite.ui.commands import BUILTINS
 
+    labels = {
+        "chat": "chat",
+        "model": "model & keys",
+        "memory": "memory",
+        "extensions": "skills & commands",
+        "attach": "attachments",
+    }
     groups: dict[str, list] = {}
     for builtin in BUILTINS:
-        groups.setdefault(builtin.group or "session", []).append(builtin)
+        key = builtin.group or "chat"
+        groups.setdefault(key, []).append(builtin)
 
-    lines: list[str] = []
+    lines: list[str] = ["Type a task or /command. Legacy: /select /models /provider /cost still work.", ""]
     for group, items in groups.items():
-        if lines:
+        if len(lines) > 2:
             lines.append("")
-        lines.append(group)
+        lines.append(labels.get(group, group))
         for b in items:
             hint = f" {b.hint}" if b.hint else ""
             lines.append(f"  /{b.name:<14}{hint}  {b.description}".rstrip())
 
-    lines.extend(["", "skills & commands"])
+    lines.extend(["", "prompts (expand into your next turn)"])
     seen: set[str] = set()
     rows = sorted(index.prompt_specs(), key=lambda s: (s.source, s.name))
     from kite.ui.theme import glyph

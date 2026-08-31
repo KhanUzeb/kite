@@ -1,4 +1,4 @@
-# Ideal CLI spec coverage (Kite 0.6.8)
+# Ideal CLI spec coverage (Kite 0.7.1)
 
 How Kite maps onto the 14-category Ideal Coding CLI spec.
 
@@ -10,7 +10,7 @@ How Kite maps onto the 14-category Ideal Coding CLI spec.
 | 4 | Parallel + legible | Claude/Antigravity | `task` tool `prompts[]` parallel fan-out; **`subagent`** LLM orchestrator with manager events |
 | 5 | Model-agnostic | OpenCode | LiteLLM + Ollama catalog; `kite import <format>` for Cursor/Claude/Aider/Codex sessions |
 | 6 | MCP-native | Claude Code | `[[mcp]]` servers in TOML -> stdio JSON-RPC -> `mcp_<server>_<tool>` registry |
-| 7 | Long-horizon context | Claude Code | Auto-compaction, sessions/resume, image token budgeting in `estimate_message_tokens` |
+| 7 | Long-horizon context | Claude Code | Preserved-fact compaction; auto-checkpoint ~72%; `/checkpoint` + `/handoff`; sessions/resume; image token budgeting |
 | 8 | Cloud/local parity | Codex CLI | `kite cloud list|apply`, `kite apply <trajectory>` |
 | 9 | Terminal-native | Aider/Warp | `kite run`, `kite exec`, `--json`, `--stdin`, exit codes |
 | 10 | GitHub integration | Copilot | `gh_issue`, `gh_pr`, `gh_prs`, `gh_runs`, `gh_run` tools (via `gh` CLI) |

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.markup import escape
@@ -68,6 +69,8 @@ class ChatSession:
         self.attachments: list = []
         self._session_id: str | None = None
         self._harness = None
+        self._harness_key: tuple | None = None
+        self._model_resolved = False
         self._prompt = None
         self._model_cache: list[str] = []
         self._pending_open = session_id
@@ -75,20 +78,31 @@ class ChatSession:
         self._sync_from_config()
 
     def _sync_from_config(self) -> None:
-        from kite.providers.resolve import resolve_model
-
         cfg = UserConfig.load()
         if not self.provider:
             self.provider = cfg.default_provider or self.provider
         if not self.model:
-            try:
-                resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
-                self.provider = resolved.provider
-                self.model = resolved.model
-            except Exception:
-                self.model = cfg.default_model or self.model
+            self.model = cfg.default_model or self.model
         self.state.provider = self.provider or self.state.provider
         self.state.model = self.model or self.state.model
+
+    def _ensure_model_resolved(self) -> None:
+        """Resolve provider/model on first task — keeps REPL cold start cheap."""
+        if self._model_resolved and self.provider and self.model:
+            return
+        from kite.providers.resolve import resolve_model
+
+        cfg = UserConfig.load()
+        resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
+        self.provider = resolved.provider
+        self.model = resolved.model
+        self.state.provider = resolved.provider
+        self.state.model = resolved.model
+        self._model_resolved = True
+
+    def _invalidate_harness(self) -> None:
+        self._harness = None
+        self._harness_key = None
 
     def _effective_model_pair(self) -> tuple[str, str]:
         provider = self.provider or self.state.provider
@@ -104,13 +118,15 @@ class ChatSession:
             return provider or "", model or ""
 
     def _startup_banner(self) -> None:
-        from kite.providers.resolve import missing_credentials, resolve_model
+        from kite.config.readiness import assess_setup_status, format_setup_banner, is_fresh_install
+        from kite.providers.resolve import missing_credentials, missing_model, resolve_model
 
         cfg = UserConfig.load()
+        resolved = None
         try:
             resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
-            cred = missing_credentials(resolved)
-            model_line = f"{resolved.provider}/{resolved.model}"
+            cred = missing_credentials(resolved) or missing_model(resolved)
+            model_line = f"{resolved.provider}/{resolved.model or '—'}"
         except Exception as e:
             cred = str(e)
             model_line = f"{self.provider or cfg.default_provider or '—'}/{self.model or cfg.default_model or '—'}"
@@ -124,16 +140,29 @@ class ChatSession:
         banner.append("  ·  ", style="kite.muted")
         banner.append("Ctrl+O tools", style="kite.muted")
         banner.append("  ·  ", style="kite.muted")
-        banner.append("/login", style="kite.muted")
+        banner.append("/setup", style="kite.muted")
         self.console.print(banner)
 
-        if cred:
+        status = assess_setup_status(provider=self.provider, model=self.model)
+        if is_fresh_install():
             self.console.print(
-                f"[kite.pending]⚠[/]  [kite.muted]No API key — [kite.brand]/login {resolved.provider if 'resolved' in locals() else cfg.default_provider}[/] "
-                f"or [kite.brand]kite setup[/][/]"
+                "[kite.brand]Welcome![/]  First time here? Run [kite.brand]/setup[/] "
+                "or [kite.brand]kite setup[/] to add an API key and pick a model."
+            )
+        elif not status.ready:
+            note = format_setup_banner(status)
+            if note:
+                self.console.print(note)
+        elif cred:
+            prov = resolved.provider if resolved else cfg.default_provider
+            self.console.print(
+                f"[kite.pending]⚠[/]  [kite.muted]Not ready — [kite.brand]/login {prov}[/] "
+                f"or [kite.brand]/setup[/][/]"
             )
         elif not cfg.default_model:
-            self.console.print("[kite.muted]Tip:[/]  [kite.brand]/select[/] or [kite.brand]kite models -p groq --select[/]")
+            self.console.print(
+                "[kite.muted]Tip:[/]  [kite.brand]/model select[/] or [kite.brand]kite models -p groq --select[/]"
+            )
 
     def _flash_note(self, text: str) -> None:
         self.state.flash = text
@@ -164,8 +193,28 @@ class ChatSession:
             workspace_cwd=self.cwd,
         )
 
+    def _harness_cache_key(self) -> tuple:
+        return (
+            self.provider,
+            self.model,
+            self.state.mode.value,
+            self.state.approval.value,
+            self._session_id,
+            self.config_name,
+            self.state.reasoning or "auto",
+        )
+
     def _make_harness(self, *, resume: bool = False, follow_up: str | None = None):
         from kite.agent.harness import Harness, HarnessConfig
+
+        key = self._harness_cache_key()
+        if self._harness is not None and self._harness_key == key:
+            h = self._harness
+            h.config.resume = resume and bool(self._session_id)
+            h.config.follow_up = follow_up
+            h.config.session_id = self._session_id
+            h.config.attachments = list(self.attachments)
+            return h
 
         h = Harness(
             HarnessConfig(
@@ -184,6 +233,8 @@ class ChatSession:
             )
         )
         h.subscribe(self.display)
+        self._harness = h
+        self._harness_key = key
         return h
 
     def _provider_names(self) -> list[str]:
@@ -306,7 +357,7 @@ class ChatSession:
             self.console.print("[kite.muted]no session yet[/]")
             return
         from kite.agent.summarize import make_summarizer
-        from kite.context.window import compact_messages
+        from kite.memory.compaction_ops import run_compaction
         from kite.memory.session import load_session
 
         try:
@@ -318,17 +369,137 @@ class ChatSession:
         before = len(session.messages)
         summarizer = make_summarizer(cfg) if cfg.compaction_use_llm else None
         self.console.print("[kite.muted]compacting…[/]")
-        compacted = compact_messages(
+        result = run_compaction(
             session.messages,
             keep_recent_tokens=cfg.compaction_keep_recent_tokens,
+            reserve_tokens=cfg.compaction_reserve_tokens,
             summarizer=summarizer,
             force=True,
+            session_id=session.id,
+            cwd=self.cwd,
+            todos=self.todos.read(),
+            meta=session.meta.to_dict(),
         )
-        if compacted == session.messages:
+        if not result.compacted:
             self.console.print("[kite.muted]already compact[/]")
             return
-        session.replace_messages(compacted)
-        self.console.print(f"[kite.muted]{SYMBOL_COMPACT}  {before} → {len(compacted)}[/]")
+        session.replace_messages(result.messages)
+        if result.checkpoint is not None:
+            session.record_context_checkpoint(result.checkpoint.id, label=result.checkpoint.label, reason="pre_compact")
+            self.console.print(f"[kite.muted]◇ saved {result.checkpoint.id}[/]")
+        self.console.print(f"[kite.muted]{SYMBOL_COMPACT}  {before} → {result.after}[/]")
+
+    def _checkpoint_cmd(self, raw: str) -> None:
+        if not self._session_id:
+            self.console.print("[kite.muted]no session yet[/]")
+            return
+        from kite.memory.context_checkpoint import list_checkpoints, load_checkpoint, save_checkpoint
+        from kite.memory.session import load_session
+
+        parts = raw.strip().split(maxsplit=1)
+        sub = (parts[0] if parts else "list").lower()
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
+        try:
+            session = load_session(self._session_id)
+        except (OSError, ValueError) as e:
+            self.console.print(f"[kite.error]{e}[/]")
+            return
+
+        if sub in {"", "list"}:
+            rows = list_checkpoints(session.id)
+            if not rows:
+                self.console.print("[kite.muted]no checkpoints[/]")
+                return
+            for cp in rows:
+                ratio = cp.context_usage.get("ratio")
+                pct = f"{float(ratio):.0%}" if ratio is not None else "—"
+                self.console.print(
+                    f"[kite.muted]{cp.id}[/]  {cp.label}  ctx {pct}  "
+                    f"{len(cp.messages)} msgs  {cp.reason}"
+                )
+            return
+
+        if sub == "save":
+            label = arg or "manual"
+            cp = save_checkpoint(
+                session_id=session.id,
+                messages=session.messages,
+                cwd=self.cwd,
+                label=label,
+                reason="manual",
+                todos=self.todos.read(),
+                meta=session.meta.to_dict(),
+            )
+            session.record_context_checkpoint(cp.id, label=cp.label, reason="manual")
+            self.console.print(f"[kite.muted]◇ saved {cp.id}[/]  {label}")
+            return
+
+        if sub == "restore":
+            if not arg:
+                self.console.print("[kite.error]/checkpoint restore <id>[/]")
+                return
+            try:
+                cp = load_checkpoint(session.id, arg)
+            except (OSError, ValueError) as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            session.replace_messages(cp.messages)
+            self.console.print(
+                f"[kite.muted]◇ restored {cp.id}[/]  {len(cp.messages)} messages  ({cp.label})"
+            )
+            return
+
+        if sub == "show":
+            if not arg:
+                self.console.print("[kite.error]/checkpoint show <id>[/]")
+                return
+            try:
+                cp = load_checkpoint(session.id, arg)
+            except (OSError, ValueError) as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            usage = cp.context_usage
+            self.console.print(
+                f"[kite.muted]{cp.id}[/]  {cp.label}\n"
+                f"  {len(cp.messages)} messages  ·  ctx {usage.get('total_tokens', '?')} tok  "
+                f"({usage.get('ratio', '?')})\n"
+                f"  cwd {cp.cwd}  ·  {cp.reason}"
+            )
+            return
+
+        self.console.print("[kite.error]/checkpoint save|list|restore|show[/]")
+
+    def _handoff_cmd(self, raw: str) -> None:
+        if not self._session_id:
+            self.console.print("[kite.muted]no session yet[/]")
+            return
+        from kite.memory.handoff import write_handoff
+        from kite.memory.session import load_session
+
+        try:
+            session = load_session(self._session_id)
+        except (OSError, ValueError) as e:
+            self.console.print(f"[kite.error]{e}[/]")
+            return
+
+        out = raw.strip()
+        out_dir = Path(out).parent if out and (Path(out).suffix or "/" in out) else self.cwd
+        if out and Path(out).suffix:
+            out_dir = Path(out).parent
+
+        bundle = write_handoff(
+            session=session,
+            cwd=self.cwd,
+            todos=self.todos.read(),
+            out_dir=out_dir,
+            provider=self.provider or "",
+            model=self.model or "",
+        )
+        session.record_context_checkpoint(bundle.checkpoint_id, label="handoff", reason="manual")
+        self.console.print(f"[kite.muted]handoff[/]  {bundle.markdown_path}")
+        self.console.print(f"[kite.muted]json[/]     {bundle.json_path}")
+        self.console.print(f"[kite.muted]resume[/]  kite resume {bundle.session_id}")
 
     def _sync_attach_count(self) -> None:
         self.state.pending_attach = len(self.attachments)
@@ -392,6 +563,126 @@ class ChatSession:
         for item in self.attachments:
             self.console.print(f"  {item.source}  {item.name}  {item.kind}")
 
+    def _apply_legacy_slash(self, cmd: str, arg: str, legacy: str) -> tuple[str, str]:
+        if legacy == "provider":
+            return "model", f"provider {arg}".strip()
+        if legacy == "models":
+            return "model", f"list {arg}".strip()
+        if legacy == "select":
+            return "model", f"select {arg}".strip()
+        if legacy == "semantic":
+            return "memory", "semantic"
+        if legacy == "episodic":
+            return "memory", "episodic"
+        if legacy == "cost":
+            return "status", arg
+        if legacy == "collapse":
+            return "collapse", arg
+        if legacy in {"thinking", "fast"}:
+            return "reasoning", legacy if not arg else arg
+        return cmd, arg
+
+    def _model_cmd(self, arg: str) -> None:
+        token = arg.strip()
+        lower = token.lower()
+
+        if lower == "list" or lower.startswith("list "):
+            provider = token[4:].strip() if lower.startswith("list ") else (self.provider or self.state.provider or "").strip()
+            if not provider:
+                self.console.print("[kite.error]/model list <provider>[/]")
+                return
+            from kite.providers.list_models import list_models_for_provider
+
+            try:
+                result = list_models_for_provider(provider, refresh=True)
+            except KeyError as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            if not result.ok:
+                self.console.print(f"[kite.error]{result.error or 'no models'}[/]")
+                return
+            self._model_cache = [m.id for m in result.models]
+            shown = result.models[:80]
+            for m in shown:
+                win = f"  {m.context_window}" if m.context_window else ""
+                self.console.print(f"  {m.id}{win}")
+            extra = len(result.models) - len(shown)
+            if extra > 0:
+                self.console.print(f"[kite.muted]  … {extra} more[/]")
+            self.console.print("[kite.muted]  /model select[/] to pick one")
+            return
+
+        if lower == "select" or lower.startswith("select "):
+            from kite.providers.select import select_model_interactive, select_provider_interactive
+
+            provider = token[6:].strip() if lower.startswith("select ") else (self.provider or self.state.provider or "").strip()
+            if not provider:
+                picked = select_provider_interactive(self.console)
+                if not picked:
+                    return
+                provider = picked
+            code, picked_provider, model = select_model_interactive(self.console, provider, persist=True)
+            if code == 0 and picked_provider and model:
+                self.provider = picked_provider
+                self.model = model
+                self.state.provider = picked_provider
+                self.state.model = model
+                self._model_cache = []
+                self._model_resolved = True
+                self._invalidate_harness()
+            return
+
+        if lower.startswith("provider "):
+            name = token.split(None, 1)[1].strip()
+            if not name:
+                self.console.print("[kite.error]/model provider <name>[/]")
+                return
+            self.provider = name
+            self.state.provider = name
+            self._model_cache = []
+            self._model_resolved = False
+            self._invalidate_harness()
+            self.console.print(f"[kite.muted]provider[/]  {name}")
+            return
+
+        if token:
+            save = False
+            for suffix in (" --save", " --persist"):
+                if token.endswith(suffix):
+                    save = True
+                    token = token[: -len(suffix)].strip()
+                    break
+            if "/" in token:
+                self.provider, self.model = token.split("/", 1)
+            else:
+                self.model = token
+            self.state.provider = self.provider or self.state.provider
+            self.state.model = self.model or self.state.model
+            self._model_cache = []
+            self._model_resolved = True
+            self._invalidate_harness()
+            if save:
+                cfg = UserConfig.load()
+                cfg.default_provider = self.provider or cfg.default_provider
+                cfg.default_model = self.model or cfg.default_model
+                if self.provider:
+                    cfg.provider_defaults[self.provider] = self.model or cfg.default_model
+                cfg.save()
+                self.console.print(f"[kite.success]saved[/] {self.state.provider}/{self.state.model}")
+            else:
+                self.console.print(
+                    f"[kite.success]model[/] {self.state.provider}/{self.state.model}  "
+                    "[kite.muted](session — add --save to persist)[/]"
+                )
+            return
+
+        provider, model = self._effective_model_pair()
+        cfg = UserConfig.load()
+        self.console.print(
+            f"session {provider}/{model or '—'}  ·  config {cfg.default_provider}/{cfg.default_model or '—'}\n"
+            f"[kite.muted]/model list <provider>  ·  /model select  ·  /model groq/id --save[/]"
+        )
+
     def _ensure_prompt(self):
         if self._prompt is not None:
             return self._prompt
@@ -410,12 +701,14 @@ class ChatSession:
         def _plan() -> str:
             self.state.mode = AgentMode.PLAN
             self.state.approval = ApprovalMode.READONLY
+            self._invalidate_harness()
             return "plan mode"
 
         def _build() -> str:
             self.state.mode = AgentMode.BUILD
             if self.state.approval is ApprovalMode.READONLY:
                 self.state.approval = ApprovalMode.APPROVE
+            self._invalidate_harness()
             return "build mode"
 
         def _status() -> str:
@@ -507,6 +800,223 @@ class ChatSession:
     def _index(self) -> CommandIndex:
         return CommandIndex.load(self.cwd)
 
+    def _normalize_slash_cmd(self, cmd: str, arg: str) -> tuple[str, str]:
+        if cmd == "mode" and arg in {"plan", "build"}:
+            return arg, ""
+        if cmd == "new":
+            return "clear", arg
+        if cmd == "sessions" and not arg:
+            return "session", "list"
+        if cmd == "skill" and not arg:
+            return "skills", ""
+        return cmd, arg
+
+    def _slash_handlers(self) -> dict[str, Callable[[str], None]]:
+        login = self._login_provider
+        logout = self._logout_provider
+        clip = self._attach_clipboard
+        return {
+            "help": self._slash_help,
+            "plan": self._slash_plan,
+            "build": self._slash_build,
+            "approve": self._slash_approve,
+            "cost": self._slash_cost,
+            "expand": self._slash_expand,
+            "collapse": self._slash_collapse,
+            "trace": self._slash_trace,
+            "undo": self._slash_undo,
+            "clear": self._slash_clear,
+            "init": self._slash_init,
+            "login": login,
+            "signin": login,
+            "logout": logout,
+            "signout": logout,
+            "keys": self._show_keys,
+            "setup": self._slash_setup,
+            "model": self._model_cmd,
+            "select": self._slash_model_select,
+            "models": self._slash_model_list,
+            "provider": self._slash_model_provider,
+            "thinking": self._slash_thinking,
+            "fast": self._slash_fast,
+            "reasoning": self._slash_reasoning,
+            "effort": self._slash_reasoning,
+            "compact": self._compact_now,
+            "checkpoint": self._checkpoint_cmd,
+            "handoff": self._handoff_cmd,
+            "attach": self._attach_path,
+            "clip": clip,
+            "clipboard": clip,
+            "paste": clip,
+            "detach": self._detach,
+            "attachments": self._show_attachments,
+            "skills": self._show_skills,
+            "commands": self._handle_commands,
+            "plugins": self._handle_plugins,
+            "memory": self._slash_memory,
+            "semantic": self._show_semantic,
+            "episodic": self._show_episodic,
+            "remember": self._remember,
+            "forget": self._slash_forget,
+            "status": self._slash_status,
+            "resume": self._slash_resume,
+            "session": self._handle_session,
+            "home": self._slash_home,
+            "theme": self._set_theme,
+            "font": self._set_font,
+        }
+
+    def _slash_help(self, _arg: str) -> None:
+        self.console.print(help_text(self._index()), style="kite.muted")
+
+    def _slash_plan(self, _arg: str) -> None:
+        self.state.mode = AgentMode.PLAN
+        self.state.approval = ApprovalMode.READONLY
+        self._invalidate_harness()
+        self.console.print("[kite.plan]plan mode[/]  read-only — I'll suggest, not edit")
+
+    def _slash_build(self, _arg: str) -> None:
+        self.state.mode = AgentMode.BUILD
+        if self.state.approval is ApprovalMode.READONLY:
+            self.state.approval = ApprovalMode.APPROVE
+        self._invalidate_harness()
+        self.console.print("[kite.build]build mode[/]  edits are on")
+
+    def _slash_approve(self, arg: str) -> None:
+        try:
+            self.state.approval = ApprovalMode(arg or "approve")
+        except ValueError:
+            self.console.print("[kite.error]use /approve auto|approve|readonly[/]")
+            return
+        self._invalidate_harness()
+        self.console.print(f"[kite.pending]approval[/] {self.state.approval.value}")
+
+    def _slash_cost(self, _arg: str) -> None:
+        pct = f"{self.state.context_pct:.0%}" if self.state.context_pct is not None else "—"
+        cache = ""
+        if self.state.cache_hit_tokens:
+            cache = f"  ·  cache {self.state.cache_hit_ratio:.0%} ({self.state.cache_hit_tokens} tok)"
+        self.console.print(
+            f"${self.state.cost:.4f}  ·  ctx {self.state.tokens}/{self.state.window or '—'} ({pct}){cache}  ·  calls {self.state.n_calls}"
+        )
+
+    def _slash_expand(self, _arg: str) -> None:
+        self.state.expanded_all = not self.state.expanded_all
+        mode = "expanded" if self.state.expanded_all else "collapsed"
+        self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
+
+    def _slash_collapse(self, _arg: str) -> None:
+        self.state.expanded_all = False
+        self.console.print("[kite.muted]tool output collapsed[/]")
+
+    def _slash_trace(self, _arg: str) -> None:
+        if self.state.last_trace:
+            self.console.print(self.state.last_trace)
+        elif self.state.last_error:
+            self.console.print(self.state.last_error)
+        else:
+            self.console.print("[kite.muted]no traceback saved yet[/]")
+
+    def _slash_undo(self, _arg: str) -> None:
+        ok, msg = self.git.undo()
+        style = "kite.success" if ok else "kite.error"
+        self.console.print(f"[{style}]{msg}[/]")
+
+    def _slash_clear(self, _arg: str) -> None:
+        self._reset_chat()
+        self.console.print("[kite.muted]fresh start — conversation cleared[/]")
+
+    def _slash_init(self, _arg: str) -> None:
+        path = Path(self.cwd) / "KITE.md"
+        if path.exists():
+            self.console.print(f"[kite.pending]already exists[/] {path}")
+            return
+        path.write_text(KITE_MD_STUB, encoding="utf-8")
+        self.console.print(f"[kite.success]wrote[/] {path}")
+
+    def _slash_setup(self, _arg: str) -> None:
+        from kite.cli.setup import run_setup_wizard
+
+        code = run_setup_wizard(self.console)
+        if code == 0:
+            self._invalidate_harness()
+            self._sync_from_config()
+
+    def _slash_model_select(self, arg: str) -> None:
+        self._model_cmd(f"select {arg}".strip())
+
+    def _slash_model_list(self, arg: str) -> None:
+        self._model_cmd(f"list {arg}".strip())
+
+    def _slash_model_provider(self, arg: str) -> None:
+        self._model_cmd(f"provider {arg}".strip())
+
+    def _slash_thinking(self, arg: str) -> None:
+        self._set_reasoning(arg, command="thinking")
+
+    def _slash_fast(self, arg: str) -> None:
+        self._set_reasoning(arg, command="fast")
+
+    def _slash_reasoning(self, arg: str) -> None:
+        if not arg:
+            from kite.models.reasoning import reasoning_badge
+
+            badge = reasoning_badge(self.state.reasoning) or self.state.reasoning
+            info = self._reasoning_info()
+            extra = ""
+            if info is not None and info.can_both:
+                think = "|".join(info.thinking_levels())
+                fast = "|".join(info.fast_levels())
+                extra = f"  ·  /thinking {think}  /fast {fast}"
+            self.console.print(f"[kite.muted]effort[/]  {badge}{extra}")
+            return
+        self._set_reasoning(arg)
+
+    def _slash_memory(self, arg: str) -> None:
+        which = arg.strip().lower()
+        if which in {"semantic", "md", "markdown"}:
+            self._show_semantic()
+        elif which in {"episodic", "episodes", "sqlite"}:
+            self._show_episodic()
+        else:
+            self._show_memory()
+
+    def _slash_forget(self, arg: str) -> None:
+        if not arg:
+            self.console.print("[kite.error]/forget id or substring[/]")
+            return
+        removed = self.memory.forget(arg)
+        if not removed:
+            self.console.print("[kite.muted]no matching notes[/]")
+            return
+        for note in removed:
+            self.console.print(f"[kite.success]forgot[/] {note.scope}/{note.id}  {note.text}")
+
+    def _slash_status(self, _arg: str) -> None:
+        from kite.ui.theme import current_font, theme_label
+
+        sid = self._session_id or "—"
+        self.console.print(
+            f"{self.state.mode.value} · {self.state.approval.value} · "
+            f"{self.state.provider or '—'}/{self.state.model or '—'} · "
+            f"effort {self.state.reasoning} · "
+            f"theme {theme_label()} · font {current_font()} · "
+            f"${self.state.cost:.4f} · session {sid}"
+        )
+
+    def _slash_resume(self, arg: str) -> None:
+        if not arg:
+            self.console.print("[kite.error]/resume <session-id>[/]  ·  /sessions")
+            return
+        self._open_session(arg)
+
+    def _slash_home(self, _arg: str) -> None:
+        home = kite_home()
+        self.console.print(f"{home}")
+        for name in ("commands", "skills", "plugins", "memory", "sessions"):
+            self.console.print(f"  {home / name}")
+        self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")
+
     def _handle_slash(self, raw: str) -> bool:
         """Return False to quit."""
         parsed = resolve_slash(raw, self._index())
@@ -518,292 +1028,22 @@ class ChatSession:
         if parsed.kind == "unknown":
             self.console.print(f"[kite.error]{parsed.message}[/]")
             return True
+
         cmd, arg = parsed.command, parsed.arg
+        cmd, arg = self._apply_legacy_slash(cmd, arg, parsed.legacy)
+        cmd, arg = self._normalize_slash_cmd(cmd, arg)
 
         if cmd == "quit":
             return False
-        if cmd == "help":
-            self.console.print(help_text(self._index()), style="kite.muted")
-            return True
-        if cmd == "plan" or (cmd == "mode" and arg == "plan"):
-            self.state.mode = AgentMode.PLAN
-            self.state.approval = ApprovalMode.READONLY
-            self.console.print("[kite.plan]plan mode[/]  read-only — I'll suggest, not edit")
-            return True
-        if cmd == "build" or (cmd == "mode" and arg == "build"):
-            self.state.mode = AgentMode.BUILD
-            if self.state.approval is ApprovalMode.READONLY:
-                self.state.approval = ApprovalMode.APPROVE
-            self.console.print("[kite.build]build mode[/]  edits are on")
-            return True
-        if cmd == "approve":
-            try:
-                self.state.approval = ApprovalMode(arg or "approve")
-            except ValueError:
-                self.console.print("[kite.error]use /approve auto|approve|readonly[/]")
-                return True
-            self.console.print(f"[kite.pending]approval[/] {self.state.approval.value}")
-            return True
-        if cmd == "cost":
-            pct = f"{self.state.context_pct:.0%}" if self.state.context_pct is not None else "—"
-            cache = ""
-            if self.state.cache_hit_tokens:
-                cache = f"  ·  cache {self.state.cache_hit_ratio:.0%} ({self.state.cache_hit_tokens} tok)"
-            self.console.print(
-                f"${self.state.cost:.4f}  ·  ctx {self.state.tokens}/{self.state.window or '—'} ({pct}){cache}  ·  calls {self.state.n_calls}"
-            )
-            return True
-        if cmd == "expand":
-            self.state.expanded_all = not self.state.expanded_all
-            mode = "expanded" if self.state.expanded_all else "collapsed"
-            self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
-            return True
-        if cmd == "collapse":
-            self.state.expanded_all = False
-            self.console.print("[kite.muted]tool output collapsed[/]")
-            return True
-        if cmd == "trace":
-            if self.state.last_trace:
-                self.console.print(self.state.last_trace)
-            elif self.state.last_error:
-                self.console.print(self.state.last_error)
-            else:
-                self.console.print("[kite.muted]no traceback saved yet[/]")
-            return True
-        if cmd == "undo":
-            ok, msg = self.git.undo()
-            style = "kite.success" if ok else "kite.error"
-            self.console.print(f"[{style}]{msg}[/]")
-            return True
-        if cmd == "new":
-            cmd = "clear"
-        if cmd == "clear":
-            self._reset_chat()
-            self.console.print("[kite.muted]fresh start — conversation cleared[/]")
-            return True
-        if cmd == "init":
-            path = Path(self.cwd) / "KITE.md"
-            if path.exists():
-                self.console.print(f"[kite.pending]already exists[/] {path}")
-                return True
-            path.write_text(KITE_MD_STUB, encoding="utf-8")
-            self.console.print(f"[kite.success]wrote[/] {path}")
-            return True
-        if cmd in {"login", "signin"}:
-            self._login_provider(arg)
-            return True
-        if cmd in {"logout", "signout"}:
-            self._logout_provider(arg)
-            return True
-        if cmd == "keys":
-            self._show_keys()
-            return True
-        if cmd == "model":
-            if arg:
-                save = False
-                token = arg.strip()
-                for suffix in (" --save", " --persist"):
-                    if token.endswith(suffix):
-                        save = True
-                        token = token[: -len(suffix)].strip()
-                        break
-                if "/" in token:
-                    self.provider, self.model = token.split("/", 1)
-                else:
-                    self.model = token
-                self.state.provider = self.provider or self.state.provider
-                self.state.model = self.model or self.state.model
-                self._model_cache = []
-                if save:
-                    cfg = UserConfig.load()
-                    cfg.default_provider = self.provider or cfg.default_provider
-                    cfg.default_model = self.model or cfg.default_model
-                    if self.provider:
-                        cfg.provider_defaults[self.provider] = self.model or cfg.default_model
-                    cfg.save()
-                    self.console.print(f"[kite.success]saved[/] {self.state.provider}/{self.state.model}")
-                else:
-                    self.console.print(
-                        f"[kite.success]model[/] {self.state.provider}/{self.state.model}  "
-                        "[kite.muted](session — add --save to persist)[/]"
-                    )
-                return True
-            provider, model = self._effective_model_pair()
-            cfg = UserConfig.load()
-            self.console.print(
-                f"session {provider}/{model or '—'}  ·  config {cfg.default_provider}/{cfg.default_model or '—'}  ·  /select"
-            )
-            return True
-        if cmd == "provider":
-            if arg:
-                self.provider = arg
-                self.state.provider = arg
-                self._model_cache = []
-                self.console.print(f"[kite.muted]provider[/]  {arg}")
-                return True
-            current = self.provider or self.state.provider or "—"
-            names = "  ".join(self._provider_names()[:24])
-            extra = f"\n[kite.muted]{names}[/]" if names else ""
-            self.console.print(f"{current}  ·  /provider name{extra}")
-            return True
-        if cmd == "models":
-            provider = (arg or self.provider or self.state.provider or "").strip()
-            if not provider:
-                self.console.print("[kite.error]/models needs a provider  ·  /provider name[/]")
-                return True
-            from kite.providers.list_models import list_models_for_provider
 
-            try:
-                result = list_models_for_provider(provider, refresh=True)
-            except KeyError as e:
-                self.console.print(f"[kite.error]{e}[/]")
-                return True
-            if not result.ok:
-                self.console.print(f"[kite.error]{result.error or 'no models'}[/]")
-                return True
-            self._model_cache = [m.id for m in result.models]
-            shown = result.models[:80]
-            for m in shown:
-                win = f"  {m.context_window}" if m.context_window else ""
-                self.console.print(f"  {m.id}{win}")
-            extra = len(result.models) - len(shown)
-            if extra > 0:
-                self.console.print(f"[kite.muted]  … {extra} more[/]")
-            self.console.print("[kite.muted]  /select for interactive picker[/]")
-            return True
-        if cmd == "select":
-            from kite.providers.select import select_model_interactive, select_provider_interactive
-
-            provider = (arg or self.provider or self.state.provider or "").strip()
-            if not provider:
-                picked = select_provider_interactive(self.console)
-                if not picked:
-                    return True
-                provider = picked
-            code, picked_provider, model = select_model_interactive(self.console, provider, persist=True)
-            if code == 0 and picked_provider and model:
-                self.provider = picked_provider
-                self.model = model
-                self.state.provider = picked_provider
-                self.state.model = model
-                self._model_cache = []
-                self._sync_from_config()
-            return True
-        if cmd == "thinking":
-            self._set_reasoning(arg, command="thinking")
-            return True
-        if cmd == "fast":
-            self._set_reasoning(arg, command="fast")
-            return True
-        if cmd in {"reasoning", "effort"}:
-            if not arg:
-                from kite.models.reasoning import reasoning_badge
-
-                badge = reasoning_badge(self.state.reasoning) or self.state.reasoning
-                info = self._reasoning_info()
-                extra = ""
-                if info is not None and info.can_both:
-                    think = "|".join(info.thinking_levels())
-                    fast = "|".join(info.fast_levels())
-                    extra = f"  ·  /thinking {think}  /fast {fast}"
-                self.console.print(f"[kite.muted]effort[/]  {badge}{extra}")
-                return True
-            self._set_reasoning(arg)
-            return True
-        if cmd == "compact":
-            self._compact_now()
-            return True
-        if cmd == "attach":
-            self._attach_path(arg)
-            return True
-        if cmd in {"clip", "clipboard", "paste"}:
-            self._attach_clipboard()
-            return True
-        if cmd == "detach":
-            self._detach(arg)
-            return True
-        if cmd == "attachments":
-            self._show_attachments()
-            return True
-        if cmd == "skills" or (cmd == "skill" and not arg):
-            self._show_skills(arg)
-            return True
-        if cmd == "commands":
-            self._handle_commands(arg)
-            return True
-        if cmd == "plugins":
-            self._handle_plugins(arg)
-            return True
-        if cmd == "memory":
-            which = arg.strip().lower()
-            if which in {"semantic", "md", "markdown"}:
-                self._show_semantic()
-            elif which in {"episodic", "episodes", "sqlite"}:
-                self._show_episodic()
-            else:
-                self._show_memory()
-            return True
-        if cmd == "semantic":
-            self._show_semantic()
-            return True
-        if cmd == "episodic":
-            self._show_episodic()
-            return True
-        if cmd == "remember":
-            self._remember(arg)
-            return True
-        if cmd == "forget":
-            if not arg:
-                self.console.print("[kite.error]/forget id or substring[/]")
-                return True
-            removed = self.memory.forget(arg)
-            if not removed:
-                self.console.print("[kite.muted]no matching notes[/]")
-            else:
-                for note in removed:
-                    self.console.print(f"[kite.success]forgot[/] {note.scope}/{note.id}  {note.text}")
-            return True
-        if cmd == "status":
-            from kite.ui.theme import current_font, theme_label
-
-            sid = self._session_id or "—"
-            self.console.print(
-                f"{self.state.mode.value} · {self.state.approval.value} · "
-                f"{self.state.provider or '—'}/{self.state.model or '—'} · "
-                f"effort {self.state.reasoning} · "
-                f"theme {theme_label()} · font {current_font()} · "
-                f"${self.state.cost:.4f} · session {sid}"
-            )
-            return True
-        if cmd == "resume":
-            if not arg:
-                self.console.print("[kite.error]/resume <session-id>[/]  ·  /sessions")
-                return True
-            self._open_session(arg)
-            return True
-        if cmd in {"session", "sessions"}:
-            if cmd == "sessions" and not arg:
-                arg = "list"
-            self._handle_session(arg)
-            return True
-        if cmd == "home":
-            home = kite_home()
-            self.console.print(f"{home}")
-            for name in ("commands", "skills", "plugins", "memory", "sessions"):
-                self.console.print(f"  {home / name}")
-            self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")
-            return True
-        if cmd == "theme":
-            self._set_theme(arg)
-            return True
-        if cmd == "font":
-            self._set_font(arg)
-            return True
+        handler = self._slash_handlers().get(cmd)
+        if handler is not None:
+            handler(arg)
         return True
 
     def _reset_chat(self) -> None:
         self._session_id = None
-        self._harness = None
+        self._invalidate_harness()
         self.todos = TodoStore()
         self.state.todos = []
         self.state.n_calls = 0
@@ -847,7 +1087,7 @@ class ChatSession:
         except (OSError, ValueError) as e:
             self.console.print(f"[kite.error]{e}[/]")
             return
-        self._harness = None
+        self._invalidate_harness()
         self._session_id = session.id
         if session.meta.provider:
             self.provider = session.meta.provider
@@ -1090,6 +1330,11 @@ class ChatSession:
             task = "Look at the attached files."
         self.attachments = list(bundled)
         self._sync_attach_count()
+        try:
+            self._ensure_model_resolved()
+        except Exception as e:
+            self.console.print(f"[kite.error]{escape(str(e))}[/]  [kite.muted]/login · /select · kite setup[/]")
+            return
         resume = bool(self._session_id)
         harness = self._make_harness(resume=resume, follow_up=task if resume else None)
         harness.approver = self._approver()
