@@ -109,7 +109,7 @@ kite runtime-config
 
 **REPL shortcuts:** `Ctrl+O` expand tool output · `Ctrl+P` plan · `Ctrl+B` build · `Ctrl+S` status · type `/` for commands
 
-### Use Kite on any project (not just this repo)
+### Use Kite on any project 
 
 Install Kite once (script or manual install above). After that you do **not** need to be inside the kite checkout.
 
