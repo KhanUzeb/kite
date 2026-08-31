@@ -8,11 +8,23 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Kite** — A terminal coding-agent harness. The user describes work; Kite runs a model loop with tools against a **workspace** (a project directory on disk).
 
-**Harness** — Everything outside the raw model API: config, prompts, tools, guardrails, UI, sessions, and the agent loop that ties them together.
+**Harness** — Everything outside the raw model API: config, prompts, tools, guardrails, UI, sessions, compaction, checkpoints, and the agent loop that ties them together.
 
-**Workspace** — The project directory Kite is acting on. Defaults to the shell’s current directory; can be overridden with `--cwd`. Sandboxed tools cannot escape it.
+**Workspace** — The project directory Kite is acting on. Defaults to the shell’s current directory; can be overridden with `--cwd`.
 
-**Kite home** — Global per-user state (config, API keys, sessions, skills). Not the same as the workspace.
+**Kite home** — Global per-user state (config, API keys, sessions, skills, checkpoints). Not the same as the workspace.
+
+---
+
+## Execution & sandbox
+
+**Project root** — The discovered repository root (`.git`, `pyproject.toml`, etc.). Used for project instructions, tree, and git context.
+
+**Execution cwd** — The active working directory for file tools and bash. Defaults to the launch cwd; may change via `set_cwd` or bash `cwd`.
+
+**Execution mode** — `restricted` (default) or `host`. Restricted mode sandboxes file/bash paths to the session. Host mode allows explicit access outside the session cwd; protected paths remain blocked.
+
+**Sandbox** — Guardrail policy on paths and bash — not a fake “unrestricted” label. The model is told the real mode.
 
 ---
 
@@ -52,7 +64,11 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Episodic memory** — Short sqlite log of notable events per user/project.
 
-**Compaction** — Summarizing older turns to free context window space while keeping recent messages.
+**Compaction** — Summarizing older turns to free context window space while keeping recent messages and **preserved facts** (constraints, errors, paths).
+
+**Context checkpoint** — Named snapshot of the full model transcript (and todos) at a point in time. Distinct from git undo. Stored under `~/.kite/checkpoints/<session>/`.
+
+**Handoff** — Export bundle (markdown + JSON + checkpoint) so another agent or machine can resume the task. Written to `<project>/.kite/handoff-<session>.*`.
 
 ---
 
@@ -86,13 +102,15 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Action** — A tool invocation the model requested (read, edit, bash, …).
 
-**Observation** — Tool result fed back into the message list.
+**Observation** — Tool result fed back into the message list (structured dict; normalized through `ToolResult`).
 
-**Checkpoint** — Optional git commit tagged for agent edits so **undo** can revert the last agent batch.
+**Git checkpoint** — Optional git commit tagged for agent edits so **undo** can revert the last agent batch. Not the same as a **context checkpoint**.
 
 **Verification** — Evidence the task is done (test output, diff, command result) before treating work as complete.
 
 **Submit** — End of a build turn when the task is finished (bash submit phrase or plain text reply in chat).
+
+**Interrupt** — User cancellation (Ctrl+C) propagates to the model stream and long-running bash; does not kill the REPL.
 
 ---
 
@@ -112,10 +130,12 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 |------|----|--------|
 | Workspace | Project being edited | Kite source repo when user runs Kite elsewhere |
 | Session | Chat log | Git branch |
+| Context checkpoint | Transcript snapshot | Git commit |
+| Git checkpoint | `kite:` commit for `/undo` | Context snapshot |
 | Skill | Reusable prompt/instructions | Python module |
 | Provider | Catalog entry + API route | A single model name |
 | Harness | Runtime + UI | The LLM itself |
-| Trajectory | Run artifact | Live REPL scrollback |
+| Handoff | Exported brief + checkpoint | Live REPL scrollback |
 
 ---
 
@@ -125,3 +145,4 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 - [kite_commands.md](kite_commands.md) — full CLI and slash map
 - [docs/cli-ux.md](docs/cli-ux.md) — TUI behavior and shortcuts
 - [docs/kite-system-design.md](docs/kite-system-design.md) — architecture atlas
+- [architecture.md](architecture.md) — quick system overview
