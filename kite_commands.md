@@ -72,6 +72,7 @@ Install: `scripts/install.sh` / `install.ps1` — see [CONTRIBUTING.md](CONTRIBU
 | `/model list <provider>` | Live model ids (`/models` alias) |
 | `/model select [provider]` | Interactive picker (`/select` alias) |
 | `/model provider/id [--save]` | Set model (`/provider` alias for provider only) |
+| `/setup` | First-run wizard (same as `kite setup`) |
 | `/login` `/keys` `/logout` | Credentials |
 | `/reasoning auto\|off\|fast\|thinking` | Effort (`/effort`, `/thinking`, `/fast`) |
 
