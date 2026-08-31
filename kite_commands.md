@@ -273,6 +273,10 @@ irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | i
 
 Custom dir: `KITE_INSTALL_DIR=~/tools/kite ./scripts/install.sh` or `.\scripts\install.ps1 -Dir C:\tools\kite`.
 
+Options: `--no-dev` / `-NoDev` (runtime only) · `--verify` / `-Verify` (run `pytest` after install).
+
+The install script creates `~/.kite/` (sessions, checkpoints, skills, config) and seeds `~/.kite/.env` from `.env.example` when missing.
+
 Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. Then `kite setup` (or `kite providers` + `kite models --select`).
 
 ### CI

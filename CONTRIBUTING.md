@@ -11,7 +11,7 @@ cd kite
 # .\scripts\install.ps1         # Windows PowerShell
 ```
 
-This creates a venv, installs Kite in editable mode, and seeds `~/.kite/.env` from `.env.example`.
+This creates a venv, installs Kite in editable mode, seeds `~/.kite/.env` from `.env.example` when missing, and bootstraps `~/.kite/` (sessions, checkpoints, skills, config). Use `./scripts/install.sh --verify` to run pytest after install.
 
 Then run the suite:
 
