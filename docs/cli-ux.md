@@ -69,7 +69,8 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 │      [a] once  [s] session  [p] always  [n] deny  [q] stop       │
 │  ✓ edit  +125,-21                                                │
 │                                                                  │
-│  ↻  48 → 12              ← compaction boundary                      │
+│  ↻  48 → 12              ← compaction boundary
+  ◇  auto pre-compact     ← context checkpoint (full transcript saved)
 └──────────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────────┐
 │  STATUS FOOTER / COMPOSER                                        │
@@ -133,7 +134,7 @@ Thinking and answer never share a block. The model id is not reprinted as a spee
 
 **Symbols (never color alone)**
 
-`✓` success · `✗` fail · `⚠` approval · `●` in-progress · `○` pending · `▸` tool · `›` you · `•` answer · `…` thinking · `↻` compact
+`✓` success · `✗` fail · `⚠` approval · `●` in-progress · `○` pending · `▸` tool · `›` you · `•` answer · `…` thinking · `↻` compact · `◇` checkpoint
 
 **Spacing**
 
@@ -155,12 +156,12 @@ Implemented in `src/kite/ui/render.py` (`RunDisplay.__call__`):
 4. `tool_end` prints `✓/✗/⚠` plus git-stat `+125,-21` (green/red) on write/edit, then a collapsed body or a colored unified diff (never a full-file reprint).
 5. Mutating tools hit `ApprovalPolicy` (`once / session / always this pattern`) with the **exact** command or diff, compact, not a rainbow panel.
 6. `todo_write` rewrites the plan checklist in place. Completing a todo (or ending the turn) flushes one `kite:` commit of that step's files.
-7. Compaction prints `↻  before → after` as a boundary, then continues.
+7. Compaction prints `↻  before → after` as a boundary. Auto-checkpoint at ~72% context prints `◇ checkpoint` with id.
 8. Footer updates model, mode, approval, effort, ctx %, cost, git branch.
 
-Slash commands are parsed before any natural-language turn. Builtins (`/plan`, `/build`, `/select`, `/thinking`, `/fast`, `/undo`, `/memory`, `/effort`, …) never hit the model. Skills (`/commit`), bundled prompts (`/explain` `/fix` `/pr`), `.kite/commands/*.md`, `~/.kite/commands/*.md`, and plugin commands expand into the turn. Full map: [kite_commands.md](../kite_commands.md). Type `/` for the dropdown (name + one-line description).
+Slash commands are parsed before any natural-language turn. Builtins (`/plan`, `/build`, `/checkpoint`, `/handoff`, `/compact`, `/select`, `/thinking`, `/fast`, `/undo`, `/memory`, `/effort`, …) never hit the model. Skills (`/commit`), bundled prompts (`/explain` `/fix` `/pr`), `.kite/commands/*.md`, `~/.kite/commands/*.md`, and plugin commands expand into the turn. Full map: [kite_commands.md](../kite_commands.md). Type `/` for the dropdown (name + one-line description).
 
-Interrupt: **Ctrl+C** stops the current turn without killing the process; type a correction and continue. `/undo` resets the last `kite:` task commit.
+Interrupt: **Ctrl+C** requests end-to-end interrupt (model stream + long bash) without killing the REPL; type a correction and continue. `/undo` resets the last `kite:` **git** task commit. `/checkpoint restore` rewinds the **transcript** without touching git.
 
 ---
 

@@ -212,8 +212,11 @@ DefaultAgent.run
 **Nit:** System prompt already includes project context when built by runtime; `project_context` field remains for standalone agent use.
 
 ### 4.4 `agent/compaction.py` — LoopCompactor
-**Job:** Before each query, estimate tokens; if `total >= window - reserve`, replace older body with a deterministic summary user message; keep recent tail by token budget.
-**Pick:** Deterministic summary first (no extra LLM spend). LLM summarization can plug in later like tau's compaction prompts.
+**Job:** Before each query, estimate tokens; auto-checkpoint at ~72% context; if `total >= window - reserve`, compact with **preserved facts** + LLM/deterministic summary; keep recent tail by token budget.
+**Shared path:** `memory/compaction_ops.run_compaction()` — also used by `/compact` in the REPL.
+
+### 4.4b `memory/context_checkpoint.py` + `memory/handoff.py`
+**Job:** Named transcript snapshots (`~/.kite/checkpoints/<session>/`); `/checkpoint` REPL commands; `/handoff` writes `.kite/handoff-*` for cross-agent resume.
 
 ### 4.5 `config/runtime.py` — AgentRuntimeConfig
 **Job:** TOML schema for agent limits, tools enable-list, guardrails, skills, context.
@@ -234,6 +237,7 @@ DefaultAgent.run
 ### 4.9 `tools/` — Tool + ToolRegistry + coding tools
 **Tools:**
 - `read` — numbered lines, offset/limit; huge files auto-truncate
+- `set_cwd` — change session execution cwd (file tools + bash default)
 - `write` — create/overwrite; returns a unified diff; UI shows git-stat `+N,-M`
 - `edit` — exact string replace (unique or replace_all); returns a unified diff; UI shows git-stat `+N,-M`
 - `bash` — fresh subprocess; submit magic string; highest-privilege, gated
@@ -461,15 +465,13 @@ REPL slash commands: builtins (`/plan` `/build` `/select` `/thinking` `/fast` `/
 ## 11. Roadmap (sorted by leverage)
 
 1. DockerEnvironment (`docker exec`) — unlocks eval sandboxes
-2. LLM-backed compaction (tau prompts) when deterministic summary loses too much
-3. ~~Append-only session log~~ **partial (0.6.3):** message append; compaction still rewrites
-4. ~~Streaming + Textual TUI consuming events~~ **done (0.4):** Rich linear TUI — see [cli-ux.md](cli-ux.md)
-5. ~~ripgrep-backed grep tool~~ **done (0.4)**
-6. ~~Tests for guardrails, approval, loop guard~~ **partial (0.6.6):** `pytest` in `tests/` — expand catalog resolve + compaction
-7. ~~Optional nested LLM `subagent` tool~~ **done (0.6)**
+2. ~~LLM-backed compaction~~ **done:** OpenRouter free tier + preserved facts fallback
+3. ~~Append-only session log~~ **partial (0.6.3):** message append; compaction snapshots on rewrite
+4. ~~Context checkpoints + handoff~~ **done (0.7):** `/checkpoint`, `/handoff`, auto pre-compact snapshot
+5. ~~Harness benchmarks~~ **done (0.7):** `kite bench`
+6. ~~Execution cwd + host mode~~ **done (0.7):** `set_cwd`, `[guardrails] execution_mode`
+7. ~~Parallel safe read tools + bash cancel~~ **done (0.7)**
 8. Click-to-expand tool blocks (needs a full-screen TUI if we ever want it)
-9. ~~Git-stat `+N,-M` on write/edit~~ **done (0.6.6)**
-10. ~~npm/npx/GitHub skill install into `~/.kite/skills`~~ **done (0.6.6)**
 
 ### Running tests
 

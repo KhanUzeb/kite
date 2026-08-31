@@ -6,6 +6,7 @@ Security fixes are applied to the latest released version of Kite.
 
 | Version | Supported |
 |---------|-----------|
+| 0.7.x   | yes (when released) |
 | 0.6.x   | yes |
 | < 0.6   | no |
 
@@ -20,5 +21,7 @@ If you find a security issue in Kite, please report it privately rather than ope
 ## Scope and trust model
 
 Kite runs tools against your local workspace. Its guardrails protect against **model mistakes** (path escapes, destructive bash, secret-shaped writes), not against a hostile operator on the same machine. Do not run Kite with untrusted task text, and avoid `--no-guardrails` outside trusted, local automation.
+
+**Execution mode:** default `restricted` keeps file and bash access inside the session sandbox. `host` mode (config: `[guardrails] execution_mode = "host"`) allows broader filesystem access for trusted workflows; protected paths (`.ssh`, system dirs, `.env`) remain blocked. Only enable host mode when you understand the blast radius.
 
 API keys live in `~/.kite/.env` (or the repo `.env`, which is gitignored). Never commit keys. If a key is leaked, rotate it immediately.

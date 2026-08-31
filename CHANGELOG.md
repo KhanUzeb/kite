@@ -2,6 +2,24 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 0.7 harness (merge PRs #7–#12)
+
+### Added
+- `kite bench` — repeatable harness timing (startup, context, tools; no live LLM).
+- `set_cwd` tool — session execution cwd separate from project root.
+- `[guardrails] execution_mode` — `restricted` (default) or `host`.
+- Structured `ToolResult` contract and tool metadata for env normalization.
+- Bash cancellation and parallel execution of safe read-only tools.
+- Context checkpoints — auto snapshot at ~72% context; `/checkpoint save|list|restore|show`.
+- `/handoff` — export `.kite/handoff-<session>.md` + `.json` for another agent.
+- Preserved-fact compaction and shared `run_compaction()` path.
+- Bundled `/handoff` prompt command; expanded `system.md` and role/mode prompts.
+- `scripts/bump_release.sh` for post-merge version bumps.
+
+### Changed
+- System prompt documents execution context, structured finish format, and session continuity.
+- Docs refresh: `CONTEXT.md`, `kite_commands.md`, `AGENTS.md`, `architecture.md`, design specs.
+
 ## [0.6.8] - 2026-08-30
 
 ### Fixed

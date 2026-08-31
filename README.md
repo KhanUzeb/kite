@@ -13,7 +13,10 @@ A slim hybrid coding-agent harness: the **mini-swe-agent** control flow plus **t
 
 - **Tight agent loop** — a mini-swe-agent style sync loop (query → tools → observe → repeat) with budgeted turns and resumable sessions.
 - **Multi-provider** — LiteLLM-backed model resolution across OpenAI, Anthropic, Groq, OpenCode Zen/Go, NVIDIA NIM, Ollama, and OpenAI-compatible endpoints.
-- **Real coding tools** — read, write, edit, bash, grep, glob, ls, web fetch/search/crawl, todo tracking, and a `subagent` orchestrator.
+- **Real coding tools** — read, write, edit, bash, grep, glob, ls, `set_cwd`, web fetch/search/crawl, todo tracking, and a `subagent` orchestrator.
+- **Execution context** — separate project root vs session cwd; `restricted` or `host` execution mode; parallel safe read-only tools.
+- **Context lifecycle** — preserved-fact compaction, auto-checkpoints at ~72% context, `/checkpoint` restore, `/handoff` export for other agents.
+- **Harness benchmarks** — `kite bench` for repeatable startup/context/tool timing (no live LLM).
 - **Skills & plugins** — `SKILL.md` packs (installable from npm, npx, or GitHub), prompt commands, and plugins.
 - **Guardrails** — path sandboxing, bash danger checks, secret redaction, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
 - **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, git-stat diffs, theme/font switching, and a context-usage meter.
@@ -146,7 +149,7 @@ kite resume <session-id>
 kite resume <session-id> "also update the README"
 ```
 
-In the REPL: `/plan` `/build` `/login` `/keys` `/logout` `/undo` `/expand` `/collapse` `/select` `/thinking` `/fast` `/effort` `/theme` `/font` `/attach` `/clip` `/skills` `/skills add` `/commit` `/explain` `/commands` `/plugins` `/memory` `/help`. Type `/` for the command menu. User skills show `~`. Ctrl+C stops the current turn. Shortcuts: Ctrl+O expand tools · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
+In the REPL: `/plan` `/build` `/login` `/keys` `/logout` `/undo` `/expand` `/collapse` `/compact` `/checkpoint` `/handoff` `/select` `/thinking` `/fast` `/effort` `/theme` `/font` `/attach` `/clip` `/skills` `/skills add` `/commit` `/explain` `/commands` `/plugins` `/memory` `/help`. Type `/` for the command menu. User skills show `~`. Ctrl+C interrupts the current turn (does not exit). Shortcuts: Ctrl+O expand tools · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
 
 Approval modes: `auto` · `approve` · `trust` · `readonly`. Set `KITE_LOADER=grid|dots|orbit|wave|spin` for terminal loader style.
 
@@ -175,6 +178,7 @@ kite models -p groq
 kite models --select
 kite config
 kite config --select-model
+kite bench [--json] [--save PATH] [--compare BASELINE.json]   # harness timing (no LLM)
 ```
 
 UX notes: `docs/cli-ux.md` · spec coverage: `docs/ideal-cli-spec.md` · command map: `kite_commands.md`
@@ -231,7 +235,7 @@ scripts/
   install.sh install.ps1   # clone + venv + editable install (any workstation)
 tests/                     # pytest suite
   data/configs/default.toml
-  data/prompts/{system,instance}.md
-  data/commands/{explain,fix,pr}.md
+  data/prompts/{system,instance,mode_*,role_*}.md
+  data/commands/{explain,fix,pr,handoff}.md
   data/skills/{commit,debug,test,review}/SKILL.md
 ```
