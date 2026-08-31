@@ -18,7 +18,7 @@ run `kite help` for the full map  ·  in REPL type /help
 
 
 def cli_help_text() -> str:
-  return """Kite CLI — quick reference
+    return """Kite CLI — quick reference
 
 Session
   kite | kite chat              REPL (plan/build, /slash commands)

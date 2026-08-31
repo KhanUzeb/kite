@@ -5,6 +5,7 @@ Run from the repo root after installing Kite:
 ```bash
 ./scripts/install.sh          # macOS/Linux — or .\scripts\install.ps1 on Windows
 pytest
+./scripts/install.sh --no-clone --verify   # install + smoke check
 ```
 
 Or manual install: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"` → `pytest`.
@@ -29,12 +30,12 @@ GitHub Actions runs `pytest` on **push/PR to `main` when the batch has 5+ commit
 | `test_status.py` | context meter, footer tail |
 | `test_chips.py` | tool chips, task row badges |
 | `test_animations.py` | loader glyphs, elapsed format |
-| `test_render.py` | warning events, git-stat `+N,-M` on edit |
+| `test_render.py` | warning events, git-stat `+N,-M` on edit (ANSI-safe) |
 | `test_preview_diff.py` | approval previews, `+125,-21` counts |
 | `test_skill_install.py` | npm/npx/git spec parse, user-skill `~` mark |
 | `test_theme.py` | `/theme` palettes, `/font` glyphs |
 | `test_config.py` | default runtime TOML load |
-| `test_reasoning.py` | `/thinking` `/fast` levels, effort detection |
+| `test_reasoning.py` | `/reasoning` levels, effort detection, completion |
 | `test_setup.py` | `kite setup` / `kite keys` env writer |
 | `test_maintainer_dashboard.py` | maintainer-only dashboard gate |
 | `test_git.py` | git checkpoints, `/undo` |
@@ -42,9 +43,13 @@ GitHub Actions runs `pytest` on **push/PR to `main` when the batch has 5+ commit
 | `test_session_list.py` | session list/delete |
 | `test_cache.py` | prompt cache stats |
 | `test_context_checkpoint_handoff.py` | checkpoints, handoff export, compaction facts |
+| `test_bench.py` | `kite bench` suite |
+| `test_tool_result.py` | ToolResult contract, tool metadata |
+| `test_workspace.py` | execution cwd, host/restricted mode, `set_cwd` |
+| `test_cancellation_parallel.py` | bash cancel, parallel read tools |
+| `test_repl_lazy.py` | REPL cold start skips model resolve |
+| `test_cli_commands.py` | slash legacy aliases, `kite help` |
 
-**Harness 0.7 PRs** (land with their feature branches): `test_bench.py`, `test_tool_result.py`, `test_workspace.py`, `test_cancellation_parallel.py`.
-
-Fixtures in `conftest.py`: isolated `KITE_HOME`, sample workspace with `src/`.
+Fixtures in `conftest.py`: isolated `KITE_HOME`, sample workspace with `src/`, `strip_ansi()` helper.
 
 Not covered yet: live LLM calls, catalog resolve edge cases, full CLI integration, handoff round-trip across machines.

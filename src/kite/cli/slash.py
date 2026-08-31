@@ -128,6 +128,20 @@ class CommandIndex:
             for alias in builtin.aliases:
                 put(spec, alias=alias)
 
+        from kite.ui.commands import LEGACY_ALIASES
+
+        for legacy_name, target in LEGACY_ALIASES.items():
+            if legacy_name in specs:
+                continue
+            put(
+                SlashSpec(
+                    name=legacy_name,
+                    kind="control",
+                    source="builtin",
+                    description=f"legacy alias for /{target}",
+                )
+            )
+
         return cls(specs=specs, skills=skills, plugins=plugins, commands=overlay)
 
     def expand(self, name: str, arg: str = "") -> str | None:

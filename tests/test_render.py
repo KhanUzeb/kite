@@ -59,7 +59,9 @@ def test_edit_tool_end_shows_diff_stat() -> None:
     )
     out = buf.getvalue()
     assert "edit" in out
-    assert "+2,-1" in out
+    from tests.conftest import strip_ansi
+
+    assert "+2,-1" in strip_ansi(out)
 
 
 def test_failed_verification_still_warns() -> None:
