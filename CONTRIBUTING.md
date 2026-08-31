@@ -26,9 +26,12 @@ Workflow: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
 
 | Trigger | pytest |
 |---------|--------|
-| Push or PR to `main` with **5+ commits** in the batch | runs on Python 3.11 and 3.12 |
-| Push or PR with **fewer than 5** commits | skipped (saves minutes on small fixes) |
+| **Pull request** to `main` | always runs (Python 3.11 and 3.12) |
+| Push to `main` with **5+ commits** in the batch | runs on Python 3.11 and 3.12 |
+| Push to `main` with **fewer than 5** commits | skipped (saves minutes on small fixes) |
 | **Actions → Tests → Run workflow** | always runs (manual) |
+
+CI sets `KITE_HOME` to an isolated temp directory and `KITE_SKIP_SETUP=1` so tests never prompt for onboarding. An `install-smoke` job also runs `./scripts/install.sh --no-clone` on Ubuntu.
 
 Count a batch locally before pushing:
 
