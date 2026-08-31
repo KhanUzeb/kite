@@ -25,9 +25,11 @@ def test_cwd_in_trusted_subtree(workspace: Path) -> None:
     assert not cwd_in_trusted(workspace, root, ["src/"])
 
 
-def test_path_escape_blocked(workspace: Path) -> None:
-    policy = GuardrailPolicy(GuardrailConfig(), workspace)
-    verdict = policy.check_path("/etc/passwd")
+def test_path_escape_blocked_in_restricted_mode(workspace: Path, tmp_path: Path) -> None:
+    external = tmp_path / "outside.txt"
+    external.write_text("secret\n", encoding="utf-8")
+    policy = GuardrailPolicy(GuardrailConfig(execution_mode="restricted"), workspace)
+    verdict = policy.check_path(str(external))
     assert not verdict.allowed
     assert "sandbox" in verdict.reason.lower() or "escape" in verdict.reason.lower()
 

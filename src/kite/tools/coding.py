@@ -711,7 +711,7 @@ def make_coding_tools(
             "set_cwd",
             Tool(
                 name="set_cwd",
-                description="Change the session working directory for file tools and bash (default cwd).",
+                description="Change the session working directory for file tools and bash. Can move outside the project root when the user asks (sandbox follows the new cwd). Protected system paths are still blocked.",
                 parameters={
                     "type": "object",
                     "properties": {
