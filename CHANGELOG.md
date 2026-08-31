@@ -2,6 +2,22 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-08-31
+
+### Added
+- **Tool cards UI** — structured tool rows (`▸ read  path`), parallel batch headers, read line-count summaries, stream coalescing for less flicker.
+- **Setup readiness** — `config/readiness.py`; first-run prompt on bare `kite`; REPL `/setup` wizard; `kite providers` / `kite keys` show ready/not-ready status.
+- **Install `--setup`** — `./scripts/install.sh --setup` and `install.ps1 -Setup` run the wizard after install (TTY only).
+- **`kite help`** — grouped quick reference CLI map; slimmer `/help` builtins with legacy aliases preserved.
+
+### Changed
+- **CI** — pytest runs on every pull request; isolated `KITE_HOME` + `KITE_SKIP_SETUP` in CI; `install-smoke` job validates install script.
+- Provider picker sorts configured and recommended providers (groq, openrouter, ollama) first.
+- Install scripts point new users at `kite setup` instead of editing `.env` manually.
+
+### Fixed
+- `UserConfig.path` property for setup wizard config display.
+
 ## [0.7.0] - 2026-08-31
 
 ### Added

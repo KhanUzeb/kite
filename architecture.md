@@ -1,6 +1,6 @@
 # Kite architecture
 
-**Version:** 0.7.0 · Python 3.11+ · Entry: `kite.cli.run:main`
+**Version:** 0.7.1 · Python 3.11+ · Entry: `kite.cli.run:main`
 
 Kite is a **slim hybrid coding-agent harness**: a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) style control loop wrapped in tau-inspired **runtime assembly** (providers, tools, guardrails, compaction, sessions). The brain never renders UI; the CLI never calls LiteLLM directly.
 

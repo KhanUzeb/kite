@@ -14,7 +14,7 @@ After merging the harness upgrade PRs to `main`, cut a release:
 
 ```bash
 chmod +x scripts/bump_release.sh
-./scripts/bump_release.sh 0.7.0
+./scripts/bump_release.sh 0.7.1
 ```
 
 Edit `CHANGELOG.md` if needed, then:
