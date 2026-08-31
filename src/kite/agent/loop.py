@@ -385,8 +385,15 @@ class DefaultAgent:
                 if self._interrupt:
                     break
                 prepared.append(self._prepare_action(action))
-            for tool, args, _action in prepared:
-                self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
+            for idx, (tool, args, _action) in enumerate(prepared, start=1):
+                self._emit(
+                    "tool_start",
+                    tool=tool,
+                    arguments=args,
+                    reason=args.get("reason"),
+                    parallel_batch=len(prepared),
+                    parallel_index=idx,
+                )
             started = time.time()
 
             def _worker(item: tuple[int, tuple[str, dict, dict]]) -> tuple[int, str, dict, dict, dict]:
@@ -467,6 +474,7 @@ class DefaultAgent:
     ) -> None:
         preview = (out.get("output") or out.get("error") or "")[:120]
         flat = preview.replace("\n", " ")
+        summary = str(out.get("summary") or flat)
         structured = {
             "tool": tool,
             "ok": out.get("ok", True),
@@ -487,6 +495,7 @@ class DefaultAgent:
             ok=out.get("ok", True),
             blocked=out.get("blocked", False),
             preview=flat,
+            summary=summary,
             output=out.get("output") or "",
             error=out.get("error") or "",
             diff=out.get("diff") or "",
