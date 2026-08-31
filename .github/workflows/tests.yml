@@ -28,4 +28,5 @@ jobs:
       - name: Install and test
         run: |
           uv pip install -e ".[dev]"
+          python scripts/sync_version.py --check
           uv run pytest -q

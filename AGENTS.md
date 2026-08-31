@@ -145,3 +145,19 @@ Users run Kite from **any** directory. This repo is the harness source; when dog
 ## Commit / PR notes
 
 Follow [CONTRIBUTING.md](CONTRIBUTING.md). Conventional short commits (`feat(ui): …`, `fix(guardrails): …`). Update docs when behavior changes. Do not commit `LICENSE`/`CHANGELOG` churn unless asked.
+
+---
+
+## Release automation
+
+Version source of truth: **`pyproject.toml`**. Stamped files stay in sync via `scripts/sync_version.py`.
+
+```bash
+./scripts/bump_release.sh 0.7.3   # bump, sync README/AGENTS/docs, CHANGELOG stub, tag
+# edit CHANGELOG.md + docs/RELEASE-0.7.3.md
+git push origin main --tags       # tag push runs .github/workflows/release.yml
+```
+
+- **`scripts/sync_version.py`** — sync or `--check` (also runs in CI on every push/PR).
+- **`scripts/verify_release_pr.sh`** — pre-tag pytest + version check on main.
+- **`.github/workflows/release.yml`** — on `v*` tag push, verify stamps and publish GitHub release from `docs/RELEASE-X.Y.Z.md`.

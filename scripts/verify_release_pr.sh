@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Pre-merge / post-merge checks for v0.7.1 release PR (#18).
+# Pre-release checks on main or a release branch.
 # Usage:
-#   ./scripts/verify_release_pr.sh              # on release branch or main
-#   ./scripts/verify_release_pr.sh --pr 18      # also check GitHub PR state
+#   ./scripts/verify_release_pr.sh
+#   ./scripts/verify_release_pr.sh --pr 18
 set -euo pipefail
 
 PR=0
@@ -23,21 +23,10 @@ cd "$ROOT"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "OK: $*"; }
 
-EXPECTED="0.7.1"
+EXPECTED="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
 
-# Version in package metadata
-VER="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
-[[ "$VER" == "$EXPECTED" ]] || fail "pyproject.toml version is $VER, expected $EXPECTED"
-ok "pyproject.toml version $VER"
-
-PKG_VER="$(python -c "import kite; print(kite.__version__)")"
-[[ "$PKG_VER" == "$EXPECTED" ]] || fail "kite.__version__ is $PKG_VER, expected $EXPECTED"
-ok "kite.__version__ $PKG_VER"
-
-# Release docs
-[[ -f docs/RELEASE-0.7.1.md ]] || fail "missing docs/RELEASE-0.7.1.md"
-grep -q "0.7.1" CHANGELOG.md || fail "CHANGELOG.md missing 0.7.1 section"
-ok "release docs present"
+python scripts/sync_version.py --check || fail "version stamps out of sync (run: python scripts/sync_version.py)"
+ok "version stamps synced ($EXPECTED)"
 
 # CI workflow — no batch gate
 if grep -q "run_tests=false" .github/workflows/tests.yml 2>/dev/null; then
