@@ -1,5 +1,5 @@
-# pytest on every pull request and manual run.
-# Direct pushes to main still use the 5+ commit batch gate to save minutes on tiny fixes.
+# Run pytest on every push and pull request to main.
+# workflow_dispatch remains available for re-runs from the Actions tab.
 
 name: Tests
 
@@ -15,64 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gate:
-    runs-on: ubuntu-latest
-    outputs:
-      run_tests: ${{ steps.decide.outputs.run_tests }}
-      reason: ${{ steps.decide.outputs.reason }}
-    steps:
-      - uses: actions/checkout@v4
-        if: github.event_name == 'push'
-        with:
-          fetch-depth: 0
-
-      - name: Decide whether to run tests
-        id: decide
-        env:
-          COMMITS_JSON: ${{ toJson(github.event.commits) }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "run_tests=true" >> "$GITHUB_OUTPUT"
-            echo "reason=manual" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "run_tests=true" >> "$GITHUB_OUTPUT"
-            echo "reason=pull_request" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # push to main — batch gate (see CONTRIBUTING.md)
-          BEFORE="${{ github.event.before }}"
-          AFTER="${{ github.sha }}"
-          PUSH_COMMITS=0
-          if [ -n "${COMMITS_JSON:-}" ] && [ "${COMMITS_JSON}" != "null" ]; then
-            PUSH_COMMITS="$(python3 -c "import json, os; d=json.loads(os.environ['COMMITS_JSON']); print(len(d) if isinstance(d, list) else 0)")"
-          fi
-          if [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ]; then
-            COUNT=1
-          elif git merge-base --is-ancestor "${BEFORE}" "${AFTER}" 2>/dev/null; then
-            COUNT="$(git rev-list --count "${BEFORE}..${AFTER}")"
-          elif [ "${PUSH_COMMITS}" -gt 0 ]; then
-            COUNT="${PUSH_COMMITS}"
-          else
-            COUNT=5
-          fi
-
-          echo "reason=push_batch_${COUNT}" >> "$GITHUB_OUTPUT"
-          if [ "${COUNT}" -ge 5 ]; then
-            echo "run_tests=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run_tests=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "Commits in push batch: ${COUNT}"
-
   pytest:
-    needs: gate
-    if: needs.gate.outputs.run_tests == 'true'
     runs-on: ubuntu-latest
     env:
       KITE_HOME: ${{ runner.temp }}/kite-home
@@ -96,8 +39,6 @@ jobs:
         run: uv run pytest -q
 
   install-smoke:
-    needs: gate
-    if: needs.gate.outputs.run_tests == 'true'
     runs-on: ubuntu-latest
     env:
       KITE_HOME: ${{ runner.temp }}/kite-install-home
@@ -116,14 +57,3 @@ jobs:
           kite --version
           kite providers
           kite help | head -n 5
-
-  skipped:
-    needs: gate
-    if: needs.gate.outputs.run_tests != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Note
-        run: |
-          echo "pytest skipped (${{ needs.gate.outputs.reason }})."
-          echo "Pull requests always run tests. Direct pushes to main need 5+ commits in the batch,"
-          echo "or run this workflow manually from the Actions tab."
