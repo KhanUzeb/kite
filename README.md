@@ -22,7 +22,7 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 
 - [Features](#features)
 - [Setup](#setup)
-- [Use Kite on any project (not just this repo)](#use-kite-on-any-project-not-just-this-repo)
+- [Use Kite on any project](#use-kite-on-any-project)
 - [Tests](#tests)
 - [CLI](#cli)
 - [Architecture](#architecture)
