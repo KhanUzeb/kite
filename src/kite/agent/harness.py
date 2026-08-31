@@ -136,3 +136,7 @@ class Harness:
         result = runtime.run(task)
         self.last_session = runtime.last_session
         return result
+
+    def request_interrupt(self) -> None:
+        if self._runtime is not None:
+            self._runtime.request_interrupt()

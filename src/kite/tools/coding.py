@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -25,6 +26,11 @@ try:
     from kite.context.workspace import ExecutionSession
 except ImportError:  # pragma: no cover
     ExecutionSession = None  # type: ignore[misc, assignment]
+
+try:
+    from kite.agent.cancel import CancelToken
+except ImportError:  # pragma: no cover
+    CancelToken = None  # type: ignore[misc, assignment]
 
 
 _SKIP_NAMES = frozenset({".git", ".venv", "node_modules", "__pycache__"})
@@ -85,6 +91,7 @@ def make_coding_tools(
     memory: MemoryStore | None = None,
     orchestrator=None,
     execution: ExecutionSession | None = None,
+    cancel: CancelToken | None = None,
 ) -> list[Tool]:
     def _root() -> str:
         if execution is not None:
@@ -266,18 +273,36 @@ def make_coding_tools(
 
             reader = threading.Thread(target=_drain, daemon=True)
             reader.start()
+            deadline = time.monotonic() + limit
+            rc: int | None = None
             try:
-                rc = proc.wait(timeout=limit)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                reader.join(timeout=1.0)
-                partial = "".join(output_parts)
-                return {
-                    "ok": False,
-                    "returncode": -1,
-                    "output": partial,
-                    "error": f"timeout after {limit}s",
-                }
+                while rc is None:
+                    if cancel is not None and cancel.is_set():
+                        proc.kill()
+                        reader.join(timeout=1.0)
+                        partial = "".join(output_parts)
+                        return {
+                            "ok": False,
+                            "returncode": -1,
+                            "output": partial,
+                            "error": "cancelled",
+                            "cancelled": True,
+                        }
+                    try:
+                        rc = proc.wait(timeout=0.15)
+                    except subprocess.TimeoutExpired:
+                        if time.monotonic() >= deadline:
+                            proc.kill()
+                            reader.join(timeout=1.0)
+                            partial = "".join(output_parts)
+                            return {
+                                "ok": False,
+                                "returncode": -1,
+                                "output": partial,
+                                "error": f"timeout after {limit}s",
+                            }
+            except OSError:
+                raise
             reader.join(timeout=2.0)
             output = "".join(output_parts)
             lines = output.lstrip().splitlines(keepends=True)
