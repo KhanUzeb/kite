@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from kite.cli.slash import CommandIndex, help_text
 from kite.ui.commands import parse_slash
+from kite.ui.repl import ChatSession
 
 
 def test_legacy_model_aliases() -> None:
@@ -34,6 +36,31 @@ def test_model_subcommand_still_builtin() -> None:
     assert r.arg == "list groq"
 
 
+def test_legacy_slash_routing() -> None:
+    session = ChatSession.__new__(ChatSession)
+    cmd, arg = session._apply_legacy_slash("model", "groq", "select")
+    assert cmd == "model"
+    assert arg == "select groq"
+
+    cmd, arg = session._apply_legacy_slash("memory", "", "semantic")
+    assert cmd == "memory"
+    assert arg == "semantic"
+
+
+def test_help_text_groups() -> None:
+    text = help_text(CommandIndex.load("."))
+    assert "chat" in text
+    assert "model & keys" in text
+    assert "/checkpoint" in text
+    assert "legacy" in text.lower()
+
+
+def test_legacy_names_in_command_index() -> None:
+    index = CommandIndex.load(".")
+    assert index.get("thinking") is not None
+    assert index.get("select") is not None
+
+
 def test_cmd_help(capsys) -> None:
     import argparse
 
@@ -43,3 +70,10 @@ def test_cmd_help(capsys) -> None:
     assert "kite run" in cli_help_text()
     assert cmd_help(argparse.Namespace()) == 0
     assert "kite setup" in capsys.readouterr().out
+
+
+def test_strip_ansi_helper() -> None:
+    from tests.conftest import strip_ansi
+
+    colored = "\x1b[32m+2\x1b[0m\x1b[2m,\x1b[0m\x1b[31m-1\x1b[0m"
+    assert strip_ansi(colored) == "+2,-1"
