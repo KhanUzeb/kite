@@ -21,6 +21,8 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
     BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),
     BuiltinCommand("compact", "Summarize older turns now (OpenRouter free)", group="session"),
+    BuiltinCommand("checkpoint", "Save/list/restore context snapshots", hint="save|list|restore|show", group="session"),
+    BuiltinCommand("handoff", "Export handoff doc for another coding agent", hint="[path]", group="session"),
     BuiltinCommand("expand", "Toggle expanded tool output", group="session"),
     BuiltinCommand("collapse", "Collapse tool output (default)", group="session"),
     BuiltinCommand("cost", "Session tokens and USD", group="session"),
@@ -93,6 +95,12 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "font": [
         ("unicode", "✓ ⚠ › — default"),
         ("ascii", "+ ! > — plain ASCII"),
+    ],
+    "checkpoint": [
+        ("save", "snapshot current transcript"),
+        ("list", "list checkpoints for this session"),
+        ("restore", "restore transcript from checkpoint id"),
+        ("show", "preview checkpoint summary"),
     ],
 }
 
