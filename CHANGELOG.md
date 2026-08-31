@@ -10,8 +10,11 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - **Install `--setup`** — `./scripts/install.sh --setup` and `install.ps1 -Setup` run the wizard after install (TTY only).
 - **`kite help`** — grouped quick reference CLI map; slimmer `/help` builtins with legacy aliases preserved.
 
+### Removed
+- **MCP integration** — stdio MCP client and `[[mcp]]` runtime config removed; inject custom tools via `Harness.extra_tools` instead.
+
 ### Changed
-- **CI** — pytest runs on every pull request; isolated `KITE_HOME` + `KITE_SKIP_SETUP` in CI; `install-smoke` job validates install script.
+- **CI** — pytest on every push and PR to `main` (Python 3.11 + 3.12); isolated `KITE_HOME` + `KITE_SKIP_SETUP` in CI.
 - Provider picker sorts configured and recommended providers (groq, openrouter, ollama) first.
 - Install scripts point new users at `kite setup` instead of editing `.env` manually.
 

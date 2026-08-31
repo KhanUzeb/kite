@@ -22,6 +22,6 @@ If you find a security issue in Kite, please report it privately rather than ope
 
 Kite runs tools against your local workspace. Its guardrails protect against **model mistakes** (path escapes, destructive bash, secret-shaped writes), not against a hostile operator on the same machine. Do not run Kite with untrusted task text, and avoid `--no-guardrails` outside trusted, local automation.
 
-**Execution mode:** default `restricted` keeps file and bash access inside the session sandbox. `host` mode (config: `[guardrails] execution_mode = "host"`) allows broader filesystem access for trusted workflows; protected paths (`.ssh`, system dirs, `.env`) remain blocked. Only enable host mode when you understand the blast radius.
+**Execution mode:** default `host` keeps file and bash access outside the session cwd (protected paths like `.ssh`, system dirs, `.env` still blocked). `restricted` mode clamps paths to the session sandbox. Toggle in the REPL with `/restricted on|off`, or set `[guardrails] execution_mode = "restricted"` in runtime config. Only use host mode when you understand the blast radius.
 
 API keys live in `~/.kite/.env` (or the repo `.env`, which is gitignored). Never commit keys. If a key is leaked, rotate it immediately.

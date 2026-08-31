@@ -33,7 +33,7 @@ src/kite/
   skills/         SKILL.md loader + npm/git install
   commands/       Markdown slash prompt loader
   plugins/        .kite/plugins discovery
-  mcp/            MCP stdio client → tools
+  extensions/     .kite/extensions loader (register_tool → Harness.extra_tools)
   data/           Bundled catalog.toml, prompts, skills, commands
 tests/            pytest unit tests (no live LLM)
 docs/             Design + UX specs (source of truth for behavior)

@@ -28,6 +28,10 @@ Switch in the REPL with `/plan` and `/build`. One-shot: `kite run --mode plan "�
 
 Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` · `trust` · `readonly`.
 
+**Sandbox:** off by default (**host** mode). `/restricted on` clamps file/bash paths to the session cwd; footer shows `restricted` when active.
+
+**Slash menu:** scroll the `/` completion dropdown with the mouse wheel (or ↑/↓ when the menu is open). Long lists show a scrollbar.
+
 Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning auto|off|fast|thinking`. Shown on the footer when not `auto`.
 
 **Keyboard shortcuts** (composer): `Ctrl+O` toggle tool output expand · `Ctrl+P` plan · `Ctrl+B` build · `Ctrl+S` flash status on footer · `Ctrl+C` stop turn · `Tab` slash menu.
@@ -208,7 +212,7 @@ Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. T
 pytest
 ```
 
-GitHub Actions (`.github/workflows/tests.yml`) runs `pytest` on push/PR to `main` when the batch has **5+ commits**. Smaller pushes skip; use **Actions → Tests → Run workflow** to force a run. See [CONTRIBUTING.md](../CONTRIBUTING.md#ci-github-actions).
+GitHub Actions (`.github/workflows/tests.yml`) runs `pytest` on every push and pull request to `main` (Python 3.11 + 3.12). Use **Actions → Tests → Run workflow** to re-run manually. See [CONTRIBUTING.md](../CONTRIBUTING.md#ci-github-actions).
 
 ### Workspace (any project directory)
 

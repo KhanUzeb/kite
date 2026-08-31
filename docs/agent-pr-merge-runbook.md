@@ -78,7 +78,7 @@ python -c "from kite import __version__; print(__version__)"  # expect: 0.7.1
 pytest -q
 ```
 
-Wait for CI on `main` to complete (pytest 3.11 + 3.12 + install-smoke). CI runs automatically on every push to `main`.
+Wait for CI on `main` to complete (pytest 3.11 + 3.12). CI runs automatically on every push to `main`.
 
 ```bash
 gh run list --branch main --limit 3

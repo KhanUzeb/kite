@@ -17,10 +17,9 @@ A slim hybrid coding-agent harness: the **mini-swe-agent** control flow plus **t
 - **Execution context** — separate project root vs session cwd; `restricted` or `host` execution mode; parallel safe read-only tools.
 - **Context lifecycle** — preserved-fact compaction, auto-checkpoints at ~72% context, `/checkpoint` restore, `/handoff` export for other agents.
 - **Harness benchmarks** — `kite bench` for repeatable startup/context/tool timing (no live LLM).
-- **Skills & plugins** — `SKILL.md` packs (installable from npm, npx, or GitHub), prompt commands, and plugins.
+- **Skills & plugins** — `SKILL.md` packs (installable from npm, npx, or GitHub), prompt commands, plugins, and `.kite/extensions/` for custom tools.
 - **Guardrails** — path sandboxing, bash danger checks, secret redaction, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
 - **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, git-stat diffs, theme/font switching, and a context-usage meter.
-- **MCP-native** — stdio MCP servers become regular tools.
 - **Portable** — install once, then run `kite` from any project directory via `--cwd`.
 
 ## Setup
@@ -122,7 +121,7 @@ pytest                    # guardrails, agent, sessions, git-stat diffs, skills,
 pytest -v                 # verbose
 ```
 
-Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, MCP warnings, orchestrator dispatch, reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
+Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, orchestrator dispatch, reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
 
 **CI:** GitHub Actions runs `pytest` on every push and pull request to `main` (Python 3.11 + 3.12). Details in [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
 
@@ -230,7 +229,6 @@ src/kite/
   context/
   memory/
   skills/ commands/ plugins/
-  mcp/                     # stdio MCP client
 scripts/
   install.sh install.ps1   # clone + venv + editable install (any workstation)
 tests/                     # pytest suite

@@ -76,6 +76,7 @@ These never go to the model.
 | `/plan` `/p` | Read-only mode, checklist |
 | `/build` `/b` | Apply edits; approval stays unless it was readonly |
 | `/approve auto\|approve\|trust\|readonly` | Autonomy for this session |
+| `/restricted on\|off` `/sandbox` | Path sandbox (default **off** = host mode) |
 | `/model [provider/id]` | Show or set model |
 | `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
 | `/select [provider]` | Interactive model picker (saved to config) |
@@ -88,7 +89,7 @@ These never go to the model.
 | `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort; shown on the footer |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
 | `/clear` `/new` | Fresh chat session (memory notes stay) |
-| `/compact` | Summarize older turns now (OpenRouter free tier) |
+| `/compact` | Summarize older turns now; ctx meter updates immediately |
 | `/cost` | USD + context |
 | `/status` | Mode, approval, model, cost, session id |
 | `/session` | Current session id |
@@ -286,4 +287,4 @@ pytest              # after install.sh or uv pip install -e ".[dev]"
 pytest -v
 ```
 
-See `tests/` for guardrails, approval/trust, loop guard, sessions, verification, MCP, orchestrator, caches, and UI helpers.
+See `tests/` for guardrails, approval/trust, loop guard, sessions, verification, orchestrator, caches, and UI helpers.
