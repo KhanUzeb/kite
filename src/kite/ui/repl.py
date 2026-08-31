@@ -68,6 +68,8 @@ class ChatSession:
         self.attachments: list = []
         self._session_id: str | None = None
         self._harness = None
+        self._harness_key: tuple | None = None
+        self._model_resolved = False
         self._prompt = None
         self._model_cache: list[str] = []
         self._pending_open = session_id
@@ -75,20 +77,31 @@ class ChatSession:
         self._sync_from_config()
 
     def _sync_from_config(self) -> None:
-        from kite.providers.resolve import resolve_model
-
         cfg = UserConfig.load()
         if not self.provider:
             self.provider = cfg.default_provider or self.provider
         if not self.model:
-            try:
-                resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
-                self.provider = resolved.provider
-                self.model = resolved.model
-            except Exception:
-                self.model = cfg.default_model or self.model
+            self.model = cfg.default_model or self.model
         self.state.provider = self.provider or self.state.provider
         self.state.model = self.model or self.state.model
+
+    def _ensure_model_resolved(self) -> None:
+        """Resolve provider/model on first task — keeps REPL cold start cheap."""
+        if self._model_resolved and self.provider and self.model:
+            return
+        from kite.providers.resolve import resolve_model
+
+        cfg = UserConfig.load()
+        resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
+        self.provider = resolved.provider
+        self.model = resolved.model
+        self.state.provider = resolved.provider
+        self.state.model = resolved.model
+        self._model_resolved = True
+
+    def _invalidate_harness(self) -> None:
+        self._harness = None
+        self._harness_key = None
 
     def _effective_model_pair(self) -> tuple[str, str]:
         provider = self.provider or self.state.provider
@@ -104,21 +117,17 @@ class ChatSession:
             return provider or "", model or ""
 
     def _startup_banner(self) -> None:
-        from kite.providers.resolve import missing_credentials, resolve_model
+        from kite.providers.credentials import configured_providers
 
         cfg = UserConfig.load()
-        try:
-            resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
-            cred = missing_credentials(resolved)
-            model_line = f"{resolved.provider}/{resolved.model}"
-        except Exception as e:
-            cred = str(e)
-            model_line = f"{self.provider or cfg.default_provider or '—'}/{self.model or cfg.default_model or '—'}"
+        provider = self.provider or cfg.default_provider or "—"
+        model = self.model or cfg.default_model or "—"
+        ready = {name for name, ok, _ in configured_providers() if ok}
 
         banner = Text()
         banner.append("kite", style="kite.brand")
         banner.append("  ", style="kite.muted")
-        banner.append(model_line, style="kite.muted")
+        banner.append(f"{provider}/{model}", style="kite.muted")
         banner.append("  ·  ", style="kite.muted")
         banner.append("/help", style="kite.muted")
         banner.append("  ·  ", style="kite.muted")
@@ -127,12 +136,12 @@ class ChatSession:
         banner.append("/login", style="kite.muted")
         self.console.print(banner)
 
-        if cred:
+        if provider != "—" and provider not in ready and provider != "ollama":
             self.console.print(
-                f"[kite.pending]⚠[/]  [kite.muted]No API key — [kite.brand]/login {resolved.provider if 'resolved' in locals() else cfg.default_provider}[/] "
+                f"[kite.pending]⚠[/]  [kite.muted]No API key — [kite.brand]/login {provider}[/] "
                 f"or [kite.brand]kite setup[/][/]"
             )
-        elif not cfg.default_model:
+        elif not cfg.default_model and model == "—":
             self.console.print("[kite.muted]Tip:[/]  [kite.brand]/select[/] or [kite.brand]kite models -p groq --select[/]")
 
     def _flash_note(self, text: str) -> None:
@@ -164,8 +173,28 @@ class ChatSession:
             workspace_cwd=self.cwd,
         )
 
+    def _harness_cache_key(self) -> tuple:
+        return (
+            self.provider,
+            self.model,
+            self.state.mode.value,
+            self.state.approval.value,
+            self._session_id,
+            self.config_name,
+            self.state.reasoning or "auto",
+        )
+
     def _make_harness(self, *, resume: bool = False, follow_up: str | None = None):
         from kite.agent.harness import Harness, HarnessConfig
+
+        key = self._harness_cache_key()
+        if self._harness is not None and self._harness_key == key:
+            h = self._harness
+            h.config.resume = resume and bool(self._session_id)
+            h.config.follow_up = follow_up
+            h.config.session_id = self._session_id
+            h.config.attachments = list(self.attachments)
+            return h
 
         h = Harness(
             HarnessConfig(
@@ -184,6 +213,8 @@ class ChatSession:
             )
         )
         h.subscribe(self.display)
+        self._harness = h
+        self._harness_key = key
         return h
 
     def _provider_names(self) -> list[str]:
@@ -530,12 +561,14 @@ class ChatSession:
         def _plan() -> str:
             self.state.mode = AgentMode.PLAN
             self.state.approval = ApprovalMode.READONLY
+            self._invalidate_harness()
             return "plan mode"
 
         def _build() -> str:
             self.state.mode = AgentMode.BUILD
             if self.state.approval is ApprovalMode.READONLY:
                 self.state.approval = ApprovalMode.APPROVE
+            self._invalidate_harness()
             return "build mode"
 
         def _status() -> str:
@@ -648,12 +681,14 @@ class ChatSession:
         if cmd == "plan" or (cmd == "mode" and arg == "plan"):
             self.state.mode = AgentMode.PLAN
             self.state.approval = ApprovalMode.READONLY
+            self._invalidate_harness()
             self.console.print("[kite.plan]plan mode[/]  read-only — I'll suggest, not edit")
             return True
         if cmd == "build" or (cmd == "mode" and arg == "build"):
             self.state.mode = AgentMode.BUILD
             if self.state.approval is ApprovalMode.READONLY:
                 self.state.approval = ApprovalMode.APPROVE
+            self._invalidate_harness()
             self.console.print("[kite.build]build mode[/]  edits are on")
             return True
         if cmd == "approve":
@@ -662,6 +697,7 @@ class ChatSession:
             except ValueError:
                 self.console.print("[kite.error]use /approve auto|approve|readonly[/]")
                 return True
+            self._invalidate_harness()
             self.console.print(f"[kite.pending]approval[/] {self.state.approval.value}")
             return True
         if cmd == "cost":
@@ -734,6 +770,8 @@ class ChatSession:
                 self.state.provider = self.provider or self.state.provider
                 self.state.model = self.model or self.state.model
                 self._model_cache = []
+                self._model_resolved = True
+                self._invalidate_harness()
                 if save:
                     cfg = UserConfig.load()
                     cfg.default_provider = self.provider or cfg.default_provider
@@ -759,6 +797,8 @@ class ChatSession:
                 self.provider = arg
                 self.state.provider = arg
                 self._model_cache = []
+                self._model_resolved = False
+                self._invalidate_harness()
                 self.console.print(f"[kite.muted]provider[/]  {arg}")
                 return True
             current = self.provider or self.state.provider or "—"
@@ -807,6 +847,8 @@ class ChatSession:
                 self.state.provider = picked_provider
                 self.state.model = model
                 self._model_cache = []
+                self._model_resolved = True
+                self._invalidate_harness()
                 self._sync_from_config()
             return True
         if cmd == "thinking":
@@ -929,7 +971,7 @@ class ChatSession:
 
     def _reset_chat(self) -> None:
         self._session_id = None
-        self._harness = None
+        self._invalidate_harness()
         self.todos = TodoStore()
         self.state.todos = []
         self.state.n_calls = 0
@@ -973,7 +1015,7 @@ class ChatSession:
         except (OSError, ValueError) as e:
             self.console.print(f"[kite.error]{e}[/]")
             return
-        self._harness = None
+        self._invalidate_harness()
         self._session_id = session.id
         if session.meta.provider:
             self.provider = session.meta.provider
@@ -1216,6 +1258,11 @@ class ChatSession:
             task = "Look at the attached files."
         self.attachments = list(bundled)
         self._sync_attach_count()
+        try:
+            self._ensure_model_resolved()
+        except Exception as e:
+            self.console.print(f"[kite.error]{escape(str(e))}[/]  [kite.muted]/login · /select · kite setup[/]")
+            return
         resume = bool(self._session_id)
         harness = self._make_harness(resume=resume, follow_up=task if resume else None)
         harness.approver = self._approver()
