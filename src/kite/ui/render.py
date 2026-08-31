@@ -16,11 +16,22 @@ from rich.text import Text
 
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode
-from kite.ui.chips import render_plan_tasks, render_tool_chip, render_tool_chip_done
+from kite.ui.chips import render_plan_tasks
 from kite.ui.diff import count_diff_lines, render_diff
 from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState
 from kite.ui.status import approval_style, mode_style, status_context_parts
+from kite.ui.stream_buffer import StreamCoalescer
+from kite.ui.tool_cards import (
+    ToolCard,
+    detail_from_args,
+    line_count_from_output,
+    render_parallel_batch_header,
+    render_stream_tool_preview,
+    render_tool_card_done,
+    render_tool_card_start,
+    render_tool_summary,
+)
 from kite.ui.style import (
     CHANNEL_PREFIX,
     COLLAPSE_LINES,
@@ -179,6 +190,10 @@ class RunDisplay:
         self._spinner_on = False
         self._anim_tick = 0
         self._thinking_open = False
+        self._stream_coalesce = StreamCoalescer()
+        self._pending_tool_name: str | None = None
+        self._pending_tool_args: str = ""
+        self._parallel_batch: int = 0
 
     def _touch_state(self) -> None:
         self.state.touch()
@@ -227,10 +242,30 @@ class RunDisplay:
             elif i > 0:
                 self._streaming = True
 
+    def _flush_stream_buffers(self) -> None:
+        for channel, chunk in self._stream_coalesce.flush().items():
+            if chunk:
+                self._stream_write(chunk, channel=channel)
+
+    def _flush_tool_preview(self) -> None:
+        if not self._pending_tool_name:
+            return
+        self.console.print(
+            render_stream_tool_preview(self._pending_tool_name, self._pending_tool_args)
+        )
+        self._pending_tool_name = None
+        self._pending_tool_args = ""
+
+    def _coalesced_stream(self, channel: str, text: str) -> None:
+        chunk = self._stream_coalesce.push(channel, text)
+        if chunk:
+            self._spin(False)
+            self._stream_write(chunk, channel=channel)
+
     def _spin(self, on: bool, label: str = "thinking") -> None:
         if on and not self.quiet:
             self._anim_tick += 1
-            fast = label.startswith(("working", "subagent"))
+            fast = label.startswith(("working", "subagent", "preparing"))
             if not self._spinner_on:
                 self._spinner.start()
                 self._spinner_on = True
@@ -242,6 +277,8 @@ class RunDisplay:
 
     def close(self) -> None:
         self._spin(False)
+        self._flush_stream_buffers()
+        self._flush_tool_preview()
         self._end_stream_line()
 
     def print_status(self) -> None:
@@ -309,8 +346,7 @@ class RunDisplay:
                 if not self._thinking_open:
                     self.console.print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
                     self._thinking_open = True
-                self._spin(False)
-                self._stream_write(text, channel="thinking")
+                self._coalesced_stream("thinking", text)
             else:
                 self._spin(True, "thinking")
             return
@@ -318,18 +354,23 @@ class RunDisplay:
         if kind == "stream_delta":
             text = p.get("text") or ""
             if text:
-                self._spin(False)
-                self._stream_write(text, channel="answer")
+                self._coalesced_stream("answer", text)
             else:
                 self._spin(True, "thinking")
             return
 
         if kind == "stream_tool":
-            name = p.get("name") or "?"
-            self._spin(True, f"working  {name}")
+            name = str(p.get("name") or "?")
+            partial = str(p.get("partial_args") or "")
+            self._pending_tool_name = name
+            self._pending_tool_args = partial
+            preview = partial[-40:] if partial else ""
+            self._spin(True, f"preparing  {name}  {preview}".strip())
             return
 
         if kind == "stream_end":
+            self._flush_stream_buffers()
+            self._flush_tool_preview()
             self._end_stream_line()
             self._channel = None
             self._thinking_open = False
@@ -348,20 +389,35 @@ class RunDisplay:
             return
 
         if kind == "tool_start":
+            self._flush_stream_buffers()
+            self._flush_tool_preview()
             self._end_stream_line()
             tool = str(p.get("tool") or "?")
             args = p.get("arguments") or {}
             if not isinstance(args, dict):
                 args = {}
             reason = str(args.get("reason") or p.get("reason") or "")
-            detail = _short_args(args, limit=60)
-            self.console.print(render_tool_chip(tool, detail, running=True))
+            batch = int(p.get("parallel_batch") or 0)
+            pindex = int(p.get("parallel_index") or 1)
+            if batch > 1 and batch != self._parallel_batch:
+                self._parallel_batch = batch
+                self.console.print(render_parallel_batch_header(batch))
+            card = ToolCard(
+                tool=tool,
+                detail=detail_from_args(tool, args),
+                reason=reason,
+                parallel_batch=max(batch, 1),
+                parallel_index=max(pindex, 1),
+            )
+            self.console.print(render_tool_card_start(card))
             if reason:
                 self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted"))
             if tool == "bash" and args.get("command"):
                 cmd = str(args["command"]).strip()
-                for cmd_line in cmd.splitlines():
+                for cmd_line in cmd.splitlines()[:3]:
                     self.console.print(Text(f"{GUTTER}{GUTTER}$ {cmd_line}", style="kite.muted"))
+                if cmd.count("\n") > 2:
+                    self.console.print(Text(f"{GUTTER}{GUTTER}…", style="kite.muted"))
             self._spin(True, f"working  {tool}")
             return
 
@@ -376,6 +432,7 @@ class RunDisplay:
         if kind == "tool_end":
             self._end_stream_line()
             self._spin(False)
+            self._parallel_batch = 0
             tool = str(p.get("tool") or "tool")
             ok = p.get("ok", True)
             blocked = bool(p.get("blocked"))
@@ -383,21 +440,33 @@ class RunDisplay:
             exit_code = structured.get("exit_code", p.get("exit_code"))
             meta = _tool_meta(p.get("duration_ms"), exit_code)
             diff = p.get("diff")
+            preview = str(p.get("preview") or structured.get("preview") or "")
+            summary = str(p.get("summary") or "")
             added = deleted = None
             if isinstance(diff, str) and diff.strip():
                 counted = count_diff_lines(diff)
                 if counted[0] or counted[1]:
                     added, deleted = counted
             self.console.print(
-                render_tool_chip_done(
+                render_tool_card_done(
                     tool,
                     ok=ok,
                     warn=blocked,
                     meta=meta,
                     added=added,
                     deleted=deleted,
+                    preview=preview,
+                    summary=summary,
                 )
             )
+            output = str(p.get("output") or "")
+            summary_line = render_tool_summary(
+                preview=preview,
+                summary=summary,
+                line_count=line_count_from_output(output) if tool == "read" else None,
+            )
+            if summary_line is not None and (added is None and deleted is None):
+                self.console.print(summary_line)
 
             if isinstance(diff, str) and diff.strip():
                 self.console.print(
@@ -408,7 +477,6 @@ class RunDisplay:
                 if err:
                     self.console.print(render_error(err.splitlines()[0], show_trace_hint=False))
             else:
-                output = str(p.get("output") or "")
                 redacted = p.get("secrets_redacted")
                 expanded = self.verbose or self.state.expanded_all
                 collapsed = _collapse_text(output, expanded=expanded)
