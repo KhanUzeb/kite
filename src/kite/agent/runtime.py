@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kite.agent.hooks import HarnessSlots, HookBus
+from kite.agent.cancel import CancelToken
 from kite.agent.loop import DefaultAgent
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode, tools_for_mode
@@ -75,6 +75,11 @@ class AgentRuntime:
     slots: HarnessSlots = field(default_factory=HarnessSlots)
     hooks: HookBus = field(default_factory=HookBus)
     extra_tools: list[Any] = field(default_factory=list)
+    last_agent: DefaultAgent | None = field(default=None, init=False)
+
+    def request_interrupt(self) -> None:
+        if self.last_agent is not None:
+            self.last_agent.request_interrupt()
 
     def subscribe(self, listener: Callable[[Event], None]) -> Callable[[], None]:
         self._listeners.append(listener)
@@ -203,6 +208,7 @@ class AgentRuntime:
         task = expand_prompt_slash(task, cwd, extra_skill_dirs=rcfg.skills.dirs)
         mem = self.slots.memory or MemoryStore.open(cwd)
         self.hooks.fire("before_run", task=task, cwd=cwd)
+        cancel = CancelToken()
 
         guard = None
         if rcfg.guardrails.enabled and not self.options.no_guardrails:
@@ -267,6 +273,7 @@ class AgentRuntime:
                 todos=self.todos,
                 memory=mem,
                 orchestrator=orchestrator,
+                cancel=cancel,
             )
         if self.extra_tools:
             tools = list(tools) + list(self.extra_tools)
@@ -376,7 +383,9 @@ class AgentRuntime:
             verification=verification,
             audit=audit,
             tool_progress_interval_seconds=rcfg.tools.progress_interval_seconds,
+            cancel=cancel,
         )
+        self.last_agent = agent
 
         def _audit_listener(event: Event) -> None:
             if event.kind == "approval":
