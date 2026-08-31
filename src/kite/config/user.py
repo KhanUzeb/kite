@@ -28,7 +28,7 @@ def ensure_home() -> Path:
     key = str(home)
     if key in _ensured:
         return home
-    for name in ("sessions", "trajectories", "skills", "commands", "plugins", "memory", "configs", "extensions", "attachments"):
+    for name in ("sessions", "trajectories", "skills", "commands", "plugins", "memory", "configs", "extensions", "attachments", "checkpoints"):
         (home / name).mkdir(parents=True, exist_ok=True)
     _ensured.add(key)
     return home

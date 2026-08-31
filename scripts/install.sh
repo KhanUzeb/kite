@@ -7,6 +7,7 @@ PYTHON="${KITE_PYTHON:-3.12}"
 INSTALL_DIR="${KITE_INSTALL_DIR:-}"
 SKIP_CLONE=0
 DEV_EXTRAS=1
+VERIFY=0
 
 usage() {
   cat <<'EOF'
@@ -18,12 +19,14 @@ Options:
   --python VER     Python version for uv venv (default: 3.12)
   --no-clone       Skip git clone; install from the current directory
   --no-dev         Install runtime deps only (omit pytest dev extra)
+  --verify         Run pytest after install (dev / CI smoke check)
   -h, --help       Show this help
 
 Examples:
   git clone https://github.com/KhanUzeb/kite.git && cd kite && ./scripts/install.sh
   curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
   KITE_INSTALL_DIR=~/tools/kite ./scripts/install.sh
+  ./scripts/install.sh --no-clone --verify
 EOF
 }
 
@@ -34,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --python) PYTHON="$2"; shift 2 ;;
     --no-clone) SKIP_CLONE=1; shift ;;
     --no-dev) DEV_EXTRAS=0; shift ;;
+    --verify) VERIFY=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -59,6 +63,18 @@ repo_root_from_script() {
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   cd "${script_dir}/.." && pwd
+}
+
+bootstrap_kite_home() {
+  local env_file="${KITE_HOME}/.env"
+  if [[ ! -f "${env_file}" ]] && [[ -f "${INSTALL_DIR}/.env.example" ]]; then
+    cp "${INSTALL_DIR}/.env.example" "${env_file}"
+    chmod 600 "${env_file}" 2>/dev/null || true
+    echo "Created ${env_file} — add your API keys there."
+  elif [[ -f "${env_file}" ]]; then
+    chmod 600 "${env_file}" 2>/dev/null || true
+  fi
+  python -c "from kite.config import ensure_home; ensure_home()"
 }
 
 if [[ -z "${INSTALL_DIR}" ]]; then
@@ -105,17 +121,27 @@ else
   uv pip install -e .
 fi
 
-KITE_HOME="${KITE_HOME:-${HOME}/.kite}"
+export KITE_HOME="${KITE_HOME:-${HOME}/.kite}"
 mkdir -p "${KITE_HOME}"
-if [[ ! -f "${KITE_HOME}/.env" ]] && [[ -f "${INSTALL_DIR}/.env.example" ]]; then
-  cp "${INSTALL_DIR}/.env.example" "${KITE_HOME}/.env"
-  echo "Created ${KITE_HOME}/.env — add your API keys there."
+bootstrap_kite_home
+
+KITE_VERSION="$(kite --version 2>/dev/null || true)"
+if [[ -z "${KITE_VERSION}" ]]; then
+  echo "Warning: kite CLI not on PATH in this shell. Activate .venv first." >&2
+else
+  echo "Installed kite ${KITE_VERSION}"
+fi
+
+if [[ "${VERIFY}" -eq 1 ]]; then
+  echo "Running pytest (smoke check)..."
+  pytest -q
 fi
 
 VENV_BIN="${INSTALL_DIR}/.venv/bin"
 cat <<EOF
 
 Kite installed in: ${INSTALL_DIR}
+Kite home:         ${KITE_HOME}
 
 Activate this shell:
   source "${VENV_BIN}/activate"
@@ -132,11 +158,19 @@ Or target a directory explicitly:
 Make kite available in every new shell (add to ~/.bashrc or ~/.zshrc):
   export PATH="${VENV_BIN}:\$PATH"
 
-Next steps:
+First run:
   kite setup                 # guided API key + model picker
   kite providers
   kite models -p groq --select
   kite runtime-config
 
-Docs: ${INSTALL_DIR}/README.md
+REPL tips (after kite setup):
+  /plan /build               plan vs apply mode
+  /checkpoint /handoff       save or export session context
+  /compact                   summarize older turns
+  Ctrl+C                     interrupt current turn (REPL stays open)
+  Ctrl+O / Ctrl+P / Ctrl+B   expand tools / plan / build
+
+Contributors: pytest  ·  optional: ./scripts/install.sh --verify
+Docs: ${INSTALL_DIR}/README.md  ·  ${INSTALL_DIR}/kite_commands.md
 EOF
