@@ -61,6 +61,7 @@ kite commands
 kite plugins
 kite memory [--remember text] [--forget query] [--project]
 kite runtime-config [--config name]
+kite bench [--json] [--save PATH] [--compare BASELINE.json]   # harness timing (no LLM)
 ```
 
 You can also drop a path into the prompt with `@screenshot.png` or `@C:\path\spec.md`.
@@ -88,7 +89,12 @@ These never go to the model.
 | `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort; shown on the footer |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
 | `/clear` `/new` | Fresh chat session (memory notes stay) |
-| `/compact` | Summarize older turns now (OpenRouter free tier) |
+| `/compact` | Summarize older turns now (preserves facts block; auto-checkpoint at ~72% ctx) |
+| `/checkpoint save [label]` | Snapshot full transcript to `~/.kite/checkpoints/` |
+| `/checkpoint list` | List checkpoints for this session |
+| `/checkpoint restore <id>` | Restore transcript from checkpoint |
+| `/checkpoint show <id>` | Preview checkpoint metadata |
+| `/handoff [dir]` | Write `.kite/handoff-<session>.md` + `.json` for another agent |
 | `/cost` | USD + context |
 | `/status` | Mode, approval, model, cost, session id |
 | `/session` | Current session id |
@@ -120,7 +126,7 @@ These never go to the model.
 | `/help` `/h` | This map |
 | `/quit` `/q` `/exit` | Leave the REPL |
 
-Ctrl+C stops the **current turn**, not the process.
+Ctrl+C requests **interrupt** on the current turn (model stream + long bash). The REPL stays open; type a correction and continue.
 
 ### Keyboard shortcuts (composer)
 
@@ -147,6 +153,7 @@ These **are** the next user turn. Overlay (later wins): bundled → `~/.kite/com
 | `/explain [path or question]` | Explain the repo or a focus |
 | `/fix [test or error]` | Diagnose and patch a failure |
 | `/pr [notes]` | Draft a PR title and body |
+| `/handoff [dir]` | Guide handoff export for another agent |
 
 `$ARGUMENTS` (and `$1`…`$9`) in the markdown file is replaced with whatever you typed after the command.
 
@@ -204,9 +211,13 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 
 ## 4. Agent tools (model-called, not typed by you)
 
-Plan mode: `read` `grep` `glob` `ls` `task` `webfetch` `websearch` `webcrawl` `skill` `memory` `todo_read` `todo_write`.
+Plan mode: `read` `grep` `glob` `ls` `set_cwd` `task` `webfetch` `websearch` `webcrawl` `skill` `memory` `todo_read` `todo_write`.
 
 Build mode adds: `write` `edit` `bash`.
+
+`set_cwd` changes the session working directory for subsequent file tools and bash (default cwd). Independent of **project root** in the system prompt.
+
+Read-only tools (`read`, `grep`, `glob`, `ls`) may run **in parallel** when the model returns multiple in one turn.
 
 `memory` is notes (`list` / `remember` / `forget`), not the chat log. `KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable notes.
 
@@ -223,7 +234,8 @@ Build mode adds: `write` `edit` `bash`.
   memory/MEMORY.md     # semantic facts
   memory/episodes.sqlite
   sessions/*.jsonl
-  approvals.json
+  checkpoints/<session>/cp-*.json   # context snapshots (not git)
+  trajectories/*.json
 
 <repo>/.kite/
   commands/*.md
@@ -231,9 +243,11 @@ Build mode adds: `write` `edit` `bash`.
   plugins/
   memory/notes.jsonl
   MEMORY.md
+  handoff-<session>.md              # agent handoff brief
+  handoff-<session>.json
 ```
 
-Human commits are the source of truth for the project. Checkpoint `kite:` commits exist so `/undo` can revert agent edits without touching your own history.
+Human commits are the source of truth for the project. **Git** checkpoint `kite:` commits exist so `/undo` can revert agent edits. **Context** checkpoints exist so `/checkpoint restore` can rewind the transcript without touching git.
 
 ---
 
@@ -258,6 +272,10 @@ irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | i
 ```
 
 Custom dir: `KITE_INSTALL_DIR=~/tools/kite ./scripts/install.sh` or `.\scripts\install.ps1 -Dir C:\tools\kite`.
+
+Options: `--no-dev` / `-NoDev` (runtime only) · `--verify` / `-Verify` (run `pytest` after install).
+
+The install script creates `~/.kite/` (sessions, checkpoints, skills, config) and seeds `~/.kite/.env` from `.env.example` when missing.
 
 Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. Then `kite setup` (or `kite providers` + `kite models --select`).
 
