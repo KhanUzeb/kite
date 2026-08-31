@@ -25,7 +25,7 @@ progress_interval_seconds = 5.0
 enabled = true
 sandbox_to_cwd = true
 allow_paths_outside_cwd = false
-execution_mode = "restricted"  # restricted | host — host allows paths outside session cwd
+execution_mode = "host"  # restricted | host — host allows paths outside session cwd (default)
 trusted_paths = []  # relative subtrees with elevated trust (e.g. "src/", "tests/")
 deny_bash_patterns = [
   "git\\s+push",
@@ -75,10 +75,3 @@ cost_limit = 1.0
 loader = "grid"  # pixel-grid default; override with KITE_LOADER=grid|dots|orbit|wave|spin
 theme = "auto"  # auto|kite|dark|light|dim|mono
 font = "unicode"  # unicode|ascii
-
-# MCP servers — portable JSON-RPC tools (stdio). Example:
-# [[mcp]]
-# name = "filesystem"
-# command = "npx"
-# args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed"]
-# enabled = true
