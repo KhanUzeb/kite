@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from kite.agent.exceptions import Submitted
+from kite.agent.tool_result import ToolResult
 from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
 
@@ -49,4 +50,4 @@ class LocalEnvironment:
         # Normalize observation shape for the model layer
         if "output" not in result:
             result = {**result, "output": result.get("error") or str(result)}
-        return result
+        return ToolResult.normalize(result, tool=str(name))
