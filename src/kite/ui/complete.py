@@ -138,25 +138,39 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             return
 
         name = ALIASES.get(cmd.lower(), cmd.lower())
-        yield from self._arg_completions(name, rest, index)
+        from kite.ui.commands import LEGACY_ALIASES
 
-    def _arg_completions(self, cmd: str, rest: str, index: CommandIndex):
+        if name in LEGACY_ALIASES:
+            name = LEGACY_ALIASES[name]
+        yield from self._arg_completions(name, rest, index, legacy_cmd=cmd.lower())
+
+    def _arg_completions(self, cmd: str, rest: str, index: CommandIndex, *, legacy_cmd: str = ""):
         token = rest
         # only complete the last token
         prefix = token.split()[-1] if token and not token.endswith(" ") else ""
         start = -len(prefix) if prefix else 0
         choices: list[tuple[str, str]] = []
+        routed = legacy_cmd or cmd
 
-        if cmd in {"thinking", "fast"}:
-            choices = effort_menu(self._support(), cmd)
+        if routed in {"thinking", "fast"}:
+            choices = effort_menu(self._support(), routed)
         elif cmd in ARG_CHOICES:
             choices = list(ARG_CHOICES[cmd])
-        elif cmd in {"model", "models"}:
-            for mid in self._models_factory():
-                choices.append((str(mid), "model"))
-        elif cmd in {"provider"}:
-            for name in self._providers_factory():
-                choices.append((str(name), "provider"))
+        elif cmd == "model" or routed in {"models", "select", "provider"}:
+            parts = rest.split()
+            sub = parts[0].lower() if parts else ""
+            if routed in {"select"} or sub == "select":
+                for name in self._providers_factory():
+                    choices.append((name, "provider"))
+            elif routed in {"models"} or sub == "list":
+                for name in self._providers_factory():
+                    choices.append((name, "provider"))
+            elif routed == "provider" or sub == "provider":
+                for name in self._providers_factory():
+                    choices.append((name, "provider"))
+            else:
+                for mid in self._models_factory():
+                    choices.append((str(mid), "model"))
         elif cmd in {"login", "logout", "signin", "signout"}:
             from kite.providers.credentials import loginable_providers
 

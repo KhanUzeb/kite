@@ -6,7 +6,7 @@ Instructions for coding agents (Cursor, Claude Code, Kite itself, etc.) hacking 
 
 ## What this repo is
 
-**Kite** v0.6.8 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
+**Kite** v0.7.1 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
 
 - **Engine:** mini-swe-agent style loop (`agent/loop.py`) — query → tools → observe → repeat
 - **Cockpit:** tau-inspired assembly — catalog providers, skills, guardrails, Rich TUI, JSONL sessions
@@ -19,16 +19,17 @@ Stack: LiteLLM, Rich, prompt_toolkit, pydantic, tomllib. Entry: `kite.cli.run:ma
 
 ```
 src/kite/
-  agent/          Loop, harness, runtime, compaction, orchestrator, verification
-  cli/            argparse entry (run.py), slash index, setup, stats, import/apply
+  agent/          Loop, harness, runtime, compaction, cancel, tool_result, orchestrator
+  bench/          Repeatable harness benchmarks (`kite bench`)
+  cli/            argparse entry (run.py), slash index, setup, stats, bench, import/apply
   config/         ~/.kite/config.toml (UserConfig), runtime TOML merge
-  context/        Project discovery (tree, git, AGENTS.md) + token estimate
+  context/        Project discovery, workspace/execution cwd, token estimate
   providers/      Catalog, resolve model, list_models, credentials, select
   models/         LiteLLM wrapper, reasoning effort, prompt cache
-  tools/          Coding tools (read/write/edit/bash/…), web, github, store
-  guardrails/     Path sandbox, bash policy, secret redaction
+  tools/          Coding tools (read/write/edit/bash/set_cwd/…), metadata, web, github
+  guardrails/     Path sandbox, execution mode, bash policy, secret redaction
   ui/             REPL, render, approval, complete, theme, status
-  memory/         Sessions JSONL, semantic/episodic, audit log
+  memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic
   skills/         SKILL.md loader + npm/git install
   commands/       Markdown slash prompt loader
   plugins/        .kite/plugins discovery
@@ -59,7 +60,7 @@ Editable install: `uv pip install -e ".[dev]"`. Config and keys live in **`~/.ki
 ## Tests & CI
 
 - **Local:** `pytest` from repo root (uses `tests/`, `conftest.py` isolates `KITE_HOME`).
-- **CI:** `.github/workflows/tests.yml` runs pytest on push/PR to `main` when the batch has **≥ 5 commits**; use Actions → Run workflow to force. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- **CI:** `.github/workflows/tests.yml` runs pytest on every push and PR to `main` (Python 3.11 + 3.12). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Add tests for real behavior; skip trivial “assert True” coverage. No live provider calls in unit tests.
 
@@ -73,7 +74,7 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 4. **New CLI subcommands** — `cli/run.py` `build_parser()` + handler module.
 5. **Provider behavior** — `providers/` + `models/reasoning.py`; don’t hardcode model id lists.
 6. **Secrets** — `providers/credentials.py` writes `~/.kite/.env` with owner-only perms; never log key values.
-7. **Docs** — User-facing behavior changes need `kite_commands.md` and/or `docs/cli-ux.md`. Glossary changes → `CONTEXT.md`.
+7. **Docs** — User-facing behavior changes need `kite_commands.md` and/or `docs/cli-ux.md`. Glossary changes → `CONTEXT.md`. Prompt changes → `data/prompts/system.md`.
 
 ---
 
@@ -86,6 +87,9 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 | `/login groq` | `providers/credentials.py` → `ui/repl.py` |
 | Model resolution | `providers/resolve.py` |
 | Tool execution | `env/local.py` + `tools/coding.py` + `guardrails/` |
+| Context compaction | `agent/compaction.py` + `memory/compaction_ops.py` |
+| Checkpoints / handoff | `memory/context_checkpoint.py` + `memory/handoff.py` + `ui/repl.py` |
+| Benchmarks | `bench/` + `cli/bench.py` |
 | Streaming UI | `ui/render.py` `RunDisplay` ← `agent/events.py` |
 | Slash expansion | `cli/slash.py` `CommandIndex` |
 
@@ -98,6 +102,7 @@ kite setup                      # onboarding wizard
 kite keys --set groq            # save API key (hidden)
 kite models -p groq --select    # pick default model
 kite chat                       # REPL
+kite bench                      # harness timing baseline
 pytest -q                       # verify changes
 ```
 

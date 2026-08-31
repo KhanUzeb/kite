@@ -16,11 +16,18 @@ class GuardrailConfig:
     enabled: bool = True
     sandbox_to_cwd: bool = True
     allow_paths_outside_cwd: bool = False
+    execution_mode: str = "restricted"  # restricted | host
     trusted_paths: list[str] = field(default_factory=list)  # relative subtrees with elevated bash trust
     deny_bash_patterns: list[str] = field(default_factory=list)
     block_secret_writes: bool = True
     max_bash_output_chars: int = 100_000
     max_read_chars: int = 200_000
+
+    def host_access(self) -> bool:
+        """True when file/shell tools may reach paths outside the session cwd."""
+        if self.execution_mode == "host":
+            return True
+        return self.allow_paths_outside_cwd
 
 
 @dataclass
@@ -49,6 +56,7 @@ class ToolsConfig:
             "grep",
             "glob",
             "ls",
+            "set_cwd",
             "skill",
             "todo_write",
             "todo_read",
@@ -159,6 +167,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             enabled=bool(guard.get("enabled", True)),
             sandbox_to_cwd=bool(guard.get("sandbox_to_cwd", True)),
             allow_paths_outside_cwd=bool(guard.get("allow_paths_outside_cwd", False)),
+            execution_mode=str(guard.get("execution_mode", "restricted")),
             trusted_paths=list(guard.get("trusted_paths") or []),
             deny_bash_patterns=list(guard.get("deny_bash_patterns") or []),
             block_secret_writes=bool(guard.get("block_secret_writes", True)),

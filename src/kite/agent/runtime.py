@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from kite.agent.cancel import CancelToken
 from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
 from kite.agent.events import Event
@@ -15,6 +16,7 @@ from kite.agent.role import AgentRole, parse_role, tools_for_role
 from kite.cli.slash import expand_prompt_slash
 from kite.config import AgentRuntimeConfig, UserConfig, ensure_home, load_runtime_config
 from kite.context.discovery import gather_project_context
+from kite.context.workspace import ExecutionMode, ExecutionSession, WorkspaceContext
 from kite.env.local import LocalEnvironment
 from kite.guardrails import GuardrailPolicy
 from kite.memory.session import Session, create_session, load_session
@@ -75,6 +77,11 @@ class AgentRuntime:
     slots: HarnessSlots = field(default_factory=HarnessSlots)
     hooks: HookBus = field(default_factory=HookBus)
     extra_tools: list[Any] = field(default_factory=list)
+    last_agent: DefaultAgent | None = field(default=None, init=False)
+
+    def request_interrupt(self) -> None:
+        if self.last_agent is not None:
+            self.last_agent.request_interrupt()
 
     def subscribe(self, listener: Callable[[Event], None]) -> Callable[[], None]:
         self._listeners.append(listener)
@@ -203,10 +210,17 @@ class AgentRuntime:
         task = expand_prompt_slash(task, cwd, extra_skill_dirs=rcfg.skills.dirs)
         mem = self.slots.memory or MemoryStore.open(cwd)
         self.hooks.fire("before_run", task=task, cwd=cwd)
+        cancel = CancelToken()
+
+        workspace = WorkspaceContext.discover(
+            cwd,
+            execution_mode=ExecutionMode.HOST if rcfg.guardrails.host_access() else ExecutionMode.RESTRICTED,
+        )
+        execution = ExecutionSession(workspace)
 
         guard = None
         if rcfg.guardrails.enabled and not self.options.no_guardrails:
-            guard = GuardrailPolicy(rcfg.guardrails, cwd)
+            guard = GuardrailPolicy(rcfg.guardrails, cwd, execution=execution)
 
         try:
             mode = AgentMode(self.options.mode or "build")
@@ -267,6 +281,8 @@ class AgentRuntime:
                 todos=self.todos,
                 memory=mem,
                 orchestrator=orchestrator,
+                execution=execution,
+                cancel=cancel,
             )
         if self.extra_tools:
             tools = list(tools) + list(self.extra_tools)
@@ -331,6 +347,7 @@ class AgentRuntime:
             out_path = ensure_home() / "trajectories" / f"{session.id}.json"
 
         instance = assemble_instance_prompt(config=rcfg, task="{task}")
+        system = system.rstrip() + "\n\n" + workspace.render_for_prompt() + "\n"
 
         summarizer = self.slots.summarizer
         if summarizer is None and not self.options.no_compact:
@@ -376,7 +393,9 @@ class AgentRuntime:
             verification=verification,
             audit=audit,
             tool_progress_interval_seconds=rcfg.tools.progress_interval_seconds,
+            cancel=cancel,
         )
+        self.last_agent = agent
 
         def _audit_listener(event: Event) -> None:
             if event.kind == "approval":

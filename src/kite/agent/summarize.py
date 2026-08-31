@@ -14,8 +14,9 @@ from kite.context.window import deterministic_summary
 from kite.providers.list_models import RemoteModel, list_free_models
 
 COMPACTION_SYSTEM = """You compress a coding-agent transcript into a dense brief.
-Keep: decisions, file paths touched, errors, user constraints, remaining work.
+Keep: decisions, file paths touched, errors, user constraints, remaining work, test failures.
 Drop: raw tool dumps, repeated code, chit-chat, duplicated paths.
+If a ## Preserved facts block is present in the input, integrate those bullets — do not drop them.
 Write in third person. No preamble. Max 700 words."""
 
 _MAX_TRIES = 3

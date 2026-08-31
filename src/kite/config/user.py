@@ -28,7 +28,7 @@ def ensure_home() -> Path:
     key = str(home)
     if key in _ensured:
         return home
-    for name in ("sessions", "trajectories", "skills", "commands", "plugins", "memory", "configs", "extensions", "attachments"):
+    for name in ("sessions", "trajectories", "skills", "commands", "plugins", "memory", "configs", "extensions", "attachments", "checkpoints"):
         (home / name).mkdir(parents=True, exist_ok=True)
     _ensured.add(key)
     return home
@@ -56,6 +56,11 @@ class UserConfig:
     reasoning: str = "auto"
     theme: str = ""
     font: str = ""
+
+    @property
+    def path(self) -> Path:
+        """Resolved path to ~/.kite/config.toml (file may not exist yet)."""
+        return kite_home() / "config.toml"
 
     @classmethod
     def load(cls) -> UserConfig:

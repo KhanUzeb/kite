@@ -151,7 +151,12 @@ def is_protected(path: Path) -> bool:
     return False
 
 
-def clamp_cwd(requested: str | None, workspace: Path) -> tuple[Path | None, str]:
+def clamp_cwd(
+    requested: str | None,
+    workspace: Path,
+    *,
+    allow_outside: bool = False,
+) -> tuple[Path | None, str]:
     """Return a cwd inside the workspace, or (None, reason)."""
     if not requested or not str(requested).strip():
         return workspace, ""
@@ -159,7 +164,7 @@ def clamp_cwd(requested: str | None, workspace: Path) -> tuple[Path | None, str]
         resolved = resolve_in_workspace(requested, workspace)
     except OSError as e:
         return None, f"invalid cwd: {e}"
-    if not is_inside(resolved, workspace):
+    if not allow_outside and not is_inside(resolved, workspace):
         return None, f"cwd escapes workspace sandbox ({workspace}): {resolved}"
     if is_protected(resolved):
         return None, f"cwd is a protected path: {resolved}"

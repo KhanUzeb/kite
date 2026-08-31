@@ -4,7 +4,9 @@ param(
     [string]$Repo = "https://github.com/KhanUzeb/kite.git",
     [string]$Python = "3.12",
     [switch]$NoClone,
-    [switch]$NoDev
+    [switch]$NoDev,
+    [switch]$Verify,
+    [switch]$Setup
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,11 +21,14 @@ Options:
   -Python VER      Python version for uv venv (default: 3.12)
   -NoClone         Skip git clone; install from the current directory
   -NoDev           Install runtime deps only (omit pytest dev extra)
+  -Verify          Run pytest after install (dev / CI smoke check)
+  -Setup           Run kite setup after install (interactive console only)
 
 Examples:
   git clone https://github.com/KhanUzeb/kite.git; cd kite; .\scripts\install.ps1
   irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
   .\scripts\install.ps1 -Dir C:\tools\kite
+  .\scripts\install.ps1 -NoClone -Verify
 '@
 }
 
@@ -38,6 +43,17 @@ function Ensure-Uv {
     if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
         throw 'uv install finished but uv is still not on PATH. Open a new shell and re-run.'
     }
+}
+
+function Bootstrap-KiteHome {
+    param([string]$InstallRoot, [string]$HomeDir)
+    $envExample = Join-Path $InstallRoot ".env.example"
+    $envTarget = Join-Path $HomeDir ".env"
+    if (-not (Test-Path $envTarget) -and (Test-Path $envExample)) {
+        Copy-Item $envExample $envTarget
+        Write-Host "Created $envTarget (template) - run: kite setup"
+    }
+    python -c "from kite.config import ensure_home; ensure_home()"
 }
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -92,37 +108,48 @@ if ($NoDev) {
 
 $kiteHome = if ($env:KITE_HOME) { $env:KITE_HOME } else { Join-Path $env:USERPROFILE ".kite" }
 New-Item -ItemType Directory -Path $kiteHome -Force | Out-Null
-$envExample = Join-Path $Dir ".env.example"
-$envTarget = Join-Path $kiteHome ".env"
-if (-not (Test-Path $envTarget) -and (Test-Path $envExample)) {
-    Copy-Item $envExample $envTarget
-    Write-Host "Created $envTarget - add your API keys there."
+$env:KITE_HOME = $kiteHome
+Bootstrap-KiteHome -InstallRoot $Dir -HomeDir $kiteHome
+
+$kiteVersion = ""
+try {
+    $kiteVersion = (kite --version 2>$null).Trim()
+} catch {
+    $kiteVersion = ""
+}
+if ($kiteVersion) {
+    Write-Host "Installed kite $kiteVersion"
+} else {
+    Write-Host "Warning: kite CLI not on PATH in this shell. Activate .venv first." -ForegroundColor Yellow
+}
+
+if ($Verify) {
+    Write-Host "Running pytest (smoke check)..."
+    pytest -q
+}
+
+if ($Setup -and [Console]::IsInputRedirected -eq $false) {
+    Write-Host ""
+    Write-Host "Starting kite setup (Ctrl+C to skip)..."
+    try { kite setup } catch { }
 }
 
 $venvScripts = Join-Path $Dir ".venv\Scripts"
 $readme = Join-Path $Dir "README.md"
+$commands = Join-Path $Dir "kite_commands.md"
 Write-Host ""
 Write-Host "Kite installed in: $Dir"
+Write-Host "Kite home:         $kiteHome"
 Write-Host ""
 Write-Host "Activate this shell:"
 Write-Host "  . `"$activate`""
 Write-Host ""
-Write-Host "Use kite from any project directory (workspace = current directory):"
-Write-Host "  cd C:\path\to\your\project"
-Write-Host "  kite"
-Write-Host '  kite run "summarize this repo"'
-Write-Host "  kite chat --cwd C:\path\to\other\project"
-Write-Host ""
-Write-Host "Or target a directory explicitly:"
-Write-Host '  kite run --cwd C:\path\to\project "add tests"'
-Write-Host ""
-Write-Host "Make kite available in every new PowerShell session (add to `$PROFILE):"
-Write-Host "  `$env:Path = `"$venvScripts;`" + `$env:Path"
-Write-Host ""
-Write-Host "Next steps:"
-Write-Host "  kite setup                 # guided API key + model picker"
-Write-Host "  kite providers"
+Write-Host "First run (recommended):"
+Write-Host "  kite setup                 # guided API key + model picker (or .\scripts\install.ps1 -Setup)"
+Write-Host "  kite providers             # readiness + credential status"
 Write-Host "  kite models -p groq --select"
-Write-Host "  kite runtime-config"
+Write-Host ""
+Write-Host "Contributors: pytest  |  optional: .\scripts\install.ps1 -Verify"
 Write-Host ""
 Write-Host "Docs: $readme"
+Write-Host "      $commands"
