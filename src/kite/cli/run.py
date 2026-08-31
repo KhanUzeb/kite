@@ -873,6 +873,10 @@ def build_parser() -> argparse.ArgumentParser:
     cloud.add_argument("--dry-run", action="store_true")
     cloud.set_defaults(func=cmd_cloud)
 
+    from kite.cli.bench import add_bench_parser
+
+    add_bench_parser(sub)
+
     return parser
 
 
