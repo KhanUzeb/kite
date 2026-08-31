@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.7.2) — must match pyproject.toml on main"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: uv pip install -e ".[dev]"
+
+      - name: Verify version stamps
+        run: python scripts/sync_version.py --check
+
+      - name: Resolve release version
+        id: meta
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          TAG="${{ steps.meta.outputs.tag }}"
+          NOTES="docs/RELEASE-${VERSION}.md"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — updating notes if present"
+            if [[ -f "$NOTES" ]]; then
+              gh release edit "$TAG" --title "Kite v${VERSION}" --notes-file "$NOTES"
+            fi
+          elif [[ -f "$NOTES" ]]; then
+            gh release create "$TAG" --title "Kite v${VERSION}" --notes-file "$NOTES"
+          else
+            gh release create "$TAG" --title "Kite v${VERSION}" --generate-notes
+          fi

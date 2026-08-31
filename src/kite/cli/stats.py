@@ -20,11 +20,13 @@ _PYPI_PACKAGE = "kite-agent"  # fallback name if published later
 
 
 def _http_json(url: str, *, timeout: float = 12.0) -> dict | list | None:
+    from kite import __version__
+
     req = urllib.request.Request(
         url,
         headers={
             "Accept": "application/json",
-            "User-Agent": "kite-stats/0.7.1",
+            "User-Agent": f"kite-stats/{__version__}",
         },
     )
     try:

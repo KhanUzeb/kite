@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Bump Kite version, prepend CHANGELOG stub, and create an annotated git tag.
+# Bump Kite version, sync stamped files, prepend CHANGELOG stub, tag, and push.
 #
-# Usage (after harness upgrade PRs are merged to main):
-#   ./scripts/bump_release.sh 0.7.0
+# Usage (after changes are merged to main):
+#   ./scripts/bump_release.sh 0.7.3
 #
-# Then review CHANGELOG.md, commit, and push with tags:
+# Then edit CHANGELOG.md and docs/RELEASE-X.Y.Z.md, commit if needed, push:
 #   git push origin main --tags
+#
+# Pushing tag vX.Y.Z triggers .github/workflows/release.yml (GitHub release).
 
 set -euo pipefail
 
@@ -26,46 +28,54 @@ if [[ "$NEW" == "$CURRENT" ]]; then
   exit 1
 fi
 
-python - "$NEW" <<'PY'
-import re
-import sys
-from pathlib import Path
+echo "syncing version stamps to $NEW ..."
+python scripts/sync_version.py "$NEW"
 
-new = sys.argv[1]
-root = Path(".")
-pyproject = root / "pyproject.toml"
-text = pyproject.read_text(encoding="utf-8")
-text, n = re.subn(r'(?m)^version = "[^"]+"', f'version = "{new}"', text, count=1)
-if n != 1:
-    raise SystemExit("could not update pyproject.toml version")
-pyproject.write_text(text, encoding="utf-8")
+RELEASE_DOC="docs/RELEASE-$NEW.md"
+if [[ ! -f "$RELEASE_DOC" ]]; then
+  cat > "$RELEASE_DOC" <<EOF
+# Kite v$NEW
 
-init = root / "src" / "kite" / "__init__.py"
-itext = init.read_text(encoding="utf-8")
-itext, n = re.subn(r'__version__ = "[^"]+"', f'__version__ = "{new}"', itext, count=1)
-if n != 1:
-    raise SystemExit("could not update kite __version__")
-init.write_text(itext, encoding="utf-8")
-print(f"bumped project files to {new}")
-PY
+**Date:** $DATE
+
+## Highlights
+
+(TODO: one paragraph summary)
+
+---
+
+## Upgrade
+
+\`\`\`bash
+git pull
+./scripts/install.sh --no-clone
+pytest -q
+kite --version   # $NEW
+\`\`\`
+
+---
+
+## Full changelog
+
+See [CHANGELOG.md](../CHANGELOG.md) for the [$NEW] entry.
+EOF
+  echo "created stub $RELEASE_DOC"
+fi
 
 CHANGELOG="$ROOT/CHANGELOG.md"
-STUB="## [$NEW] - $DATE
+if ! grep -q "^## \[$NEW\]" "$CHANGELOG"; then
+  STUB="## [$NEW] - $DATE
 
 ### Added
-- Harness benchmark suite (\`kite bench\`) with BEFORE/AFTER compare tables.
-- \`ToolResult\` contract and tool scheduling metadata.
-- \`WorkspaceContext\` with separate \`execution_cwd\`, \`set_cwd\` tool, and host/restricted modes.
-- Parallel read-only tool execution and end-to-end bash cancellation.
+-
 
 ### Changed
-- Guardrails follow live execution cwd; host mode allows explicit external paths.
+-
+
+### Fixed
+-
 
 "
-
-if grep -q "^## \[$NEW\]" "$CHANGELOG"; then
-  echo "CHANGELOG already has section for $NEW" >&2
-else
   python - "$CHANGELOG" "$STUB" <<'PY'
 import sys
 from pathlib import Path
@@ -84,7 +94,9 @@ print(f"prepended CHANGELOG section for {stub.splitlines()[0]}")
 PY
 fi
 
-git add pyproject.toml src/kite/__init__.py CHANGELOG.md
+python scripts/sync_version.py --check
+
+git add pyproject.toml src/kite/__init__.py CHANGELOG.md README.md AGENTS.md architecture.md docs/cli-ux.md docs/kite-system-design.md docs/ideal-cli-spec.md "$RELEASE_DOC"
 git commit -m "chore: release v$NEW"
 
 if git rev-parse "v$NEW" >/dev/null 2>&1; then
@@ -95,5 +107,7 @@ else
 fi
 
 echo ""
-echo "Done. Review CHANGELOG.md, then:"
+echo "Done. Edit CHANGELOG.md and $RELEASE_DOC, amend if needed, then:"
 echo "  git push origin main --tags"
+echo ""
+echo "Tag push publishes the GitHub release via .github/workflows/release.yml"

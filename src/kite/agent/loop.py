@@ -22,7 +22,7 @@ from kite.prompts import load_prompt_template
 try:
     from kite import __version__
 except Exception:  # pragma: no cover
-    __version__ = "0.7.1"
+    __version__ = "unknown"
 
 try:
     SYSTEM_PROMPT = load_prompt_template("system")
