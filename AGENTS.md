@@ -59,7 +59,7 @@ Editable install: `uv pip install -e ".[dev]"`. Config and keys live in **`~/.ki
 ## Tests & CI
 
 - **Local:** `pytest` from repo root (uses `tests/`, `conftest.py` isolates `KITE_HOME`).
-- **CI:** `.github/workflows/tests.yml` runs pytest on push/PR to `main` when the batch has **≥ 5 commits**; use Actions → Run workflow to force. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- **CI:** `.github/workflows/tests.yml` runs pytest on every PR to `main`; direct pushes to `main` need **≥ 5 commits** in the batch (or use Actions → Run workflow). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Add tests for real behavior; skip trivial “assert True” coverage. No live provider calls in unit tests.
 
