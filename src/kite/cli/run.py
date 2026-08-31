@@ -728,21 +728,35 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--json", action="store_true", help="Emit final trajectory JSON on stdout (CI-friendly)")
 
 
+def cmd_help(_args: argparse.Namespace) -> int:
+    from kite.cli.help_map import cli_help_text
+
+    print(cli_help_text())
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
+    from kite.cli.help_map import CLI_EPILOG
+
     parser = argparse.ArgumentParser(
         prog="kite",
-        description="Kite coding agent - plan or build in the terminal",
+        description="Kite coding agent — plan or build in the terminal",
+        epilog=CLI_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="store_true", help="Print version")
     sub = parser.add_subparsers(dest="command")
 
-    run = sub.add_parser("run", help="Start a new agent session")
+    help_p = sub.add_parser("help", help="Print CLI quick reference")
+    help_p.set_defaults(func=cmd_help)
+
+    run = sub.add_parser("run", help="One-shot task")
     run.add_argument("task", nargs="?", help="Task prompt")
     run.add_argument("--stdin", action="store_true", help="Read task from stdin")
     _add_run_flags(run)
     run.set_defaults(func=cmd_run)
 
-    chat = sub.add_parser("chat", help="Interactive session (plan/build, slash commands)")
+    chat = sub.add_parser("chat", help="Interactive REPL (default when bare `kite`)")
     _add_run_flags(chat)
     chat.add_argument("--session", help="Open an existing session id")
     chat.set_defaults(func=cmd_chat)
@@ -754,7 +768,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_run_flags(resume)
     resume.set_defaults(func=cmd_resume)
 
-    sessions = sub.add_parser("sessions", help="List, inspect, or delete sessions")
+    sessions = sub.add_parser("sessions", help="List or inspect saved sessions")
     sessions.add_argument("--limit", type=int, default=20)
     sessions.add_argument("--show", help="Show session id")
     sessions.add_argument("--tail", type=int, default=12, help="Messages to show with --show")
@@ -789,7 +803,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--json", action="store_true")
     dashboard.set_defaults(func=cmd_maintainer_dashboard)
 
-    models = sub.add_parser("models", help="List live models from provider APIs (uses your API key)")
+    models = sub.add_parser("models", help="List models for a provider")
     models.add_argument("-p", "--provider", help="Filter one provider")
     models.add_argument(
         "--select",
@@ -838,7 +852,7 @@ def build_parser() -> argparse.ArgumentParser:
     memory.add_argument("--project", action="store_true", help="With --remember, store on the project")
     memory.set_defaults(func=cmd_memory)
 
-    rt = sub.add_parser("runtime-config", help="Show merged agent runtime TOML config")
+    rt = sub.add_parser("runtime-config", help="Show merged runtime TOML (advanced)")
     rt.add_argument("--config", help="Named config or path")
     rt.set_defaults(func=cmd_runtime_config)
 

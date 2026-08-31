@@ -10,55 +10,46 @@ class BuiltinCommand:
     name: str
     description: str
     hint: str = ""
-    group: str = "session"
+    group: str = "chat"
     aliases: tuple[str, ...] = ()
 
 
+# Shown in /help — legacy names (provider, models, select, cost, thinking, …) still work in repl.py
 BUILTINS: tuple[BuiltinCommand, ...] = (
-    BuiltinCommand("plan", "Read-only mode — produce a checklist", aliases=("p",), group="session"),
-    BuiltinCommand("build", "Apply edits, gated bash", aliases=("b",), group="session"),
-    BuiltinCommand("approve", "Autonomy for this session", hint="auto|approve|readonly", group="session"),
-    BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
-    BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),
-    BuiltinCommand("compact", "Summarize older turns now (OpenRouter free)", group="session"),
-    BuiltinCommand("checkpoint", "Save/list/restore context snapshots", hint="save|list|restore|show", group="session"),
-    BuiltinCommand("handoff", "Export handoff doc for another coding agent", hint="[path]", group="session"),
-    BuiltinCommand("expand", "Toggle expanded tool output", group="session"),
-    BuiltinCommand("collapse", "Collapse tool output (default)", group="session"),
-    BuiltinCommand("cost", "Session tokens and USD", group="session"),
-    BuiltinCommand("status", "Mode, model, effort, session id", group="session"),
-    BuiltinCommand("session", "Show, list, open, or delete transcripts", hint="[list|show|open|delete]", aliases=("sessions",), group="session"),
-    BuiltinCommand("resume", "Continue a saved session", hint="id", group="session"),
-    BuiltinCommand("init", "Write KITE.md project memory", group="session"),
-    BuiltinCommand("trace", "Last error traceback", group="session"),
-    BuiltinCommand("home", "Show ~/.kite paths", group="session"),
-    BuiltinCommand("help", "This map", aliases=("h",), group="session"),
-    BuiltinCommand("quit", "Leave the REPL", aliases=("q", "exit"), group="session"),
-    BuiltinCommand("theme", "Color palette", hint="auto|kite|dark|light|dim|mono", group="session"),
-    BuiltinCommand("font", "Glyphs for this terminal", hint="unicode|ascii", group="session"),
-    BuiltinCommand("login", "Save provider API key to ~/.kite/.env (hidden input)", hint="provider", aliases=("signin",), group="model"),
-    BuiltinCommand("logout", "Remove provider API key from ~/.kite/.env", hint="provider", aliases=("signout",), group="model"),
-    BuiltinCommand("keys", "Show which provider API keys are set", group="model"),
-    BuiltinCommand("model", "Show or set provider/model", hint="provider/id", group="model"),
-    BuiltinCommand("models", "List live models for the current provider", group="model"),
-    BuiltinCommand("select", "Interactive model picker (saved to ~/.kite/config.toml)", hint="[provider]", group="model"),
-    BuiltinCommand("provider", "Show or set provider", hint="name", group="model"),
-    BuiltinCommand("thinking", "Thinking level (only if this API has thinking and fast)", hint="level", group="model"),
-    BuiltinCommand("fast", "Fast level (only if this API has thinking and fast)", hint="level", group="model"),
-    BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
-    BuiltinCommand("memory", "Semantic markdown + episodic sqlite", hint="semantic|episodic", aliases=("mem",), group="memory"),
-    BuiltinCommand("semantic", "Show markdown semantic memory", group="memory"),
-    BuiltinCommand("episodic", "Show sqlite episode log", group="memory"),
-    BuiltinCommand("remember", "Append a semantic note", hint="[user|project] text", group="memory"),
-    BuiltinCommand("forget", "Drop matching notes or episodes", hint="id|substring", group="memory"),
-    BuiltinCommand("skills", "List, show, or install a skill", hint="[add pkg]|name", group="extensions"),
-    BuiltinCommand("skill", "Run a skill as this turn", hint="name [args]", group="extensions"),
-    BuiltinCommand("commands", "List markdown slash prompts", hint="new name", aliases=("cmd", "cmds"), group="extensions"),
-    BuiltinCommand("plugins", "List plugins, or scaffold one", hint="init name", aliases=("plugin",), group="extensions"),
-    BuiltinCommand("attach", "Attach a file or image to the next turn", hint="path", group="attach"),
-    BuiltinCommand("clip", "Attach the clipboard (text or image)", aliases=("clipboard", "paste"), group="attach"),
-    BuiltinCommand("detach", "Drop a pending attachment", hint="name|all", group="attach"),
-    BuiltinCommand("attachments", "List files queued for the next turn", group="attach"),
+    BuiltinCommand("plan", "Read-only checklist mode", aliases=("p",), group="chat"),
+    BuiltinCommand("build", "Apply edits (gated bash)", aliases=("b",), group="chat"),
+    BuiltinCommand("approve", "Session autonomy", hint="auto|approve|readonly", group="chat"),
+    BuiltinCommand("undo", "Revert last kite: git checkpoint", group="chat"),
+    BuiltinCommand("clear", "Fresh chat (memory stays)", aliases=("new",), group="chat"),
+    BuiltinCommand("compact", "Summarize older turns now", group="chat"),
+    BuiltinCommand("checkpoint", "Save/list/restore transcript", hint="save|list|restore|show", group="chat"),
+    BuiltinCommand("handoff", "Export context for another agent", hint="[dir]", group="chat"),
+    BuiltinCommand("expand", "Toggle tool output detail", group="chat"),
+    BuiltinCommand("status", "Mode, model, cost, session id", group="chat"),
+    BuiltinCommand("session", "List, show, open, delete transcripts", hint="list|show|open|delete", aliases=("sessions",), group="chat"),
+    BuiltinCommand("resume", "Continue a saved session", hint="id", group="chat"),
+    BuiltinCommand("init", "Write KITE.md if missing", group="chat"),
+    BuiltinCommand("trace", "Last error traceback", group="chat"),
+    BuiltinCommand("theme", "Color palette", hint="auto|kite|dark|light|dim|mono", group="chat"),
+    BuiltinCommand("font", "Terminal glyphs", hint="unicode|ascii", group="chat"),
+    BuiltinCommand("home", "Show ~/.kite paths", group="chat"),
+    BuiltinCommand("help", "Command map", aliases=("h",), group="chat"),
+    BuiltinCommand("quit", "Leave REPL", aliases=("q", "exit"), group="chat"),
+    BuiltinCommand("model", "Show, set, list, or pick model", hint="list|select|provider/id", group="model"),
+    BuiltinCommand("login", "Save API key (hidden)", hint="provider", aliases=("signin",), group="model"),
+    BuiltinCommand("logout", "Remove API key", hint="provider", aliases=("signout",), group="model"),
+    BuiltinCommand("keys", "Which provider keys are set", group="model"),
+    BuiltinCommand("reasoning", "Effort: auto|off|fast|thinking", hint="level", aliases=("effort",), group="model"),
+    BuiltinCommand("memory", "Notes: semantic + episodic", hint="semantic|episodic", aliases=("mem",), group="memory"),
+    BuiltinCommand("remember", "Append a note", hint="[user|project] text", group="memory"),
+    BuiltinCommand("forget", "Drop matching notes", hint="id|substring", group="memory"),
+    BuiltinCommand("skills", "List, show, or install skills", hint="add pkg|name", group="extensions"),
+    BuiltinCommand("commands", "Markdown slash prompts", hint="new name", aliases=("cmd", "cmds"), group="extensions"),
+    BuiltinCommand("plugins", "List or scaffold plugins", hint="init name", aliases=("plugin",), group="extensions"),
+    BuiltinCommand("attach", "File/image for next turn", hint="path", group="attach"),
+    BuiltinCommand("clip", "Clipboard for next turn", aliases=("clipboard", "paste"), group="attach"),
+    BuiltinCommand("detach", "Drop attachment", hint="name|all", group="attach"),
+    BuiltinCommand("attachments", "Queued attachments", group="attach"),
 )
 
 CONTROL_COMMANDS = frozenset(b.name for b in BUILTINS)
@@ -67,6 +58,20 @@ ALIASES: dict[str, str] = {}
 for _b in BUILTINS:
     for _a in _b.aliases:
         ALIASES[_a] = _b.name
+
+# Legacy shortcuts — hidden from /help but still parsed
+LEGACY_ALIASES: dict[str, str] = {
+    "provider": "model",
+    "models": "model",
+    "select": "model",
+    "cost": "status",
+    "collapse": "expand",
+    "thinking": "reasoning",
+    "fast": "reasoning",
+    "semantic": "memory",
+    "episodic": "memory",
+    "skill": "skills",
+}
 
 ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "approve": [
@@ -79,6 +84,10 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("off", "disable extended thinking"),
         ("fast", "low effort / low latency"),
         ("thinking", "extended thinking"),
+    ],
+    "model": [
+        ("list", "live models for provider"),
+        ("select", "interactive picker"),
     ],
     "mode": [
         ("plan", "read-only checklist"),
@@ -102,6 +111,10 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("restore", "restore transcript from checkpoint id"),
         ("show", "preview checkpoint summary"),
     ],
+    "memory": [
+        ("semantic", "markdown notes"),
+        ("episodic", "sqlite episode log"),
+    ],
 }
 
 ARG_CHOICES["effort"] = ARG_CHOICES["reasoning"]
@@ -115,6 +128,7 @@ class SlashResult:
     message: str = ""
     prompt: str = ""
     source: str = ""
+    legacy: str = ""  # original cmd before legacy alias rewrite
 
 
 def parse_slash(raw: str) -> SlashResult:
@@ -122,13 +136,21 @@ def parse_slash(raw: str) -> SlashResult:
     if not text.startswith("/"):
         return SlashResult("not_slash")
     if text.startswith("//"):
-        # escaped natural-language that happens to start with /
         return SlashResult("not_slash")
     body = text[1:]
     cmd, _, rest = body.partition(" ")
-    cmd = cmd.lower().strip()
+    original = cmd.lower().strip()
     arg = rest.strip()
-    cmd = ALIASES.get(cmd, cmd)
-    if cmd in CONTROL_COMMANDS:
-        return SlashResult("handled", command=cmd, arg=arg)
-    return SlashResult("unknown", command=cmd, arg=arg, message=f"unknown command /{cmd}  — type / for the list")
+    cmd = ALIASES.get(original, original)
+    legacy = ""
+    if original in LEGACY_ALIASES:
+        legacy = original
+        mapped = LEGACY_ALIASES[original]
+        if mapped == cmd:
+            pass
+        else:
+            cmd = mapped
+    if cmd in CONTROL_COMMANDS or legacy:
+        return SlashResult("handled", command=cmd, arg=arg, legacy=legacy)
+    return SlashResult("unknown", command=cmd, arg=arg, message=f"unknown command /{original}  — type /help")
+
