@@ -64,6 +64,50 @@ def test_edit_tool_end_shows_diff_stat() -> None:
     assert "+2,-1" in strip_ansi(out)
 
 
+def test_parallel_tool_start_shows_batch_header() -> None:
+    buf, display = _display()
+    display(
+        Event(
+            "tool_start",
+            payload={
+                "tool": "read",
+                "arguments": {"path": "src/a.py"},
+                "parallel_batch": 3,
+            },
+        )
+    )
+    out = buf.getvalue()
+    assert "parallel 3" in out
+    assert "read" in out
+
+
+def test_read_tool_end_shows_line_count_summary() -> None:
+    buf, display = _display()
+    display(
+        Event(
+            "tool_end",
+            payload={
+                "tool": "read",
+                "ok": True,
+                "output": "line one\nline two\nline three\n",
+                "duration_ms": 12,
+            },
+        )
+    )
+    out = buf.getvalue()
+    assert "3 lines" in out
+
+
+def test_stream_coalescing_batches_answer_deltas() -> None:
+    buf, display = _display()
+    display(Event("stream_start", payload={}))
+    display(Event("stream_delta", payload={"text": "Hello"}))
+    display(Event("stream_delta", payload={"text": " world"}))
+    display(Event("stream_end", payload={}))
+    out = buf.getvalue()
+    assert "Hello world" in out
+
+
 def test_failed_verification_still_warns() -> None:
     buf, display = _display()
     display(

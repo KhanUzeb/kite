@@ -34,7 +34,9 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 
 **Loaders** (beautifului-inspired, TTY-only): default pixel-grid loader with shimmer label and elapsed time. Override with `KITE_LOADER=grid|dots|orbit|wave|spin`.
 
-**Tool chips:** `╭ edit · path · … ╮` while running; `✓ edit  1.2s` when done. **Task rows** show `Running` / `Completed` / `To do` badges.
+**Tool cards:** `▸ read  src/foo.py  …` while running (reason on the next line when provided); parallel read-only batches show `parallel N read-only tools` once. `✓ edit  1.2s  +2,-1` when done, with a muted one-line summary for reads (`42 lines  ·  preview…`). **Task rows** show `Running` / `Completed` / `To do` badges.
+
+**Stream coalescing:** small `stream_delta` / reasoning chunks batch before Rich writes — less flicker on fast models.
 
 **Context meter** on footer: `ctx ████░░░░ 50%`. `/expand` toggles full tool output; `/collapse` resets.
 
