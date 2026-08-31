@@ -1,3 +1,4 @@
+# kite-release-version: 0.7.2
 # Install Kite on Windows: clone (optional), venv, editable install, env bootstrap.
 param(
     [string]$Dir = "",

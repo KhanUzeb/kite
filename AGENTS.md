@@ -158,6 +158,6 @@ Version source of truth: **`pyproject.toml`**. Stamped files stay in sync via `s
 git push origin main --tags       # tag push runs .github/workflows/release.yml
 ```
 
-- **`scripts/sync_version.py`** — sync or `--check` (also runs in CI on every push/PR).
+- **`scripts/sync_version.py`** — sync or `--check` (also runs in CI on every push/PR). Stamps `scripts/*` via `# kite-release-version:`.
 - **`scripts/verify_release_pr.sh`** — pre-tag pytest + version check on main.
 - **`.github/workflows/release.yml`** — on `v*` tag push, verify stamps and publish GitHub release from `docs/RELEASE-X.Y.Z.md`.

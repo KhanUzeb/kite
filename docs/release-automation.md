@@ -13,6 +13,7 @@ This runs `scripts/sync_version.py`, which updates:
 - `pyproject.toml`, `src/kite/__init__.py`
 - `README.md`, `AGENTS.md`, `architecture.md`
 - `docs/cli-ux.md`, `docs/kite-system-design.md`, `docs/ideal-cli-spec.md`
+- **`scripts/*`** — `# kite-release-version:` marker in every `.sh`, `.ps1`, and `.py` under `scripts/`
 
 It also prepends a CHANGELOG stub and creates `docs/RELEASE-X.Y.Z.md` if missing.
 

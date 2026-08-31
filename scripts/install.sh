@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# kite-release-version: 0.7.2
 # Install Kite on macOS/Linux: clone (optional), venv, editable install, env bootstrap.
 set -euo pipefail
 
