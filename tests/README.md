@@ -41,8 +41,10 @@ GitHub Actions runs `pytest` on **push/PR to `main` when the batch has 5+ commit
 | `test_prompts.py` | prompt assembly, greeting handling |
 | `test_session_list.py` | session list/delete |
 | `test_cache.py` | prompt cache stats |
-| `test_cli_import.py` | session import formats |
+| `test_context_checkpoint_handoff.py` | checkpoints, handoff export, compaction facts |
+
+**Harness 0.7 PRs** (land with their feature branches): `test_bench.py`, `test_tool_result.py`, `test_workspace.py`, `test_cancellation_parallel.py`.
 
 Fixtures in `conftest.py`: isolated `KITE_HOME`, sample workspace with `src/`.
 
-Not covered yet: live LLM calls, catalog resolve edge cases, compaction invariants, full CLI integration.
+Not covered yet: live LLM calls, catalog resolve edge cases, full CLI integration, handoff round-trip across machines.
