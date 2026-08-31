@@ -1,6 +1,6 @@
 # Kite
 
-A slim hybrid coding-agent harness: the **mini-swe-agent** control flow plus **tau**-style tools, providers, context, sessions, skills, and guardrails.
+Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harness that combines **mini-swe-agent** control flow with **tau**-style tools, providers, context, sessions, skills, and guardrails.
 
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -8,6 +8,25 @@ A slim hybrid coding-agent harness: the **mini-swe-agent** control flow plus **t
 [![Version](https://img.shields.io/badge/version-0.7.2-cyan.svg)](CHANGELOG.md)
 
 **Version:** 0.7.2
+
+**Keywords:** coding agent, AI code assistant, terminal coding assistant, agent CLI, SWE-agent style loop, repository automation, code review automation
+
+## Why Kite
+
+- Built for practical repo work in a terminal-first workflow
+- Combines planning + execution modes with guarded tool use
+- Works across providers and local project directories
+- Keeps context manageable with checkpoints and compaction
+
+## Table of contents
+
+- [Features](#features)
+- [Setup](#setup)
+- [Use Kite on any project (not just this repo)](#use-kite-on-any-project-not-just-this-repo)
+- [Tests](#tests)
+- [CLI](#cli)
+- [Architecture](#architecture)
+- [Design docs](#design-docs)
 
 ## Features
 
