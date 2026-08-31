@@ -471,6 +471,16 @@ REPL slash commands: builtins (`/plan` `/build` `/select` `/thinking` `/fast` `/
 9. ~~Git-stat `+N,-M` on write/edit~~ **done (0.6.6)**
 10. ~~npm/npx/GitHub skill install into `~/.kite/skills`~~ **done (0.6.6)**
 
+### Phase 2 — next harness batches
+
+| Batch | Scope | Key modules |
+|-------|--------|-------------|
+| **1. Lazy init + bench** | Defer REPL model resolve until first task; reuse harness across turns; `kite bench` cases for startup vs resolve vs prompt cache | `ui/repl.py`, `bench/suite.py` |
+| **2. Compaction / verification / fuzzy edits** | Fuzzy `edit` matching; safer tool-pair compaction; post-run verification hooks | `tools/coding.py`, `agent/verification.py` |
+| **3. Tool cards UI** | Coalesce stream deltas; in-flight + completed tool cards via `ToolResult` | `ui/render.py`, `models/litellm_model.py` |
+| **4. Repo map + ranking** | File/symbol index; inject top-N relevant paths on first task | `context/repo_map.py` |
+| **5. PowerShell tool** | First-class `powershell`/`pwsh` with Windows guardrails | `tools/coding.py`, `guardrails/sandbox.py` |
+
 ### Running tests
 
 ```bash
