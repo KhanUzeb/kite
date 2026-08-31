@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.markup import escape
@@ -799,6 +800,223 @@ class ChatSession:
     def _index(self) -> CommandIndex:
         return CommandIndex.load(self.cwd)
 
+    def _normalize_slash_cmd(self, cmd: str, arg: str) -> tuple[str, str]:
+        if cmd == "mode" and arg in {"plan", "build"}:
+            return arg, ""
+        if cmd == "new":
+            return "clear", arg
+        if cmd == "sessions" and not arg:
+            return "session", "list"
+        if cmd == "skill" and not arg:
+            return "skills", ""
+        return cmd, arg
+
+    def _slash_handlers(self) -> dict[str, Callable[[str], None]]:
+        login = self._login_provider
+        logout = self._logout_provider
+        clip = self._attach_clipboard
+        return {
+            "help": self._slash_help,
+            "plan": self._slash_plan,
+            "build": self._slash_build,
+            "approve": self._slash_approve,
+            "cost": self._slash_cost,
+            "expand": self._slash_expand,
+            "collapse": self._slash_collapse,
+            "trace": self._slash_trace,
+            "undo": self._slash_undo,
+            "clear": self._slash_clear,
+            "init": self._slash_init,
+            "login": login,
+            "signin": login,
+            "logout": logout,
+            "signout": logout,
+            "keys": self._show_keys,
+            "setup": self._slash_setup,
+            "model": self._model_cmd,
+            "select": self._slash_model_select,
+            "models": self._slash_model_list,
+            "provider": self._slash_model_provider,
+            "thinking": self._slash_thinking,
+            "fast": self._slash_fast,
+            "reasoning": self._slash_reasoning,
+            "effort": self._slash_reasoning,
+            "compact": self._compact_now,
+            "checkpoint": self._checkpoint_cmd,
+            "handoff": self._handoff_cmd,
+            "attach": self._attach_path,
+            "clip": clip,
+            "clipboard": clip,
+            "paste": clip,
+            "detach": self._detach,
+            "attachments": self._show_attachments,
+            "skills": self._show_skills,
+            "commands": self._handle_commands,
+            "plugins": self._handle_plugins,
+            "memory": self._slash_memory,
+            "semantic": self._show_semantic,
+            "episodic": self._show_episodic,
+            "remember": self._remember,
+            "forget": self._slash_forget,
+            "status": self._slash_status,
+            "resume": self._slash_resume,
+            "session": self._handle_session,
+            "home": self._slash_home,
+            "theme": self._set_theme,
+            "font": self._set_font,
+        }
+
+    def _slash_help(self, _arg: str) -> None:
+        self.console.print(help_text(self._index()), style="kite.muted")
+
+    def _slash_plan(self, _arg: str) -> None:
+        self.state.mode = AgentMode.PLAN
+        self.state.approval = ApprovalMode.READONLY
+        self._invalidate_harness()
+        self.console.print("[kite.plan]plan mode[/]  read-only — I'll suggest, not edit")
+
+    def _slash_build(self, _arg: str) -> None:
+        self.state.mode = AgentMode.BUILD
+        if self.state.approval is ApprovalMode.READONLY:
+            self.state.approval = ApprovalMode.APPROVE
+        self._invalidate_harness()
+        self.console.print("[kite.build]build mode[/]  edits are on")
+
+    def _slash_approve(self, arg: str) -> None:
+        try:
+            self.state.approval = ApprovalMode(arg or "approve")
+        except ValueError:
+            self.console.print("[kite.error]use /approve auto|approve|readonly[/]")
+            return
+        self._invalidate_harness()
+        self.console.print(f"[kite.pending]approval[/] {self.state.approval.value}")
+
+    def _slash_cost(self, _arg: str) -> None:
+        pct = f"{self.state.context_pct:.0%}" if self.state.context_pct is not None else "—"
+        cache = ""
+        if self.state.cache_hit_tokens:
+            cache = f"  ·  cache {self.state.cache_hit_ratio:.0%} ({self.state.cache_hit_tokens} tok)"
+        self.console.print(
+            f"${self.state.cost:.4f}  ·  ctx {self.state.tokens}/{self.state.window or '—'} ({pct}){cache}  ·  calls {self.state.n_calls}"
+        )
+
+    def _slash_expand(self, _arg: str) -> None:
+        self.state.expanded_all = not self.state.expanded_all
+        mode = "expanded" if self.state.expanded_all else "collapsed"
+        self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
+
+    def _slash_collapse(self, _arg: str) -> None:
+        self.state.expanded_all = False
+        self.console.print("[kite.muted]tool output collapsed[/]")
+
+    def _slash_trace(self, _arg: str) -> None:
+        if self.state.last_trace:
+            self.console.print(self.state.last_trace)
+        elif self.state.last_error:
+            self.console.print(self.state.last_error)
+        else:
+            self.console.print("[kite.muted]no traceback saved yet[/]")
+
+    def _slash_undo(self, _arg: str) -> None:
+        ok, msg = self.git.undo()
+        style = "kite.success" if ok else "kite.error"
+        self.console.print(f"[{style}]{msg}[/]")
+
+    def _slash_clear(self, _arg: str) -> None:
+        self._reset_chat()
+        self.console.print("[kite.muted]fresh start — conversation cleared[/]")
+
+    def _slash_init(self, _arg: str) -> None:
+        path = Path(self.cwd) / "KITE.md"
+        if path.exists():
+            self.console.print(f"[kite.pending]already exists[/] {path}")
+            return
+        path.write_text(KITE_MD_STUB, encoding="utf-8")
+        self.console.print(f"[kite.success]wrote[/] {path}")
+
+    def _slash_setup(self, _arg: str) -> None:
+        from kite.cli.setup import run_setup_wizard
+
+        code = run_setup_wizard(self.console)
+        if code == 0:
+            self._invalidate_harness()
+            self._sync_from_config()
+
+    def _slash_model_select(self, arg: str) -> None:
+        self._model_cmd(f"select {arg}".strip())
+
+    def _slash_model_list(self, arg: str) -> None:
+        self._model_cmd(f"list {arg}".strip())
+
+    def _slash_model_provider(self, arg: str) -> None:
+        self._model_cmd(f"provider {arg}".strip())
+
+    def _slash_thinking(self, arg: str) -> None:
+        self._set_reasoning(arg, command="thinking")
+
+    def _slash_fast(self, arg: str) -> None:
+        self._set_reasoning(arg, command="fast")
+
+    def _slash_reasoning(self, arg: str) -> None:
+        if not arg:
+            from kite.models.reasoning import reasoning_badge
+
+            badge = reasoning_badge(self.state.reasoning) or self.state.reasoning
+            info = self._reasoning_info()
+            extra = ""
+            if info is not None and info.can_both:
+                think = "|".join(info.thinking_levels())
+                fast = "|".join(info.fast_levels())
+                extra = f"  ·  /thinking {think}  /fast {fast}"
+            self.console.print(f"[kite.muted]effort[/]  {badge}{extra}")
+            return
+        self._set_reasoning(arg)
+
+    def _slash_memory(self, arg: str) -> None:
+        which = arg.strip().lower()
+        if which in {"semantic", "md", "markdown"}:
+            self._show_semantic()
+        elif which in {"episodic", "episodes", "sqlite"}:
+            self._show_episodic()
+        else:
+            self._show_memory()
+
+    def _slash_forget(self, arg: str) -> None:
+        if not arg:
+            self.console.print("[kite.error]/forget id or substring[/]")
+            return
+        removed = self.memory.forget(arg)
+        if not removed:
+            self.console.print("[kite.muted]no matching notes[/]")
+            return
+        for note in removed:
+            self.console.print(f"[kite.success]forgot[/] {note.scope}/{note.id}  {note.text}")
+
+    def _slash_status(self, _arg: str) -> None:
+        from kite.ui.theme import current_font, theme_label
+
+        sid = self._session_id or "—"
+        self.console.print(
+            f"{self.state.mode.value} · {self.state.approval.value} · "
+            f"{self.state.provider or '—'}/{self.state.model or '—'} · "
+            f"effort {self.state.reasoning} · "
+            f"theme {theme_label()} · font {current_font()} · "
+            f"${self.state.cost:.4f} · session {sid}"
+        )
+
+    def _slash_resume(self, arg: str) -> None:
+        if not arg:
+            self.console.print("[kite.error]/resume <session-id>[/]  ·  /sessions")
+            return
+        self._open_session(arg)
+
+    def _slash_home(self, _arg: str) -> None:
+        home = kite_home()
+        self.console.print(f"{home}")
+        for name in ("commands", "skills", "plugins", "memory", "sessions"):
+            self.console.print(f"  {home / name}")
+        self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")
+
     def _handle_slash(self, raw: str) -> bool:
         """Return False to quit."""
         parsed = resolve_slash(raw, self._index())
@@ -810,226 +1028,17 @@ class ChatSession:
         if parsed.kind == "unknown":
             self.console.print(f"[kite.error]{parsed.message}[/]")
             return True
+
         cmd, arg = parsed.command, parsed.arg
         cmd, arg = self._apply_legacy_slash(cmd, arg, parsed.legacy)
+        cmd, arg = self._normalize_slash_cmd(cmd, arg)
 
         if cmd == "quit":
             return False
-        if cmd == "help":
-            self.console.print(help_text(self._index()), style="kite.muted")
-            return True
-        if cmd == "plan" or (cmd == "mode" and arg == "plan"):
-            self.state.mode = AgentMode.PLAN
-            self.state.approval = ApprovalMode.READONLY
-            self._invalidate_harness()
-            self.console.print("[kite.plan]plan mode[/]  read-only — I'll suggest, not edit")
-            return True
-        if cmd == "build" or (cmd == "mode" and arg == "build"):
-            self.state.mode = AgentMode.BUILD
-            if self.state.approval is ApprovalMode.READONLY:
-                self.state.approval = ApprovalMode.APPROVE
-            self._invalidate_harness()
-            self.console.print("[kite.build]build mode[/]  edits are on")
-            return True
-        if cmd == "approve":
-            try:
-                self.state.approval = ApprovalMode(arg or "approve")
-            except ValueError:
-                self.console.print("[kite.error]use /approve auto|approve|readonly[/]")
-                return True
-            self._invalidate_harness()
-            self.console.print(f"[kite.pending]approval[/] {self.state.approval.value}")
-            return True
-        if cmd == "cost":
-            pct = f"{self.state.context_pct:.0%}" if self.state.context_pct is not None else "—"
-            cache = ""
-            if self.state.cache_hit_tokens:
-                cache = f"  ·  cache {self.state.cache_hit_ratio:.0%} ({self.state.cache_hit_tokens} tok)"
-            self.console.print(
-                f"${self.state.cost:.4f}  ·  ctx {self.state.tokens}/{self.state.window or '—'} ({pct}){cache}  ·  calls {self.state.n_calls}"
-            )
-            return True
-        if cmd == "expand":
-            self.state.expanded_all = not self.state.expanded_all
-            mode = "expanded" if self.state.expanded_all else "collapsed"
-            self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
-            return True
-        if cmd == "collapse":
-            self.state.expanded_all = False
-            self.console.print("[kite.muted]tool output collapsed[/]")
-            return True
-        if cmd == "trace":
-            if self.state.last_trace:
-                self.console.print(self.state.last_trace)
-            elif self.state.last_error:
-                self.console.print(self.state.last_error)
-            else:
-                self.console.print("[kite.muted]no traceback saved yet[/]")
-            return True
-        if cmd == "undo":
-            ok, msg = self.git.undo()
-            style = "kite.success" if ok else "kite.error"
-            self.console.print(f"[{style}]{msg}[/]")
-            return True
-        if cmd == "new":
-            cmd = "clear"
-        if cmd == "clear":
-            self._reset_chat()
-            self.console.print("[kite.muted]fresh start — conversation cleared[/]")
-            return True
-        if cmd == "init":
-            path = Path(self.cwd) / "KITE.md"
-            if path.exists():
-                self.console.print(f"[kite.pending]already exists[/] {path}")
-                return True
-            path.write_text(KITE_MD_STUB, encoding="utf-8")
-            self.console.print(f"[kite.success]wrote[/] {path}")
-            return True
-        if cmd in {"login", "signin"}:
-            self._login_provider(arg)
-            return True
-        if cmd in {"logout", "signout"}:
-            self._logout_provider(arg)
-            return True
-        if cmd == "keys":
-            self._show_keys()
-            return True
-        if cmd == "setup":
-            from kite.cli.setup import run_setup_wizard
 
-            code = run_setup_wizard(self.console)
-            if code == 0:
-                self._invalidate_harness()
-                self._sync_from_config()
-            return True
-        if cmd == "model":
-            self._model_cmd(arg)
-            return True
-        if cmd == "select":
-            self._model_cmd(f"select {arg}".strip())
-            return True
-        if cmd == "models":
-            self._model_cmd(f"list {arg}".strip())
-            return True
-        if cmd == "provider":
-            self._model_cmd(f"provider {arg}".strip())
-            return True
-        if cmd == "thinking":
-            self._set_reasoning(arg, command="thinking")
-            return True
-        if cmd == "fast":
-            self._set_reasoning(arg, command="fast")
-            return True
-        if cmd in {"reasoning", "effort"}:
-            if not arg:
-                from kite.models.reasoning import reasoning_badge
-
-                badge = reasoning_badge(self.state.reasoning) or self.state.reasoning
-                info = self._reasoning_info()
-                extra = ""
-                if info is not None and info.can_both:
-                    think = "|".join(info.thinking_levels())
-                    fast = "|".join(info.fast_levels())
-                    extra = f"  ·  /thinking {think}  /fast {fast}"
-                self.console.print(f"[kite.muted]effort[/]  {badge}{extra}")
-                return True
-            self._set_reasoning(arg)
-            return True
-        if cmd == "compact":
-            self._compact_now()
-            return True
-        if cmd == "checkpoint":
-            self._checkpoint_cmd(arg)
-            return True
-        if cmd == "handoff":
-            self._handoff_cmd(arg)
-            return True
-        if cmd == "attach":
-            self._attach_path(arg)
-            return True
-        if cmd in {"clip", "clipboard", "paste"}:
-            self._attach_clipboard()
-            return True
-        if cmd == "detach":
-            self._detach(arg)
-            return True
-        if cmd == "attachments":
-            self._show_attachments()
-            return True
-        if cmd == "skills" or (cmd == "skill" and not arg):
-            self._show_skills(arg)
-            return True
-        if cmd == "commands":
-            self._handle_commands(arg)
-            return True
-        if cmd == "plugins":
-            self._handle_plugins(arg)
-            return True
-        if cmd == "memory":
-            which = arg.strip().lower()
-            if which in {"semantic", "md", "markdown"}:
-                self._show_semantic()
-            elif which in {"episodic", "episodes", "sqlite"}:
-                self._show_episodic()
-            else:
-                self._show_memory()
-            return True
-        if cmd == "semantic":
-            self._show_semantic()
-            return True
-        if cmd == "episodic":
-            self._show_episodic()
-            return True
-        if cmd == "remember":
-            self._remember(arg)
-            return True
-        if cmd == "forget":
-            if not arg:
-                self.console.print("[kite.error]/forget id or substring[/]")
-                return True
-            removed = self.memory.forget(arg)
-            if not removed:
-                self.console.print("[kite.muted]no matching notes[/]")
-            else:
-                for note in removed:
-                    self.console.print(f"[kite.success]forgot[/] {note.scope}/{note.id}  {note.text}")
-            return True
-        if cmd == "status":
-            from kite.ui.theme import current_font, theme_label
-
-            sid = self._session_id or "—"
-            self.console.print(
-                f"{self.state.mode.value} · {self.state.approval.value} · "
-                f"{self.state.provider or '—'}/{self.state.model or '—'} · "
-                f"effort {self.state.reasoning} · "
-                f"theme {theme_label()} · font {current_font()} · "
-                f"${self.state.cost:.4f} · session {sid}"
-            )
-            return True
-        if cmd == "resume":
-            if not arg:
-                self.console.print("[kite.error]/resume <session-id>[/]  ·  /sessions")
-                return True
-            self._open_session(arg)
-            return True
-        if cmd in {"session", "sessions"}:
-            if cmd == "sessions" and not arg:
-                arg = "list"
-            self._handle_session(arg)
-            return True
-        if cmd == "home":
-            home = kite_home()
-            self.console.print(f"{home}")
-            for name in ("commands", "skills", "plugins", "memory", "sessions"):
-                self.console.print(f"  {home / name}")
-            self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")
-            return True
-        if cmd == "theme":
-            self._set_theme(arg)
-            return True
-        if cmd == "font":
-            self._set_font(arg)
-            return True
+        handler = self._slash_handlers().get(cmd)
+        if handler is not None:
+            handler(arg)
         return True
 
     def _reset_chat(self) -> None:
