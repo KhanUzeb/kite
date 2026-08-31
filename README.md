@@ -149,7 +149,7 @@ kite resume <session-id>
 kite resume <session-id> "also update the README"
 ```
 
-In the REPL: `/plan` `/build` `/login` `/keys` `/logout` `/undo` `/expand` `/collapse` `/compact` `/checkpoint` `/handoff` `/select` `/thinking` `/fast` `/effort` `/theme` `/font` `/attach` `/clip` `/skills` `/skills add` `/commit` `/explain` `/commands` `/plugins` `/memory` `/help`. Type `/` for the command menu. User skills show `~`. Ctrl+C interrupts the current turn (does not exit). Shortcuts: Ctrl+O expand tools · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
+In the REPL: `/help` for commands · `/plan` `/build` `/model select` `/checkpoint` `/handoff` · Ctrl+C interrupts the turn. Shortcuts: Ctrl+O expand · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
 
 Approval modes: `auto` · `approve` · `trust` · `readonly`. Set `KITE_LOADER=grid|dots|orbit|wave|spin` for terminal loader style.
 

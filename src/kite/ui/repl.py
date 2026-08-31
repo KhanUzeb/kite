@@ -543,6 +543,126 @@ class ChatSession:
         for item in self.attachments:
             self.console.print(f"  {item.source}  {item.name}  {item.kind}")
 
+    def _apply_legacy_slash(self, cmd: str, arg: str, legacy: str) -> tuple[str, str]:
+        if legacy == "provider":
+            return "model", f"provider {arg}".strip()
+        if legacy == "models":
+            return "model", f"list {arg}".strip()
+        if legacy == "select":
+            return "model", f"select {arg}".strip()
+        if legacy == "semantic":
+            return "memory", "semantic"
+        if legacy == "episodic":
+            return "memory", "episodic"
+        if legacy == "cost":
+            return "status", arg
+        if legacy == "collapse":
+            return "collapse", arg
+        if legacy in {"thinking", "fast"}:
+            return "reasoning", legacy if not arg else arg
+        return cmd, arg
+
+    def _model_cmd(self, arg: str) -> None:
+        token = arg.strip()
+        lower = token.lower()
+
+        if lower == "list" or lower.startswith("list "):
+            provider = token[4:].strip() if lower.startswith("list ") else (self.provider or self.state.provider or "").strip()
+            if not provider:
+                self.console.print("[kite.error]/model list <provider>[/]")
+                return
+            from kite.providers.list_models import list_models_for_provider
+
+            try:
+                result = list_models_for_provider(provider, refresh=True)
+            except KeyError as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            if not result.ok:
+                self.console.print(f"[kite.error]{result.error or 'no models'}[/]")
+                return
+            self._model_cache = [m.id for m in result.models]
+            shown = result.models[:80]
+            for m in shown:
+                win = f"  {m.context_window}" if m.context_window else ""
+                self.console.print(f"  {m.id}{win}")
+            extra = len(result.models) - len(shown)
+            if extra > 0:
+                self.console.print(f"[kite.muted]  … {extra} more[/]")
+            self.console.print("[kite.muted]  /model select[/] to pick one")
+            return
+
+        if lower == "select" or lower.startswith("select "):
+            from kite.providers.select import select_model_interactive, select_provider_interactive
+
+            provider = token[6:].strip() if lower.startswith("select ") else (self.provider or self.state.provider or "").strip()
+            if not provider:
+                picked = select_provider_interactive(self.console)
+                if not picked:
+                    return
+                provider = picked
+            code, picked_provider, model = select_model_interactive(self.console, provider, persist=True)
+            if code == 0 and picked_provider and model:
+                self.provider = picked_provider
+                self.model = model
+                self.state.provider = picked_provider
+                self.state.model = model
+                self._model_cache = []
+                self._model_resolved = True
+                self._invalidate_harness()
+            return
+
+        if lower.startswith("provider "):
+            name = token.split(None, 1)[1].strip()
+            if not name:
+                self.console.print("[kite.error]/model provider <name>[/]")
+                return
+            self.provider = name
+            self.state.provider = name
+            self._model_cache = []
+            self._model_resolved = False
+            self._invalidate_harness()
+            self.console.print(f"[kite.muted]provider[/]  {name}")
+            return
+
+        if token:
+            save = False
+            for suffix in (" --save", " --persist"):
+                if token.endswith(suffix):
+                    save = True
+                    token = token[: -len(suffix)].strip()
+                    break
+            if "/" in token:
+                self.provider, self.model = token.split("/", 1)
+            else:
+                self.model = token
+            self.state.provider = self.provider or self.state.provider
+            self.state.model = self.model or self.state.model
+            self._model_cache = []
+            self._model_resolved = True
+            self._invalidate_harness()
+            if save:
+                cfg = UserConfig.load()
+                cfg.default_provider = self.provider or cfg.default_provider
+                cfg.default_model = self.model or cfg.default_model
+                if self.provider:
+                    cfg.provider_defaults[self.provider] = self.model or cfg.default_model
+                cfg.save()
+                self.console.print(f"[kite.success]saved[/] {self.state.provider}/{self.state.model}")
+            else:
+                self.console.print(
+                    f"[kite.success]model[/] {self.state.provider}/{self.state.model}  "
+                    "[kite.muted](session — add --save to persist)[/]"
+                )
+            return
+
+        provider, model = self._effective_model_pair()
+        cfg = UserConfig.load()
+        self.console.print(
+            f"session {provider}/{model or '—'}  ·  config {cfg.default_provider}/{cfg.default_model or '—'}\n"
+            f"[kite.muted]/model list <provider>  ·  /model select  ·  /model groq/id --save[/]"
+        )
+
     def _ensure_prompt(self):
         if self._prompt is not None:
             return self._prompt
@@ -672,6 +792,7 @@ class ChatSession:
             self.console.print(f"[kite.error]{parsed.message}[/]")
             return True
         cmd, arg = parsed.command, parsed.arg
+        cmd, arg = self._apply_legacy_slash(cmd, arg, parsed.legacy)
 
         if cmd == "quit":
             return False
@@ -755,101 +876,7 @@ class ChatSession:
             self._show_keys()
             return True
         if cmd == "model":
-            if arg:
-                save = False
-                token = arg.strip()
-                for suffix in (" --save", " --persist"):
-                    if token.endswith(suffix):
-                        save = True
-                        token = token[: -len(suffix)].strip()
-                        break
-                if "/" in token:
-                    self.provider, self.model = token.split("/", 1)
-                else:
-                    self.model = token
-                self.state.provider = self.provider or self.state.provider
-                self.state.model = self.model or self.state.model
-                self._model_cache = []
-                self._model_resolved = True
-                self._invalidate_harness()
-                if save:
-                    cfg = UserConfig.load()
-                    cfg.default_provider = self.provider or cfg.default_provider
-                    cfg.default_model = self.model or cfg.default_model
-                    if self.provider:
-                        cfg.provider_defaults[self.provider] = self.model or cfg.default_model
-                    cfg.save()
-                    self.console.print(f"[kite.success]saved[/] {self.state.provider}/{self.state.model}")
-                else:
-                    self.console.print(
-                        f"[kite.success]model[/] {self.state.provider}/{self.state.model}  "
-                        "[kite.muted](session — add --save to persist)[/]"
-                    )
-                return True
-            provider, model = self._effective_model_pair()
-            cfg = UserConfig.load()
-            self.console.print(
-                f"session {provider}/{model or '—'}  ·  config {cfg.default_provider}/{cfg.default_model or '—'}  ·  /select"
-            )
-            return True
-        if cmd == "provider":
-            if arg:
-                self.provider = arg
-                self.state.provider = arg
-                self._model_cache = []
-                self._model_resolved = False
-                self._invalidate_harness()
-                self.console.print(f"[kite.muted]provider[/]  {arg}")
-                return True
-            current = self.provider or self.state.provider or "—"
-            names = "  ".join(self._provider_names()[:24])
-            extra = f"\n[kite.muted]{names}[/]" if names else ""
-            self.console.print(f"{current}  ·  /provider name{extra}")
-            return True
-        if cmd == "models":
-            provider = (arg or self.provider or self.state.provider or "").strip()
-            if not provider:
-                self.console.print("[kite.error]/models needs a provider  ·  /provider name[/]")
-                return True
-            from kite.providers.list_models import list_models_for_provider
-
-            try:
-                result = list_models_for_provider(provider, refresh=True)
-            except KeyError as e:
-                self.console.print(f"[kite.error]{e}[/]")
-                return True
-            if not result.ok:
-                self.console.print(f"[kite.error]{result.error or 'no models'}[/]")
-                return True
-            self._model_cache = [m.id for m in result.models]
-            shown = result.models[:80]
-            for m in shown:
-                win = f"  {m.context_window}" if m.context_window else ""
-                self.console.print(f"  {m.id}{win}")
-            extra = len(result.models) - len(shown)
-            if extra > 0:
-                self.console.print(f"[kite.muted]  … {extra} more[/]")
-            self.console.print("[kite.muted]  /select for interactive picker[/]")
-            return True
-        if cmd == "select":
-            from kite.providers.select import select_model_interactive, select_provider_interactive
-
-            provider = (arg or self.provider or self.state.provider or "").strip()
-            if not provider:
-                picked = select_provider_interactive(self.console)
-                if not picked:
-                    return True
-                provider = picked
-            code, picked_provider, model = select_model_interactive(self.console, provider, persist=True)
-            if code == 0 and picked_provider and model:
-                self.provider = picked_provider
-                self.model = model
-                self.state.provider = picked_provider
-                self.state.model = model
-                self._model_cache = []
-                self._model_resolved = True
-                self._invalidate_harness()
-                self._sync_from_config()
+            self._model_cmd(arg)
             return True
         if cmd == "thinking":
             self._set_reasoning(arg, command="thinking")

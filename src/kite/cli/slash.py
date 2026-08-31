@@ -214,20 +214,28 @@ def expand_prompt_slash(
 def help_text(index: CommandIndex) -> str:
     from kite.ui.commands import BUILTINS
 
+    labels = {
+        "chat": "chat",
+        "model": "model & keys",
+        "memory": "memory",
+        "extensions": "skills & commands",
+        "attach": "attachments",
+    }
     groups: dict[str, list] = {}
     for builtin in BUILTINS:
-        groups.setdefault(builtin.group or "session", []).append(builtin)
+        key = builtin.group or "chat"
+        groups.setdefault(key, []).append(builtin)
 
-    lines: list[str] = []
+    lines: list[str] = ["Type a task or /command. Legacy: /select /models /provider /cost still work.", ""]
     for group, items in groups.items():
-        if lines:
+        if len(lines) > 2:
             lines.append("")
-        lines.append(group)
+        lines.append(labels.get(group, group))
         for b in items:
             hint = f" {b.hint}" if b.hint else ""
             lines.append(f"  /{b.name:<14}{hint}  {b.description}".rstrip())
 
-    lines.extend(["", "skills & commands"])
+    lines.extend(["", "prompts (expand into your next turn)"])
     seen: set[str] = set()
     rows = sorted(index.prompt_specs(), key=lambda s: (s.source, s.name))
     from kite.ui.theme import glyph
