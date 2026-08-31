@@ -905,6 +905,15 @@ class ChatSession:
         if cmd == "model":
             self._model_cmd(arg)
             return True
+        if cmd == "select":
+            self._model_cmd(f"select {arg}".strip())
+            return True
+        if cmd == "models":
+            self._model_cmd(f"list {arg}".strip())
+            return True
+        if cmd == "provider":
+            self._model_cmd(f"provider {arg}".strip())
+            return True
         if cmd == "thinking":
             self._set_reasoning(arg, command="thinking")
             return True
