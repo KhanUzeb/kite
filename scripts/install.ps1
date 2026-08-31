@@ -4,7 +4,8 @@ param(
     [string]$Repo = "https://github.com/KhanUzeb/kite.git",
     [string]$Python = "3.12",
     [switch]$NoClone,
-    [switch]$NoDev
+    [switch]$NoDev,
+    [switch]$Setup
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +20,7 @@ Options:
   -Python VER      Python version for uv venv (default: 3.12)
   -NoClone         Skip git clone; install from the current directory
   -NoDev           Install runtime deps only (omit pytest dev extra)
+  -Setup           Run kite setup after install (interactive console only)
 
 Examples:
   git clone https://github.com/KhanUzeb/kite.git; cd kite; .\scripts\install.ps1
@@ -96,7 +98,14 @@ $envExample = Join-Path $Dir ".env.example"
 $envTarget = Join-Path $kiteHome ".env"
 if (-not (Test-Path $envTarget) -and (Test-Path $envExample)) {
     Copy-Item $envExample $envTarget
-    Write-Host "Created $envTarget - add your API keys there."
+    Write-Host "Created $envTarget (template) - run: kite setup"
+}
+python -c "from kite.config import ensure_home; ensure_home()" 2>$null
+
+if ($Setup -and [Console]::IsInputRedirected -eq $false) {
+    Write-Host ""
+    Write-Host "Starting kite setup (Ctrl+C to skip)..."
+    try { kite setup } catch { }
 }
 
 $venvScripts = Join-Path $Dir ".venv\Scripts"
