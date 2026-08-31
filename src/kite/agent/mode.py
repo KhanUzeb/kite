@@ -28,6 +28,9 @@ READONLY_TOOLS = frozenset(
     }
 )
 
+# Read-only tools safe to run concurrently in one model turn (deterministic order preserved).
+PARALLEL_SAFE_TOOLS = frozenset({"read", "grep", "glob", "ls"})
+
 # Mutating / side-effecting — gated, and blocked entirely in plan mode.
 MUTATING_TOOLS = frozenset({"write", "edit", "bash"})
 
