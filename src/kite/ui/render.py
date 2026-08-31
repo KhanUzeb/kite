@@ -513,6 +513,14 @@ class RunDisplay:
             self.console.print(render_compact_boundary(p.get("before", "?"), p.get("after", "?")))
             return
 
+        if kind == "checkpoint":
+            self._end_stream_line()
+            self.console.print(
+                f"[kite.muted]◇ checkpoint[/]  {p.get('label', '')}  "
+                f"[dim]{p.get('id', '')}[/]  ({p.get('tokens', '?')} tok)"
+            )
+            return
+
         if kind == "commit":
             self._end_stream_line()
             self._spin(False)
