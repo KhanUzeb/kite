@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from kite.config import UserConfig, kite_home
+from kite.config import UserConfig
+from kite.config.readiness import (
+    RECOMMENDED_PROVIDERS,
+    assess_setup_status,
+    config_path,
+    format_setup_banner,
+    is_fresh_install,
+    offer_setup_interactive,
+)
 from kite.providers.credentials import (
     configured_providers,
     env_file_path,
@@ -10,7 +18,7 @@ from kite.providers.credentials import (
     write_api_key,
 )
 from kite.providers.catalog import load_catalog
-from kite.providers.keys import api_key_env_names, api_key_for
+from kite.providers.keys import api_key_for
 from kite.providers.select import select_model_interactive, select_provider_interactive
 
 # Re-export for tests and legacy imports.
@@ -20,16 +28,30 @@ __all__ = [
     "write_api_key",
     "cmd_setup",
     "cmd_keys",
+    "run_setup_wizard",
+    "maybe_run_first_setup",
 ]
 
 
-def cmd_setup(args) -> int:
+def run_setup_wizard(console, *, provider: str | None = None) -> int:
+    """Interactive setup — provider, key, model. Returns exit code."""
     from rich.panel import Panel
 
-    from kite.ui.style import make_console
-
-    console = make_console(stderr=True)
     env_path = env_file_path()
+    status = assess_setup_status()
+
+    if status.ready and not is_fresh_install():
+        console.print(
+            Panel(
+                f"[green]Already configured[/]\n\n"
+                f"  Provider: [cyan]{status.default_provider}[/]\n"
+                f"  Model:    [cyan]{status.default_model or '(live default)'}[/]\n\n"
+                "[dim]Change anytime: /model select · /login provider · kite keys[/]",
+                title="kite setup",
+                border_style="green",
+            )
+        )
+        return 0
 
     console.print(
         Panel(
@@ -38,8 +60,11 @@ def cmd_setup(args) -> int:
             "  1. Add an API key to [cyan]~/.kite/.env[/] (owner-only permissions)\n"
             "  2. Pick a provider and model\n"
             "  3. Start chatting with [cyan]kite[/]\n\n"
-            "In the REPL later: [cyan]/login provider[/]  [cyan]/keys[/]  [cyan]/logout provider[/]\n\n"
-            f"Config: [dim]{UserConfig.load().path}[/]\n"
+            "[dim]Recommended free/local:[/] "
+            + " · ".join(f"[cyan]{p}[/]" for p in RECOMMENDED_PROVIDERS)
+            + "\n\n"
+            "In the REPL later: [cyan]/setup[/]  [cyan]/login groq[/]  [cyan]/keys[/]\n\n"
+            f"Config: [dim]{config_path()}[/]\n"
             f"Keys:   [dim]{env_path}[/]",
             title="kite setup",
             border_style="cyan",
@@ -47,36 +72,46 @@ def cmd_setup(args) -> int:
     )
 
     rows = configured_providers()
-    ready = [name for name, ok, _ in rows if ok or name == "ollama"]
+    ready = [name for name, ok, _ in rows if ok]
     if ready:
         console.print(f"[green]Keys found[/] for: {', '.join(ready)}")
     else:
         console.print("[yellow]No API keys detected yet[/]")
+        console.print(
+            "[dim]Tip:[/] [cyan]groq[/] has a generous free tier — "
+            "get a key at console.groq.com, then pick groq here."
+        )
 
-    provider = getattr(args, "provider", None) or select_provider_interactive(console)
-    if not provider:
-        console.print("[dim]Run [cyan]kite setup[/] or [cyan]/login provider[/] when ready.[/]")
+    picked = provider or select_provider_interactive(console)
+    if not picked:
+        console.print("[dim]Run [cyan]kite setup[/] or [cyan]/setup[/] in the REPL when ready.[/]")
         return 130
 
     catalog = load_catalog()
     try:
-        spec = catalog.get(provider)
+        spec = catalog.get(picked)
     except KeyError as e:
         console.print(f"[red]{e}[/]")
         return 2
 
-    if provider != "ollama" and spec.api_key_env and not api_key_for(spec):
-        code, msg, _ = login_provider(provider, set_default=True, console=console)
+    if picked != "ollama" and spec.api_key_env and not api_key_for(spec):
+        code, msg, _ = login_provider(picked, set_default=True, console=console)
         if code == 130:
             return 130
         if code != 0:
             console.print(f"[yellow]{msg}[/]")
-        else:
-            console.print(f"[green]{msg}[/]")
+            return code
+        console.print(f"[green]{msg}[/]")
 
-    code, picked_provider, model = select_model_interactive(console, provider, persist=True)
+    code, picked_provider, model = select_model_interactive(console, picked, persist=True)
     if code != 0 or not picked_provider or not model:
         return code or 130
+
+    final = assess_setup_status(provider=picked_provider, model=model)
+    if not final.ready:
+        for blocker in final.blockers:
+            console.print(f"[yellow]{blocker}[/]")
+        return 1
 
     console.print(
         Panel(
@@ -91,6 +126,21 @@ def cmd_setup(args) -> int:
         )
     )
     return 0
+
+
+def cmd_setup(args) -> int:
+    from kite.ui.style import make_console
+
+    console = make_console(stderr=True)
+    provider = getattr(args, "provider", None)
+    return run_setup_wizard(console, provider=provider)
+
+
+def maybe_run_first_setup(console) -> int | None:
+    """Offer setup on first bare `kite` launch. Returns exit code if setup ran, else None."""
+    if not offer_setup_interactive(console):
+        return None
+    return run_setup_wizard(console)
 
 
 def cmd_keys(args) -> int:
@@ -126,6 +176,14 @@ def cmd_keys(args) -> int:
     console.print(f"[dim]File:[/] {env_path}  [dim](owner read/write only)[/]")
     console.print("[dim]Add:[/] [cyan]kite keys --set groq[/]  or  [cyan]/login groq[/] in the REPL")
 
+    status = assess_setup_status()
+    if status.ready:
+        console.print(f"[green]Ready[/]  {status.default_provider}/{status.default_model}")
+    else:
+        console.print("[yellow]Not ready yet[/] — run [cyan]kite setup[/] or [cyan]/setup[/]")
+        for hint in status.hints[:2]:
+            console.print(f"[dim]{hint}[/]")
+
     if getattr(args, "set", None):
         code, msg, _ = login_provider(args.set, set_default=False, console=console)
         if code == 130:
@@ -135,4 +193,15 @@ def cmd_keys(args) -> int:
             console.print(f"[red]{msg}[/]")
             return code
         console.print(f"[green]{msg}[/]")
+        if needs_model_after_key(args.set):
+            console.print("[dim]Next:[/] [cyan]kite models -p {0} --select[/]".format(args.set))
     return 0
+
+
+def needs_model_after_key(provider: str) -> bool:
+    cfg = UserConfig.load()
+    if cfg.default_model and cfg.default_provider == provider:
+        return False
+    if cfg.provider_defaults.get(provider):
+        return False
+    return True

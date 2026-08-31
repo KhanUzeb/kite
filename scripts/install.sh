@@ -8,6 +8,7 @@ INSTALL_DIR="${KITE_INSTALL_DIR:-}"
 SKIP_CLONE=0
 DEV_EXTRAS=1
 VERIFY=0
+RUN_SETUP=0
 
 usage() {
   cat <<'EOF'
@@ -20,6 +21,7 @@ Options:
   --no-clone       Skip git clone; install from the current directory
   --no-dev         Install runtime deps only (omit pytest dev extra)
   --verify         Run pytest after install (dev / CI smoke check)
+  --setup          Run `kite setup` after install (interactive TTY only)
   -h, --help       Show this help
 
 Examples:
@@ -38,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     --no-clone) SKIP_CLONE=1; shift ;;
     --no-dev) DEV_EXTRAS=0; shift ;;
     --verify) VERIFY=1; shift ;;
+    --setup) RUN_SETUP=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -70,7 +73,7 @@ bootstrap_kite_home() {
   if [[ ! -f "${env_file}" ]] && [[ -f "${INSTALL_DIR}/.env.example" ]]; then
     cp "${INSTALL_DIR}/.env.example" "${env_file}"
     chmod 600 "${env_file}" 2>/dev/null || true
-    echo "Created ${env_file} — add your API keys there."
+    echo "Created ${env_file} (template) — run: kite setup"
   elif [[ -f "${env_file}" ]]; then
     chmod 600 "${env_file}" 2>/dev/null || true
   fi
@@ -137,6 +140,12 @@ if [[ "${VERIFY}" -eq 1 ]]; then
   pytest -q
 fi
 
+if [[ "${RUN_SETUP}" -eq 1 ]] && [[ -t 0 ]] && [[ -t 1 ]]; then
+  echo ""
+  echo "Starting kite setup (Ctrl+C to skip)..."
+  kite setup || true
+fi
+
 VENV_BIN="${INSTALL_DIR}/.venv/bin"
 cat <<EOF
 
@@ -158,14 +167,15 @@ Or target a directory explicitly:
 Make kite available in every new shell (add to ~/.bashrc or ~/.zshrc):
   export PATH="${VENV_BIN}:\$PATH"
 
-First run:
-  kite setup                 # guided API key + model picker
-  kite providers
+First run (recommended):
+  kite setup                 # guided API key + model picker (or ./scripts/install.sh --setup)
+  kite providers             # readiness + credential status
   kite models -p groq --select
   kite runtime-config
 
 REPL tips (after kite setup):
   /plan /build               plan vs apply mode
+  /setup /login              credentials and model
   /checkpoint /handoff       save or export session context
   /compact                   summarize older turns
   Ctrl+C                     interrupt current turn (REPL stays open)

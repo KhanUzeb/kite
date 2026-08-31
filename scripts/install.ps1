@@ -5,7 +5,8 @@ param(
     [string]$Python = "3.12",
     [switch]$NoClone,
     [switch]$NoDev,
-    [switch]$Verify
+    [switch]$Verify,
+    [switch]$Setup
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,6 +22,7 @@ Options:
   -NoClone         Skip git clone; install from the current directory
   -NoDev           Install runtime deps only (omit pytest dev extra)
   -Verify          Run pytest after install (dev / CI smoke check)
+  -Setup           Run kite setup after install (interactive console only)
 
 Examples:
   git clone https://github.com/KhanUzeb/kite.git; cd kite; .\scripts\install.ps1
@@ -49,7 +51,7 @@ function Bootstrap-KiteHome {
     $envTarget = Join-Path $HomeDir ".env"
     if (-not (Test-Path $envTarget) -and (Test-Path $envExample)) {
         Copy-Item $envExample $envTarget
-        Write-Host "Created $envTarget - add your API keys there."
+        Write-Host "Created $envTarget (template) - run: kite setup"
     }
     python -c "from kite.config import ensure_home; ensure_home()"
 }
@@ -126,6 +128,12 @@ if ($Verify) {
     pytest -q
 }
 
+if ($Setup -and [Console]::IsInputRedirected -eq $false) {
+    Write-Host ""
+    Write-Host "Starting kite setup (Ctrl+C to skip)..."
+    try { kite setup } catch { }
+}
+
 $venvScripts = Join-Path $Dir ".venv\Scripts"
 $readme = Join-Path $Dir "README.md"
 $commands = Join-Path $Dir "kite_commands.md"
@@ -136,30 +144,10 @@ Write-Host ""
 Write-Host "Activate this shell:"
 Write-Host "  . `"$activate`""
 Write-Host ""
-Write-Host "Use kite from any project directory (workspace = current directory):"
-Write-Host "  cd C:\path\to\your\project"
-Write-Host "  kite"
-Write-Host '  kite run "summarize this repo"'
-Write-Host "  kite chat --cwd C:\path\to\other\project"
-Write-Host ""
-Write-Host "Or target a directory explicitly:"
-Write-Host '  kite run --cwd C:\path\to\project "add tests"'
-Write-Host ""
-Write-Host "Make kite available in every new PowerShell session (add to `$PROFILE):"
-Write-Host "  `$env:Path = `"$venvScripts;`" + `$env:Path"
-Write-Host ""
-Write-Host "First run:"
-Write-Host "  kite setup                 # guided API key + model picker"
-Write-Host "  kite providers"
+Write-Host "First run (recommended):"
+Write-Host "  kite setup                 # guided API key + model picker (or .\scripts\install.ps1 -Setup)"
+Write-Host "  kite providers             # readiness + credential status"
 Write-Host "  kite models -p groq --select"
-Write-Host "  kite runtime-config"
-Write-Host ""
-Write-Host "REPL tips (after kite setup):"
-Write-Host "  /plan /build               plan vs apply mode"
-Write-Host "  /checkpoint /handoff       save or export session context"
-Write-Host "  /compact                   summarize older turns"
-Write-Host "  Ctrl+C                     interrupt current turn (REPL stays open)"
-Write-Host "  Ctrl+O / Ctrl+P / Ctrl+B   expand tools / plan / build"
 Write-Host ""
 Write-Host "Contributors: pytest  |  optional: .\scripts\install.ps1 -Verify"
 Write-Host ""

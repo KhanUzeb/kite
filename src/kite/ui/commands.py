@@ -39,6 +39,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("login", "Save API key (hidden)", hint="provider", aliases=("signin",), group="model"),
     BuiltinCommand("logout", "Remove API key", hint="provider", aliases=("signout",), group="model"),
     BuiltinCommand("keys", "Which provider keys are set", group="model"),
+    BuiltinCommand("setup", "First-run wizard (key + model)", group="model"),
     BuiltinCommand("reasoning", "Effort: auto|off|fast|thinking", hint="level", aliases=("effort",), group="model"),
     BuiltinCommand("memory", "Notes: semantic + episodic", hint="semantic|episodic", aliases=("mem",), group="memory"),
     BuiltinCommand("remember", "Append a note", hint="[user|project] text", group="memory"),
@@ -153,4 +154,3 @@ def parse_slash(raw: str) -> SlashResult:
     if cmd in CONTROL_COMMANDS or legacy:
         return SlashResult("handled", command=cmd, arg=arg, legacy=legacy)
     return SlashResult("unknown", command=cmd, arg=arg, message=f"unknown command /{original}  — type /help")
-
