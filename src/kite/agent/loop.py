@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import threading
 import time
 import traceback
@@ -15,7 +16,7 @@ from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.loop_guard import LoopGuard
 from kite.agent.verification import VerificationCollector
 from kite.memory.session import Session
-from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
+from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode, PARALLEL_SAFE_TOOLS
 from kite.prompts import load_prompt_template
 
 try:
@@ -89,6 +90,7 @@ class DefaultAgent:
         verification: VerificationCollector | None = None,
         audit=None,
         tool_progress_interval_seconds: float = 5.0,
+        cancel=None,
     ):
         self.model = model
         self.env = env
@@ -121,6 +123,7 @@ class DefaultAgent:
         self.verification = verification or VerificationCollector()
         self.audit = audit
         self.tool_progress_interval_seconds = tool_progress_interval_seconds
+        self.cancel = cancel
         self._cost_warned = False
 
         self.messages: list[dict] = []
@@ -138,6 +141,8 @@ class DefaultAgent:
 
     def request_interrupt(self) -> None:
         self._interrupt = True
+        if self.cancel is not None:
+            self.cancel.request()
         self._emit("interrupt")
 
     def _active_task_label(self) -> str:
@@ -262,7 +267,12 @@ class DefaultAgent:
                 self.model.format_message(role="user", content=content),
             )
 
+        old_sigint = signal.getsignal(signal.SIGINT)
         try:
+            def _on_sigint(signum, frame):
+                self.request_interrupt()
+
+            signal.signal(signal.SIGINT, _on_sigint)
             while True:
                 try:
                     self._emit("turn_start")
@@ -291,6 +301,7 @@ class DefaultAgent:
                 if self.messages and self.messages[-1].get("role") == "exit":
                     break
         finally:
+            signal.signal(signal.SIGINT, old_sigint)
             self.save(self.output_path)
             vsum = self.verification.summary()
             self._emit("artifact", **vsum)
@@ -359,112 +370,154 @@ class DefaultAgent:
                 }
             )
         outputs = []
-        for action in actions:
-            if self._interrupt:
-                outputs.append({"ok": False, "error": "interrupted", "output": "interrupted", "blocked": True})
-                break
-            tool = str(action.get("tool") or "")
-            args = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
-            if self.hooks is not None:
-                action = self.hooks.call("before_tool", action) or action
-                tool = str(action.get("tool") or tool)
-                args = action.get("arguments") if isinstance(action.get("arguments"), dict) else args
-            self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
-            self._tool_started_at = time.time()
+        parallel = len(actions) > 1 and all(
+            str(a.get("tool") or "") in PARALLEL_SAFE_TOOLS for a in actions
+        )
+        if parallel:
+            from concurrent.futures import ThreadPoolExecutor
 
-            try:
-                cmd = str(args.get("command") or "").strip()
-                submit_ok = (
-                    tool == "bash"
-                    and "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in cmd
-                    and "&&" not in cmd
-                )
-                plan_block = (
-                    self.mode is AgentMode.PLAN
-                    and tool in MUTATING_TOOLS
-                    and tool != "todo_write"
-                    and not submit_ok
-                )
-                if plan_block:
-                    out = _blocked(
-                        "blocked in plan mode — /build to apply edits",
-                        "blocked in plan mode — switch to build to mutate the workspace",
-                    )
-                else:
-                    out = self._run_gated(tool, args, action)
-            except Submitted:
-                self._emit("tool_end", tool=tool, ok=True, preview="submitted", output="", error="")
-                raise
+            prepared: list[tuple[str, dict, dict]] = []
+            for action in actions:
+                if self._interrupt:
+                    break
+                prepared.append(self._prepare_action(action))
+            for tool, args, _action in prepared:
+                self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
+            started = time.time()
 
-            preview = (out.get("output") or out.get("error") or "")[:120]
-            duration_ms = None
-            if self._tool_started_at is not None:
-                duration_ms = int((time.time() - self._tool_started_at) * 1000)
-                self._tool_started_at = None
-            flat = preview.replace("\n", " ")
-            structured = {
-                "tool": tool,
-                "ok": out.get("ok", True),
-                "blocked": out.get("blocked", False),
-                "duration_ms": duration_ms,
-                "exit_code": out.get("returncode"),
-                "preview": flat,
-            }
-            if tool == "bash":
-                structured["command"] = str(args.get("command") or "")
-            elif tool in {"read", "write", "edit", "grep", "glob", "ls"}:
-                structured["target"] = str(args.get("path") or args.get("pattern") or args.get("command") or "")
-            elif tool in {"websearch", "webfetch", "webcrawl"}:
-                structured["target"] = str(args.get("query") or args.get("url") or "")
-            self._emit(
-                "tool_end",
-                tool=tool,
-                ok=out.get("ok", True),
-                blocked=out.get("blocked", False),
-                preview=flat,
-                output=out.get("output") or "",
-                error=out.get("error") or "",
-                diff=out.get("diff") or "",
-                path=out.get("path") or args.get("path"),
-                duration_ms=duration_ms,
-                structured=structured,
-                secrets_redacted=out.get("secrets_redacted"),
-            )
-            if tool == "todo_write" and out.get("items") is not None:
-                self._emit("todo", items=out["items"])
-                if out.get("ok") and self.checkpoints is not None:
-                    items = out["items"]
-                    has_in_progress = any(
-                        isinstance(item, dict) and item.get("status") == "in_progress"
-                        for item in items
-                    )
-                    self._emit_commit(
-                        self.checkpoints.flush_if_task_changed(
-                            self._active_task_label(),
-                            has_in_progress=has_in_progress,
-                        )
-                    )
-            if (
-                out.get("ok")
-                and tool in {"write", "edit"}
-                and out.get("path")
-            ):
-                self._note_edit(str(out["path"]))
-            loop_warn = self._loop_guard.record(tool, args)
-            if loop_warn:
-                self._emit("loop_warning", message=loop_warn, tool=tool)
-                existing = str(out.get("output") or out.get("error") or "")
-                out = {**out, "output": f"{loop_warn}\n\n{existing}".strip(), "loop_warning": True}
-            self.verification.on_tool_end(tool, args, out)
-            if self.hooks is not None:
-                self.hooks.call("after_tool", out, tool=tool, args=args)
-            if self.audit is not None:
-                self.audit.log_tool(tool, ok=bool(out.get("ok")), duration_ms=duration_ms)
-            outputs.append(out)
+            def _worker(item: tuple[int, tuple[str, dict, dict]]) -> tuple[int, str, dict, dict, dict]:
+                idx, (tool, args, action) = item
+                return idx, tool, args, action, self._invoke_tool(tool, args, action)
+
+            results: dict[int, tuple[str, dict, dict, dict]] = {}
+            with ThreadPoolExecutor(max_workers=min(4, len(prepared))) as pool:
+                for row in pool.map(_worker, list(enumerate(prepared))):
+                    idx, tool, args, action, out = row
+                    results[idx] = (tool, args, action, out)
+            for idx in range(len(prepared)):
+                if idx not in results:
+                    continue
+                tool, args, action, out = results[idx]
+                duration_ms = int((time.time() - started) * 1000)
+                self._after_tool(tool, args, action, out, duration_ms, outputs)
+        else:
+            for action in actions:
+                if self._interrupt:
+                    outputs.append({"ok": False, "error": "interrupted", "output": "interrupted", "blocked": True})
+                    break
+                tool, args, action = self._prepare_action(action)
+                self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
+                self._tool_started_at = time.time()
+                try:
+                    out = self._invoke_tool(tool, args, action)
+                except Submitted:
+                    self._emit("tool_end", tool=tool, ok=True, preview="submitted", output="", error="")
+                    raise
+                duration_ms = None
+                if self._tool_started_at is not None:
+                    duration_ms = int((time.time() - self._tool_started_at) * 1000)
+                    self._tool_started_at = None
+                self._after_tool(tool, args, action, out, duration_ms, outputs)
         obs = self.add_messages(*self.model.format_observation_messages(message, outputs))
         if self._interrupt:
             raise _user_interrupt()
         return obs
+
+    def _prepare_action(self, action: dict) -> tuple[str, dict, dict]:
+        tool = str(action.get("tool") or "")
+        args = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
+        if self.hooks is not None:
+            action = self.hooks.call("before_tool", action) or action
+            tool = str(action.get("tool") or tool)
+            args = action.get("arguments") if isinstance(action.get("arguments"), dict) else args
+        return tool, args, action
+
+    def _invoke_tool(self, tool: str, args: dict, action: dict) -> dict:
+        cmd = str(args.get("command") or "").strip()
+        submit_ok = (
+            tool == "bash"
+            and "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in cmd
+            and "&&" not in cmd
+        )
+        plan_block = (
+            self.mode is AgentMode.PLAN
+            and tool in MUTATING_TOOLS
+            and tool != "todo_write"
+            and not submit_ok
+        )
+        if plan_block:
+            return _blocked(
+                "blocked in plan mode — /build to apply edits",
+                "blocked in plan mode — switch to build to mutate the workspace",
+            )
+        return self._run_gated(tool, args, action)
+
+    def _after_tool(
+        self,
+        tool: str,
+        args: dict,
+        action: dict,
+        out: dict,
+        duration_ms: int | None,
+        outputs: list[dict],
+    ) -> None:
+        preview = (out.get("output") or out.get("error") or "")[:120]
+        flat = preview.replace("\n", " ")
+        structured = {
+            "tool": tool,
+            "ok": out.get("ok", True),
+            "blocked": out.get("blocked", False),
+            "duration_ms": duration_ms,
+            "exit_code": out.get("returncode"),
+            "preview": flat,
+        }
+        if tool == "bash":
+            structured["command"] = str(args.get("command") or "")
+        elif tool in {"read", "write", "edit", "grep", "glob", "ls"}:
+            structured["target"] = str(args.get("path") or args.get("pattern") or args.get("command") or "")
+        elif tool in {"websearch", "webfetch", "webcrawl"}:
+            structured["target"] = str(args.get("query") or args.get("url") or "")
+        self._emit(
+            "tool_end",
+            tool=tool,
+            ok=out.get("ok", True),
+            blocked=out.get("blocked", False),
+            preview=flat,
+            output=out.get("output") or "",
+            error=out.get("error") or "",
+            diff=out.get("diff") or "",
+            path=out.get("path") or args.get("path"),
+            duration_ms=duration_ms,
+            structured=structured,
+            secrets_redacted=out.get("secrets_redacted"),
+        )
+        if tool == "todo_write" and out.get("items") is not None:
+            self._emit("todo", items=out["items"])
+            if out.get("ok") and self.checkpoints is not None:
+                items = out["items"]
+                has_in_progress = any(
+                    isinstance(item, dict) and item.get("status") == "in_progress"
+                    for item in items
+                )
+                self._emit_commit(
+                    self.checkpoints.flush_if_task_changed(
+                        self._active_task_label(),
+                        has_in_progress=has_in_progress,
+                    )
+                )
+        if out.get("ok") and tool in {"write", "edit"} and out.get("path"):
+            self._note_edit(str(out["path"]))
+        loop_warn = self._loop_guard.record(tool, args)
+        if loop_warn:
+            self._emit("loop_warning", message=loop_warn, tool=tool)
+            existing = str(out.get("output") or out.get("error") or "")
+            out = {**out, "output": f"{loop_warn}\n\n{existing}".strip(), "loop_warning": True}
+        self.verification.on_tool_end(tool, args, out)
+        if self.hooks is not None:
+            self.hooks.call("after_tool", out, tool=tool, args=args)
+        if self.audit is not None:
+            self.audit.log_tool(tool, ok=bool(out.get("ok")), duration_ms=duration_ms)
+        outputs.append(out)
 
     def _run_gated(self, tool: str, args: dict, action: dict) -> dict:
         if self.approver and tool in MUTATING_TOOLS:
@@ -497,6 +550,9 @@ class DefaultAgent:
         start = time.monotonic()
         interval = max(0.5, float(self.tool_progress_interval_seconds))
         while not done.wait(timeout=interval):
+            if self._interrupt:
+                if self.cancel is not None:
+                    self.cancel.request()
             elapsed = int(time.monotonic() - start)
             hint = ""
             if tool == "bash":
