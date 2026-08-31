@@ -131,12 +131,30 @@ class GuardrailPolicy:
         """Return (redacted_text, count_of_redactions)."""
         return redact_secrets(text)
 
+    def check_set_cwd(self, path: str) -> GuardrailVerdict:
+        """Allow set_cwd outside project root; sandbox follows the new execution cwd."""
+        if not self.config.enabled:
+            return GuardrailVerdict(True)
+        token = str(path or "").strip()
+        if not token:
+            return GuardrailVerdict(False, "path required")
+        try:
+            if self.execution is not None:
+                resolved = self.execution.resolve_path(token)
+            else:
+                resolved = resolve_in_workspace(token, self.cwd)
+        except OSError as e:
+            return GuardrailVerdict(False, f"invalid path: {e}")
+        if is_protected(resolved):
+            return GuardrailVerdict(False, f"refusing to set cwd to protected path: {resolved}")
+        return GuardrailVerdict(True)
+
     def check_tool_call(self, tool: str, arguments: dict[str, Any]) -> GuardrailVerdict:
         if not self.config.enabled:
             return GuardrailVerdict(True)
         args = dict(arguments)
 
-        if tool in {"read", "write", "edit", "grep", "glob", "ls", "set_cwd"}:
+        if tool in {"read", "write", "edit", "grep", "glob", "ls"}:
             path_key = "path" if "path" in args else ("root" if "root" in args else None)
             if path_key and args.get(path_key):
                 v = self.check_path(str(args[path_key]), for_write=tool in {"write", "edit"})
@@ -158,7 +176,7 @@ class GuardrailPolicy:
             return GuardrailVerdict(True, rewritten_args=args)
 
         if tool == "set_cwd":
-            v = self.check_path(str(args.get("path") or ""))
+            v = self.check_set_cwd(str(args.get("path") or ""))
             if not v.allowed:
                 return v
             return GuardrailVerdict(True, rewritten_args=args)
