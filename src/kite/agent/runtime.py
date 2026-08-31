@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from kite.agent.cancel import CancelToken
+from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode, tools_for_mode

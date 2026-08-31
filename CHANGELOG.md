@@ -2,23 +2,30 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 0.7 harness (merge PRs #7–#12)
+## [0.7.0] - 2026-08-31
 
 ### Added
-- `kite bench` — repeatable harness timing (startup, context, tools; no live LLM).
-- `set_cwd` tool — session execution cwd separate from project root.
-- `[guardrails] execution_mode` — `restricted` (default) or `host`.
-- Structured `ToolResult` contract and tool metadata for env normalization.
-- Bash cancellation and parallel execution of safe read-only tools.
-- Context checkpoints — auto snapshot at ~72% context; `/checkpoint save|list|restore|show`.
-- `/handoff` — export `.kite/handoff-<session>.md` + `.json` for another agent.
-- Preserved-fact compaction and shared `run_compaction()` path.
-- Bundled `/handoff` prompt command; expanded `system.md` and role/mode prompts.
-- `scripts/bump_release.sh` for post-merge version bumps.
+- **`kite bench`** — repeatable harness timing (CLI import, config, context, tools, prompt assembly) with `--json`, `--save`, and `--compare` for BEFORE/AFTER deltas.
+- **`set_cwd` tool** — session execution cwd separate from project root; file tools and bash resolve relative paths from execution cwd.
+- **`[guardrails] execution_mode`** — `restricted` (default sandbox) or `host` (broader filesystem access; protected paths still blocked).
+- **`ToolResult` contract** — structured tool outcomes and scheduling metadata (`tools/metadata.py`).
+- **Parallel read-only tools** — safe fan-out for concurrent `read`/`grep`/`glob`/`ls` in one model turn.
+- **Bash cancellation** — Ctrl+C / interrupt propagates to long-running bash subprocesses (`CancelToken`).
+- **Context checkpoints** — auto snapshot at ~72% context; `/checkpoint save|list|restore|show` in the REPL.
+- **`/handoff`** — export `.kite/handoff-<session>.md` + `.json` for another agent or machine.
+- **Preserved-fact compaction** — shared `run_compaction()` path; facts block survives summarization.
+- **Lazy REPL init** — defer `resolve_model` until first task; reuse `Harness` across turns when config unchanged.
+- **Bundled `/handoff` prompt**; expanded `system.md`, mode/role prompts, and install scripts.
+- **`scripts/bump_release.sh`** — version bump + CHANGELOG stub + annotated tag helper.
 
 ### Changed
-- System prompt documents execution context, structured finish format, and session continuity.
+- Guardrails follow live execution cwd; host mode allows explicit external paths when configured.
+- System prompt documents execution context, structured finish format (Done/Changed/Verification), and session continuity.
+- Install scripts bootstrap `~/.kite/` (including `checkpoints/`), support `--verify` / `-Verify` for post-install pytest.
 - Docs refresh: `CONTEXT.md`, `kite_commands.md`, `AGENTS.md`, `architecture.md`, design specs.
+
+### Fixed
+- Missing `HarnessSlots` / `HookBus` imports in `agent/runtime.py` after merge.
 
 ## [0.6.8] - 2026-08-30
 
