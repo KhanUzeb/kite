@@ -8,7 +8,7 @@ description: Systematic debugging of failing tests, stack traces, or unexpected 
 Use when something is broken and the cause is unclear.
 
 ## Steps
-1. Reproduce: capture the exact command and full error output.
+1. Reproduce: capture the exact command and full error output. Use `set_cwd` if the failure is in a subdirectory or monorepo package.
 2. Localize: identify the failing file/function from the stack trace.
 3. Hypothesize: list 1–3 likely causes; pick the cheapest check first.
 4. Instrument: read relevant code; add temporary prints only if needed.

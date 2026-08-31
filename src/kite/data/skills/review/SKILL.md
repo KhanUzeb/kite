@@ -19,3 +19,5 @@ Use when asked to review a diff or PR-like change set.
 - Summary (2–4 sentences)
 - Findings (ordered by severity)
 - Open questions / residual risk
+
+If the review spans a long session, suggest `/handoff` so another agent can continue with your findings captured.
