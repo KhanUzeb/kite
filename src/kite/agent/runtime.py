@@ -15,6 +15,7 @@ from kite.agent.role import AgentRole, parse_role, tools_for_role
 from kite.cli.slash import expand_prompt_slash
 from kite.config import AgentRuntimeConfig, UserConfig, ensure_home, load_runtime_config
 from kite.context.discovery import gather_project_context
+from kite.context.workspace import ExecutionMode, ExecutionSession, WorkspaceContext
 from kite.env.local import LocalEnvironment
 from kite.guardrails import GuardrailPolicy
 from kite.memory.session import Session, create_session, load_session
@@ -204,9 +205,15 @@ class AgentRuntime:
         mem = self.slots.memory or MemoryStore.open(cwd)
         self.hooks.fire("before_run", task=task, cwd=cwd)
 
+        workspace = WorkspaceContext.discover(
+            cwd,
+            execution_mode=ExecutionMode.HOST if rcfg.guardrails.host_access() else ExecutionMode.RESTRICTED,
+        )
+        execution = ExecutionSession(workspace)
+
         guard = None
         if rcfg.guardrails.enabled and not self.options.no_guardrails:
-            guard = GuardrailPolicy(rcfg.guardrails, cwd)
+            guard = GuardrailPolicy(rcfg.guardrails, cwd, execution=execution)
 
         try:
             mode = AgentMode(self.options.mode or "build")
@@ -267,6 +274,7 @@ class AgentRuntime:
                 todos=self.todos,
                 memory=mem,
                 orchestrator=orchestrator,
+                execution=execution,
             )
         if self.extra_tools:
             tools = list(tools) + list(self.extra_tools)
@@ -331,6 +339,7 @@ class AgentRuntime:
             out_path = ensure_home() / "trajectories" / f"{session.id}.json"
 
         instance = assemble_instance_prompt(config=rcfg, task="{task}")
+        system = system.rstrip() + "\n\n" + workspace.render_for_prompt() + "\n"
 
         summarizer = self.slots.summarizer
         if summarizer is None and not self.options.no_compact:
