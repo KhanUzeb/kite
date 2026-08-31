@@ -37,6 +37,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("login", "Save provider API key to ~/.kite/.env (hidden input)", hint="provider", aliases=("signin",), group="model"),
     BuiltinCommand("logout", "Remove provider API key from ~/.kite/.env", hint="provider", aliases=("signout",), group="model"),
     BuiltinCommand("keys", "Show which provider API keys are set", group="model"),
+    BuiltinCommand("setup", "First-run wizard (API key + model)", group="model"),
     BuiltinCommand("model", "Show or set provider/model", hint="provider/id", group="model"),
     BuiltinCommand("models", "List live models for the current provider", group="model"),
     BuiltinCommand("select", "Interactive model picker (saved to ~/.kite/config.toml)", hint="[provider]", group="model"),

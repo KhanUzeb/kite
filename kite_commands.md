@@ -81,6 +81,7 @@ These never go to the model.
 | `/select [provider]` | Interactive model picker (saved to config) |
 | `/models [provider]` | List live models for the current (or named) provider |
 | `/provider [name]` | Show or set provider |
+| `/setup` | First-run wizard — API key + model (same as `kite setup`) |
 | `/login [provider]` | Save API key to `~/.kite/.env` (hidden input, owner-only file) |
 | `/logout provider` | Remove that provider's key from `~/.kite/.env` |
 | `/keys` | Show which provider keys are set |

@@ -104,13 +104,15 @@ class ChatSession:
             return provider or "", model or ""
 
     def _startup_banner(self) -> None:
-        from kite.providers.resolve import missing_credentials, resolve_model
+        from kite.config.readiness import assess_setup_status, format_setup_banner, is_fresh_install
+        from kite.providers.resolve import missing_credentials, missing_model, resolve_model
 
         cfg = UserConfig.load()
+        resolved = None
         try:
             resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
-            cred = missing_credentials(resolved)
-            model_line = f"{resolved.provider}/{resolved.model}"
+            cred = missing_credentials(resolved) or missing_model(resolved)
+            model_line = f"{resolved.provider}/{resolved.model or '—'}"
         except Exception as e:
             cred = str(e)
             model_line = f"{self.provider or cfg.default_provider or '—'}/{self.model or cfg.default_model or '—'}"
@@ -124,16 +126,29 @@ class ChatSession:
         banner.append("  ·  ", style="kite.muted")
         banner.append("Ctrl+O tools", style="kite.muted")
         banner.append("  ·  ", style="kite.muted")
-        banner.append("/login", style="kite.muted")
+        banner.append("/setup", style="kite.muted")
         self.console.print(banner)
 
-        if cred:
+        status = assess_setup_status(provider=self.provider, model=self.model)
+        if is_fresh_install():
             self.console.print(
-                f"[kite.pending]⚠[/]  [kite.muted]No API key — [kite.brand]/login {resolved.provider if 'resolved' in locals() else cfg.default_provider}[/] "
-                f"or [kite.brand]kite setup[/][/]"
+                "[kite.brand]Welcome![/]  First time here? Run [kite.brand]/setup[/] "
+                "or [kite.brand]kite setup[/] to add an API key and pick a model."
+            )
+        elif not status.ready:
+            note = format_setup_banner(status)
+            if note:
+                self.console.print(note)
+        elif cred:
+            prov = resolved.provider if resolved else cfg.default_provider
+            self.console.print(
+                f"[kite.pending]⚠[/]  [kite.muted]Not ready — [kite.brand]/login {prov}[/] "
+                f"or [kite.brand]/setup[/][/]"
             )
         elif not cfg.default_model:
-            self.console.print("[kite.muted]Tip:[/]  [kite.brand]/select[/] or [kite.brand]kite models -p groq --select[/]")
+            self.console.print(
+                "[kite.muted]Tip:[/]  [kite.brand]/select[/] or [kite.brand]kite models -p groq --select[/]"
+            )
 
     def _flash_note(self, text: str) -> None:
         self.state.flash = text
@@ -597,6 +612,14 @@ class ChatSession:
             return True
         if cmd == "keys":
             self._show_keys()
+            return True
+        if cmd == "setup":
+            from kite.cli.setup import run_setup_wizard
+
+            code = run_setup_wizard(self.console)
+            if code == 0:
+                self._invalidate_harness()
+                self._sync_from_config()
             return True
         if cmd == "model":
             if arg:

@@ -98,17 +98,28 @@ def select_provider_interactive(console: Console) -> str | None:
     from rich.table import Table
 
     from kite.config import UserConfig
+    from kite.config.readiness import RECOMMENDED_PROVIDERS
     from kite.providers.catalog import load_catalog
     from kite.providers.keys import api_key_env_names, api_key_for
 
     catalog = load_catalog()
     cfg = UserConfig.load()
     rows = list(catalog.list())
+
+    def _sort_key(spec):
+        name = spec.name
+        has_key = name == "ollama" or bool(api_key_for(spec))
+        rec = RECOMMENDED_PROVIDERS.index(name) if name in RECOMMENDED_PROVIDERS else 99
+        return (0 if has_key else 1, rec, name)
+
+    rows.sort(key=_sort_key)
+
     table = Table(title="Select a provider")
     table.add_column("#", style="cyan", justify="right")
     table.add_column("name")
     table.add_column("key")
     table.add_column("env var")
+    table.add_column("note")
     for i, spec in enumerate(rows, start=1):
         mark = " *" if spec.name == cfg.default_provider else ""
         if spec.name == "ollama":
@@ -118,9 +129,14 @@ def select_provider_interactive(console: Console) -> str | None:
         else:
             key = "—"
         env = spec.api_key_env or "—"
-        table.add_row(str(i), spec.name + mark, key, env)
+        note = ""
+        if spec.name in RECOMMENDED_PROVIDERS:
+            note = "recommended"
+        if spec.name in RECOMMENDED_PROVIDERS and key == "missing":
+            note = "free tier" if spec.name != "ollama" else "local"
+        table.add_row(str(i), spec.name + mark, key, env, note)
     console.print(table)
-    console.print("[dim]* = default provider[/]")
+    console.print("[dim]* = default · keys and recommended providers listed first[/]")
 
     try:
         raw = console.input("Pick provider (number or name): ").strip()

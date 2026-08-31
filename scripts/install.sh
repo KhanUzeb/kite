@@ -7,6 +7,7 @@ PYTHON="${KITE_PYTHON:-3.12}"
 INSTALL_DIR="${KITE_INSTALL_DIR:-}"
 SKIP_CLONE=0
 DEV_EXTRAS=1
+RUN_SETUP=0
 
 usage() {
   cat <<'EOF'
@@ -18,6 +19,7 @@ Options:
   --python VER     Python version for uv venv (default: 3.12)
   --no-clone       Skip git clone; install from the current directory
   --no-dev         Install runtime deps only (omit pytest dev extra)
+  --setup          Run `kite setup` after install (interactive TTY only)
   -h, --help       Show this help
 
 Examples:
@@ -34,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --python) PYTHON="$2"; shift 2 ;;
     --no-clone) SKIP_CLONE=1; shift ;;
     --no-dev) DEV_EXTRAS=0; shift ;;
+    --setup) RUN_SETUP=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -109,7 +112,15 @@ KITE_HOME="${KITE_HOME:-${HOME}/.kite}"
 mkdir -p "${KITE_HOME}"
 if [[ ! -f "${KITE_HOME}/.env" ]] && [[ -f "${INSTALL_DIR}/.env.example" ]]; then
   cp "${INSTALL_DIR}/.env.example" "${KITE_HOME}/.env"
-  echo "Created ${KITE_HOME}/.env — add your API keys there."
+  chmod 600 "${KITE_HOME}/.env" 2>/dev/null || true
+  echo "Created ${KITE_HOME}/.env (template) — run: kite setup"
+fi
+python -c "from kite.config import ensure_home; ensure_home()" 2>/dev/null || true
+
+if [[ "${RUN_SETUP}" -eq 1 ]] && [[ -t 0 ]] && [[ -t 1 ]]; then
+  echo ""
+  echo "Starting kite setup (Ctrl+C to skip)..."
+  kite setup || true
 fi
 
 VENV_BIN="${INSTALL_DIR}/.venv/bin"
@@ -132,9 +143,9 @@ Or target a directory explicitly:
 Make kite available in every new shell (add to ~/.bashrc or ~/.zshrc):
   export PATH="${VENV_BIN}:\$PATH"
 
-Next steps:
-  kite setup                 # guided API key + model picker
-  kite providers
+Next steps (recommended):
+  kite setup                 # guided API key + model picker (or ./scripts/install.sh --setup)
+  kite providers             # readiness + credential status
   kite models -p groq --select
   kite runtime-config
 

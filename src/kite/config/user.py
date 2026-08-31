@@ -57,6 +57,11 @@ class UserConfig:
     theme: str = ""
     font: str = ""
 
+    @property
+    def path(self) -> Path:
+        """Resolved path to ~/.kite/config.toml (file may not exist yet)."""
+        return kite_home() / "config.toml"
+
     @classmethod
     def load(cls) -> UserConfig:
         ensure_home()

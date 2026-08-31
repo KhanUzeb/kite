@@ -279,13 +279,14 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 def cmd_providers(_args: argparse.Namespace) -> int:
     from rich.table import Table
 
-    from kite.config import UserConfig
+    from kite.config import UserConfig, assess_setup_status
     from kite.providers.catalog import load_catalog
     from kite.providers.keys import api_key_for
 
     console = _console()
     catalog = load_catalog()
     cfg = UserConfig.load()
+    status = assess_setup_status()
     table = Table(title="Providers")
     table.add_column("name")
     table.add_column("selected model")
@@ -308,6 +309,12 @@ def cmd_providers(_args: argparse.Namespace) -> int:
         table.add_row(p.name + mark, selected, p.api_key_env or "-", key_ok, p.docs_url[:40])
     console.print(table)
     console.print("[dim]* = default provider · models fetched live via API key[/]")
+    if status.ready:
+        console.print(f"[green]Ready[/]  {status.default_provider}/{status.default_model}")
+    else:
+        console.print("[yellow]Not ready[/] — run [cyan]kite setup[/] or [cyan]/setup[/] in the REPL")
+        for hint in status.hints[:2]:
+            console.print(f"[dim]{hint}[/]")
     return 0
 
 
@@ -904,6 +911,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # Bare `kite` → interactive chat (cold-start REPL). `kite --help` still works.
     if args.command is None:
+        from kite.ui.style import make_console
+
+        from kite.cli.setup import maybe_run_first_setup
+
+        console = make_console(stderr=True)
+        setup_code = maybe_run_first_setup(console)
+        if setup_code is not None:
+            if setup_code != 0:
+                return setup_code
         return cmd_chat(
             argparse.Namespace(
                 provider=None,
