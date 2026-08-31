@@ -2,6 +2,24 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-08-31
+
+### Added
+- **`/restricted on|off`** (alias `/sandbox`) — REPL toggle for path sandbox; **off by default** (host mode).
+- **Slash menu scroll** — mouse wheel and scroll-key bindings on the `/` completion dropdown.
+- **Compaction ctx meter** — `/compact` and auto-compaction refresh the footer context bar immediately.
+
+### Removed
+- **MCP integration** — stdio MCP client and `[[mcp]]` runtime config removed; use `Harness.extra_tools` for custom tools.
+
+### Changed
+- **Default execution mode** — `host` instead of `restricted` in runtime TOML and guardrail defaults; use `/restricted on` for a tighter sandbox.
+- **Runtime assembly** — merged extra-tool wiring; audit listener registered once; cached `UserConfig` and bundled prompts.
+
+### Fixed
+- **Bare `kite` launch** — `readiness` used `os.stdin.isatty()`; now routes through `sys.stdin`.
+- **`set_cwd` outside repo** — sessions can move to Desktop or sibling dirs; sandbox follows execution cwd (protected paths still blocked).
+
 ## [0.7.1] - 2026-08-31
 
 ### Added
@@ -9,9 +27,6 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - **Setup readiness** — `config/readiness.py`; first-run prompt on bare `kite`; REPL `/setup` wizard; `kite providers` / `kite keys` show ready/not-ready status.
 - **Install `--setup`** — `./scripts/install.sh --setup` and `install.ps1 -Setup` run the wizard after install (TTY only).
 - **`kite help`** — grouped quick reference CLI map; slimmer `/help` builtins with legacy aliases preserved.
-
-### Removed
-- **MCP integration** — stdio MCP client and `[[mcp]]` runtime config removed; inject custom tools via `Harness.extra_tools` instead.
 
 ### Changed
 - **CI** — pytest on every push and PR to `main` (Python 3.11 + 3.12); isolated `KITE_HOME` + `KITE_SKIP_SETUP` in CI.
