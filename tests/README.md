@@ -12,7 +12,7 @@ Or manual install: `uv venv --python 3.12` → activate → `uv pip install -e "
 
 ## CI
 
-GitHub Actions runs `pytest` on **push/PR to `main` when the batch has 5+ commits**. Smaller pushes skip automatically; use **Actions → Tests → Run workflow** to force a run. See [CONTRIBUTING.md](../CONTRIBUTING.md#ci-github-actions).
+GitHub Actions runs `pytest` on **every push and pull request to `main`** (Python 3.11 + 3.12). See [CONTRIBUTING.md](../CONTRIBUTING.md#ci-github-actions).
 
 ## Layout
 
