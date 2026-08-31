@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from kite.config import UserConfig, kite_home
 from kite.providers.credentials import configured_providers
 from kite.providers.resolve import missing_credentials, missing_model, resolve_model
+from kite.util.tty import is_interactive_tty
 
 # Shown in setup wizard and fresh-install hints (free tiers / local).
 RECOMMENDED_PROVIDERS: tuple[str, ...] = ("groq", "openrouter", "ollama")
@@ -127,7 +128,7 @@ def offer_setup_interactive(console) -> bool:
     """Ask on a TTY whether to run setup now. Returns True if user wants setup."""
     if os.environ.get("KITE_SKIP_SETUP"):
         return False
-    if not (os.stdin.isatty() and os.stdout.isatty()):
+    if not is_interactive_tty():
         return False
     if not is_fresh_install():
         return False
