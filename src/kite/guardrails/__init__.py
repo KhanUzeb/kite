@@ -68,24 +68,31 @@ class GuardrailVerdict:
 
 
 class GuardrailPolicy:
-    def __init__(self, config: GuardrailConfig, cwd: str | Path):
+    def __init__(self, config: GuardrailConfig, cwd: str | Path, execution=None):
         self.config = config
         self.cwd = workspace_root(cwd)
+        self.execution = execution
         self._deny = [re.compile(p, re.IGNORECASE) for p in config.deny_bash_patterns]
+
+    @property
+    def workspace(self) -> Path:
+        if self.execution is not None:
+            return workspace_root(self.execution.execution_cwd)
+        return self.cwd
 
     def check_path(self, path: str | Path, *, for_write: bool = False) -> GuardrailVerdict:
         if not self.config.enabled:
             return GuardrailVerdict(True)
         try:
-            resolved = resolve_in_workspace(path, self.cwd)
+            resolved = resolve_in_workspace(path, self.workspace)
         except OSError as e:
             return GuardrailVerdict(False, f"invalid path: {e}")
 
-        if self.config.sandbox_to_cwd and not self.config.allow_paths_outside_cwd:
-            if not is_inside(resolved, self.cwd):
+        if self.config.sandbox_to_cwd and not self.config.host_access():
+            if not is_inside(resolved, self.workspace):
                 return GuardrailVerdict(
                     False,
-                    f"path escapes workspace sandbox ({self.cwd}): {resolved}",
+                    f"path escapes workspace sandbox ({self.workspace}): {resolved}",
                 )
 
         if is_protected(resolved):
@@ -111,11 +118,11 @@ class GuardrailPolicy:
         blocked = env_dump_blocked(command)
         if blocked:
             return GuardrailVerdict(False, blocked)
-        if self.config.sandbox_to_cwd and not self.config.allow_paths_outside_cwd:
-            escaped = check_command_paths(command, self.cwd)
+        if self.config.sandbox_to_cwd and not self.config.host_access():
+            escaped = check_command_paths(command, self.workspace)
             if escaped:
                 return GuardrailVerdict(False, escaped)
-        workdir, reason = clamp_cwd(cwd, self.cwd)
+        workdir, reason = clamp_cwd(cwd, self.workspace, allow_outside=self.config.host_access())
         if workdir is None:
             return GuardrailVerdict(False, reason)
         return GuardrailVerdict(True, rewritten_args={"cwd": str(workdir)})
@@ -129,7 +136,7 @@ class GuardrailPolicy:
             return GuardrailVerdict(True)
         args = dict(arguments)
 
-        if tool in {"read", "write", "edit", "grep", "glob", "ls"}:
+        if tool in {"read", "write", "edit", "grep", "glob", "ls", "set_cwd"}:
             path_key = "path" if "path" in args else ("root" if "root" in args else None)
             if path_key and args.get(path_key):
                 v = self.check_path(str(args[path_key]), for_write=tool in {"write", "edit"})
@@ -147,7 +154,13 @@ class GuardrailPolicy:
             if v.rewritten_args:
                 args.update(v.rewritten_args)
             else:
-                args["cwd"] = str(self.cwd)
+                args["cwd"] = str(self.workspace)
+            return GuardrailVerdict(True, rewritten_args=args)
+
+        if tool == "set_cwd":
+            v = self.check_path(str(args.get("path") or ""))
+            if not v.allowed:
+                return v
             return GuardrailVerdict(True, rewritten_args=args)
 
         if tool == "write" and self.config.block_secret_writes:
