@@ -64,32 +64,39 @@ class UserConfig:
 
     @classmethod
     def load(cls) -> UserConfig:
+        global _USER_CONFIG_CACHE
         ensure_home()
         path = kite_home() / "config.toml"
+        mtime = path.stat().st_mtime if path.is_file() else 0.0
+        if _USER_CONFIG_CACHE is not None and _USER_CONFIG_CACHE[0] == mtime:
+            return _USER_CONFIG_CACHE[1]
         if not path.is_file():
-            return cls()
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-        return cls(
-            default_provider=str(data.get("default_provider", "openai")),
-            default_model=data.get("default_model"),
-            step_limit=int(data.get("step_limit", 40)),
-            cost_limit=float(data.get("cost_limit", 5.0)),
-            context_window=data.get("context_window"),
-            compaction_reserve_tokens=int(data.get("compaction_reserve_tokens", 16_384)),
-            compaction_keep_recent_tokens=int(data.get("compaction_keep_recent_tokens", 20_000)),
-            auto_compact=bool(data.get("auto_compact", True)),
-            include_git_status=bool(data.get("include_git_status", True)),
-            include_tree_snippet=bool(data.get("include_tree_snippet", True)),
-            tree_max_entries=int(data.get("tree_max_entries", 80)),
-            api_bases=dict(data.get("api_bases") or {}),
-            provider_defaults=dict(data.get("provider_defaults") or {}),
-            compaction_provider=str(data.get("compaction_provider") or "openrouter"),
-            compaction_model=data.get("compaction_model") or None,
-            compaction_use_llm=bool(data.get("compaction_use_llm", True)),
-            reasoning=str(data.get("reasoning") or "auto"),
-            theme=str(data.get("theme") or ""),
-            font=str(data.get("font") or ""),
-        )
+            cfg = cls()
+        else:
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+            cfg = cls(
+                default_provider=str(data.get("default_provider", "openai")),
+                default_model=data.get("default_model"),
+                step_limit=int(data.get("step_limit", 40)),
+                cost_limit=float(data.get("cost_limit", 5.0)),
+                context_window=data.get("context_window"),
+                compaction_reserve_tokens=int(data.get("compaction_reserve_tokens", 16_384)),
+                compaction_keep_recent_tokens=int(data.get("compaction_keep_recent_tokens", 20_000)),
+                auto_compact=bool(data.get("auto_compact", True)),
+                include_git_status=bool(data.get("include_git_status", True)),
+                include_tree_snippet=bool(data.get("include_tree_snippet", True)),
+                tree_max_entries=int(data.get("tree_max_entries", 80)),
+                api_bases=dict(data.get("api_bases") or {}),
+                provider_defaults=dict(data.get("provider_defaults") or {}),
+                compaction_provider=str(data.get("compaction_provider") or "openrouter"),
+                compaction_model=data.get("compaction_model") or None,
+                compaction_use_llm=bool(data.get("compaction_use_llm", True)),
+                reasoning=str(data.get("reasoning") or "auto"),
+                theme=str(data.get("theme") or ""),
+                font=str(data.get("font") or ""),
+            )
+        _USER_CONFIG_CACHE = (mtime, cfg)
+        return cfg
 
     def save(self) -> Path:
         ensure_home()
@@ -136,4 +143,13 @@ class UserConfig:
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         else:
             path.write_text(tomli_w.dumps(payload), encoding="utf-8")
+        _invalidate_user_config_cache()
         return path
+
+
+_USER_CONFIG_CACHE: tuple[float, UserConfig] | None = None
+
+
+def _invalidate_user_config_cache() -> None:
+    global _USER_CONFIG_CACHE
+    _USER_CONFIG_CACHE = None

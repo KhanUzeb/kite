@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 
@@ -10,15 +11,18 @@ from kite.context.discovery import ProjectContext
 from kite.skills.loader import Skill, build_skill_index
 
 
+@lru_cache(maxsize=64)
+def _load_packaged_prompt(stem: str) -> str:
+    pkg = resources.files("kite").joinpath(f"data/prompts/{stem}.md")
+    return pkg.read_bytes().decode("utf-8")
+
+
 def load_prompt_template(name: str) -> str:
     """Load `data/prompts/<name>.md`, or a filesystem path if it exists."""
     path = Path(name)
-    if path.suffix and path.is_file():
-        return path.read_text(encoding="utf-8")
     if path.is_file():
         return path.read_text(encoding="utf-8")
-    pkg = resources.files("kite").joinpath(f"data/prompts/{name}.md")
-    return pkg.read_bytes().decode("utf-8")
+    return _load_packaged_prompt(name)
 
 
 def assemble_system_prompt(

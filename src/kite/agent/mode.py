@@ -44,6 +44,10 @@ def default_approval(mode: AgentMode) -> ApprovalMode:
     return ApprovalMode.READONLY if mode is AgentMode.PLAN else ApprovalMode.APPROVE
 
 
+def filter_enabled(enabled: list[str], allowed: frozenset[str]) -> list[str]:
+    return [name for name in enabled if name in allowed]
+
+
 def tools_for_mode(mode: AgentMode, enabled: list[str]) -> list[str]:
     allow = PLAN_TOOLS if mode is AgentMode.PLAN else BUILD_TOOLS
-    return [name for name in enabled if name in allow]
+    return filter_enabled(enabled, allow)

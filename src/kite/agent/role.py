@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from kite.agent.mode import BUILD_TOOLS, PLAN_TOOLS, READONLY_TOOLS
+from kite.agent.mode import BUILD_TOOLS, PLAN_TOOLS, READONLY_TOOLS, filter_enabled
 
 
 class AgentRole(str, Enum):
@@ -40,4 +40,4 @@ def parse_role(raw: str | None, *, mode: str = "build") -> AgentRole:
 
 def tools_for_role(role: AgentRole, enabled: list[str]) -> list[str]:
     allow = ROLE_TOOLS.get(role, BUILD_TOOLS)
-    return [name for name in enabled if name in allow]
+    return filter_enabled(enabled, allow)
