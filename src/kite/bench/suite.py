@@ -199,6 +199,44 @@ def _bench_subprocess_spawn() -> BenchmarkResult:
     return _sample("subprocess_spawn", "tools", sample, returncode=rc)
 
 
+def _bench_repl_chat_init(cwd: Path) -> BenchmarkResult:
+    def _run():
+        from kite.ui.repl import ChatSession
+
+        ChatSession(cwd=str(cwd))
+
+    _, sample = measure_many("repl_chat_init", _run, iterations=3)
+    return _sample("repl_chat_init", "startup", sample)
+
+
+def _bench_model_resolve() -> BenchmarkResult:
+    from kite.config import UserConfig
+    from kite.providers.resolve import resolve_model
+
+    cfg = UserConfig.load()
+
+    def _run():
+        return resolve_model(provider=cfg.default_provider, model=cfg.default_model, config=cfg)
+
+    _, sample = measure_many("model_resolve", _run, iterations=3)
+    return _sample("model_resolve", "startup", sample)
+
+
+def _bench_prompt_cache_prepare() -> BenchmarkResult:
+    from kite.config import UserConfig
+    from kite.models.cache import PromptCacheManager
+    from kite.providers.resolve import resolve_model
+
+    cfg = UserConfig.load()
+
+    def _run():
+        resolved = resolve_model(provider=cfg.default_provider, model=cfg.default_model, config=cfg)
+        return PromptCacheManager(resolved.provider, enabled=True)
+
+    _, sample = measure_many("prompt_cache_prepare", _run, iterations=3)
+    return _sample("prompt_cache_prepare", "context", sample)
+
+
 def _ensure_workspace(cwd: Path) -> None:
     src = cwd / "src"
     src.mkdir(parents=True, exist_ok=True)
@@ -225,6 +263,9 @@ def run_suite(*, cwd: str | Path | None = None) -> BenchmarkReport:
         _bench_cli_import,
         _bench_config_load,
         _bench_skills_load,
+        lambda: _bench_repl_chat_init(root),
+        _bench_model_resolve,
+        _bench_prompt_cache_prepare,
         lambda: _bench_context_gather(root),
         lambda: _bench_tool_registry(root),
         lambda: _bench_read_tool(root),
