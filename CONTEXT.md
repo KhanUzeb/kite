@@ -82,6 +82,8 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Credential** — API key (or local endpoint) for a provider, stored in Kite home `.env`, never in the git workspace.
 
+**API style** — Optional transport override for a **catalog** provider (`chat` | `messages` | `responses`). Default is `chat` (LiteLLM chat completions for all providers). `messages` and `responses` are opt-in native routes for Anthropic and OpenAI only; they do not replace or duplicate catalog entries.
+
 ---
 
 ## Extensions
