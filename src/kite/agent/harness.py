@@ -48,6 +48,7 @@ class HarnessConfig:
     role: str = "auto"
     attachments: list | None = None
     execution_mode: str | None = None  # restricted | host
+    long_task: bool = False
 
 
 @dataclass
@@ -114,6 +115,7 @@ class Harness:
                 role=self.config.role,
                 attachments=self.config.attachments,
                 execution_mode=self.config.execution_mode,
+                long_task=self.config.long_task,
             ),
             user_config=self.user_config,
         )
