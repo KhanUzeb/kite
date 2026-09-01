@@ -68,7 +68,7 @@ kite runtime-config [--config name]
 kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
 ```
 
-`kite dashboard` scans local session JSONL + stats sidecars: tool/API counts, estimated tokens, cache hits, cost, longest/recent sessions. Use `--session` to drill into one run; `--watch 5` refreshes every 5 seconds.
+`kite dashboard` is **per-user** — it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
 
 ```
 
