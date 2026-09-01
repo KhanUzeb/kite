@@ -380,6 +380,7 @@ class AgentRuntime:
             auto_compact=rcfg.auto_compact and ucfg.auto_compact and not self.options.no_compact,
             compaction_reserve_tokens=rcfg.compaction_reserve_tokens,
             compaction_keep_recent_tokens=rcfg.compaction_keep_recent_tokens,
+            compaction_ratio=rcfg.compaction_ratio,
             mode=mode,
             approval=approval,
             approver=self.approver,
