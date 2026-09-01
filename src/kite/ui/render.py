@@ -166,11 +166,19 @@ def render_status(state: SessionUiState) -> Text:
     return t
 
 
-def render_error(message: str, *, show_trace_hint: bool = True) -> Text:
+def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: str = "") -> Text:
     t = Text()
     t.append(f"{SYMBOL_FAIL} ", style="kite.error")
     t.append(message.strip() or "error", style="kite.error")
-    if show_trace_hint:
+    if traceback_text.strip():
+        t.append("\n")
+        lines = traceback_text.strip().splitlines()
+        tail = lines[-12:] if len(lines) > 12 else lines
+        for line in tail:
+            t.append(f"{GUTTER}{line}\n", style="kite.muted")
+        if len(lines) > len(tail):
+            t.append(f"{GUTTER}… {len(lines) - len(tail)} earlier lines  ·  /trace\n", style="kite.muted")
+    elif show_trace_hint:
         t.append("  /trace", style="kite.muted")
     t.append("\n")
     return t
@@ -740,6 +748,11 @@ class RunDisplay:
                 if submission and not self._saw_answer:
                     self._stream_write(submission, channel="answer")
                     self._end_stream_line()
+                line = Text()
+                line.append(f"{GUTTER}{SYMBOL_OK} ", style="kite.success")
+                line.append("work complete", style="kite.success bold")
+                line.append("\n")
+                self.console.print(line)
                 vstatus = p.get("verification_status")
                 vsum = p.get("verification") if isinstance(p.get("verification"), dict) else {}
                 had_work = bool(vsum.get("artifact_count") or vsum.get("diff_count") or vsum.get("gaps"))
@@ -760,6 +773,20 @@ class RunDisplay:
                 line.append(f"  ·  {err[:100]}", style="kite.muted")
                 line.append("\n")
                 self.console.print(line)
+            elif status == "Stalled":
+                msg = str(p.get("submission") or p.get("content") or "stopped — no progress")
+                self.console.print(
+                    render_error(msg, show_trace_hint=False)
+                )
+            elif status == "Error":
+                err = str(p.get("error") or "unexpected error")
+                trace = str(p.get("traceback") or "")
+                self.state.last_error = err
+                self.state.last_trace = trace
+                self.console.print(render_error(err, traceback_text=trace))
+            elif status in {"LimitsExceeded", "TimeExceeded", "RepeatedFormatError"}:
+                detail = str(p.get("submission") or p.get("content") or status)
+                self.console.print(render_error(f"{status}: {detail}", show_trace_hint=False))
             else:
                 self.console.print(render_error(str(status), show_trace_hint=False))
             self.print_status()
@@ -771,7 +798,9 @@ class RunDisplay:
             msg = str(p.get("error") or "error")
             self.state.last_error = msg
             self.state.last_trace = str(p.get("traceback") or "")
-            self.console.print(render_error(msg, show_trace_hint=bool(self.state.last_trace)))
+            self.console.print(
+                render_error(msg, traceback_text=self.state.last_trace, show_trace_hint=not self.state.last_trace)
+            )
             return
 
         if kind == "cost":

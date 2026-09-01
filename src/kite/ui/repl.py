@@ -1449,6 +1449,10 @@ class ChatSession:
         if extra.get("exit_status") == "ProviderFault":
             self.state.last_error = str(extra.get("error") or "provider fault")
             return
+        if extra.get("exit_status") in {"Error", "Stalled", "LimitsExceeded", "TimeExceeded"}:
+            self.state.last_error = str(extra.get("error") or extra.get("submission") or extra.get("exit_status"))
+            self.state.last_trace = str(extra.get("traceback") or "")
+            return
         if extra.get("cost") is not None:
             try:
                 self.state.cost = float(extra["cost"])

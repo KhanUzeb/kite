@@ -20,6 +20,8 @@ echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
 ```
 The harness **blocks submit** if you edited files without a recorded passing test/lint, or if your summary claims success without evidence. Do not chain submit with `&&`.
 
-In chat, a text-only reply also ends the turn. If they only said hi or asked a short question, reply in text. Don't start a checklist.
+In chat, only **short greetings or quick questions** may end as plain text. For real tasks, finish with the submit block above — do not stop early with prose alone.
+
+If they only said hi or asked a short question, reply in text. Don't start a checklist.
 
 Respect **execution_mode** from the Execution context section. Prefer reversible edits. Never `git push`. If they want a commit, they will say so or run `/commit`.

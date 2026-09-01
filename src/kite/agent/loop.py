@@ -53,6 +53,51 @@ def _exit_msg(status: str, *, content: str | None = None, submission: str = "", 
     }
 
 
+_MAX_IDLE_TURNS = 4
+_CASUAL_CHAT = frozenset(
+    {
+        "hi",
+        "hello",
+        "hey",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+        "cool",
+        "bye",
+        "goodbye",
+        "yo",
+        "sup",
+        "good morning",
+        "good night",
+        "thx",
+    }
+)
+
+
+def _is_casual_chat(content: str) -> bool:
+    """Short greetings / thanks — may end in chat without the formal submit marker."""
+    text = content.strip().lower()
+    if not text or len(text) > 200:
+        return False
+    normalized = text.rstrip("!?. ")
+    if normalized in _CASUAL_CHAT:
+        return True
+    if len(text) < 80 and text.endswith("?"):
+        task_verbs = ("fix", "implement", "add", "create", "refactor", "debug", "build", "write", "update")
+        if not any(v in text for v in task_verbs):
+            return True
+    return False
+
+
+def _allow_text_submit(content: str, *, mode: AgentMode, interactive: bool) -> bool:
+    if not content.strip():
+        return False
+    if mode is AgentMode.PLAN:
+        return True
+    if not interactive:
+        return False
+    return _is_casual_chat(content)
 def _user_interrupt() -> Interrupted:
     return Interrupted(
         {
@@ -153,6 +198,7 @@ class DefaultAgent:
         self.cost = 0.0
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
+        self._consecutive_no_tool_turns = 0
         self._start_time = time.time()
         self.last_usage_estimate = None
         self._compactor: LoopCompactor | None = None
@@ -337,6 +383,8 @@ class DefaultAgent:
 
         old_sigint = signal.getsignal(signal.SIGINT)
         provider_fault: str | None = None
+        run_error: str | None = None
+        run_traceback: str | None = None
         try:
             def _on_sigint(signum, frame):
                 self.request_interrupt()
@@ -373,11 +421,12 @@ class DefaultAgent:
                     )
                     break
                 except Exception as e:
-                    self.add_messages(
-                        _exit_msg(type(e).__name__, content=str(e), traceback=traceback.format_exc())
-                    )
-                    self._emit("error", error=str(e), traceback=traceback.format_exc())
-                    raise
+                    run_traceback = traceback.format_exc()
+                    run_error = str(e) or type(e).__name__
+                    if self.session is not None:
+                        self.session.replace_messages(self.messages)
+                    self._emit("error", error=run_error, traceback=run_traceback)
+                    break
 
                 if self.messages and self.messages[-1].get("role") == "exit":
                     break
@@ -395,6 +444,14 @@ class DefaultAgent:
                 "exit_status": "ProviderFault",
                 "error": provider_fault,
                 "recoverable": True,
+                "cost": self.cost,
+            }
+        elif run_error:
+            result = {
+                **(result or {}),
+                "exit_status": "Error",
+                "error": run_error,
+                "traceback": run_traceback or "",
                 "cost": self.cost,
             }
         elif result:
@@ -476,7 +533,7 @@ class DefaultAgent:
         actions = message.get("extra", {}).get("actions", [])
         if not actions:
             content = (message.get("content") or "").strip()
-            if (self.interactive or self.mode is AgentMode.PLAN) and content:
+            if _allow_text_submit(content, mode=self.mode, interactive=self.interactive):
                 if self.mode is AgentMode.BUILD and self.verification.has_edits():
                     reason = self.verification.submit_block_reason(
                         content,
@@ -485,15 +542,25 @@ class DefaultAgent:
                     if reason:
                         return self.add_messages({"role": "user", "content": reason})
                 raise Submitted(_exit_msg("Submitted", content=content, submission=content))
+            self._consecutive_no_tool_turns += 1
+            if self.mode is AgentMode.BUILD and self._consecutive_no_tool_turns >= _MAX_IDLE_TURNS:
+                msg = (
+                    f"Stopped after {self._consecutive_no_tool_turns} turns with no tool calls "
+                    "(idle token protection). Use tools to continue work, then submit via:\n"
+                    "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+                )
+                self.add_messages(_exit_msg("Stalled", content=msg))
+                return []
             return self.add_messages(
                 {
                     "role": "user",
                     "content": (
-                        "No tool calls in your last message. Use a tool, or submit via bash "
-                        "with COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT."
+                        "No tool calls in your last message. Keep working with tools, or finish with bash:\n"
+                        "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n## Done\n- …"
                     ),
                 }
             )
+        self._consecutive_no_tool_turns = 0
         outputs = []
         parallel = len(actions) > 1 and all(
             str(a.get("tool") or "") in PARALLEL_SAFE_TOOLS for a in actions
