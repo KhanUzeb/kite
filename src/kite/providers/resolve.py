@@ -42,10 +42,13 @@ class ResolvedModel:
 
 
 def _default_api_style(provider: str, kind: str) -> str:
-  """Provider-native API route — chat completions remain the default for compatibility."""
-  if provider == "anthropic" or kind == "anthropic":
-      return "messages"
-  return "chat"
+    """Default transport is LiteLLM chat completions for every catalog provider.
+
+    ``api_styles`` in ~/.kite/config.toml is an opt-in override to native SDK routes
+    (Anthropic Messages API, OpenAI Responses API). It does not add providers — use
+    catalog.toml / ``kite keys`` for that.
+    """
+    return "chat"
 
 
 def _stock_cloud_base(provider: str, api_base: str | None) -> bool:
