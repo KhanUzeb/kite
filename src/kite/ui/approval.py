@@ -20,10 +20,24 @@ from kite.ui.style import GUTTER, SYMBOL_WARN
 
 Decision = Literal["allow", "session", "always", "deny", "stop"]
 
-# git status must not also authorize git push / git commit
-_GIT_WRITE = re.compile(
-    r"(?i)\bgit(?:\s+-[^\s]+)*\s+(commit|push|reset|rebase|filter-branch|update-ref|clean)\b"
-)
+GitBashKind = Literal["read", "write", "other"]
+
+# Flags that consume the next token (git -C /path status).
+_GIT_VALUE_FLAGS = frozenset({"-c", "--git-dir", "--work-tree", "--namespace"})
+
+# Subcommands that mutate the repo or working tree.
+_GIT_WRITE_SUBS = frozenset({
+    "add", "am", "checkout", "cherry-pick", "clean", "clone", "commit", "fetch", "gc",
+    "init", "merge", "pull", "push", "rebase", "reset", "restore", "revert", "rm",
+    "switch", "submodule", "filter-branch", "update-ref", "update-index",
+})
+
+# Subcommands that only inspect state.
+_GIT_READ_SUBS = frozenset({
+    "status", "log", "show", "diff", "blame", "grep", "describe", "shortlog",
+    "ls-files", "ls-tree", "whatchanged", "rev-parse", "cat-file", "count-objects",
+    "help", "version", "reflog", "config",
+})
 
 # High-risk bash — always prompt; no yolo/auto/trust/remember bypass.
 _MANDATORY_BASH = re.compile(
@@ -46,6 +60,78 @@ _PACKAGE_INSTALL = re.compile(
 )
 
 
+def _git_command_tokens(command: str) -> list[str]:
+    """Return git subcommand tokens after the ``git`` binary (lowercased)."""
+    text = command or ""
+    match = re.search(r"(?i)(?:^|[;&|]\s*)git\b", text)
+    if not match:
+        return []
+    rest = text[match.end() :].strip()
+    if not rest:
+        return []
+    parts = rest.split()
+    tokens: list[str] = []
+    i = 0
+    while i < len(parts):
+        part = parts[i]
+        low = part.lower()
+        if low in _GIT_VALUE_FLAGS:
+            i += 2 if i + 1 < len(parts) else 1
+            continue
+        if low.startswith("-") and low not in {"-d", "-D", "-m", "-M", "-b"}:
+            i += 1
+            continue
+        tokens.append(low)
+        i += 1
+    return tokens
+
+
+def git_bash_kind(command: str) -> GitBashKind:
+    """Classify a bash git invocation as read-only, mutating, or non-git/unknown."""
+    tokens = _git_command_tokens(command)
+    if not tokens:
+        if re.search(r"(?i)(?:^|[;&|]\s*)git\b", command or ""):
+            return "other"
+        return "other"
+
+    sub, *rest = tokens
+    if sub in _GIT_WRITE_SUBS:
+        return "write"
+    if sub == "stash":
+        return "write" if rest and rest[0] in {"pop", "apply", "drop", "clear", "push", "store"} else "read"
+    if sub == "branch":
+        if any(x in rest for x in ("-d", "-D", "-m", "-M", "--delete", "--move")):
+            return "write"
+        return "read"
+    if sub == "remote":
+        return "write" if rest and rest[0] in {"add", "remove", "rm", "set-url", "rename", "prune"} else "read"
+    if sub == "tag":
+        if rest and rest[0] in {"-l", "--list", "list"}:
+            return "read"
+        if rest and not rest[0].startswith("-"):
+            return "write"
+        return "read"
+    if sub == "config":
+        if not rest:
+            return "read"
+        if rest[0] in {"--get", "--list", "-l"} or any(r.startswith("--get") for r in rest):
+            return "read"
+        if len(rest) >= 2 or "=" in " ".join(rest):
+            return "write"
+        return "read"
+    if sub in _GIT_READ_SUBS:
+        return "read"
+    return "other"
+
+
+def is_git_write(command: str) -> bool:
+    return git_bash_kind(command) == "write"
+
+
+def is_git_read(command: str) -> bool:
+    return git_bash_kind(command) == "read"
+
+
 def action_pattern(tool: str, arguments: dict[str, Any]) -> str:
     """Stable pattern used for always-allow matching."""
     if tool == "bash":
@@ -61,10 +147,6 @@ def action_pattern(tool: str, arguments: dict[str, Any]) -> str:
     if path:
         return f"{tool}:{path}"
     return f"{tool}:*"
-
-
-def is_git_write(command: str) -> bool:
-    return bool(_GIT_WRITE.search(command or ""))
 
 
 def mandatory_approval_reason(
@@ -265,6 +347,12 @@ def needs_approval(
         bash_cwd=bash_cwd,
     ):
         return True
+    if tool == "bash":
+        kind = git_bash_kind(command)
+        if kind == "read":
+            return False
+        if kind == "write":
+            return True
     plan = _needs_approval_plan(tool, mode, command)
     if plan is not None:
         return plan
@@ -279,8 +367,6 @@ def needs_approval(
     )
     if by_mode is not None:
         return by_mode
-    if tool == "bash" and is_git_write(command):
-        return True
     return True
 
 
