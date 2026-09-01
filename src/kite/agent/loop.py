@@ -90,6 +90,8 @@ class DefaultAgent:
         verification: VerificationCollector | None = None,
         audit=None,
         tool_progress_interval_seconds: float = 5.0,
+        verify_before_submit: bool = True,
+        loop_hard_threshold: int = 5,
         cancel=None,
     ):
         self.model = model
@@ -123,6 +125,7 @@ class DefaultAgent:
         self.verification = verification or VerificationCollector()
         self.audit = audit
         self.tool_progress_interval_seconds = tool_progress_interval_seconds
+        self.verify_before_submit = verify_before_submit
         self.cancel = cancel
         self._cost_warned = False
 
@@ -134,7 +137,7 @@ class DefaultAgent:
         self.last_usage_estimate = None
         self._compactor: LoopCompactor | None = None
         self._interrupt = False
-        self._loop_guard = LoopGuard()
+        self._loop_guard = LoopGuard(hard_threshold=loop_hard_threshold)
         self._tool_started_at: float | None = None
         if hasattr(self.model, "should_stop"):
             self.model.should_stop = lambda: self._interrupt
@@ -363,6 +366,13 @@ class DefaultAgent:
         if not actions:
             content = (message.get("content") or "").strip()
             if (self.interactive or self.mode is AgentMode.PLAN) and content:
+                if self.mode is AgentMode.BUILD and self.verification.has_edits():
+                    reason = self.verification.submit_block_reason(
+                        content,
+                        require_verification=self.verify_before_submit,
+                    )
+                    if reason:
+                        return self.add_messages({"role": "user", "content": reason})
                 raise Submitted(_exit_msg("Submitted", content=content, submission=content))
             return self.add_messages(
                 {
@@ -461,7 +471,32 @@ class DefaultAgent:
                 "blocked in plan mode — /build to apply edits",
                 "blocked in plan mode — switch to build to mutate the workspace",
             )
-        return self._run_gated(tool, args, action)
+        try:
+            return self._run_gated(tool, args, action)
+        except Submitted as submitted:
+            submission = ""
+            if submitted.messages:
+                extra = submitted.messages[0].get("extra") or {}
+                submission = str(extra.get("submission") or submitted.messages[0].get("content") or "")
+            reason = self.verification.submit_block_reason(
+                submission,
+                require_verification=self.verify_before_submit,
+            )
+            if reason:
+                self._emit(
+                    "submit_blocked",
+                    reason=reason,
+                    verification=self.verification.summary(),
+                )
+                return _blocked(
+                    reason,
+                    output=(
+                        f"{reason}\n\n"
+                        f"Verification status: {self.verification.status()}\n"
+                        + "\n".join(self.verification.render_lines())
+                    ),
+                )
+            raise
 
     def _after_tool(
         self,
@@ -520,12 +555,19 @@ class DefaultAgent:
                 )
         if out.get("ok") and tool in {"write", "edit"} and out.get("path"):
             self._note_edit(str(out["path"]))
-        loop_warn = self._loop_guard.record(tool, args)
-        if loop_warn:
-            self._emit("loop_warning", message=loop_warn, tool=tool)
+        loop = self._loop_guard.record(tool, args, out)
+        if loop.hard_stop:
+            self._emit("loop_hard_stop", message=loop.hard_stop, tool=tool)
+            out = _blocked(loop.hard_stop, output=loop.hard_stop)
+        elif loop.warning:
+            self._emit("loop_warning", message=loop.warning, tool=tool)
             existing = str(out.get("output") or out.get("error") or "")
-            out = {**out, "output": f"{loop_warn}\n\n{existing}".strip(), "loop_warning": True}
+            out = {**out, "output": f"{loop.warning}\n\n{existing}".strip(), "loop_warning": True}
         self.verification.on_tool_end(tool, args, out)
+        nudge = self.verification.post_edit_nudge()
+        if nudge and out.get("ok") and tool in {"write", "edit"}:
+            existing = str(out.get("output") or "")
+            out = {**out, "output": f"{existing}\n\n{nudge}".strip()}
         if self.hooks is not None:
             self.hooks.call("after_tool", out, tool=tool, args=args)
         if self.audit is not None:
