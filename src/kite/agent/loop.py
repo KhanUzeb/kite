@@ -78,6 +78,7 @@ class DefaultAgent:
         compaction_reserve_tokens: int = 16_384,
         compaction_keep_recent_tokens: int = 20_000,
         compaction_ratio: float = 0.80,
+        compaction_llm_ratio: float = 0.92,
         mode: AgentMode = AgentMode.BUILD,
         approval: ApprovalMode = ApprovalMode.AUTO,
         approver=None,
@@ -111,6 +112,7 @@ class DefaultAgent:
         self.compaction_reserve_tokens = compaction_reserve_tokens
         self.compaction_keep_recent_tokens = compaction_keep_recent_tokens
         self.compaction_ratio = compaction_ratio
+        self.compaction_llm_ratio = compaction_llm_ratio
         self.mode = mode
         self.approval = approval
         self.approver = approver
@@ -208,6 +210,7 @@ class DefaultAgent:
                     reserve_tokens=self.compaction_reserve_tokens,
                     keep_recent_tokens=self.compaction_keep_recent_tokens,
                     compact_ratio=self.compaction_ratio,
+                    compaction_llm_ratio=self.compaction_llm_ratio,
                 ),
                 system=self._full_system(),
                 tool_schemas=schemas,
