@@ -23,6 +23,27 @@ def env_file_path() -> Path:
     return kite_home() / ".env"
 
 
+def load_kite_env() -> None:
+    """Load project .env then ~/.kite/.env.
+
+    Non-empty project values win. Kite home fills keys still unset or left
+    empty (``KEY=`` placeholders from a copied ``.env.example``).
+    """
+    from dotenv import dotenv_values, load_dotenv
+
+    project_env = Path.cwd() / ".env"
+    if project_env.is_file():
+        load_dotenv(project_env)
+    path = env_file_path()
+    if not path.is_file():
+        return
+    for key, val in dotenv_values(path).items():
+        if not val:
+            continue
+        if not (os.getenv(key) or "").strip():
+            os.environ[key] = val
+
+
 def read_env_lines(path: Path) -> list[str]:
     if not path.is_file():
         return []

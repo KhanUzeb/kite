@@ -7,6 +7,7 @@ import stat
 
 from kite.providers.credentials import (
     env_file_path,
+    load_kite_env,
     remove_api_key,
     write_api_key,
 )
@@ -57,6 +58,36 @@ def test_remove_api_key(tmp_path, monkeypatch) -> None:
     assert "GROQ_API_KEY" not in text
     assert "OTHER=1" in text
     assert os.getenv("GROQ_API_KEY") is None
+
+
+def test_load_kite_env_fills_empty_project_placeholder(tmp_path, monkeypatch) -> None:
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    (project_dir / ".env").write_text("GROQ_API_KEY=\n", encoding="utf-8")
+    kite_env = tmp_path / "kite" / ".env"
+    kite_env.parent.mkdir()
+    kite_env.write_text("GROQ_API_KEY=from-kite-home\n", encoding="utf-8")
+    monkeypatch.chdir(project_dir)
+    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: kite_env)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    load_kite_env()
+    assert os.getenv("GROQ_API_KEY") == "from-kite-home"
+
+
+def test_load_kite_env_project_key_wins_over_kite_home(tmp_path, monkeypatch) -> None:
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    (project_dir / ".env").write_text("GROQ_API_KEY=from-project\n", encoding="utf-8")
+    kite_env = tmp_path / "kite" / ".env"
+    kite_env.parent.mkdir()
+    kite_env.write_text("GROQ_API_KEY=from-kite-home\n", encoding="utf-8")
+    monkeypatch.chdir(project_dir)
+    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: kite_env)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    load_kite_env()
+    assert os.getenv("GROQ_API_KEY") == "from-project"
 
 
 def test_logout_provider(tmp_path, monkeypatch) -> None:
