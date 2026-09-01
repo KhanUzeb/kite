@@ -12,7 +12,7 @@ from rich.text import Text
 
 from kite.commands.loader import project_commands_dir, write_command_stub
 from kite.config import UserConfig, kite_home
-from kite.agent.mode import AgentMode, ApprovalMode, default_approval
+from kite.agent.mode import AgentMode, ApprovalMode, default_approval, approval_display_name, parse_approval_mode
 from kite.plugins.loader import project_plugins_dir, write_plugin_stub
 from kite.cli.slash import CommandIndex, SlashResult, help_text, invalidate_command_index, resolve_slash
 from kite.tools.store import TodoStore
@@ -905,13 +905,10 @@ class ChatSession:
         self.console.print("[kite.build]build mode[/]  edits are on")
 
     def _slash_approve(self, arg: str) -> None:
-        try:
-            self.state.approval = ApprovalMode(arg or "approve")
-        except ValueError:
-            self.console.print("[kite.error]use /approve auto|approve|readonly[/]")
-            return
+        mode = parse_approval_mode(arg or None, default=self.state.approval)
+        self.state.approval = mode
         self._invalidate_harness()
-        self.console.print(f"[kite.pending]approval[/] {self.state.approval.value}")
+        self.console.print(f"[kite.pending]approval[/] {approval_display_name(mode)}")
 
     def _slash_restricted(self, arg: str) -> None:
         token = (arg or "").strip().lower()

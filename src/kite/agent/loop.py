@@ -77,6 +77,7 @@ class DefaultAgent:
         auto_compact: bool = True,
         compaction_reserve_tokens: int = 16_384,
         compaction_keep_recent_tokens: int = 20_000,
+        compaction_ratio: float = 0.80,
         mode: AgentMode = AgentMode.BUILD,
         approval: ApprovalMode = ApprovalMode.AUTO,
         approver=None,
@@ -109,6 +110,7 @@ class DefaultAgent:
         self.auto_compact = auto_compact
         self.compaction_reserve_tokens = compaction_reserve_tokens
         self.compaction_keep_recent_tokens = compaction_keep_recent_tokens
+        self.compaction_ratio = compaction_ratio
         self.mode = mode
         self.approval = approval
         self.approver = approver
@@ -174,6 +176,11 @@ class DefaultAgent:
         self._emit_commit(self.checkpoints.record(path, self._active_task_label()))
 
     def _emit(self, kind: str, **payload) -> None:
+        if self.session is not None:
+            from kite.memory.session import DURABLE_EVENT_KINDS
+
+            if kind in DURABLE_EVENT_KINDS:
+                self.session.record_event(kind, payload)
         if self.on_event:
             self.on_event(Event(kind=kind, payload=payload))  # type: ignore[arg-type]
 
@@ -200,6 +207,7 @@ class DefaultAgent:
                     window=self.context_window,
                     reserve_tokens=self.compaction_reserve_tokens,
                     keep_recent_tokens=self.compaction_keep_recent_tokens,
+                    compact_ratio=self.compaction_ratio,
                 ),
                 system=self._full_system(),
                 tool_schemas=schemas,

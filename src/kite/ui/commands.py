@@ -17,7 +17,7 @@ class BuiltinCommand:
 BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("plan", "Read-only mode — produce a checklist", aliases=("p",), group="session"),
     BuiltinCommand("build", "Apply edits, gated bash", aliases=("b",), group="session"),
-    BuiltinCommand("approve", "Autonomy for this session", hint="auto|approve|readonly", group="session"),
+    BuiltinCommand("approve", "Autonomy for this session", hint="auto|supervised|yolo|trust|readonly", group="session"),
     BuiltinCommand("restricted", "Path sandbox — off by default (host mode)", hint="on|off", aliases=("sandbox",), group="session"),
     BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
     BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),
