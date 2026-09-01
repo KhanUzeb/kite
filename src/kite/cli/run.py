@@ -42,7 +42,7 @@ def _load_attachments(paths: list[str], task: str, cwd: str):
 
 
 def _wire_display(harness, console, args: argparse.Namespace):
-    from kite.cli.display import make_run_display
+    from kite.ui.render import make_run_display
     from kite.agent.mode import ApprovalMode
     from kite.ui.git import GitCheckpoints, git_branch
     from kite.ui.state import SessionUiState

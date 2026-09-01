@@ -46,8 +46,6 @@ Spacing
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from rich.console import Console
 
 from kite.ui.theme import glyph, rich_theme, syntax_name
@@ -115,17 +113,6 @@ DIFF_PREVIEW_LINES = 40
 PREVIEW_FILE_MAX_BYTES = 64_000
 PREVIEW_CHUNK_BYTES = 65_536
 GUTTER = "  "
-
-
-@dataclass(frozen=True)
-class ModeChrome:
-    name: str
-    style: str
-    label: str
-
-
-PLAN = ModeChrome(name="plan", style="kite.plan", label="plan")
-BUILD = ModeChrome(name="build", style="kite.build", label="build")
 
 
 def make_console(*, stderr: bool = False, quiet: bool = False) -> Console:
