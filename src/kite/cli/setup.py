@@ -155,11 +155,19 @@ def maybe_run_first_setup(console) -> int | None:
 def cmd_keys(args) -> int:
     from rich.table import Table
 
-    from kite.providers.credentials import logout_provider
+    from kite.config import UserConfig
+    from kite.providers.catalog import load_catalog
+    from kite.providers.credentials import (
+        api_key_fingerprint,
+        credential_type_label,
+        logout_provider,
+    )
     from kite.ui.style import make_console
 
     console = make_console(stderr=True)
     env_path = env_file_path()
+    catalog = load_catalog()
+    cfg = UserConfig.load()
 
     if getattr(args, "logout", None):
         code, msg = logout_provider(args.logout)
@@ -170,17 +178,35 @@ def cmd_keys(args) -> int:
     rows = configured_providers()
     table = Table(title="Provider credentials")
     table.add_column("provider")
+    table.add_column("type")
     table.add_column("status")
-    table.add_column("auth")
+    table.add_column("detail")
     for name, ok, env in rows:
+        try:
+            spec = catalog.get(name)
+            kind = credential_type_label(spec)
+        except KeyError:
+            kind = "—"
+            spec = None
         status = provider_credential_status(ok=ok, env_col=env)
-        if ok and env not in {"local", "—"}:
+        if kind == "BYOK" and ok and spec is not None:
+            detail = api_key_fingerprint(spec) or env
+        elif kind == "BYOS":
+            detail = "oauth"
+        elif env == "local":
+            detail = "localhost"
+        else:
+            detail = env if env not in {"—"} else "—"
+
+        if ok:
             status = f"[green]{status}[/]"
-        elif env == "oauth":
+        elif kind == "BYOS":
             status = f"[yellow]{status}[/]"
         elif env not in {"local", "—"}:
             status = f"[yellow]{status}[/]"
-        table.add_row(name, status, env)
+
+        mark = " *" if name == cfg.default_provider else ""
+        table.add_row(name + mark, kind, status, detail)
 
     console.print(table)
     console.print(

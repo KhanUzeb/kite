@@ -48,3 +48,25 @@ def test_kite_login_parser_registered() -> None:
     assert args.set_default is True
     args2 = parser.parse_args(["login", "groq", "--no-set-default"])
     assert args2.set_default is False
+
+
+def test_credential_type_labels() -> None:
+    from kite.providers.credentials import credential_type_label
+
+    catalog = load_catalog()
+    assert credential_type_label(catalog.get("groq")) == "BYOK"
+    assert credential_type_label(catalog.get("chatgpt")) == "BYOS"
+    assert credential_type_label(catalog.get("ollama")) == "local"
+
+
+def test_render_credentials_table_rows_includes_type() -> None:
+    from kite.ui.credentials import render_credentials_table_rows
+
+    text = render_credentials_table_rows(
+        [("groq", False, "GROQ_API_KEY"), ("ollama", True, "local")],
+        fingerprints={},
+    )
+    plain = str(text)
+    assert "BYOK" in plain
+    assert "local" in plain
+    assert "groq" in plain

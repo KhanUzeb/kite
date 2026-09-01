@@ -89,15 +89,9 @@ These never go to the model.
 | `/select [provider]` | Interactive model picker (saved to config) |
 | `/models [provider]` | List live models for the current (or named) provider |
 | `/provider [name]` | Show or set provider |
-<<<<<<< HEAD
-| `/login [provider]` | BYOK: save API key. BYOS: OAuth for `chatgpt`, `claude`, `grok` (also `kite keys --set <provider>`) |
-| `/logout provider` | Remove that provider's key from `~/.kite/.env` |
-| `/keys` | Show which provider keys are set |
-=======
-| `/login [provider]` | Link provider — **BYOK**: hidden API key → `~/.kite/.env`; **BYOS**: OAuth → `~/.kite/oauth/` |
+| `/login [provider]` | Link provider — **BYOK**: hidden API key (double-entry for new keys) → `~/.kite/.env`; **BYOS**: OAuth → `~/.kite/oauth/` |
 | `/logout provider` | Unlink — removes BYOK key from `.env` or BYOS OAuth session |
-| `/keys` | Show credential status (keys + OAuth link state) |
->>>>>>> 9c86c47 (feat(ui): BYOK/BYOS credential UX — kite login, clearer pickers and /keys)
+| `/keys` | Credential status with type (BYOK/BYOS), masked key fingerprint, OAuth link state |
 | `/thinking` `/fast` | Effort: extended thinking, or low-latency (if the model supports it) |
 | `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort; shown on the footer |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |

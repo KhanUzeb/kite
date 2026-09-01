@@ -754,16 +754,36 @@ class ChatSession:
         return line
 
     def _show_keys(self) -> None:
+        from kite.config import UserConfig
+        from kite.providers.catalog import load_catalog
         from kite.providers.credentials import (
+            api_key_fingerprint,
             configured_providers,
             env_file_path,
-            provider_credential_status,
         )
+        from kite.ui.credentials import render_credentials_table_rows
 
+        cfg = UserConfig.load()
         rows = configured_providers()
+        catalog = load_catalog()
+        fingerprints: dict[str, str] = {}
         for name, ok, env in rows:
-            status = provider_credential_status(ok=ok, env_col=env)
-            self.console.print(f"  {name:<14}{status:<18}{env}")
+            if not ok or env in {"local", "oauth", "—"}:
+                continue
+            try:
+                fp = api_key_fingerprint(catalog.get(name))
+            except KeyError:
+                continue
+            if fp:
+                fingerprints[name] = fp
+
+        self.console.print(
+            render_credentials_table_rows(
+                rows,
+                default_provider=cfg.default_provider,
+                fingerprints=fingerprints,
+            )
+        )
         self.console.print(
             f"[kite.muted]BYOK[/]  {env_file_path()}  "
             f"[kite.muted]BYOS[/]  ~/.kite/oauth/  "

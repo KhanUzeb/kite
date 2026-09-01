@@ -69,6 +69,86 @@ def provider_credential_status(*, ok: bool, env_col: str) -> str:
     return "set" if ok else "missing"
 
 
+def credential_type_label(spec) -> str:
+    """BYOK, BYOS, local, or — for UI tables."""
+    if spec.name == "ollama":
+        return "local"
+    if is_oauth_provider(spec):
+        return "BYOS"
+    if api_key_env_names(spec):
+        return "BYOK"
+    return "—"
+
+
+def mask_api_key_fingerprint(value: str) -> str:
+    """Show last four chars only — safe for status displays."""
+    text = (value or "").strip()
+    if len(text) < 4:
+        return "••••"
+    return f"••••{text[-4:]}"
+
+
+def api_key_fingerprint(spec) -> str:
+    """Masked fingerprint for a provider's primary API key, if set."""
+    if is_oauth_provider(spec) or spec.name == "ollama":
+        return ""
+    key = api_key_for(spec)
+    return mask_api_key_fingerprint(key) if key else ""
+
+
+def validate_api_key(value: str) -> str | None:
+    """Return an error message, or None when the key looks acceptable."""
+    text = (value or "").strip()
+    if not text:
+        return "API key cannot be empty"
+    if "\n" in text or "\r" in text:
+        return "API key must be a single line"
+    if len(text) < 8:
+        return "API key looks too short — check for typos"
+    if text.isspace():
+        return "API key cannot be whitespace only"
+    return None
+
+
+def env_file_permission_warning(path: Path | None = None) -> str | None:
+    """Warn when ~/.kite/.env is group/world readable (Unix)."""
+    target = path or env_file_path()
+    if not target.is_file() or os.name == "nt":
+        return None
+    mode = stat.S_IMODE(target.stat().st_mode)
+    if mode & 0o077:
+        return f"{target} is readable by others ({oct(mode)}) — run: chmod 600 {target}"
+    return None
+
+
+def prompt_api_key(
+    env_var: str,
+    *,
+    replacing: bool = False,
+    console: Console | None = None,
+) -> tuple[str | None, str | None]:
+    """Prompt for a BYOK key. Returns (secret, error). Both None means cancelled."""
+    if replacing:
+        secret = read_secret(f"{env_var} (hidden): ")
+        if secret is None:
+            return None, None
+        err = validate_api_key(secret)
+        return (None, err) if err else (secret, None)
+
+    secret = read_secret(f"{env_var} (hidden): ")
+    if secret is None:
+        return None, None
+    err = validate_api_key(secret)
+    if err:
+        return None, err
+    confirm = read_secret(f"{env_var} confirm (hidden): ")
+    if confirm is None:
+        return None, None
+    if secret != confirm:
+        return None, "keys did not match — nothing saved"
+    return secret, None
+
+
 def provider_needs_login(spec) -> bool:
     """True when setup/login should prompt before using this provider."""
     if spec.name == "ollama":
@@ -257,25 +337,34 @@ def login_provider(
 
     primary = env_names[0]
     path = env_file_path()
+    replacing = bool(api_key_for(spec))
 
     if console is not None:
-        console.print(f"[dim]{spec.display_name}[/]  →  [cyan]{path}[/]")
-        if spec.docs_url:
-            console.print(f"[dim]Get a key:[/] {spec.docs_url}")
-        if api_key_for(spec):
-            console.print(f"[dim]Replacing existing {primary}[/]")
+        from kite.ui.credentials import render_byok_login_panel
 
-    secret = read_secret(f"{primary} (hidden): ")
-    if secret is None:
+        console.print(
+            render_byok_login_panel(
+                spec,
+                env_path=str(path),
+                env_var=primary,
+                replacing=replacing,
+            )
+        )
+        perm_warn = env_file_permission_warning(path)
+        if perm_warn:
+            console.print(f"[yellow]{perm_warn}[/]")
+
+    secret, err = prompt_api_key(primary, replacing=replacing, console=console)
+    if secret is None and err is None:
         return 130, "cancelled", None
-    if not secret:
-        return 2, "empty key — nothing saved", None
+    if err:
+        return 2, err, None
 
     saved = write_api_key(primary, secret)
     for alias in env_names[1:]:
         remove_api_key(alias)
 
-    msg = f"saved {primary} → {saved}"
+    msg = f"saved {primary} → {saved}  ({mask_api_key_fingerprint(secret)})"
     if set_default:
         cfg = UserConfig.load()
         cfg.default_provider = spec.name

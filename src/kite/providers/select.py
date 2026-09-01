@@ -65,16 +65,20 @@ def _numbered_pick(console: Console, models: list, current: str | None) -> str |
 def _provider_auth_hint(spec: ProviderSpec) -> str:
     """Short auth status for provider pickers."""
     from kite.providers.byos import has_oauth_session, is_oauth_provider
+    from kite.providers.credentials import credential_type_label
     from kite.providers.keys import api_key_for
 
+    kind = credential_type_label(spec)
     if spec.name == "ollama":
         return "local"
     if is_oauth_provider(spec):
         oauth_id = spec.oauth_provider or spec.name
-        return "linked" if has_oauth_session(oauth_id) else "login required"
+        linked = "linked" if has_oauth_session(oauth_id) else "login required"
+        return f"{kind} · {linked}"
     if spec.api_key_env:
-        return "key set" if api_key_for(spec) else "missing key"
-    return "subscription"
+        key_status = "key set" if api_key_for(spec) else "missing key"
+        return f"{kind} · {key_status}"
+    return kind
 
 
 def select_model_interactive(
