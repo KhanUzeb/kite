@@ -13,3 +13,4 @@ def test_dashboard_json_empty(kite_home, capsys) -> None:
     assert code == 0
     captured = capsys.readouterr()
     assert "session_count" in (captured.out + captured.err)
+    assert "user" in (captured.out + captured.err)

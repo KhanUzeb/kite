@@ -121,7 +121,12 @@ class AgentRuntime:
             model=meta.model,
             task=meta.task,
             label=meta.label,
+            cwd=meta.cwd,
             exit_status=str(result.get("exit_status") or meta.exit_status),
+            verification_status=str(result.get("verification_status") or ""),
+            last_error=str(result.get("error") or "")[:240],
+            mode=getattr(agent, "mode", None).value if agent and getattr(agent, "mode", None) else "",
+            approval=getattr(agent, "approval", None).value if agent and getattr(agent, "approval", None) else "",
             tool_calls=getattr(agent, "tool_call_count", 0) if agent else 0,
             tool_counts=dict(getattr(agent, "tool_counts", {}) or {}),
             api_calls=getattr(agent, "n_calls", 0) if agent else 0,
@@ -129,6 +134,7 @@ class AgentRuntime:
             estimated_tokens=estimated,
             cache_hit_tokens=cache_hits,
             turn_count=getattr(agent, "n_calls", 0) if agent else 0,
+            message_count=len(session.messages) if hasattr(session, "messages") else 0,
         )
         save_session_stats(stats)
 
