@@ -106,6 +106,8 @@ class AgentRuntimeConfig:
     ui_theme: str = "auto"
     ui_font: str = "unicode"
     model_timeout_seconds: int = 180
+    verify_before_submit: bool = True
+    loop_hard_threshold: int = 5
 
     def with_overrides(self, **kwargs: Any) -> AgentRuntimeConfig:
         return replace(self, **{k: v for k, v in kwargs.items() if v is not None})
@@ -127,6 +129,8 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         cost_limit=float(agent.get("cost_limit", 5.0)),
         wall_time_limit_seconds=int(agent.get("wall_time_limit_seconds", 0)),
         model_timeout_seconds=int(agent.get("model_timeout_seconds", 180)),
+        verify_before_submit=bool(agent.get("verify_before_submit", True)),
+        loop_hard_threshold=int(agent.get("loop_hard_threshold", 5)),
         max_consecutive_format_errors=int(agent.get("max_consecutive_format_errors", 3)),
         auto_compact=bool(agent.get("auto_compact", True)),
         compaction_ratio=float(agent.get("compaction_ratio", 0.80)),

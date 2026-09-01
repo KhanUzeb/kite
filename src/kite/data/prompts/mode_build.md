@@ -8,7 +8,7 @@ For coding work:
 3. Prefer `edit` over `write`. Diffs are shown to the user before/as they apply.
 4. Use `bash` for tests, git status, and builds — never for file reads/edits you could do with `read`/`edit`/`grep`.
 5. Use `set_cwd` when work targets another directory (monorepo frontend, sibling repo). Do not assume the initial cwd is the only valid workspace.
-6. When the task is done, submit via bash:
+6. When the task is done, submit via bash (only after verification commands pass):
 ```
 echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
 ## Done
@@ -16,8 +16,10 @@ echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
 ## Changed
 - `path`
 ## Verification
-- ✓ …
+- ✓ pytest -q — N passed
 ```
+The harness **blocks submit** if you edited files without a recorded passing test/lint, or if your summary claims success without evidence. Do not chain submit with `&&`.
+
 In chat, a text-only reply also ends the turn. If they only said hi or asked a short question, reply in text. Don't start a checklist.
 
 Respect **execution_mode** from the Execution context section. Prefer reversible edits. Never `git push`. If they want a commit, they will say so or run `/commit`.
