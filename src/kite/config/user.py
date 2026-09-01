@@ -48,6 +48,7 @@ class UserConfig:
     include_tree_snippet: bool = True
     tree_max_entries: int = 80
     api_bases: dict[str, str] = field(default_factory=dict)
+    api_styles: dict[str, str] = field(default_factory=dict)  # provider -> chat|messages|responses
     # provider -> model override default
     provider_defaults: dict[str, str] = field(default_factory=dict)
     compaction_provider: str = "openrouter"
@@ -87,6 +88,7 @@ class UserConfig:
                 include_tree_snippet=bool(data.get("include_tree_snippet", True)),
                 tree_max_entries=int(data.get("tree_max_entries", 80)),
                 api_bases=dict(data.get("api_bases") or {}),
+                api_styles=dict(data.get("api_styles") or {}),
                 provider_defaults=dict(data.get("provider_defaults") or {}),
                 compaction_provider=str(data.get("compaction_provider") or "openrouter"),
                 compaction_model=data.get("compaction_model") or None,
@@ -114,6 +116,7 @@ class UserConfig:
             "include_tree_snippet": self.include_tree_snippet,
             "tree_max_entries": self.tree_max_entries,
             "api_bases": self.api_bases,
+            "api_styles": self.api_styles,
             "provider_defaults": self.provider_defaults,
             "compaction_provider": self.compaction_provider,
             "compaction_model": self.compaction_model,
