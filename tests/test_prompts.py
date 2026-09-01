@@ -34,14 +34,14 @@ def test_instance_prompt_wraps_task_without_legacy_boilerplate() -> None:
 
 def test_system_prompt_matches_effort_on_greetings() -> None:
     system = load_prompt_template("system")
-    assert "Don't open the repo" in system
-    assert "If they said hi or thanks" in system
+    assert "Greetings and short Q&A" in system
+    assert "numbered action list" in system
     assert 'Asking the user "hi"' not in system
 
 
 def test_build_mode_does_not_force_checklist_on_chat() -> None:
     build = load_prompt_template("mode_build")
-    assert "Don't start a checklist" in build
+    assert "reply in text for chat" in build
 
 
 def test_interactive_hi_sends_raw_user_text() -> None:
@@ -72,4 +72,4 @@ def test_assemble_system_includes_effort_section() -> None:
     cfg = load_runtime_config()
     text = assemble_system_prompt(config=cfg)
     assert "## Effort" in text
-    assert "Don't open the repo, load a skill, or start a checklist" in text
+    assert "numbered action list" in text
