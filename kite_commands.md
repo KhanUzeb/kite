@@ -49,9 +49,10 @@ Housekeeping (no model):
 kite sessions [--limit N] [--show id] [--tail N]
 kite sessions --delete <id> [<id> ...]
 kite sessions --delete-all -y
-kite setup [-p provider]       # first-run wizard: key + model
-kite keys [--set provider]     # show or paste API keys (hidden input)
-kite keys --logout provider    # remove a stored key
+kite setup [-p provider]       # first-run wizard: credentials + model
+kite login [provider]          # BYOK hidden key or BYOS OAuth (chatgpt/claude/grok)
+kite keys [--set provider]     # show status or paste BYOK API keys (hidden input)
+kite keys --logout provider    # remove BYOK key or BYOS OAuth session
 kite providers
 kite models [-p provider] [--select]
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
@@ -82,9 +83,9 @@ These never go to the model.
 | `/select [provider]` | Interactive model picker (saved to config) |
 | `/models [provider]` | List live models for the current (or named) provider |
 | `/provider [name]` | Show or set provider |
-| `/login [provider]` | Save API key to `~/.kite/.env` (hidden input, owner-only file) |
-| `/logout provider` | Remove that provider's key from `~/.kite/.env` |
-| `/keys` | Show which provider keys are set |
+| `/login [provider]` | Link provider — **BYOK**: hidden API key → `~/.kite/.env`; **BYOS**: OAuth → `~/.kite/oauth/` |
+| `/logout provider` | Unlink — removes BYOK key from `.env` or BYOS OAuth session |
+| `/keys` | Show credential status (keys + OAuth link state) |
 | `/thinking` `/fast` | Effort: extended thinking, or low-latency (if the model supports it) |
 | `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort; shown on the footer |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
