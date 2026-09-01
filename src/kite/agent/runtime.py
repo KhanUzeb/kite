@@ -266,6 +266,7 @@ class AgentRuntime:
             runner=_subagent_runner,
             on_event=self._on_event,
             max_workers=rcfg.orchestrator_max_workers,
+            timeout_seconds=rcfg.orchestrator_timeout_seconds,
         )
 
         if self.slots.tools is not None:

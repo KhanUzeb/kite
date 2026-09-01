@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,6 +39,7 @@ class SubagentOrchestrator:
     runner: Callable[[str], dict[str, Any]]
     on_event: Callable[[Event], None] | None = None
     max_workers: int = 3
+    timeout_seconds: int = 300
     tasks: list[SubagentTask] = field(default_factory=list)
 
     def _emit(self, kind: str, **payload: Any) -> None:
@@ -56,7 +57,14 @@ class SubagentOrchestrator:
         self._emit("subagent_start", id=tid, label=title, prompt=prompt[:300], manager=self.manager_view())
 
         try:
-            result = self.runner(prompt)
+            if self.timeout_seconds > 0:
+                from concurrent.futures import Future
+
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    fut: Future[dict[str, Any]] = pool.submit(self.runner, prompt)
+                    result = fut.result(timeout=self.timeout_seconds)
+            else:
+                result = self.runner(prompt)
             submission = str(result.get("submission") or result.get("content") or "")
             status = str(result.get("exit_status") or "done")
             ok = status == "Submitted"
@@ -70,6 +78,17 @@ class SubagentOrchestrator:
                 "output": summary,
                 "subagent_id": tid,
                 "exit_status": status,
+                "manager": self.manager_view(),
+            }
+        except FuturesTimeout:
+            task.status = "failed"
+            task.summary = f"subagent timed out after {self.timeout_seconds}s"
+            task.ok = False
+            out = {
+                "ok": False,
+                "output": task.summary,
+                "subagent_id": tid,
+                "error": "timeout",
                 "manager": self.manager_view(),
             }
         except Exception as e:
