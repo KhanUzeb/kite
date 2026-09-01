@@ -27,8 +27,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("expand", "Toggle expanded tool output", group="session"),
     BuiltinCommand("expand-thinking", "Show or hide model thinking trace", hint="collapse", group="session"),
     BuiltinCommand("collapse", "Collapse tool output (default)", group="session"),
-    BuiltinCommand("cost", "Session tokens and USD", group="session"),
-    BuiltinCommand("status", "Mode, model, effort, session id", group="session"),
+    BuiltinCommand("status", "Mode, model, effort, cost, session id", group="session"),
     BuiltinCommand("session", "Show, list, open, or delete transcripts", hint="[list|show|open|delete]", aliases=("sessions",), group="session"),
     BuiltinCommand("resume", "Continue a saved session", hint="id", group="session"),
     BuiltinCommand("init", "Write KITE.md project memory", group="session"),
@@ -55,15 +54,8 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     ),
     BuiltinCommand("keys", "Show BYOK keys and BYOS OAuth link status", group="model"),
     BuiltinCommand("model", "Show, set, list, or pick model", hint="list|select|provider/id", group="model"),
-    BuiltinCommand("models", "List live models for the current provider", group="model"),
-    BuiltinCommand("select", "Interactive model picker (saved to ~/.kite/config.toml)", hint="[provider]", group="model"),
-    BuiltinCommand("provider", "Show or set provider", hint="name", group="model"),
-    BuiltinCommand("thinking", "Thinking level (only if this API has thinking and fast)", hint="level", group="model"),
-    BuiltinCommand("fast", "Fast level (only if this API has thinking and fast)", hint="level", group="model"),
     BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
-    BuiltinCommand("memory", "Semantic markdown + episodic sqlite", hint="semantic|episodic", aliases=("mem",), group="memory"),
-    BuiltinCommand("semantic", "Show markdown semantic memory", group="memory"),
-    BuiltinCommand("episodic", "Show sqlite episode log", group="memory"),
+    BuiltinCommand("memory", "Semantic MEMORY.md + episodic log", hint="semantic|episodic", aliases=("mem",), group="memory"),
     BuiltinCommand("remember", "Append a semantic note", hint="[user|project] text", group="memory"),
     BuiltinCommand("forget", "Drop matching notes or episodes", hint="id|substring", group="memory"),
     BuiltinCommand("skills", "List, show, or install a skill", hint="[add pkg]|name", group="extensions"),
@@ -83,7 +75,7 @@ for _b in BUILTINS:
     for _a in _b.aliases:
         ALIASES[_a] = _b.name
 
-# Legacy shortcuts — still parsed; also listed in /help when not duplicated above.
+# Legacy shortcuts — still parsed; listed under “legacy aliases” in /help.
 LEGACY_ALIASES: dict[str, str] = {
     "provider": "model",
     "models": "model",
@@ -95,6 +87,19 @@ LEGACY_ALIASES: dict[str, str] = {
     "semantic": "memory",
     "episodic": "memory",
     "skill": "skills",
+}
+
+LEGACY_HELP: dict[str, str] = {
+    "select": "→ /model select",
+    "models": "→ /model list",
+    "provider": "→ /model provider",
+    "cost": "→ /status (includes cost)",
+    "collapse": "→ /collapse (same as /expand off)",
+    "thinking": "→ /reasoning thinking",
+    "fast": "→ /reasoning fast",
+    "semantic": "→ /memory semantic",
+    "episodic": "→ /memory episodic",
+    "skill": "→ /skills",
 }
 
 ARG_CHOICES: dict[str, list[tuple[str, str]]] = {

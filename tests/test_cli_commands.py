@@ -49,10 +49,12 @@ def test_legacy_slash_routing() -> None:
 
 def test_help_text_groups() -> None:
     text = help_text(CommandIndex.load("."))
-    assert "chat" in text
+    assert "session" in text
     assert "model & keys" in text
     assert "/checkpoint" in text
-    assert "legacy" in text.lower()
+    assert "legacy aliases" in text
+    assert "/select" in text
+    assert "→ /model select" in text
 
 
 def test_legacy_names_in_command_index() -> None:

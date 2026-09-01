@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -11,6 +12,16 @@ from kite.memory.episodic import Episode, EpisodicStore
 from kite.memory.semantic import Note, SemanticStore
 
 MemoryScope = Literal["user", "project"]
+
+
+@dataclass(frozen=True)
+class ForgetResult:
+    notes: tuple[Note, ...]
+    episodes: tuple[Episode, ...]
+
+    @property
+    def total(self) -> int:
+        return len(self.notes) + len(self.episodes)
 
 
 def _migrate_jsonl(semantic: SemanticStore) -> None:
@@ -113,10 +124,10 @@ class MemoryStore:
             pass
         return note
 
-    def forget(self, query: str) -> list[Note]:
-        removed = self.semantic.forget(query)
-        self.episodic.forget(query)
-        return removed
+    def forget(self, query: str) -> ForgetResult:
+        notes = tuple(self.semantic.forget(query))
+        episodes = tuple(self.episodic.forget(query))
+        return ForgetResult(notes=notes, episodes=episodes)
 
     def record_episode(
         self,
@@ -140,14 +151,14 @@ class MemoryStore:
             return None
 
     def render_for_prompt(self, *, max_chars: int = 4_000) -> str:
-        semantic = self.semantic.render_for_prompt(max_chars=max(800, max_chars - 1_200))
-        episodic = self.episodic.render_for_prompt(limit=8, max_chars=1_200)
+        semantic = self.semantic.render_for_prompt(max_chars=max(800, max_chars - 1_000))
+        episodic = self.episodic.render_for_prompt(limit=6, max_chars=900)
         parts = [p for p in (semantic, episodic) if p]
         if not parts:
             return ""
         text = (
-            "# Memory\nHonor these durable notes. Semantic facts live in MEMORY.md; "
-            "episodes are a short log of what happened. Use the `memory` tool to add or drop them.\n\n"
+            "# Memory\n"
+            "Honor durable notes below. Use the `memory` tool to list, remember, or forget.\n\n"
             + "\n\n".join(parts)
         )
         if len(text) > max_chars:
