@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kite · Admin</title>
+  <style>
+    :root {
+      --bg: #0c1017;
+      --card: #151c28;
+      --line: #263246;
+      --text: #eef2f8;
+      --muted: #8fa0b8;
+      --accent: #42d9c8;
+      --blue: #6d9aff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: radial-gradient(900px 500px at 0% 0%, #18243a, var(--bg) 60%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    h1 { margin: 0 0 0.25rem; font-size: 1.6rem; }
+    .sub { color: var(--muted); margin: 0 0 1.75rem; font-size: 0.95rem; }
+    .sub a { color: var(--blue); text-decoration: none; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+    }
+    .label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    .value { font-size: 2rem; font-weight: 700; line-height: 1.1; }
+    .value small { font-size: 0.85rem; color: var(--muted); font-weight: 500; }
+    .links { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1rem; }
+    .links a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.88rem;
+      border: 1px solid var(--line);
+      padding: 0.35rem 0.7rem;
+      border-radius: 8px;
+    }
+    .links a:hover { border-color: var(--accent); }
+    .status { color: var(--muted); font-size: 0.85rem; margin-top: 1rem; }
+    .err { color: #ff8f8f; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Kite admin</h1>
+    <p class="sub">
+      Private snapshot for <a href="https://github.com/KhanUzeb/kite" id="repo-link">KhanUzeb/kite</a>
+      · <span id="updated">loading…</span>
+    </p>
+
+    <div class="grid">
+      <div class="card"><div class="label">Stars</div><div class="value" id="stars">—</div></div>
+      <div class="card"><div class="label">Forks</div><div class="value" id="forks">—</div></div>
+      <div class="card"><div class="label">Watchers</div><div class="value" id="watchers">—</div></div>
+      <div class="card"><div class="label">Open issues</div><div class="value" id="issues">—</div></div>
+      <div class="card"><div class="label">Latest release</div><div class="value" id="release">—</div></div>
+      <div class="card"><div class="label">PyPI downloads</div><div class="value" id="pypi">— <small>/ 30d</small></div></div>
+    </div>
+
+    <div class="links">
+      <a href="https://github.com/KhanUzeb/kite">GitHub repo</a>
+      <a href="https://github.com/KhanUzeb/kite/releases">Releases</a>
+      <a href="https://github.com/KhanUzeb/kite/network/members">Forks</a>
+      <a href="https://pypistats.org/packages/kite">PyPI stats (kite)</a>
+      <a href="https://pypistats.org/packages/kite-agent">PyPI stats (kite-agent)</a>
+    </div>
+
+    <p class="status" id="status"></p>
+  </div>
+
+  <script>
+    const REPO = "KhanUzeb/kite";
+    const PYPI_PACKAGES = ["kite", "kite-agent"];
+
+    const $ = (id) => document.getElementById(id);
+
+    function fmt(n) {
+      return typeof n === "number" ? n.toLocaleString() : "—";
+    }
+
+    async function loadGitHub() {
+      const res = await fetch(`https://api.github.com/repos/${REPO}`);
+      if (!res.ok) throw new Error(`GitHub ${res.status}`);
+      const data = await res.json();
+      $("stars").textContent = fmt(data.stargazers_count);
+      $("forks").textContent = fmt(data.forks_count);
+      $("watchers").textContent = fmt(data.subscribers_count);
+      $("issues").textContent = fmt(data.open_issues_count);
+      return data;
+    }
+
+    async function loadRelease() {
+      const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
+      if (!res.ok) {
+        $("release").innerHTML = "— <small>none yet</small>";
+        return;
+      }
+      const data = await res.json();
+      const tag = data.tag_name || "—";
+      const dl = (data.assets || []).reduce((s, a) => s + (a.download_count || 0), 0);
+      $("release").innerHTML = `${tag} <small>${fmt(dl)} dl</small>`;
+    }
+
+    async function loadPyPI() {
+      for (const pkg of PYPI_PACKAGES) {
+        try {
+          const res = await fetch(`https://pypistats.org/api/packages/${pkg}/overall`);
+          if (!res.ok) continue;
+          const body = await res.json();
+          const row = (body.data || []).find((r) => r.category === "without_mirrors");
+          if (row && row.downloads != null) {
+            $("pypi").innerHTML = `${fmt(row.downloads)} <small>/ 30d · ${pkg}</small>`;
+            return;
+          }
+        } catch (_) { /* try next package */ }
+      }
+      $("pypi").innerHTML = "— <small>git install / clone</small>";
+    }
+
+    async function refresh() {
+      $("status").textContent = "Refreshing…";
+      $("status").className = "status";
+      try {
+        await Promise.all([loadGitHub(), loadRelease(), loadPyPI()]);
+        $("updated").textContent = "updated " + new Date().toLocaleString();
+        $("status").textContent =
+          "Clone traffic is only visible in GitHub repo Insights → Traffic (not exposed on the public API without a token).";
+      } catch (err) {
+        $("status").textContent = "Could not load some metrics: " + err.message;
+        $("status").className = "status err";
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 5 * 60 * 1000);
+  </script>
+</body>
+</html>

@@ -51,6 +51,7 @@ def load_kite_env() -> None:
             os.environ[key] = val
 
 
+
 def context7_api_key() -> str | None:
     """Optional Context7 API key for built-in docs tools (higher rate limits)."""
     load_kite_env()
