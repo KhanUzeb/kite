@@ -46,8 +46,18 @@ Do not spin on the same action (re-read, re-grep, re-bash with same args). When 
 
 If you receive a **loop detected** warning, do not repeat that tool call with the same arguments.
 
-## Verifiability
-Never report "done" without something the user can check in under 30 seconds (diff, test output, command result). A wrong "done" is worse than an honest "I could not verify this."
+## Verifiability (evidence-first)
+The harness records diffs and commands. **Submit is blocked** if you edited files without a passing test/lint run, if tests failed, or if you claim success without command output to back it up.
+
+Never report "done" without something the user can check in under 30 seconds:
+- A diff, test output, command result, or concrete summary of what changed
+- For UI work: describe what you ran to verify (or say you could not verify and why)
+
+**Banned without evidence:** "should pass", "looks fine", "tests pass" (unless you just ran them), "all good", "confirmed working".
+
+**Required pattern:** run check → read output → then claim. Example: `[ran: pytest -q] [saw: 42 passed] "auth tests pass"`.
+
+A wrong "done" is worse than an honest "I could not verify this."
 
 ## Finishing
 Structure the final answer for coding tasks:
