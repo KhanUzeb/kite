@@ -57,14 +57,7 @@ Disable enforcement: `[agent] verify_before_submit = false` in runtime config.
 
 - **Durable session events** in JSONL alongside messages
 - **Subagent timeout** — `orchestrator_timeout_seconds = 300` (configurable)
-- **`api_styles`** — optional transport override in `~/.kite/config.toml` (not a separate provider list). Default **`chat`** = LiteLLM for everyone. Opt-in examples when native adapters ship:
-
-```toml
-[api_styles]
-anthropic = "messages"   # Anthropic Messages API (opt-in)
-openai = "responses"     # OpenAI Responses API (opt-in)
-openrouter = "chat"      # explicit LiteLLM chat completions
-```
+- **`api_styles`** — per-provider `chat` | `messages` | `responses` hint (adapter wiring is thin; deeper Responses API work follows)
 
 ---
 
