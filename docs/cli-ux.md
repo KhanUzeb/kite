@@ -26,7 +26,23 @@ Patterns we took, not invented:
 
 Switch in the REPL with `/plan` and `/build`. One-shot: `kite run --mode plan "…"`.
 
-Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` · `trust` · `readonly`.
+Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` · `trust` · `readonly` · `yolo`.
+
+**Mandatory approval** — high-risk actions **always** prompt, regardless of approval mode (including `yolo`), workspace location, or remembered patterns. No session/always shortcut on these prompts — only **once**, **deny**, or **stop**:
+
+| Category | Examples |
+|----------|----------|
+| Git history | `git commit`, `git push`, `git reset`, `git rebase`, `git clean` |
+| Destructive | `rm`, `rmdir`, `del`, `Remove-Item` |
+| Privileged | `sudo`, `su`, `doas` |
+| Package installs | `pip install`, `npm install`, `cargo install`, `brew install`, … |
+| Permissions | `chmod`, `chown`, `icacls`, `takeown` |
+| Network fetch | `curl`, `wget`, `Invoke-WebRequest` |
+| Remote / containers | `ssh`, `scp`, `docker run`, `kubectl apply` |
+| Outside workspace | any `bash` whose cwd escapes the project root |
+| Outside workspace writes | `write` / `edit` to paths outside the project |
+
+Regular in-workspace `write`/`edit` and safe bash (`git status`, `pytest`, `rg`) still follow the active approval mode.
 
 **Sandbox:** off by default (**host** mode). `/restricted on` clamps file/bash paths to the session cwd; footer shows `restricted` when active.
 

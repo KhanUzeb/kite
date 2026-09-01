@@ -15,13 +15,14 @@ def test_approval_aliases() -> None:
     assert approval_display_name(ApprovalMode.YOLO) == "yolo"
 
 
-def test_yolo_never_gates(workspace: Path) -> None:
-    assert not needs_approval(
+def test_yolo_still_gates_mandatory_git_commit(workspace: Path) -> None:
+    assert needs_approval(
         "bash",
         AgentMode.BUILD,
         ApprovalMode.YOLO,
         command="git commit -m x",
         workspace_cwd=str(workspace),
+        bash_cwd=str(workspace),
     )
 
 
@@ -47,8 +48,8 @@ def test_supervised_allows_reads() -> None:
     assert not needs_approval("grep", AgentMode.BUILD, ApprovalMode.APPROVE)
 
 
-def test_auto_mode_allows_git_commit_in_workspace(workspace: Path) -> None:
-    assert not needs_approval(
+def test_auto_mode_always_asks_git_commit_in_workspace(workspace: Path) -> None:
+    assert needs_approval(
         "bash",
         AgentMode.BUILD,
         ApprovalMode.AUTO,
@@ -69,8 +70,8 @@ def test_auto_mode_gates_git_commit_outside_workspace(workspace: Path) -> None:
     )
 
 
-def test_auto_mode_allows_pip_install_in_workspace(workspace: Path) -> None:
-    assert not needs_approval(
+def test_auto_mode_always_asks_pip_install_in_workspace(workspace: Path) -> None:
+    assert needs_approval(
         "bash",
         AgentMode.BUILD,
         ApprovalMode.AUTO,

@@ -14,7 +14,7 @@ from rich.text import Text
 
 from kite.config import kite_home
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
-from kite.guardrails.sandbox import is_inspection_bash, resolve_in_workspace, workspace_root
+from kite.guardrails.sandbox import check_dangerous, is_inspection_bash, resolve_in_workspace, workspace_root
 from kite.ui.diff import count_diff_lines, diff_path, render_diff_stat
 from kite.ui.style import GUTTER, SYMBOL_WARN
 
@@ -22,7 +22,27 @@ Decision = Literal["allow", "session", "always", "deny", "stop"]
 
 # git status must not also authorize git push / git commit
 _GIT_WRITE = re.compile(
-    r"(?i)\bgit(?:\s+-[^\s]+)*\s+(commit|push|reset|rebase|filter-branch|update-ref)\b"
+    r"(?i)\bgit(?:\s+-[^\s]+)*\s+(commit|push|reset|rebase|filter-branch|update-ref|clean)\b"
+)
+
+# High-risk bash — always prompt; no yolo/auto/trust/remember bypass.
+_MANDATORY_BASH = re.compile(
+    r"(?i)\b("
+    r"sudo\b|su\b|doas\b"
+    r"|git\s+(commit|push|reset|rebase|clean|stash\s+(push|pop|apply)|checkout\s+-[fB]|branch\s+-[dD])"
+    r"|rm\b|rmdir\b|del\b|remove-item\b|erase\b"
+    r"|chmod\b|chown\b|chgrp\b|icacls\b|takeown\b"
+    r"|pip\s+(install|uninstall)|pip3\s+(install|uninstall)"
+    r"|npm\s+(install|uninstall|ci)|yarn\s+(add|remove)|pnpm\s+(add|remove)"
+    r"|cargo\s+install|apt(-get)?\s+install|brew\s+install|dnf\s+install|yum\s+install"
+    r"|curl\b|wget\b|invoke-webrequest\b|iwr\b"
+    r"|docker\s+(run|rm|system\s+prune)|kubectl\s+(apply|delete)"
+    r"|ssh\b|scp\b|rsync\b"
+    r")\b"
+)
+
+_PACKAGE_INSTALL = re.compile(
+    r"(?i)\b(pip3?|npm|yarn|pnpm|cargo|apt|apt-get|brew|dnf|yum)\s+(install|uninstall|ci|add|remove)\b"
 )
 
 
@@ -45,6 +65,65 @@ def action_pattern(tool: str, arguments: dict[str, Any]) -> str:
 
 def is_git_write(command: str) -> bool:
     return bool(_GIT_WRITE.search(command or ""))
+
+
+def mandatory_approval_reason(
+    tool: str,
+    *,
+    command: str = "",
+    arguments: dict[str, Any] | None = None,
+    workspace_cwd: str | None = None,
+    bash_cwd: str | None = None,
+) -> str | None:
+    """Return a user-facing reason when this action must always be approved."""
+    args = arguments or {}
+    if tool in {"write", "edit"}:
+        path = str(args.get("path") or "")
+        if path and workspace_cwd and not _path_in_workspace(path, workspace_cwd):
+            return "writes outside the project workspace always need approval"
+        return None
+    if tool != "bash":
+        return None
+    cmd = (command or str(args.get("command") or "")).strip()
+    if not cmd:
+        return None
+    blocked = check_dangerous(cmd)
+    if blocked:
+        return blocked.replace("bash command blocked by sandbox: ", "blocked command — ")
+    if is_git_write(cmd):
+        return "git history changes always need approval"
+    if _MANDATORY_BASH.search(cmd):
+        if _PACKAGE_INSTALL.search(cmd):
+            return "package installs always need approval"
+        if re.search(r"(?i)\b(rm|rmdir|del|remove-item|erase)\b", cmd):
+            return "destructive file removal always needs approval"
+        if re.search(r"(?i)\b(sudo|su|doas)\b", cmd):
+            return "privileged commands always need approval"
+        if re.search(r"(?i)\b(curl|wget|invoke-webrequest|iwr)\b", cmd):
+            return "network fetch commands always need approval"
+        if re.search(r"(?i)\b(chmod|chown|chgrp|icacls|takeown)\b", cmd):
+            return "permission changes always need approval"
+        return "high-risk shell command always needs approval"
+    if workspace_cwd and not _cwd_in_workspace(bash_cwd, workspace_cwd):
+        return "shell outside the project workspace always needs approval"
+    return None
+
+
+def is_mandatory_approval(
+    tool: str,
+    *,
+    command: str = "",
+    arguments: dict[str, Any] | None = None,
+    workspace_cwd: str | None = None,
+    bash_cwd: str | None = None,
+) -> bool:
+    return mandatory_approval_reason(
+        tool,
+        command=command,
+        arguments=arguments,
+        workspace_cwd=workspace_cwd,
+        bash_cwd=bash_cwd,
+    ) is not None
 
 
 _SAFE_BASH = re.compile(
@@ -100,6 +179,14 @@ def needs_approval(
     args = arguments or {}
     if tool not in MUTATING_TOOLS:
         return False
+    if is_mandatory_approval(
+        tool,
+        command=command,
+        arguments=args,
+        workspace_cwd=workspace_cwd,
+        bash_cwd=bash_cwd,
+    ):
+        return True
     if mode is AgentMode.PLAN and tool != "todo_write":
         if tool == "bash" and is_inspection_bash(command):
             return False
@@ -191,7 +278,14 @@ class ApprovalPolicy:
 APPROVAL_BAR = "┊ "
 
 
-def render_approval_panel(tool: str, arguments: dict[str, Any], *, diff: str = "", reason: str = "") -> Text:
+def render_approval_panel(
+    tool: str,
+    arguments: dict[str, Any],
+    *,
+    diff: str = "",
+    reason: str = "",
+    mandatory: bool = False,
+) -> Text:
     """Permission gate — left-bar layout, no duplicate waiting line elsewhere."""
     body = Text()
     body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.pending")
@@ -246,10 +340,11 @@ def render_approval_panel(tool: str, arguments: dict[str, Any], *, diff: str = "
     body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
     body.append("[a]", style="kite.success")
     body.append(" once  ", style="kite.muted")
-    body.append("[s]", style="kite.success")
-    body.append(" session  ", style="kite.muted")
-    body.append("[p]", style="kite.success")
-    body.append(" always  ", style="kite.muted")
+    if not mandatory:
+        body.append("[s]", style="kite.success")
+        body.append(" session  ", style="kite.muted")
+        body.append("[p]", style="kite.success")
+        body.append(" always  ", style="kite.muted")
     body.append("[n]", style="kite.pending")
     body.append(" deny  ", style="kite.muted")
     body.append("[q]", style="kite.error")
@@ -265,17 +360,19 @@ def prompt_approval(
     diff: str = "",
     reason: str = "",
     policy: ApprovalPolicy | None = None,
+    mandatory: bool = False,
 ) -> Decision:
     policy = policy or ApprovalPolicy()
     pattern = action_pattern(tool, arguments)
-    if policy.remembered(pattern):
+    if not mandatory and policy.remembered(pattern):
         return "allow"
 
-    console.print(render_approval_panel(tool, arguments, diff=diff, reason=reason))
+    console.print(render_approval_panel(tool, arguments, diff=diff, reason=reason, mandatory=mandatory))
+    choices = ["a", "n", "q"] if mandatory else ["a", "s", "p", "n", "q"]
     try:
         choice = Prompt.ask(
             " ",
-            choices=["a", "s", "p", "n", "q"],
+            choices=choices,
             default="n",
             console=console,
             show_choices=False,
@@ -285,10 +382,10 @@ def prompt_approval(
 
     if choice == "a":
         return "allow"
-    if choice == "s":
+    if not mandatory and choice == "s":
         policy.remember(pattern, always=False)
         return "session"
-    if choice == "p":
+    if not mandatory and choice == "p":
         policy.remember(pattern, always=True)
         return "always"
     if choice == "q":
@@ -311,18 +408,38 @@ def make_approver(
 
     def approve(tool: str, arguments: dict[str, Any], extra: dict[str, Any] | None = None) -> Decision:
         extra = extra or {}
+        cmd = str(arguments.get("command") or "")
+        mandatory_reason = mandatory_approval_reason(
+            tool,
+            command=cmd,
+            arguments=arguments,
+            workspace_cwd=workspace_cwd,
+            bash_cwd=str(arguments.get("cwd") or "") or None,
+        )
         if mode is AgentMode.PLAN and tool != "todo_write":
-            if tool == "bash" and is_inspection_bash(str(arguments.get("command") or "")):
+            if tool == "bash" and is_inspection_bash(cmd):
                 pass
             else:
                 return "deny"
         if approval is ApprovalMode.READONLY and tool in MUTATING_TOOLS:
             return "deny"
+        if mandatory_reason:
+            if not interactive:
+                return "deny"
+            return prompt_approval(
+                console,
+                tool,
+                arguments,
+                diff=str(extra.get("diff") or ""),
+                reason=mandatory_reason,
+                policy=policy,
+                mandatory=True,
+            )
         if not needs_approval(
             tool,
             mode,
             approval,
-            command=str(arguments.get("command") or ""),
+            command=cmd,
             arguments=arguments,
             trusted_paths=trusted_paths,
             workspace_cwd=workspace_cwd,
@@ -333,7 +450,7 @@ def make_approver(
         if policy.remembered(pattern):
             return "allow"
         if not interactive:
-            return "deny" if is_git_write(str(arguments.get("command") or "")) or approval is ApprovalMode.APPROVE else "allow"
+            return "deny" if is_git_write(cmd) or approval is ApprovalMode.APPROVE else "allow"
         return prompt_approval(
             console,
             tool,
