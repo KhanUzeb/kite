@@ -19,6 +19,7 @@ class ResolvedModel:
     api_base: str | None
     context_window: int
     spec: ProviderSpec
+    api_style: str = "chat"  # chat | messages | responses
 
     def litellm_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"model": self.litellm_model}
@@ -30,6 +31,13 @@ class ResolvedModel:
         if self.provider == "ollama":
             kwargs.setdefault("api_key", "ollama")
         return kwargs
+
+
+def _default_api_style(provider: str, kind: str) -> str:
+  """Provider-native API route — chat completions remain the default for compatibility."""
+  if provider == "anthropic" or kind == "anthropic":
+      return "messages"
+  return "chat"
 
 
 def _stock_cloud_base(provider: str, api_base: str | None) -> bool:
@@ -97,6 +105,12 @@ def resolve_model(
 
     window = cfg.context_window or spec.context_window_for(model_name or "unknown")
 
+    api_style = (
+        cfg.api_styles.get(provider_name)
+        or cfg.api_styles.get(requested)
+        or _default_api_style(provider_name, spec.kind)
+    )
+
     return ResolvedModel(
         provider=provider_name,
         model=model_name,
@@ -105,6 +119,7 @@ def resolve_model(
         api_base=api_base,
         context_window=window,
         spec=spec,
+        api_style=api_style,
     )
 
 
