@@ -529,94 +529,103 @@ class DefaultAgent:
         self.add_messages(message)
         return message
 
+    def _handle_no_actions(self, message: dict) -> list[dict]:
+        content = (message.get("content") or "").strip()
+        if _allow_text_submit(content, mode=self.mode, interactive=self.interactive):
+            if self.mode is AgentMode.BUILD and self.verification.has_edits():
+                reason = self.verification.submit_block_reason(
+                    content,
+                    require_verification=self.verify_before_submit,
+                )
+                if reason:
+                    return self.add_messages({"role": "user", "content": reason})
+            raise Submitted(_exit_msg("Submitted", content=content, submission=content))
+        self._consecutive_no_tool_turns += 1
+        if self.mode is AgentMode.BUILD and self._consecutive_no_tool_turns >= _MAX_IDLE_TURNS:
+            msg = (
+                f"Stopped after {self._consecutive_no_tool_turns} turns with no tool calls "
+                "(idle token protection). Use tools to continue work, then submit via:\n"
+                "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+            )
+            self.add_messages(_exit_msg("Stalled", content=msg))
+            return []
+        return self.add_messages(
+            {
+                "role": "user",
+                "content": (
+                    "No tool calls in your last message. Keep working with tools, or finish with bash:\n"
+                    "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n## Done\n- …"
+                ),
+            }
+        )
+
+    def _execute_parallel_actions(self, actions: list[dict], outputs: list[dict]) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        prepared: list[tuple[str, dict, dict]] = []
+        for action in actions:
+            if self._interrupt:
+                break
+            prepared.append(self._prepare_action(action))
+        for idx, (tool, args, _action) in enumerate(prepared, start=1):
+            self._emit(
+                "tool_start",
+                tool=tool,
+                arguments=args,
+                reason=args.get("reason"),
+                parallel_batch=len(prepared),
+                parallel_index=idx,
+            )
+        started = time.time()
+
+        def _worker(item: tuple[int, tuple[str, dict, dict]]) -> tuple[int, str, dict, dict, dict]:
+            idx, (tool, args, action) = item
+            return idx, tool, args, action, self._invoke_tool(tool, args, action)
+
+        results: dict[int, tuple[str, dict, dict, dict]] = {}
+        with ThreadPoolExecutor(max_workers=min(4, len(prepared))) as pool:
+            for row in pool.map(_worker, list(enumerate(prepared))):
+                idx, tool, args, action, out = row
+                results[idx] = (tool, args, action, out)
+        for idx in range(len(prepared)):
+            if idx not in results:
+                continue
+            tool, args, action, out = results[idx]
+            duration_ms = int((time.time() - started) * 1000)
+            self._after_tool(tool, args, action, out, duration_ms, outputs)
+
+    def _execute_sequential_actions(self, actions: list[dict], outputs: list[dict]) -> None:
+        for action in actions:
+            if self._interrupt:
+                outputs.append({"ok": False, "error": "interrupted", "output": "interrupted", "blocked": True})
+                break
+            tool, args, action = self._prepare_action(action)
+            self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
+            self._tool_started_at = time.time()
+            try:
+                out = self._invoke_tool(tool, args, action)
+            except Submitted:
+                self._emit("tool_end", tool=tool, ok=True, preview="submitted", output="", error="")
+                raise
+            duration_ms = None
+            if self._tool_started_at is not None:
+                duration_ms = int((time.time() - self._tool_started_at) * 1000)
+                self._tool_started_at = None
+            self._after_tool(tool, args, action, out, duration_ms, outputs)
+
     def execute_actions(self, message: dict) -> list[dict]:
         actions = message.get("extra", {}).get("actions", [])
         if not actions:
-            content = (message.get("content") or "").strip()
-            if _allow_text_submit(content, mode=self.mode, interactive=self.interactive):
-                if self.mode is AgentMode.BUILD and self.verification.has_edits():
-                    reason = self.verification.submit_block_reason(
-                        content,
-                        require_verification=self.verify_before_submit,
-                    )
-                    if reason:
-                        return self.add_messages({"role": "user", "content": reason})
-                raise Submitted(_exit_msg("Submitted", content=content, submission=content))
-            self._consecutive_no_tool_turns += 1
-            if self.mode is AgentMode.BUILD and self._consecutive_no_tool_turns >= _MAX_IDLE_TURNS:
-                msg = (
-                    f"Stopped after {self._consecutive_no_tool_turns} turns with no tool calls "
-                    "(idle token protection). Use tools to continue work, then submit via:\n"
-                    "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
-                )
-                self.add_messages(_exit_msg("Stalled", content=msg))
-                return []
-            return self.add_messages(
-                {
-                    "role": "user",
-                    "content": (
-                        "No tool calls in your last message. Keep working with tools, or finish with bash:\n"
-                        "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n## Done\n- …"
-                    ),
-                }
-            )
+            return self._handle_no_actions(message)
         self._consecutive_no_tool_turns = 0
-        outputs = []
+        outputs: list[dict] = []
         parallel = len(actions) > 1 and all(
             str(a.get("tool") or "") in PARALLEL_SAFE_TOOLS for a in actions
         )
         if parallel:
-            from concurrent.futures import ThreadPoolExecutor
-
-            prepared: list[tuple[str, dict, dict]] = []
-            for action in actions:
-                if self._interrupt:
-                    break
-                prepared.append(self._prepare_action(action))
-            for idx, (tool, args, _action) in enumerate(prepared, start=1):
-                self._emit(
-                    "tool_start",
-                    tool=tool,
-                    arguments=args,
-                    reason=args.get("reason"),
-                    parallel_batch=len(prepared),
-                    parallel_index=idx,
-                )
-            started = time.time()
-
-            def _worker(item: tuple[int, tuple[str, dict, dict]]) -> tuple[int, str, dict, dict, dict]:
-                idx, (tool, args, action) = item
-                return idx, tool, args, action, self._invoke_tool(tool, args, action)
-
-            results: dict[int, tuple[str, dict, dict, dict]] = {}
-            with ThreadPoolExecutor(max_workers=min(4, len(prepared))) as pool:
-                for row in pool.map(_worker, list(enumerate(prepared))):
-                    idx, tool, args, action, out = row
-                    results[idx] = (tool, args, action, out)
-            for idx in range(len(prepared)):
-                if idx not in results:
-                    continue
-                tool, args, action, out = results[idx]
-                duration_ms = int((time.time() - started) * 1000)
-                self._after_tool(tool, args, action, out, duration_ms, outputs)
+            self._execute_parallel_actions(actions, outputs)
         else:
-            for action in actions:
-                if self._interrupt:
-                    outputs.append({"ok": False, "error": "interrupted", "output": "interrupted", "blocked": True})
-                    break
-                tool, args, action = self._prepare_action(action)
-                self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
-                self._tool_started_at = time.time()
-                try:
-                    out = self._invoke_tool(tool, args, action)
-                except Submitted:
-                    self._emit("tool_end", tool=tool, ok=True, preview="submitted", output="", error="")
-                    raise
-                duration_ms = None
-                if self._tool_started_at is not None:
-                    duration_ms = int((time.time() - self._tool_started_at) * 1000)
-                    self._tool_started_at = None
-                self._after_tool(tool, args, action, out, duration_ms, outputs)
+            self._execute_sequential_actions(actions, outputs)
         obs = self.add_messages(*self.model.format_observation_messages(message, outputs))
         if self._interrupt:
             raise _user_interrupt()
