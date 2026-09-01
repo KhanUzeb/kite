@@ -909,14 +909,9 @@ def main(argv: list[str] | None = None) -> int:
         print(__version__)
         return 0
 
-    from dotenv import load_dotenv
+    from kite.providers.credentials import load_kite_env
 
-    from kite.config import kite_home
-
-    load_dotenv()
-    env_file = kite_home() / ".env"
-    if env_file.is_file():
-        load_dotenv(env_file)
+    load_kite_env()
 
     parser = build_parser()
     args = parser.parse_args(argv)
