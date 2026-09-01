@@ -11,7 +11,7 @@ from kite.agent.cancel import CancelToken
 from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
 from kite.agent.events import Event
-from kite.agent.mode import AgentMode, ApprovalMode, tools_for_mode
+from kite.agent.mode import AgentMode, ApprovalMode, parse_approval_mode, tools_for_mode
 from kite.agent.role import AgentRole, parse_role, tools_for_role
 from kite.cli.slash import expand_prompt_slash
 from kite.config import AgentRuntimeConfig, UserConfig, ensure_home, load_runtime_config
@@ -233,10 +233,7 @@ class AgentRuntime:
             mode = AgentMode(self.options.mode or "build")
         except ValueError:
             mode = AgentMode.BUILD
-        try:
-            approval = ApprovalMode(self.options.approval or "auto")
-        except ValueError:
-            approval = ApprovalMode.AUTO
+        approval = parse_approval_mode(self.options.approval or "auto", default=ApprovalMode.AUTO)
 
         enabled = tools_for_mode(mode, rcfg.tools.enabled)
         role = parse_role(self.options.role or rcfg.role, mode=mode.value)
