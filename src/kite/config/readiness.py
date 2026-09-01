@@ -5,9 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from kite.config import UserConfig, kite_home
-from kite.providers.credentials import configured_providers
-from kite.providers.resolve import missing_credentials, missing_model, resolve_model
+from kite.config.user import UserConfig, kite_home
 from kite.util.tty import is_interactive_tty
 
 # Shown in setup wizard and fresh-install hints (free tiers / local).
@@ -35,6 +33,8 @@ def has_config_file() -> bool:
 
 
 def configured_provider_names() -> tuple[str, ...]:
+    from kite.providers.credentials import configured_providers
+
     return tuple(name for name, ok, _ in configured_providers() if ok)
 
 
@@ -55,6 +55,8 @@ def assess_setup_status(
     model: str | None = None,
     config: UserConfig | None = None,
 ) -> SetupStatus:
+    from kite.providers.resolve import missing_credentials, missing_model, resolve_model
+
     cfg = config or UserConfig.load()
     ready_names = configured_provider_names()
     resolved = resolve_model(provider=provider, model=model, config=cfg)

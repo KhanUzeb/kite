@@ -168,13 +168,15 @@ def cmd_keys(args) -> int:
             status = "local"
         elif env == "—":
             status = "n/a"
+        elif env == "oauth":
+            status = "[green]linked[/]" if ok else "[yellow]login required[/]"
         else:
             status = "[green]set[/]" if ok else "[yellow]missing[/]"
         table.add_row(name, status, env)
 
     console.print(table)
     console.print(f"[dim]File:[/] {env_path}  [dim](owner read/write only)[/]")
-    console.print("[dim]Add:[/] [cyan]kite keys --set groq[/]  or  [cyan]/login groq[/] in the REPL")
+    console.print("[dim]Add:[/] [cyan]kite keys --set groq[/]  ·  [cyan]kite login chatgpt|claude|grok[/] for subscriptions[/]")
 
     status = assess_setup_status()
     if status.ready:
