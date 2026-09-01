@@ -35,7 +35,8 @@ def test_plan_tasks_shows_progress_and_badges() -> None:
     ]
     text = render_plan_tasks(todos, tick=0)
     plain = text.plain
-    assert "tasks  (1/3)" in plain
+    assert "Tasks" in plain
+    assert "1/3" in plain
     assert "Done" in plain
     assert "In progress" in plain
-    assert "Pending" in plain
+    assert "To do" in plain

@@ -1431,6 +1431,9 @@ class ChatSession:
         if harness.last_session:
             self._session_id = harness.last_session.id
         extra = result or {}
+        if extra.get("exit_status") == "ProviderFault":
+            self.state.last_error = str(extra.get("error") or "provider fault")
+            return
         if extra.get("cost") is not None:
             try:
                 self.state.cost = float(extra["cost"])

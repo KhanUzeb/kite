@@ -47,6 +47,14 @@ _KITE_STYLES = {
     "kite.diff.meta": "dim",
     "kite.plan": "yellow",
     "kite.build": "green",
+    "kite.accent": "bold magenta",
+    "kite.highlight": "bright_cyan",
+    "kite.task": "bold magenta",
+    "kite.task.done": "green",
+    "kite.task.active": "bold cyan",
+    "kite.task.pending": "dim bright_blue",
+    "kite.task.bar": "green",
+    "kite.task.bar_empty": "dim",
 }
 
 

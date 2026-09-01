@@ -38,7 +38,9 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 
 **Loaders** (beautifului-inspired, TTY-only): default pixel-grid loader with shimmer label and elapsed time. Override with `KITE_LOADER=grid|dots|orbit|wave|spin`.
 
-**Tool cards:** `▸ read  src/foo.py  …` while running (reason on the next line when provided); parallel read-only batches show `parallel N read-only tools` once. `✓ edit  1.2s  +2,-1` when done, with a muted one-line summary for reads (`42 lines  ·  preview…`). **Task rows** show `Running` / `Completed` / `To do` badges.
+**Tool cards:** `▸ read  src/foo.py  …` while running (reason on the next line when provided); parallel read-only batches show `parallel N read-only tools` once. `✓ edit  1.2s  +2,-1` when done, with a muted one-line summary for reads (`42 lines  ·  preview…`). **Task rows** show `Running` / `Completed` / `To do` badges with a coloured progress bar (`Tasks 2/5 ████░░`). Active item highlighted in cyan; done in green.
+
+**Provider retry:** transient network/rate-limit errors auto-retry with backoff (config: `provider_max_retries`). Session is preserved — send another message or `kite resume <id>` to continue.
 
 **Stream coalescing:** small `stream_delta` / reasoning chunks batch before Rich writes — less flicker on fast models.
 
