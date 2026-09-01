@@ -8,7 +8,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from kite.config import kite_home
+from kite.config.user import kite_home
 
 
 # Short names accepted by `kite models -p` / `-p`.
@@ -16,6 +16,8 @@ ALIASES: dict[str, str] = {
     "zen": "opencode-zen",
     "opencode": "opencode-zen",
     "go": "opencode-go",
+    "codex": "chatgpt",
+    "chatgpt-sub": "chatgpt",
     "nim": "nvidia",
     "nvidia-nim": "nvidia",
     "nvidia_nim": "nvidia",
@@ -34,6 +36,9 @@ class ProviderSpec:
     default_model: str
     docs_url: str = ""
     context_windows: dict[str, int] = field(default_factory=dict)
+    auth_kind: str = "api_key"  # api_key | oauth | subscription
+    oauth_provider: str = ""
+    billing_note: str = ""
 
     def litellm_model_id(self, model: str) -> str:
         """Map catalog model id → LiteLLM model string."""
@@ -97,6 +102,9 @@ def _parse_providers(data: dict[str, Any]) -> dict[str, ProviderSpec]:
             default_model=str(raw.get("default_model") or ""),
             docs_url=str(raw.get("docs_url") or ""),
             context_windows={str(k): int(v) for k, v in ctx.items()},
+            auth_kind=str(raw.get("auth_kind") or "api_key"),
+            oauth_provider=str(raw.get("oauth_provider") or ""),
+            billing_note=str(raw.get("billing_note") or ""),
         )
     return out
 
@@ -119,6 +127,9 @@ def _merge_provider(base: ProviderSpec, overlay: ProviderSpec) -> ProviderSpec:
         default_model=overlay.default_model or base.default_model,
         docs_url=overlay.docs_url or base.docs_url,
         context_windows=windows,
+        auth_kind=overlay.auth_kind if overlay.auth_kind != "api_key" else base.auth_kind,
+        oauth_provider=overlay.oauth_provider or base.oauth_provider,
+        billing_note=overlay.billing_note or base.billing_note,
     )
 
 
