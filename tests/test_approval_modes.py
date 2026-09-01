@@ -26,7 +26,7 @@ def test_yolo_still_gates_mandatory_git_commit(workspace: Path) -> None:
     )
 
 
-def test_supervised_gates_all_mutations(workspace: Path) -> None:
+def test_supervised_gates_mutations_not_git_reads(workspace: Path) -> None:
     assert needs_approval(
         "write",
         AgentMode.BUILD,
@@ -34,11 +34,18 @@ def test_supervised_gates_all_mutations(workspace: Path) -> None:
         arguments={"path": "src/foo.py"},
         workspace_cwd=str(workspace),
     )
-    assert needs_approval(
+    assert not needs_approval(
         "bash",
         AgentMode.BUILD,
         ApprovalMode.APPROVE,
         command="git status",
+        workspace_cwd=str(workspace),
+    )
+    assert needs_approval(
+        "bash",
+        AgentMode.BUILD,
+        ApprovalMode.APPROVE,
+        command="git commit -m x",
         workspace_cwd=str(workspace),
     )
 
