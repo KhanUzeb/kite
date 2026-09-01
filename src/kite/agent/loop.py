@@ -174,6 +174,11 @@ class DefaultAgent:
         self._emit_commit(self.checkpoints.record(path, self._active_task_label()))
 
     def _emit(self, kind: str, **payload) -> None:
+        if self.session is not None:
+            from kite.memory.session import DURABLE_EVENT_KINDS
+
+            if kind in DURABLE_EVENT_KINDS:
+                self.session.record_event(kind, payload)
         if self.on_event:
             self.on_event(Event(kind=kind, payload=payload))  # type: ignore[arg-type]
 
