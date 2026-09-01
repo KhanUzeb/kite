@@ -100,6 +100,7 @@ class AgentRuntimeConfig:
     orchestrator_max_workers: int = 3
     orchestrator_step_limit: int = 10
     orchestrator_cost_limit: float = 1.0
+    orchestrator_timeout_seconds: int = 300
     ui_theme: str = "auto"
     ui_font: str = "unicode"
     model_timeout_seconds: int = 180
@@ -166,6 +167,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         orchestrator_max_workers=int(orch.get("max_workers", 3)),
         orchestrator_step_limit=int(orch.get("step_limit", 10)),
         orchestrator_cost_limit=float(orch.get("cost_limit", 1.0)),
+        orchestrator_timeout_seconds=int(orch.get("timeout_seconds", 300)),
         ui_theme=str(ui.get("theme") or "auto"),
         ui_font=str(ui.get("font") or "unicode"),
     )
