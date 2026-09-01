@@ -17,7 +17,7 @@ class BuiltinCommand:
 BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("plan", "Read-only mode — produce a checklist", aliases=("p",), group="session"),
     BuiltinCommand("build", "Apply edits, gated bash", aliases=("b",), group="session"),
-    BuiltinCommand("approve", "Autonomy for this session", hint="auto|supervised|yolo|trust|readonly", group="session"),
+    BuiltinCommand("approve", "Autonomy: yolo|auto|supervised", hint="yolo|auto|supervised|trust|readonly", group="session"),
     BuiltinCommand("restricted", "Path sandbox — off by default (host mode)", hint="on|off", aliases=("sandbox",), group="session"),
     BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
     BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),
@@ -86,9 +86,12 @@ LEGACY_ALIASES: dict[str, str] = {
 
 ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "approve": [
-        ("auto", "run tools without asking"),
-        ("approve", "ask before mutating"),
-        ("readonly", "block writes and bash"),
+        ("yolo", "no prompts — everything allowed"),
+        ("auto", "auto in workspace; ask outside project"),
+        ("supervised", "reads free; write/bash need approval"),
+        ("approve", "alias for supervised"),
+        ("trust", "auto writes; safe bash in workspace"),
+        ("readonly", "block mutations"),
     ],
     "restricted": [
         ("on", "clamp paths to session cwd"),

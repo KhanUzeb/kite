@@ -13,9 +13,9 @@ class AgentMode(str, Enum):
 class ApprovalMode(str, Enum):
     """How much autonomy is granted — surfaced in the prompt itself."""
 
-    AUTO = "auto"  # atomic writes in cwd; ask for bash + outside-cwd mutations
+    AUTO = "auto"  # auto in workspace; ask for paths/bash outside workspace
     TRUST = "trust"  # approve-for-me: auto in workspace, ask on destructive bash
-    APPROVE = "approve"  # supervised — ask on every gated tool
+    APPROVE = "approve"  # supervised — reads free; every mutation needs approval
     YOLO = "yolo"  # no approval prompts (still respects plan/readonly)
     READONLY = "readonly"  # never mutate (plan default)
 
