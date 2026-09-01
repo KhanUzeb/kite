@@ -157,6 +157,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"[kite.pending]provider fault[/] — session saved. "
             f"[kite.muted]retry: kite resume {sid} \"continue\"[/]"
         )
+    elif result.get("exit_status") == "Error":
+        console.print(f"[red]{result.get('error')}[/]")
+        if result.get("traceback"):
+            console.print("[dim]See session log or re-run with -v for full traceback[/]")
     return 0 if result.get("exit_status") == "Submitted" else 1
 
 

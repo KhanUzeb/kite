@@ -58,6 +58,10 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 
 **Provider retry:** transient network/rate-limit errors auto-retry with backoff (config: `provider_max_retries`). Session is preserved — send another message or `kite resume <id>` to continue.
 
+**Completion discipline:** build mode only ends with `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` (or a short casual chat like “hi”). Prose-only “I'm done” replies keep the agent working. After 4 no-tool turns, the run **stalls** (idle token protection) instead of burning more API calls. Successful submit shows **work complete** in the UI.
+
+**Fatal errors:** unexpected exceptions stop the run with `exit_status=Error`, print the message + traceback tail, and save `/trace` in the REPL — no silent re-raise.
+
 **Stream coalescing:** small `stream_delta` / reasoning chunks batch before Rich writes — less flicker on fast models.
 
 **Context meter** on footer: `ctx ████░░░░ 50%`. `/expand` toggles full tool output; `/collapse` resets. `/expand-thinking` shows the last model thinking trace (collapsed by default to save scrollback).
