@@ -338,6 +338,7 @@ def make_prompt_session(
 def make_repl_key_bindings(
     *,
     on_toggle_expand: Callable[[], str] | None = None,
+    on_toggle_thinking: Callable[[], str] | None = None,
     on_plan: Callable[[], str] | None = None,
     on_build: Callable[[], str] | None = None,
     on_status: Callable[[], str] | None = None,
@@ -353,6 +354,12 @@ def make_repl_key_bindings(
     def _expand(event) -> None:  # noqa: ANN001
         if on_toggle_expand:
             on_toggle_expand()
+        event.app.invalidate()
+
+    @bindings.add("c-t")
+    def _thinking(event) -> None:  # noqa: ANN001
+        if on_toggle_thinking:
+            on_toggle_thinking()
         event.app.invalidate()
 
     @bindings.add("c-p")

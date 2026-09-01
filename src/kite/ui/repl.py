@@ -713,6 +713,9 @@ class ChatSession:
             mode = "expanded" if self.state.expanded_all else "collapsed"
             return f"tool output {mode}"
 
+        def _toggle_thinking() -> str:
+            return self._toggle_thinking_display()
+
         def _plan() -> str:
             self._apply_plan_mode()
             return "plan mode"
@@ -728,6 +731,7 @@ class ChatSession:
 
         bindings = make_repl_key_bindings(
             on_toggle_expand=lambda: self._flash_note(_toggle_expand()),
+            on_toggle_thinking=lambda: self._flash_note(_toggle_thinking()),
             on_plan=lambda: self._flash_note(_plan()),
             on_build=lambda: self._flash_note(_build()),
             on_status=lambda: self._flash_note(_status()),
@@ -836,6 +840,7 @@ class ChatSession:
             "sandbox": self._slash_restricted,
             "cost": self._slash_cost,
             "expand": self._slash_expand,
+            "expand-thinking": self._slash_expand_thinking,
             "collapse": self._slash_collapse,
             "trace": self._slash_trace,
             "undo": self._slash_undo,
@@ -948,6 +953,27 @@ class ChatSession:
         self.state.expanded_all = not self.state.expanded_all
         mode = "expanded" if self.state.expanded_all else "collapsed"
         self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
+
+    def _slash_expand_thinking(self, arg: str) -> None:
+        note = self._toggle_thinking_display(arg=arg)
+        self.console.print(f"[kite.muted]{note}[/]")
+
+    def _toggle_thinking_display(self, *, arg: str = "") -> str:
+        from kite.ui.render import render_reasoning_block
+
+        token = (arg or "").strip().lower()
+        if token == "collapse":
+            self.state.thinking_expanded = False
+            return "thinking collapsed (summary only)"
+        if token == "expand":
+            self.state.thinking_expanded = True
+        else:
+            self.state.thinking_expanded = not self.state.thinking_expanded
+        if self.state.thinking_expanded:
+            if self.state.last_thinking.strip():
+                self.console.print(render_reasoning_block(self.state.last_thinking), highlight=False)
+            return "thinking expanded"
+        return "thinking collapsed (summary only)"
 
     def _slash_collapse(self, _arg: str) -> None:
         self.state.expanded_all = False

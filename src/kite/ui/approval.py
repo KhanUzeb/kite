@@ -168,6 +168,8 @@ class ApprovalPolicy:
         )
 
     def remembered(self, pattern: str) -> bool:
+        if pattern in self.always_patterns or pattern in self.session_patterns:
+            return True
         for stored in (*self.always_patterns, *self.session_patterns):
             if pattern != stored and not fnmatch(pattern, stored):
                 continue
@@ -186,34 +188,46 @@ class ApprovalPolicy:
             self.session_patterns.add(pattern)
 
 
+APPROVAL_BAR = "┊ "
+
+
 def render_approval_panel(tool: str, arguments: dict[str, Any], *, diff: str = "", reason: str = "") -> Text:
-    """Compact gate — Codex keeps this in the composer, not a boxed panel."""
+    """Permission gate — left-bar layout, no duplicate waiting line elsewhere."""
     body = Text()
-    body.append(f"{SYMBOL_WARN}  approve ", style="kite.pending")
+    body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.pending")
+    body.append(f"approve ", style="kite.pending")
     body.append(tool, style="bold")
     body.append("\n")
-    body.append(f"{GUTTER}mode: supervised · auto · yolo  (a/s/p/n/q)\n", style="kite.muted")
+
     if reason:
-        body.append(f"{GUTTER}{reason}\n", style="kite.muted")
+        body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
+        body.append(reason.strip(), style="kite.muted")
+        body.append("\n")
 
     if tool == "bash":
-        cmd = str(arguments.get("command") or "")
+        cmd = str(arguments.get("command") or "").strip()
         cwd = arguments.get("cwd")
-        body.append(f"{GUTTER}$ {cmd}\n", style="bold")
+        for cmd_line in (cmd.splitlines() or [""])[:6]:
+            body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
+            body.append("$ ", style="kite.tool bold")
+            body.append(cmd_line + "\n", style="")
+        if cmd.count("\n") > 5:
+            body.append(f"{GUTTER}{APPROVAL_BAR}…\n", style="kite.muted")
         if cwd:
-            body.append(f"{GUTTER}cwd {cwd}\n", style="kite.muted")
+            body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
+            body.append(f"cwd  {cwd}\n", style="kite.muted")
     else:
         for key in ("path", "root", "pattern", "query"):
             if arguments.get(key):
-                body.append(f"{GUTTER}{key}={arguments[key]}\n")
+                body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
+                body.append(f"{key}  {arguments[key]}\n", style="")
         if diff:
             added, deleted = count_diff_lines(diff)
             if added or deleted:
-                body.append(GUTTER)
+                body.append(f"{GUTTER}{APPROVAL_BAR}")
                 body.append_text(render_diff_stat(added, deleted, path=diff_path(diff)))
                 body.append("\n")
-            preview = "\n".join(diff.splitlines()[:80])
-            body.append("\n")
+            preview = "\n".join(diff.splitlines()[:40])
             for line in preview.splitlines():
                 style = "kite.diff.meta"
                 if line.startswith("+") and not line.startswith("+++"):
@@ -222,13 +236,24 @@ def render_approval_panel(tool: str, arguments: dict[str, Any], *, diff: str = "
                     style = "kite.diff.del"
                 elif line.startswith("@@"):
                     style = "kite.diff.hunk"
-                body.append(f"{GUTTER}{line}\n", style=style)
-            extra = max(0, len(diff.splitlines()) - 80)
+                body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
+                body.append(line + "\n", style=style)
+            extra = max(0, len(diff.splitlines()) - 40)
             if extra:
-                body.append(f"{GUTTER}… {extra} more diff lines\n", style="kite.muted")
+                body.append(f"{GUTTER}{APPROVAL_BAR}… {extra} more diff lines\n", style="kite.muted")
 
-    body.append("\n")
-    body.append(f"{GUTTER}[a] once  [s] session  [p] always  [n] deny  [q] stop\n", style="kite.muted")
+    body.append(f"{GUTTER}{APPROVAL_BAR}\n", style="kite.muted")
+    body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
+    body.append("[a]", style="kite.success")
+    body.append(" once  ", style="kite.muted")
+    body.append("[s]", style="kite.success")
+    body.append(" session  ", style="kite.muted")
+    body.append("[p]", style="kite.success")
+    body.append(" always  ", style="kite.muted")
+    body.append("[n]", style="kite.pending")
+    body.append(" deny  ", style="kite.muted")
+    body.append("[q]", style="kite.error")
+    body.append(" stop\n", style="kite.muted")
     return body
 
 
