@@ -12,6 +12,7 @@ from kite.agent.exceptions import FormatError
 from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, split_reasoning
 from kite.models.cache import PromptCacheManager, parse_cache_usage
 from kite.context.observation import observation_content
+from kite.models.tool_args import repair_tool_arguments
 from kite.providers.byos import ensure_oauth_env, is_oauth_provider
 from kite.providers.resolve import ResolvedModel
 from kite.tools import ToolRegistry
@@ -196,16 +197,15 @@ class LitellmModel:
             tc = tool_calls_acc[idx]
             name = tc.get("name") or ""
             raw_args = tc.get("arguments") or "{}"
-            try:
-                args = json.loads(raw_args) if raw_args.strip() else {}
-            except json.JSONDecodeError as e:
+            args, err = repair_tool_arguments(raw_args)
+            if args is None:
                 raise FormatError(
                     {
                         "role": "user",
-                        "content": f"Invalid tool arguments JSON: {e}",
+                        "content": err or "Invalid tool arguments JSON",
                         "extra": {"interrupt_type": "FormatError", "cost": cost},
                     }
-                ) from e
+                )
             if not isinstance(args, dict):
                 args = {"value": args}
             actions.append({"tool": name, "arguments": args, "id": tc.get("id")})

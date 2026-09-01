@@ -122,6 +122,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             interactive=False,
             attachments=attachments,
             role=getattr(args, "role", "auto"),
+            long_task=bool(getattr(args, "long", False)),
         )
     )
     _wire_display(harness, console, args)
@@ -210,6 +211,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             approval=approval.value,
             interactive=False,
             attachments=attachments,
+            long_task=bool(getattr(args, "long", False)),
         )
     )
     _wire_display(harness, console, args)
@@ -730,6 +732,11 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
         default="auto",
         help="Agent persona — architect/debugger/implementer",
     )
+    p.add_argument(
+        "--long",
+        action="store_true",
+        help="Long-running agentic task: higher limits, phase checkpoints, mode_long prompt",
+    )
     p.add_argument("--json", action="store_true", help="Emit final trajectory JSON on stdout (CI-friendly)")
 
 
@@ -792,6 +799,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     from kite.cli.setup import cmd_keys, cmd_setup
     from kite.cli.stats import cmd_maintainer_dashboard
+    from kite.cli.dashboard import cmd_dashboard
 
     setup = sub.add_parser("setup", help="First-run wizard — API key, provider, model")
     setup.add_argument("-p", "--provider", help="Skip provider picker")
@@ -884,6 +892,13 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--limit", type=int, default=30)
     audit.add_argument("--json", action="store_true")
     audit.set_defaults(func=cmd_audit)
+
+    dashboard = sub.add_parser("dashboard", help="Interactive harness stats — sessions, tools, tokens, cache")
+    dashboard.add_argument("--session", help="Drill into one session id")
+    dashboard.add_argument("--limit", type=int, default=200, help="Max sessions to scan")
+    dashboard.add_argument("--watch", type=int, default=0, metavar="SEC", help="Refresh every N seconds")
+    dashboard.add_argument("--json", action="store_true")
+    dashboard.set_defaults(func=cmd_dashboard)
 
     cloud = sub.add_parser("cloud", help="Cloud/local task parity — list and apply saved outputs")
     cloud.add_argument("action", choices=["list", "apply"], nargs="?", default="list")

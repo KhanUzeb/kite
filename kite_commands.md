@@ -39,6 +39,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--mode plan\|build` | Read-only checklist vs apply edits |
 | `--approval yolo\|auto\|supervised` | `yolo` = no prompts; `auto` = workspace-scoped; `supervised` = approve all mutations (default: `auto` for `run`, `supervised` for chat) |
 | `--steps` `--cost` `--time` | Limits |
+| `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `-v` / `-q` | Verbose tool bodies / quiet |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
 | `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. |
@@ -61,9 +62,12 @@ kite commands
 kite plugins
 kite memory [--remember text] [--forget query] [--project]
 kite runtime-config [--config name]
+kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
 ```
 
-You can also drop a path into the prompt with `@screenshot.png` or `@C:\path\spec.md`.
+`kite dashboard` scans local session JSONL + stats sidecars: tool/API counts, estimated tokens, cache hits, cost, longest/recent sessions. Use `--session` to drill into one run; `--watch 5` refreshes every 5 seconds.
+
+```
 
 ---
 

@@ -94,6 +94,8 @@ class DefaultAgent:
         tool_progress_interval_seconds: float = 5.0,
         verify_before_submit: bool = True,
         loop_hard_threshold: int = 5,
+        long_task: bool = False,
+        phase_checkpoint_interval: int = 10,
         cancel=None,
     ):
         self.model = model
@@ -130,6 +132,8 @@ class DefaultAgent:
         self.audit = audit
         self.tool_progress_interval_seconds = tool_progress_interval_seconds
         self.verify_before_submit = verify_before_submit
+        self.long_task = long_task
+        self.phase_checkpoint_interval = max(3, phase_checkpoint_interval)
         self.cancel = cancel
         self._cost_warned = False
 
@@ -142,6 +146,9 @@ class DefaultAgent:
         self._compactor: LoopCompactor | None = None
         self._interrupt = False
         self._loop_guard = LoopGuard(hard_threshold=loop_hard_threshold)
+        self._phase_markers: set[int] = set()
+        self.tool_call_count = 0
+        self.tool_counts: dict[str, int] = {}
         self._tool_started_at: float | None = None
         if hasattr(self.model, "should_stop"):
             self.model.should_stop = lambda: self._interrupt
@@ -179,6 +186,37 @@ class DefaultAgent:
         if self.checkpoints is None or not path:
             return
         self._emit_commit(self.checkpoints.record(path, self._active_task_label()))
+
+    def _maybe_phase_checkpoint(self) -> None:
+        """Long-task mode: periodic checkpoints (Anthropic/OpenAI-style session persistence)."""
+        if not self.long_task or self.n_calls <= 0 or self.session is None:
+            return
+        if self.n_calls % self.phase_checkpoint_interval != 0:
+            return
+        if self.n_calls in self._phase_markers:
+            return
+        self._phase_markers.add(self.n_calls)
+        from kite.memory.context_checkpoint import save_checkpoint
+
+        cp = save_checkpoint(
+            session_id=self.session.id,
+            messages=list(self.messages),
+            cwd=str(getattr(self.env, "cwd", "") or ""),
+            label=f"phase turn {self.n_calls}",
+            reason="auto",
+            todos=self.todos.read() if self.todos is not None else None,
+            system=self._full_system(),
+            window=self.context_window,
+        )
+        self.session.record_context_checkpoint(cp.id, label=cp.label, reason="auto")
+        self._emit(
+            "checkpoint",
+            id=cp.id,
+            label=cp.label,
+            reason="long_task_phase",
+            turn=self.n_calls,
+            tokens=cp.context_usage.get("total_tokens"),
+        )
 
     def _emit(self, kind: str, **payload) -> None:
         if self.session is not None:
@@ -298,6 +336,7 @@ class DefaultAgent:
                     self.step()
                     self.n_consecutive_format_errors = 0
                     self._emit("turn_end")
+                    self._maybe_phase_checkpoint()
                 except FormatError as e:
                     self.cost += e.messages[0].get("extra", {}).get("cost", 0.0) if e.messages else 0.0
                     self.n_consecutive_format_errors += 1
@@ -575,6 +614,11 @@ class DefaultAgent:
             existing = str(out.get("output") or out.get("error") or "")
             out = {**out, "output": f"{loop.warning}\n\n{existing}".strip(), "loop_warning": True}
         self.verification.on_tool_end(tool, args, out)
+        if out.get("blocked"):
+            pass
+        else:
+            self.tool_call_count += 1
+            self.tool_counts[tool] = self.tool_counts.get(tool, 0) + 1
         nudge = self.verification.post_edit_nudge()
         if nudge and out.get("ok") and tool in {"write", "edit"}:
             existing = str(out.get("output") or "")
@@ -582,7 +626,12 @@ class DefaultAgent:
         if self.hooks is not None:
             self.hooks.call("after_tool", out, tool=tool, args=args)
         if self.audit is not None:
-            self.audit.log_tool(tool, ok=bool(out.get("ok")), duration_ms=duration_ms)
+            self.audit.log_tool(
+                tool,
+                ok=bool(out.get("ok")),
+                duration_ms=duration_ms,
+                session_id=self.session.id if self.session else "",
+            )
         outputs.append(out)
 
     def _run_gated(self, tool: str, args: dict, action: dict) -> dict:

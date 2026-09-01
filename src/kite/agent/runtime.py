@@ -58,6 +58,7 @@ class RuntimeOptions:
     reasoning: str = "auto"
     role: str = "auto"
     attachments: list | None = None
+    long_task: bool = False
     execution_mode: str | None = None  # restricted | host — overrides runtime TOML
 
 
@@ -97,6 +98,39 @@ class AgentRuntime:
     def _on_event(self, event: Event) -> None:
         for listener in list(self._listeners):
             listener(event)
+
+    def _persist_session_stats(self, session: Session, result: dict, *, agent: DefaultAgent | None) -> None:
+        from kite.memory.session_analytics import SessionStats, save_session_stats
+
+        cache_hits = 0
+        estimated = 0
+        if agent is not None:
+            usage = agent.last_usage_estimate
+            if usage is not None:
+                estimated = usage.total_tokens
+            prompt_cache = getattr(getattr(agent, "model", None), "prompt_cache", None)
+            if prompt_cache is not None:
+                cache_hits = int(prompt_cache.stats.cache_hit_tokens)
+        meta = session.meta
+        stats = SessionStats(
+            session_id=session.id,
+            created_at=meta.created_at,
+            updated_at=meta.updated_at,
+            duration_s=max(0.0, meta.updated_at - meta.created_at),
+            provider=meta.provider,
+            model=meta.model,
+            task=meta.task,
+            label=meta.label,
+            exit_status=str(result.get("exit_status") or meta.exit_status),
+            tool_calls=getattr(agent, "tool_call_count", 0) if agent else 0,
+            tool_counts=dict(getattr(agent, "tool_counts", {}) or {}),
+            api_calls=getattr(agent, "n_calls", 0) if agent else 0,
+            cost=getattr(agent, "cost", 0.0) if agent else 0.0,
+            estimated_tokens=estimated,
+            cache_hit_tokens=cache_hits,
+            turn_count=getattr(agent, "n_calls", 0) if agent else 0,
+        )
+        save_session_stats(stats)
 
     def prepare(self) -> tuple[AgentRuntimeConfig, ResolvedModel, str]:
         ensure_home()
@@ -140,6 +174,11 @@ class AgentRuntime:
         if role is not AgentRole.AUTO:
             try:
                 extra_sections.append(load_prompt_template(f"role_{role.value}"))
+            except (FileNotFoundError, OSError):
+                pass
+        if self.options.long_task:
+            try:
+                extra_sections.append(load_prompt_template("mode_long"))
             except (FileNotFoundError, OSError):
                 pass
 
@@ -357,14 +396,22 @@ class AgentRuntime:
         audit = AuditLog()
         verification = VerificationCollector()
 
+        step_limit = self.options.step_limit if self.options.step_limit is not None else rcfg.step_limit
+        cost_limit = self.options.cost_limit if self.options.cost_limit is not None else rcfg.cost_limit
+        if self.options.long_task:
+            if self.options.step_limit is None:
+                step_limit = max(step_limit, 120)
+            if self.options.cost_limit is None:
+                cost_limit = max(cost_limit, 25.0)
+
         agent = DefaultAgent(
             model,
             env,
             system_prompt=system,
             instance_prompt=instance,
             project_context="",
-            step_limit=self.options.step_limit if self.options.step_limit is not None else rcfg.step_limit,
-            cost_limit=self.options.cost_limit if self.options.cost_limit is not None else rcfg.cost_limit,
+            step_limit=step_limit,
+            cost_limit=cost_limit,
             wall_time_limit_seconds=(
                 self.options.wall_time_limit_seconds
                 if self.options.wall_time_limit_seconds is not None
@@ -396,6 +443,7 @@ class AgentRuntime:
             tool_progress_interval_seconds=rcfg.tools.progress_interval_seconds,
             verify_before_submit=rcfg.verify_before_submit,
             loop_hard_threshold=rcfg.loop_hard_threshold,
+            long_task=self.options.long_task,
             cancel=cancel,
         )
         self.last_agent = agent
@@ -420,6 +468,15 @@ class AgentRuntime:
         else:
             result = agent.run(task)
         if session is not None:
-            audit.log_run(session.id, str(result.get("exit_status") or ""), verification=verification.summary())
+            verification_summary = verification.summary()
+            audit.log_run(
+                session.id,
+                str(result.get("exit_status") or ""),
+                verification=verification_summary,
+                api_calls=getattr(self.last_agent, "n_calls", 0),
+                cost=getattr(self.last_agent, "cost", 0.0),
+                tool_calls=getattr(self.last_agent, "tool_call_count", 0),
+            )
+            self._persist_session_stats(session, result, agent=self.last_agent)
         self.hooks.fire("after_run", result=result, task=task)
         return result
