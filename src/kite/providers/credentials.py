@@ -12,6 +12,13 @@ from typing import TYPE_CHECKING
 
 from kite.config import UserConfig, ensure_home, kite_home
 from kite.providers.catalog import load_catalog
+from kite.providers.byos import (
+    credential_label,
+    has_oauth_session,
+    is_oauth_provider,
+    login_oauth,
+    logout_oauth,
+)
 from kite.providers.keys import api_key_env_names, api_key_for
 
 if TYPE_CHECKING:
@@ -140,9 +147,12 @@ def configured_providers() -> list[tuple[str, bool, str]]:
         if spec.name == "ollama":
             rows.append((spec.name, True, "local"))
             continue
+        if is_oauth_provider(spec):
+            rows.append((spec.name, has_oauth_session(spec.oauth_provider or spec.name), "oauth"))
+            continue
         envs = api_key_env_names(spec)
         if not envs:
-            rows.append((spec.name, False, "—"))
+            rows.append((spec.name, False, credential_label(spec)))
             continue
         ok = bool(api_key_for(spec))
         rows.append((spec.name, ok, envs[0]))
@@ -157,10 +167,13 @@ def resolve_provider_name(raw: str) -> str:
 
 
 def loginable_providers() -> list[tuple[str, str, str]]:
-    """(name, display_name, primary_env) for providers that accept API keys."""
+    """(name, display_name, auth hint) for providers that accept login."""
     rows: list[tuple[str, str, str]] = []
     for spec in load_catalog().list():
         if spec.name == "ollama":
+            continue
+        if is_oauth_provider(spec):
+            rows.append((spec.name, spec.display_name, "oauth"))
             continue
         envs = api_key_env_names(spec)
         if not envs:
@@ -185,6 +198,9 @@ def login_provider(
 
     if spec.name == "ollama":
         return 0, "ollama is local — no API key needed", spec.name
+
+    if is_oauth_provider(spec):
+        return login_oauth(spec, set_default=set_default, console=console)
 
     env_names = api_key_env_names(spec)
     if not env_names:
@@ -229,6 +245,11 @@ def logout_provider(provider: str) -> tuple[int, str]:
 
     if spec.name == "ollama":
         return 0, "ollama has no stored key"
+
+    if is_oauth_provider(spec):
+        if logout_oauth(spec):
+            return 0, f"removed OAuth session for {spec.name}"
+        return 0, f"no OAuth session for {spec.name}"
 
     env_names = api_key_env_names(spec)
     if not env_names:

@@ -11,6 +11,7 @@ from kite.agent.events import Event
 from kite.agent.exceptions import FormatError
 from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, split_reasoning
 from kite.models.cache import PromptCacheManager, parse_cache_usage
+from kite.providers.byos import ensure_oauth_env, is_oauth_provider
 from kite.providers.resolve import ResolvedModel
 from kite.tools import ToolRegistry
 
@@ -343,6 +344,9 @@ class LitellmModel:
 
     def query(self, messages: list[dict]) -> dict:
         import litellm
+
+        if is_oauth_provider(self.resolved.spec):
+            ensure_oauth_env(self.resolved.spec)
 
         # Quiet LiteLLM's banner / provider tips on errors.
         litellm.suppress_debug_info = True
