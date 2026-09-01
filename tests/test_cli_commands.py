@@ -7,19 +7,20 @@ from kite.ui.commands import parse_slash
 from kite.ui.repl import ChatSession
 
 
-def test_legacy_model_aliases() -> None:
+def test_model_select_provider_builtins() -> None:
     r = parse_slash("/select groq")
     assert r.kind == "handled"
-    assert r.command == "model"
-    assert r.legacy == "select"
+    assert r.command == "select"
+    assert r.arg == "groq"
+    assert r.legacy == ""
 
     r = parse_slash("/models anthropic")
-    assert r.command == "model"
-    assert r.legacy == "models"
+    assert r.command == "models"
+    assert r.arg == "anthropic"
 
     r = parse_slash("/provider groq")
-    assert r.command == "model"
-    assert r.legacy == "provider"
+    assert r.command == "provider"
+    assert r.arg == "groq"
 
 
 def test_legacy_status_and_memory() -> None:
@@ -54,7 +55,7 @@ def test_help_text_groups() -> None:
     assert "/checkpoint" in text
     assert "legacy aliases" in text
     assert "/select" in text
-    assert "→ /model select" in text
+    assert "/provider" in text
 
 
 def test_legacy_names_in_command_index() -> None:

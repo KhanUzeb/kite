@@ -54,6 +54,9 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     ),
     BuiltinCommand("keys", "Show BYOK keys and BYOS OAuth link status", group="model"),
     BuiltinCommand("model", "Show, set, list, or pick model", hint="list|select|provider/id", group="model"),
+    BuiltinCommand("models", "List live models for the current provider", group="model"),
+    BuiltinCommand("select", "Interactive model picker (saved to ~/.kite/config.toml)", hint="[provider]", group="model"),
+    BuiltinCommand("provider", "Show or set provider", hint="name", group="model"),
     BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
     BuiltinCommand("memory", "Semantic MEMORY.md + episodic log", hint="semantic|episodic", aliases=("mem",), group="memory"),
     BuiltinCommand("remember", "Append a semantic note", hint="[user|project] text", group="memory"),
@@ -77,9 +80,6 @@ for _b in BUILTINS:
 
 # Legacy shortcuts — still parsed; listed under “legacy aliases” in /help.
 LEGACY_ALIASES: dict[str, str] = {
-    "provider": "model",
-    "models": "model",
-    "select": "model",
     "cost": "status",
     "collapse": "expand",
     "thinking": "reasoning",
@@ -90,9 +90,6 @@ LEGACY_ALIASES: dict[str, str] = {
 }
 
 LEGACY_HELP: dict[str, str] = {
-    "select": "→ /model select",
-    "models": "→ /model list",
-    "provider": "→ /model provider",
     "cost": "→ /status (includes cost)",
     "collapse": "→ /collapse (same as /expand off)",
     "thinking": "→ /reasoning thinking",
