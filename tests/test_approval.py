@@ -39,6 +39,49 @@ def test_auto_mode_does_not_gate_git_status() -> None:
     )
 
 
+def test_approve_mode_does_not_gate_git_reads() -> None:
+    for cmd in (
+        "git status",
+        "git log -1 --oneline",
+        "git diff HEAD",
+        "git -C /tmp/repo branch",
+        "git stash list",
+    ):
+        assert not needs_approval(
+            "bash",
+            AgentMode.BUILD,
+            ApprovalMode.APPROVE,
+            command=cmd,
+        ), f"expected read-only: {cmd}"
+
+
+def test_approve_mode_gates_git_writes() -> None:
+    for cmd in (
+        "git add .",
+        "git commit -m wip",
+        "git push origin main",
+        "git pull",
+        "git checkout main",
+        "git branch -d old",
+        "git stash pop",
+    ):
+        assert needs_approval(
+            "bash",
+            AgentMode.BUILD,
+            ApprovalMode.APPROVE,
+            command=cmd,
+        ), f"expected write gate: {cmd}"
+
+
+def test_git_bash_kind_classification() -> None:
+    from kite.ui.approval import git_bash_kind
+
+    assert git_bash_kind("git status -sb") == "read"
+    assert git_bash_kind("git add src/") == "write"
+    assert git_bash_kind("git fetch origin") == "write"
+    assert git_bash_kind("pytest -q") == "other"
+
+
 def test_git_status_pattern_does_not_cover_push() -> None:
     from kite.ui.approval import ApprovalPolicy, action_pattern
 
