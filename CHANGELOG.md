@@ -12,7 +12,7 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - **Token optimizations** — 80% compaction ratio, fast deterministic compaction below 92% context, summary-aware observation elision (8k default), tool-pair-safe compaction tail.
 - **Durable session events** — JSONL event stream alongside transcript messages.
 - **Subagent timeout** — configurable `orchestrator_timeout_seconds` (default 300s).
-- **`api_styles` config** — optional per-provider **transport** override on top of the catalog (`chat` = LiteLLM default for all; `messages` / `responses` = opt-in native Anthropic/OpenAI routes when adapters land).
+- **`api_styles` config** — per-provider route hint (`chat` | `messages` | `responses`) on `ResolvedModel`.
 - **BYOK model picker** — radiolist TUI for API-key providers; subscription providers skip live picker after OAuth.
 
 ### Changed

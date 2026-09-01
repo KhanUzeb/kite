@@ -48,10 +48,7 @@ class UserConfig:
     include_tree_snippet: bool = True
     tree_max_entries: int = 80
     api_bases: dict[str, str] = field(default_factory=dict)
-    api_styles: dict[str, str] = field(default_factory=dict)
-    # Opt-in HTTP transport per catalog provider (not a separate provider list).
-    # Default for all providers: "chat" (LiteLLM chat completions).
-    # Set "messages" (Anthropic SDK) or "responses" (OpenAI Responses API) only when wired.
+    api_styles: dict[str, str] = field(default_factory=dict)  # provider -> chat|messages|responses
     # provider -> model override default
     provider_defaults: dict[str, str] = field(default_factory=dict)
     compaction_provider: str = "openrouter"
