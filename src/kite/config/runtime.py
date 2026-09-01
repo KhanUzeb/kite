@@ -86,6 +86,7 @@ class AgentRuntimeConfig:
     wall_time_limit_seconds: int = 0
     max_consecutive_format_errors: int = 3
     auto_compact: bool = True
+    compaction_ratio: float = 0.80
     compaction_reserve_tokens: int = 16_384
     compaction_keep_recent_tokens: int = 20_000
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
@@ -99,6 +100,7 @@ class AgentRuntimeConfig:
     orchestrator_max_workers: int = 3
     orchestrator_step_limit: int = 10
     orchestrator_cost_limit: float = 1.0
+    orchestrator_timeout_seconds: int = 300
     ui_theme: str = "auto"
     ui_font: str = "unicode"
     model_timeout_seconds: int = 180
@@ -125,6 +127,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         model_timeout_seconds=int(agent.get("model_timeout_seconds", 180)),
         max_consecutive_format_errors=int(agent.get("max_consecutive_format_errors", 3)),
         auto_compact=bool(agent.get("auto_compact", True)),
+        compaction_ratio=float(agent.get("compaction_ratio", 0.80)),
         compaction_reserve_tokens=int(agent.get("compaction_reserve_tokens", 16_384)),
         compaction_keep_recent_tokens=int(agent.get("compaction_keep_recent_tokens", 20_000)),
         prompts=PromptsConfig(
@@ -164,6 +167,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         orchestrator_max_workers=int(orch.get("max_workers", 3)),
         orchestrator_step_limit=int(orch.get("step_limit", 10)),
         orchestrator_cost_limit=float(orch.get("cost_limit", 1.0)),
+        orchestrator_timeout_seconds=int(orch.get("timeout_seconds", 300)),
         ui_theme=str(ui.get("theme") or "auto"),
         ui_font=str(ui.get("font") or "unicode"),
     )

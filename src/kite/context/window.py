@@ -146,7 +146,17 @@ def estimate_usage(
     )
 
 
-def should_compact(usage: ContextUsage, *, reserve: int = DEFAULT_RESERVE) -> bool:
+DEFAULT_COMPACT_RATIO = 0.80
+
+
+def should_compact(
+    usage: ContextUsage,
+    *,
+    reserve: int = DEFAULT_RESERVE,
+    ratio: float = DEFAULT_COMPACT_RATIO,
+) -> bool:
+    if usage.window > 0 and usage.ratio >= ratio:
+        return True
     return usage.window > 0 and usage.total_tokens >= max(1, usage.window - reserve)
 
 
