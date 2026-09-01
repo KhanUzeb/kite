@@ -578,11 +578,12 @@ def make_coding_tools(
             query = str(args.get("text") or args.get("query") or "").strip()
             if not query:
                 return {"ok": False, "error": "text required", "output": "text required"}
-            removed = mem.forget(query)
-            if not removed:
-                return {"ok": True, "output": "no matching notes", "count": 0}
-            lines = [f"forgot {n.scope}/{n.id}: {n.text}" for n in removed]
-            return {"ok": True, "output": "\n".join(lines), "count": len(removed)}
+            result = mem.forget(query)
+            if result.total == 0:
+                return {"ok": True, "output": "no matches", "count": 0}
+            lines = [f"forgot {n.scope}/{n.id}: {n.text}" for n in result.notes]
+            lines.extend(f"forgot episode {e.id}: {e.summary}" for e in result.episodes)
+            return {"ok": True, "output": "\n".join(lines), "count": result.total}
         return {"ok": False, "error": "action must be list|remember|forget", "output": "action must be list|remember|forget"}
 
     reason_prop = {"reason": {"type": "string", "description": "One-line why, shown in the UI"}}
