@@ -13,10 +13,43 @@ class AgentMode(str, Enum):
 class ApprovalMode(str, Enum):
     """How much autonomy is granted — surfaced in the prompt itself."""
 
-    AUTO = "auto"  # mutate inside sandbox without asking
+    AUTO = "auto"  # atomic writes in cwd; ask for bash + outside-cwd mutations
     TRUST = "trust"  # approve-for-me: auto in workspace, ask on destructive bash
-    APPROVE = "approve"  # ask on every gated tool
+    APPROVE = "approve"  # supervised — ask on every gated tool
+    YOLO = "yolo"  # no approval prompts (still respects plan/readonly)
     READONLY = "readonly"  # never mutate (plan default)
+
+
+# User-facing aliases (supervised / auto / yolo) map to canonical modes.
+APPROVAL_ALIASES: dict[str, str] = {
+    "supervised": "approve",
+    "auto": "auto",
+    "yolo": "yolo",
+    "trust": "trust",
+    "approve": "approve",
+    "readonly": "readonly",
+}
+
+
+def parse_approval_mode(raw: str | None, *, default: ApprovalMode | None = None) -> ApprovalMode:
+    """Resolve CLI/REPL approval strings, including supervised/yolo aliases."""
+    if not raw:
+        return default or ApprovalMode.AUTO
+    key = raw.strip().lower()
+    canonical = APPROVAL_ALIASES.get(key, key)
+    try:
+        return ApprovalMode(canonical)
+    except ValueError:
+        return default or ApprovalMode.AUTO
+
+
+def approval_display_name(mode: ApprovalMode) -> str:
+    """Short label for footer / approval UI."""
+    if mode is ApprovalMode.APPROVE:
+        return "supervised"
+    if mode is ApprovalMode.YOLO:
+        return "yolo"
+    return mode.value
 
 
 # Cheap, read-only tools — unrestricted in both modes.
