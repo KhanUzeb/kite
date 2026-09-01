@@ -87,7 +87,7 @@ def assess_setup_status(
         if others:
             hints.append(f"Keys ready for: {', '.join(others)} — run /model select or kite setup")
     elif is_fresh_install():
-        hints.append("Free tier: groq.com → /login groq  ·  Local: ollama → /model ollama/<id>")
+        hints.append("Free tier BYOK: groq.com → /login groq  ·  BYOS: /login chatgpt|claude|grok")
         hints.append("Run kite setup or /setup for the guided wizard")
 
     if not has_config_file():
@@ -122,7 +122,7 @@ def format_setup_banner(status: SetupStatus) -> str:
         lines.append(f"  [kite.muted]{b}[/]")
     for h in status.hints[:3]:
         lines.append(f"  [kite.brand]{h}[/]")
-    lines.append("  [kite.muted]Fix:[/] [kite.brand]/setup[/]  or  [kite.brand]kite setup[/]  ·  [kite.brand]/login groq[/]")
+    lines.append("  [kite.muted]Fix:[/] [kite.brand]/setup[/]  or  [kite.brand]kite setup[/]  ·  [kite.brand]/login groq[/]  ·  [kite.brand]kite login chatgpt[/]")
     return "\n".join(lines)
 
 
