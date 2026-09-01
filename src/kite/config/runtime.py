@@ -97,6 +97,7 @@ class AgentRuntimeConfig:
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     github_tools: bool = False
+    context7_enabled: bool = True
     role: str = "auto"
     prompt_cache_enabled: bool = True
     orchestrator_max_workers: int = 3
@@ -172,6 +173,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             max_context_chars=int(context.get("max_context_chars", 24_000)),
         ),
         github_tools=bool((data.get("github") or {}).get("enabled", False)),
+        context7_enabled=bool((data.get("context7") or {}).get("enabled", True)),
         role=str(agent.get("role", "auto")),
         prompt_cache_enabled=bool(cache.get("enabled", True)),
         orchestrator_max_workers=int(orch.get("max_workers", 3)),

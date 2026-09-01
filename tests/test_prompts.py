@@ -68,5 +68,14 @@ def test_oneshot_still_applies_instance_template() -> None:
 def test_assemble_system_includes_effort_section() -> None:
     cfg = load_runtime_config()
     text = assemble_system_prompt(config=cfg)
+    assert "## Session time" in text
+    assert "UTC:" in text
     assert "## Effort" in text
     assert "Don't open the repo, load a skill, or start a checklist" in text
+
+
+def test_system_prompt_mentions_context7_and_websearch() -> None:
+    system = load_prompt_template("system")
+    assert "context7_resolve" in system
+    assert "websearch" in system
+    assert "no other built-in mcp servers" in system.lower()

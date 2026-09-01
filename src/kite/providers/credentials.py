@@ -51,6 +51,13 @@ def load_kite_env() -> None:
             os.environ[key] = val
 
 
+def context7_api_key() -> str | None:
+    """Optional Context7 API key for built-in docs tools (higher rate limits)."""
+    load_kite_env()
+    key = (os.getenv("CONTEXT7_API_KEY") or "").strip()
+    return key or None
+
+
 def provider_credential_status(*, ok: bool, env_col: str) -> str:
     """Human-readable credential status for CLI/REPL tables."""
     if env_col == "local":

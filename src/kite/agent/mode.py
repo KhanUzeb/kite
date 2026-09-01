@@ -56,6 +56,7 @@ def approval_display_name(mode: ApprovalMode) -> str:
 READONLY_TOOLS = frozenset(
     {
         "read", "grep", "glob", "ls", "set_cwd", "skill", "todo_read", "webfetch", "websearch", "webcrawl",
+        "context7_resolve", "context7_docs",
         "subagent", "task",
         "memory", "gh_issue", "gh_pr", "gh_prs", "gh_runs", "gh_run",
     }
