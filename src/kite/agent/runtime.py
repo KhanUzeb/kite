@@ -393,6 +393,8 @@ class AgentRuntime:
             verification=verification,
             audit=audit,
             tool_progress_interval_seconds=rcfg.tools.progress_interval_seconds,
+            verify_before_submit=rcfg.verify_before_submit,
+            loop_hard_threshold=rcfg.loop_hard_threshold,
             cancel=cancel,
         )
         self.last_agent = agent
