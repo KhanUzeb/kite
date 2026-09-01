@@ -165,6 +165,84 @@ def _cwd_in_workspace(bash_cwd: str | None, workspace_cwd: str | None) -> bool:
     return _path_in_workspace(bash_cwd, workspace_cwd)
 
 
+def _needs_approval_plan(tool: str, mode: AgentMode, command: str) -> bool | None:
+    if mode is not AgentMode.PLAN or tool == "todo_write":
+        return None
+    if tool == "bash" and is_inspection_bash(command):
+        return False
+    return True  # auto-denied by the agent; still surfaces in UI
+
+
+def _needs_approval_auto(
+    tool: str,
+    args: dict[str, Any],
+    *,
+    workspace_cwd: str | None,
+    bash_cwd: str | None,
+) -> bool:
+    if tool in {"write", "edit"}:
+        path = str(args.get("path") or "")
+        return not _path_in_workspace(path, workspace_cwd)
+    if tool == "bash":
+        return not _cwd_in_workspace(bash_cwd, workspace_cwd)
+    return False
+
+
+def _needs_approval_trust(
+    tool: str,
+    command: str,
+    *,
+    trusted_paths: list[str] | None,
+    workspace_cwd: str | None,
+    bash_cwd: str | None,
+) -> bool:
+    if tool != "bash":
+        return False
+    if trusted_paths and workspace_cwd:
+        from kite.guardrails.sandbox import clamp_cwd, cwd_in_trusted, workspace_root
+
+        root = workspace_root(workspace_cwd)
+        workdir, _ = clamp_cwd(bash_cwd, root)
+        if workdir and cwd_in_trusted(workdir, root, trusted_paths):
+            return False
+    if _cwd_in_workspace(bash_cwd, workspace_cwd) and _is_safe_bash(command):
+        return False
+    cmd = command.lower()
+    return any(
+        tok in cmd
+        for tok in ("rm -", "git push", "git reset", "chmod", "curl", "wget", "pip install", "npm install")
+    )
+
+
+def _needs_approval_by_mode(
+    tool: str,
+    approval: ApprovalMode,
+    *,
+    command: str,
+    args: dict[str, Any],
+    trusted_paths: list[str] | None,
+    workspace_cwd: str | None,
+    bash_cwd: str | None,
+) -> bool | None:
+    if approval is ApprovalMode.READONLY:
+        return True
+    if approval is ApprovalMode.YOLO:
+        return False
+    if approval is ApprovalMode.AUTO:
+        return _needs_approval_auto(tool, args, workspace_cwd=workspace_cwd, bash_cwd=bash_cwd)
+    if approval is ApprovalMode.APPROVE:
+        return True
+    if approval is ApprovalMode.TRUST:
+        return _needs_approval_trust(
+            tool,
+            command,
+            trusted_paths=trusted_paths,
+            workspace_cwd=workspace_cwd,
+            bash_cwd=bash_cwd,
+        )
+    return None
+
+
 def needs_approval(
     tool: str,
     mode: AgentMode,
@@ -187,43 +265,22 @@ def needs_approval(
         bash_cwd=bash_cwd,
     ):
         return True
-    if mode is AgentMode.PLAN and tool != "todo_write":
-        if tool == "bash" and is_inspection_bash(command):
-            return False
-        return True  # will be auto-denied by the agent; still surfaces
-    if approval is ApprovalMode.READONLY:
-        return True
-    if approval is ApprovalMode.YOLO:
-        return False
-    if approval is ApprovalMode.AUTO:
-        if tool in {"write", "edit"}:
-            path = str(args.get("path") or "")
-            return not _path_in_workspace(path, workspace_cwd)
-        if tool == "bash":
-            return not _cwd_in_workspace(bash_cwd, workspace_cwd)
-        return False
-    if approval is ApprovalMode.APPROVE:
-        return True
+    plan = _needs_approval_plan(tool, mode, command)
+    if plan is not None:
+        return plan
+    by_mode = _needs_approval_by_mode(
+        tool,
+        approval,
+        command=command,
+        args=args,
+        trusted_paths=trusted_paths,
+        workspace_cwd=workspace_cwd,
+        bash_cwd=bash_cwd,
+    )
+    if by_mode is not None:
+        return by_mode
     if tool == "bash" and is_git_write(command):
         return True
-    if approval is ApprovalMode.TRUST:
-        if tool != "bash":
-            return False
-        if trusted_paths and workspace_cwd:
-            from kite.guardrails.sandbox import clamp_cwd, cwd_in_trusted, workspace_root
-
-            root = workspace_root(workspace_cwd)
-            workdir, _ = clamp_cwd(bash_cwd, root)
-            if workdir and cwd_in_trusted(workdir, root, trusted_paths):
-                return False
-        if _cwd_in_workspace(bash_cwd, workspace_cwd) and _is_safe_bash(command):
-            return False
-        cmd = command.lower()
-        destructive = any(
-            tok in cmd
-            for tok in ("rm -", "git push", "git reset", "chmod", "curl", "wget", "pip install", "npm install")
-        )
-        return destructive
     return True
 
 
