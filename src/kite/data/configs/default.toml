@@ -66,7 +66,7 @@ tree_max_entries = 80
 max_context_chars = 24000
 
 [github]
-enabled = true
+enabled = false
 
 [cache]
 enabled = true  # pi-style prefix caching; Anthropic cache_control + usage tracking

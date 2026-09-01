@@ -23,13 +23,10 @@ class _StubEnv:
         return {"ok": True, "output": ""}
 
 
-def test_instance_prompt_wraps_task_without_legacy_boilerplate() -> None:
+def test_instance_prompt_is_task_only() -> None:
     cfg = load_runtime_config()
     text = assemble_instance_prompt(config=cfg, task="hi")
-    assert text.startswith("hi")
-    assert "Please solve this task" not in text
-    assert "Inspect before editing" not in text
-    assert "structured summary" in text
+    assert text.strip() == "hi"
 
 
 def test_system_prompt_matches_effort_on_greetings() -> None:

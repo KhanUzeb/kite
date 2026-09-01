@@ -6,13 +6,11 @@ Antigravity: effort on the footer, compaction as a boundary, tools as rows.
 
 from __future__ import annotations
 
-import json
 import sys
 from collections.abc import Callable
 from typing import Any
 
 from rich.console import Console
-from rich.markup import escape
 from rich.text import Text
 
 from kite.agent.events import Event
@@ -95,21 +93,6 @@ def render_loop_warning(message: str) -> Text:
     t.append(message.strip(), style="kite.pending")
     t.append("\n")
     return t
-
-def _short_args(args: dict[str, Any], limit: int = 120) -> str:
-    if not args:
-        return ""
-    skip = {"content", "old", "new", "reason"}
-    for key in ("path", "command", "pattern", "query", "name", "prompt", "url"):
-        if key in args and args[key] is not None:
-            val = str(args[key]).replace("\n", " ")
-            if len(val) > limit:
-                val = val[: limit - 1] + "…"
-            return f"{key}={val}"
-    preview = json.dumps({k: v for k, v in args.items() if k not in skip}, ensure_ascii=False)
-    if len(preview) > limit:
-        preview = preview[: limit - 1] + "…"
-    return preview
 
 def _collapse_text(text: str, *, expanded: bool, limit: int = COLLAPSE_LINES) -> Text:
     raw = text.rstrip("\n")
