@@ -18,6 +18,8 @@ ALIASES: dict[str, str] = {
     "go": "opencode-go",
     "codex": "chatgpt",
     "chatgpt-sub": "chatgpt",
+    "claude-sub": "claude",
+    "grok-sub": "grok",
     "nim": "nvidia",
     "nvidia-nim": "nvidia",
     "nvidia_nim": "nvidia",
@@ -48,7 +50,7 @@ class ProviderSpec:
             return model if model.startswith("openrouter/") else f"openrouter/{model}"
         # Named LiteLLM routes keep their prefix. Other OpenAI-compatible
         # gateways (OpenCode Zen/Go, custom) use openai/ + api_base.
-        native = {"huggingface", "ollama", "groq", "nvidia"}
+        native = {"huggingface", "ollama", "groq", "nvidia", "xai"}
         if self.name == "openai-compatible" or (
             self.kind == "openai-compatible" and self.name not in native
         ):
