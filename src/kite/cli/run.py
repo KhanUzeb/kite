@@ -286,24 +286,23 @@ def cmd_providers(_args: argparse.Namespace) -> int:
 
     from kite.config import UserConfig, assess_setup_status
     from kite.providers.catalog import load_catalog
-    from kite.providers.keys import api_key_for
+    from kite.providers.credentials import configured_providers, provider_credential_status
 
     console = _console()
     catalog = load_catalog()
     cfg = UserConfig.load()
     status = assess_setup_status()
+    cred_rows = {name: (ok, env) for name, ok, env in configured_providers()}
     table = Table(title="Providers")
     table.add_column("name")
+    table.add_column("display")
     table.add_column("selected model")
-    table.add_column("api_key_env")
-    table.add_column("key?")
-    table.add_column("docs")
+    table.add_column("auth")
+    table.add_column("status")
     for p in catalog.list():
-        key_ok = "—"
-        if p.api_key_env:
-            key_ok = "yes" if api_key_for(p) else "missing"
-        elif p.name == "ollama":
-            key_ok = "local"
+        ok, env_col = cred_rows.get(p.name, (False, p.api_key_env or "—"))
+        auth = env_col if env_col in {"local", "oauth", "—"} else (p.api_key_env or "—")
+        cred_status = provider_credential_status(ok=ok, env_col=env_col)
         selected = (
             cfg.provider_defaults.get(p.name)
             or (cfg.default_model if p.name == cfg.default_provider else None)
@@ -311,9 +310,11 @@ def cmd_providers(_args: argparse.Namespace) -> int:
             or "(live)"
         )
         mark = " *" if p.name == cfg.default_provider else ""
-        table.add_row(p.name + mark, selected, p.api_key_env or "-", key_ok, p.docs_url[:40])
+        table.add_row(p.name + mark, p.display_name, selected, auth, cred_status)
     console.print(table)
-    console.print("[dim]* = default provider · models fetched live via API key[/]")
+    console.print(
+        "[dim]* = default · BYOK = API key · BYOS = oauth subscription (chatgpt/claude/grok)[/]"
+    )
     if status.ready:
         console.print(f"[green]Ready[/]  {status.default_provider}/{status.default_model}")
     else:
@@ -802,15 +803,28 @@ def build_parser() -> argparse.ArgumentParser:
     providers = sub.add_parser("providers", help="List providers + credential status")
     providers.set_defaults(func=cmd_providers)
 
-    from kite.cli.setup import cmd_keys, cmd_setup
+    from kite.cli.setup import cmd_keys, cmd_login, cmd_setup
     from kite.cli.stats import cmd_maintainer_dashboard
     from kite.cli.dashboard import cmd_dashboard
 
-    setup = sub.add_parser("setup", help="First-run wizard — API key, provider, model")
+    setup = sub.add_parser("setup", help="First-run wizard — credentials, provider, model")
     setup.add_argument("-p", "--provider", help="Skip provider picker")
     setup.set_defaults(func=cmd_setup)
 
-    keys = sub.add_parser("keys", help="Show API key status or set a provider key")
+    login = sub.add_parser(
+        "login",
+        help="Link provider — BYOK API key (hidden) or BYOS OAuth subscription",
+    )
+    login.add_argument("provider", nargs="?", help="Provider name (chatgpt, groq, claude, …)")
+    login.add_argument(
+        "--no-set-default",
+        action="store_false",
+        dest="set_default",
+        help="Do not set this provider as default in ~/.kite/config.toml",
+    )
+    login.set_defaults(func=cmd_login, set_default=True)
+
+    keys = sub.add_parser("keys", help="Show credential status or set a BYOK API key")
     keys.add_argument("--set", metavar="PROVIDER", help="Paste a key for this provider (hidden input)")
     keys.add_argument("--logout", metavar="PROVIDER", help="Remove a provider key from ~/.kite/.env")
     keys.set_defaults(func=cmd_keys)
@@ -927,14 +941,9 @@ def main(argv: list[str] | None = None) -> int:
         print(__version__)
         return 0
 
-    from dotenv import load_dotenv
+    from kite.providers.credentials import load_kite_env
 
-    from kite.config import kite_home
-
-    load_dotenv()
-    env_file = kite_home() / ".env"
-    if env_file.is_file():
-        load_dotenv(env_file)
+    load_kite_env()
 
     parser = build_parser()
     args = parser.parse_args(argv)

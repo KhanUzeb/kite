@@ -30,6 +30,48 @@ def env_file_path() -> Path:
     return kite_home() / ".env"
 
 
+def load_kite_env() -> None:
+    """Load project .env then ~/.kite/.env.
+
+    Non-empty project values win. Kite home fills keys still unset or left
+    empty (``KEY=`` placeholders from a copied ``.env.example``).
+    """
+    from dotenv import dotenv_values, load_dotenv
+
+    project_env = Path.cwd() / ".env"
+    if project_env.is_file():
+        load_dotenv(project_env)
+    path = env_file_path()
+    if not path.is_file():
+        return
+    for key, val in dotenv_values(path).items():
+        if not val:
+            continue
+        if not (os.getenv(key) or "").strip():
+            os.environ[key] = val
+
+
+def provider_credential_status(*, ok: bool, env_col: str) -> str:
+    """Human-readable credential status for CLI/REPL tables."""
+    if env_col == "local":
+        return "local"
+    if env_col == "—":
+        return "n/a"
+    if env_col == "oauth":
+        return "linked" if ok else "login required"
+    return "set" if ok else "missing"
+
+
+def provider_needs_login(spec) -> bool:
+    """True when setup/login should prompt before using this provider."""
+    if spec.name == "ollama":
+        return False
+    if is_oauth_provider(spec):
+        return not has_oauth_session(spec.oauth_provider or spec.name)
+    envs = api_key_env_names(spec)
+    return bool(envs) and not api_key_for(spec)
+
+
 def read_env_lines(path: Path) -> list[str]:
     if not path.is_file():
         return []

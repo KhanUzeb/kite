@@ -754,26 +754,31 @@ class ChatSession:
         return line
 
     def _show_keys(self) -> None:
-        from kite.providers.credentials import configured_providers, env_file_path
+        from kite.providers.credentials import (
+            configured_providers,
+            env_file_path,
+            provider_credential_status,
+        )
 
         rows = configured_providers()
         for name, ok, env in rows:
-            if env == "local":
-                status = "local"
-            elif env == "—":
-                status = "n/a"
-            else:
-                status = "set" if ok else "missing"
-            self.console.print(f"  {name:<14}{status:<8}{env}")
-        self.console.print(f"[kite.muted]file[/]  {env_file_path()}  ·  /login provider  ·  /logout provider")
+            status = provider_credential_status(ok=ok, env_col=env)
+            self.console.print(f"  {name:<14}{status:<18}{env}")
+        self.console.print(
+            f"[kite.muted]BYOK[/]  {env_file_path()}  "
+            f"[kite.muted]BYOS[/]  ~/.kite/oauth/  "
+            f"[kite.muted]·[/]  /login provider  ·  /logout provider"
+        )
 
     def _login_provider(self, arg: str) -> None:
+        from kite.providers.byos import is_oauth_provider
+        from kite.providers.catalog import load_catalog
         from kite.providers.credentials import login_provider
         from kite.providers.select import select_provider_interactive
 
         provider = arg.strip()
         if not provider:
-            picked = select_provider_interactive(self.console)
+            picked = select_provider_interactive(self.console, oauth_first=True)
             if not picked:
                 return
             provider = picked
@@ -789,7 +794,17 @@ class ChatSession:
             self.provider = resolved
             self.state.provider = resolved
             self._model_cache = []
-            self.console.print("[kite.muted]Tip:[/]  /select to pick a model")
+            try:
+                spec = load_catalog().get(resolved)
+            except KeyError:
+                spec = None
+            if spec is not None and is_oauth_provider(spec):
+                self.console.print(
+                    "[kite.muted]Tip:[/]  subscription linked — "
+                    "/model to view default or send a message"
+                )
+            else:
+                self.console.print("[kite.muted]Tip:[/]  /select to pick a model")
 
     def _logout_provider(self, arg: str) -> None:
         from kite.providers.credentials import logout_provider
