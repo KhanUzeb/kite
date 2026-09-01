@@ -27,15 +27,19 @@ def test_auto_mode_still_asks_for_git_commit() -> None:
         AgentMode.BUILD,
         ApprovalMode.AUTO,
         command="git commit -m 'wip'",
+        workspace_cwd="/tmp/proj",
+        bash_cwd="/tmp",
     )
 
 
-def test_auto_mode_does_not_gate_git_status() -> None:
+def test_auto_mode_does_not_gate_git_status_in_workspace(workspace: Path) -> None:
     assert not needs_approval(
         "bash",
         AgentMode.BUILD,
         ApprovalMode.AUTO,
         command="git status",
+        workspace_cwd=str(workspace),
+        bash_cwd=str(workspace),
     )
 
 

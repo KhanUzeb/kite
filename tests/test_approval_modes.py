@@ -25,30 +25,58 @@ def test_yolo_never_gates(workspace: Path) -> None:
     )
 
 
-def test_auto_mode_still_asks_for_git_commit() -> None:
+def test_supervised_gates_all_mutations(workspace: Path) -> None:
+    assert needs_approval(
+        "write",
+        AgentMode.BUILD,
+        ApprovalMode.APPROVE,
+        arguments={"path": "src/foo.py"},
+        workspace_cwd=str(workspace),
+    )
+    assert needs_approval(
+        "bash",
+        AgentMode.BUILD,
+        ApprovalMode.APPROVE,
+        command="git status",
+        workspace_cwd=str(workspace),
+    )
+
+
+def test_supervised_allows_reads() -> None:
+    assert not needs_approval("read", AgentMode.BUILD, ApprovalMode.APPROVE)
+    assert not needs_approval("grep", AgentMode.BUILD, ApprovalMode.APPROVE)
+
+
+def test_auto_mode_allows_git_commit_in_workspace(workspace: Path) -> None:
+    assert not needs_approval(
+        "bash",
+        AgentMode.BUILD,
+        ApprovalMode.AUTO,
+        command="git commit -m 'wip'",
+        workspace_cwd=str(workspace),
+        bash_cwd=str(workspace),
+    )
+
+
+def test_auto_mode_gates_git_commit_outside_workspace(workspace: Path) -> None:
     assert needs_approval(
         "bash",
         AgentMode.BUILD,
         ApprovalMode.AUTO,
         command="git commit -m 'wip'",
+        workspace_cwd=str(workspace),
+        bash_cwd="/tmp",
     )
 
 
-def test_auto_mode_does_not_gate_git_status() -> None:
+def test_auto_mode_allows_pip_install_in_workspace(workspace: Path) -> None:
     assert not needs_approval(
         "bash",
         AgentMode.BUILD,
         ApprovalMode.AUTO,
-        command="git status",
-    )
-
-
-def test_auto_mode_gates_pip_install() -> None:
-    assert needs_approval(
-        "bash",
-        AgentMode.BUILD,
-        ApprovalMode.AUTO,
         command="pip install requests",
+        workspace_cwd=str(workspace),
+        bash_cwd=str(workspace),
     )
 
 
@@ -58,5 +86,15 @@ def test_auto_mode_allows_write_in_workspace(workspace: Path) -> None:
         AgentMode.BUILD,
         ApprovalMode.AUTO,
         arguments={"path": "src/foo.py"},
+        workspace_cwd=str(workspace),
+    )
+
+
+def test_auto_mode_gates_write_outside_workspace(workspace: Path) -> None:
+    assert needs_approval(
+        "write",
+        AgentMode.BUILD,
+        ApprovalMode.AUTO,
+        arguments={"path": "/etc/passwd"},
         workspace_cwd=str(workspace),
     )

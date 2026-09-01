@@ -57,6 +57,15 @@ _SAFE_BASH = re.compile(
 )
 
 
+def _is_safe_bash(command: str) -> bool:
+    cmd = (command or "").strip()
+    if not cmd:
+        return True
+    if is_git_write(cmd):
+        return False
+    return bool(_SAFE_BASH.match(cmd))
+
+
 def _path_in_workspace(path: str, workspace_cwd: str | None) -> bool:
     if not path or not workspace_cwd:
         return True
@@ -68,13 +77,13 @@ def _path_in_workspace(path: str, workspace_cwd: str | None) -> bool:
         return False
 
 
-def _is_safe_bash(command: str) -> bool:
-    cmd = (command or "").strip()
-    if not cmd:
+def _cwd_in_workspace(bash_cwd: str | None, workspace_cwd: str | None) -> bool:
+    """True when bash runs inside the project workspace (or cwd unset → workspace default)."""
+    if not workspace_cwd:
         return True
-    if is_git_write(cmd):
-        return False
-    return bool(_SAFE_BASH.match(cmd))
+    if not bash_cwd:
+        return True
+    return _path_in_workspace(bash_cwd, workspace_cwd)
 
 
 def needs_approval(
@@ -97,15 +106,17 @@ def needs_approval(
         return True
     if approval is ApprovalMode.YOLO:
         return False
-    if tool == "bash" and is_git_write(command):
-        return True
     if approval is ApprovalMode.AUTO:
         if tool in {"write", "edit"}:
             path = str(args.get("path") or "")
             return not _path_in_workspace(path, workspace_cwd)
         if tool == "bash":
-            return not _is_safe_bash(command)
+            return not _cwd_in_workspace(bash_cwd, workspace_cwd)
         return False
+    if approval is ApprovalMode.APPROVE:
+        return True
+    if tool == "bash" and is_git_write(command):
+        return True
     if approval is ApprovalMode.TRUST:
         if tool != "bash":
             return False
@@ -116,6 +127,8 @@ def needs_approval(
             workdir, _ = clamp_cwd(bash_cwd, root)
             if workdir and cwd_in_trusted(workdir, root, trusted_paths):
                 return False
+        if _cwd_in_workspace(bash_cwd, workspace_cwd) and _is_safe_bash(command):
+            return False
         cmd = command.lower()
         destructive = any(
             tok in cmd

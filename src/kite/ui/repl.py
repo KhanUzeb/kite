@@ -905,6 +905,13 @@ class ChatSession:
         self.console.print("[kite.build]build mode[/]  edits are on")
 
     def _slash_approve(self, arg: str) -> None:
+        if not (arg or "").strip():
+            self.console.print(
+                "[kite.muted]yolo[/] — everything, no prompts\n"
+                "[kite.muted]auto[/] — auto in workspace; ask outside project folder\n"
+                "[kite.muted]supervised[/] — reads free; write/bash need approval"
+            )
+            return
         mode = parse_approval_mode(arg or None, default=self.state.approval)
         self.state.approval = mode
         self._invalidate_harness()
