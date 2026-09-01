@@ -14,6 +14,7 @@ from rich.text import Text
 
 from kite.config import kite_home
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
+from kite.guardrails.sandbox import resolve_in_workspace, workspace_root
 from kite.ui.diff import count_diff_lines, diff_path, render_diff_stat
 from kite.ui.style import GUTTER, SYMBOL_WARN
 
@@ -46,26 +47,76 @@ def is_git_write(command: str) -> bool:
     return bool(_GIT_WRITE.search(command or ""))
 
 
+_SAFE_BASH = re.compile(
+    r"(?i)^\s*("
+    r"git\s+(status|diff|log|show|branch|stash\s+list)"
+    r"|pytest\b|npm\s+test\b|cargo\s+test\b|go\s+test\b|make\s+test\b"
+    r"|ls\b|cat\b|head\b|tail\b|rg\b|grep\b|find\b|pwd\b|echo\b|which\b"
+    r"|node\s+--version|python3?\s+--version|uv\s+--version"
+    r")\b"
+)
+
+
+def _is_safe_bash(command: str) -> bool:
+    cmd = (command or "").strip()
+    if not cmd:
+        return True
+    if is_git_write(cmd):
+        return False
+    return bool(_SAFE_BASH.match(cmd))
+
+
+def _path_in_workspace(path: str, workspace_cwd: str | None) -> bool:
+    if not path or not workspace_cwd:
+        return True
+    try:
+        resolved = resolve_in_workspace(path, workspace_cwd)
+        resolved.relative_to(workspace_root(workspace_cwd))
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _cwd_in_workspace(bash_cwd: str | None, workspace_cwd: str | None) -> bool:
+    """True when bash runs inside the project workspace (or cwd unset → workspace default)."""
+    if not workspace_cwd:
+        return True
+    if not bash_cwd:
+        return True
+    return _path_in_workspace(bash_cwd, workspace_cwd)
+
+
 def needs_approval(
     tool: str,
     mode: AgentMode,
     approval: ApprovalMode,
     *,
     command: str = "",
+    arguments: dict[str, Any] | None = None,
     trusted_paths: list[str] | None = None,
     workspace_cwd: str | None = None,
     bash_cwd: str | None = None,
 ) -> bool:
+    args = arguments or {}
     if tool not in MUTATING_TOOLS:
         return False
     if mode is AgentMode.PLAN and tool != "todo_write":
         return True  # will be auto-denied by the agent; still surfaces
     if approval is ApprovalMode.READONLY:
         return True
+    if approval is ApprovalMode.YOLO:
+        return False
+    if approval is ApprovalMode.AUTO:
+        if tool in {"write", "edit"}:
+            path = str(args.get("path") or "")
+            return not _path_in_workspace(path, workspace_cwd)
+        if tool == "bash":
+            return not _cwd_in_workspace(bash_cwd, workspace_cwd)
+        return False
+    if approval is ApprovalMode.APPROVE:
+        return True
     if tool == "bash" and is_git_write(command):
         return True
-    if approval is ApprovalMode.AUTO:
-        return False
     if approval is ApprovalMode.TRUST:
         if tool != "bash":
             return False
@@ -76,6 +127,8 @@ def needs_approval(
             workdir, _ = clamp_cwd(bash_cwd, root)
             if workdir and cwd_in_trusted(workdir, root, trusted_paths):
                 return False
+        if _cwd_in_workspace(bash_cwd, workspace_cwd) and _is_safe_bash(command):
+            return False
         cmd = command.lower()
         destructive = any(
             tok in cmd
@@ -137,6 +190,7 @@ def render_approval_panel(tool: str, arguments: dict[str, Any], *, diff: str = "
     body.append(f"{SYMBOL_WARN}  approve ", style="kite.pending")
     body.append(tool, style="bold")
     body.append("\n")
+    body.append(f"{GUTTER}mode: supervised · auto · yolo  (a/s/p/n/q)\n", style="kite.muted")
     if reason:
         body.append(f"{GUTTER}{reason}\n", style="kite.muted")
 
@@ -239,6 +293,7 @@ def make_approver(
             mode,
             approval,
             command=str(arguments.get("command") or ""),
+            arguments=arguments,
             trusted_paths=trusted_paths,
             workspace_cwd=workspace_cwd,
             bash_cwd=str(arguments.get("cwd") or "") or None,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kite.agent.mode import AgentMode, ApprovalMode
+from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_SEP
 from kite.ui.theme import glyph
@@ -53,7 +53,7 @@ def status_context_parts(state: SessionUiState) -> list[str]:
 
 def format_status_tail(state: SessionUiState) -> str:
     """Everything after the kite brand — shared by render + composer toolbar."""
-    mode_bits = [state.mode.value, state.approval.value]
+    mode_bits = [state.mode.value, approval_display_name(state.approval)]
     if state.sandbox_restricted:
         mode_bits.append("restricted")
     parts = [*mode_bits, *status_context_parts(state)]
@@ -61,8 +61,8 @@ def format_status_tail(state: SessionUiState) -> str:
 
 
 def approval_style(state: SessionUiState) -> str:
-    if state.approval is ApprovalMode.APPROVE:
-        return "kite.pending"
+    if state.approval in {ApprovalMode.APPROVE, ApprovalMode.YOLO}:
+        return "kite.pending" if state.approval is ApprovalMode.APPROVE else "kite.build"
     if state.approval is ApprovalMode.READONLY:
         return "kite.muted"
     return "kite.muted"

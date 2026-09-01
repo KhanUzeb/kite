@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from kite.agent.mode import AgentMode, ApprovalMode, default_approval
+from kite.agent.mode import AgentMode, ApprovalMode, default_approval, parse_approval_mode
 
 
 def _console():
@@ -25,12 +25,10 @@ def _parse_mode(raw: str | None) -> AgentMode:
 
 
 def _parse_approval(raw: str | None, mode: AgentMode) -> ApprovalMode:
+    fallback = ApprovalMode.AUTO if mode is AgentMode.BUILD else ApprovalMode.READONLY
     if raw:
-        try:
-            return ApprovalMode(raw.lower())
-        except ValueError:
-            return default_approval(mode)
-    return ApprovalMode.AUTO if mode is AgentMode.BUILD else ApprovalMode.READONLY
+        return parse_approval_mode(raw, default=default_approval(mode))
+    return fallback
 
 
 def _load_attachments(paths: list[str], task: str, cwd: str):
@@ -722,9 +720,9 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--approval",
-        choices=["auto", "trust", "approve", "readonly"],
+        choices=["auto", "supervised", "yolo", "trust", "approve", "readonly"],
         default=None,
-        help="Autonomy: auto | trust (approve-for-me) | approve | readonly",
+        help="Autonomy: auto | supervised (approve) | yolo | trust | readonly",
     )
     p.add_argument(
         "--role",

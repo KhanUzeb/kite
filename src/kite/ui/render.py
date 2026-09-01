@@ -15,7 +15,7 @@ from rich.markup import escape
 from rich.text import Text
 
 from kite.agent.events import Event
-from kite.agent.mode import AgentMode, ApprovalMode
+from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name
 from kite.ui.chips import render_plan_tasks
 from kite.ui.diff import count_diff_lines, render_diff
 from kite.ui.spinner import WaitSpinner
@@ -145,7 +145,7 @@ def render_status(state: SessionUiState) -> Text:
     t.append(f" {SYMBOL_SEP} ", style="kite.muted")
     t.append(state.mode.value, style=mode_style(state))
     t.append(f" {SYMBOL_SEP} ", style="kite.muted")
-    t.append(state.approval.value, style=approval_style(state))
+    t.append(approval_display_name(state.approval), style=approval_style(state))
     ctx = status_context_parts(state)
     if ctx:
         t.append(f" {SYMBOL_SEP} ", style="kite.muted")
