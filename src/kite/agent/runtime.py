@@ -443,6 +443,7 @@ class AgentRuntime:
             tool_progress_interval_seconds=rcfg.tools.progress_interval_seconds,
             verify_before_submit=rcfg.verify_before_submit,
             loop_hard_threshold=rcfg.loop_hard_threshold,
+            provider_max_retries=rcfg.provider_max_retries,
             long_task=self.options.long_task,
             cancel=cancel,
         )

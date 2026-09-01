@@ -692,6 +692,40 @@ class RunDisplay:
             self.console.print(f"[kite.error]{SYMBOL_FAIL} stopped[/] [kite.muted]— steer with a follow-up to continue[/]")
             return
 
+        if kind == "provider_retry":
+            self._end_stream_line()
+            self._spin(True, f"retrying  {p.get('attempt')}/{p.get('max_attempts')}")
+            line = Text()
+            line.append(f"{GUTTER}{SYMBOL_WARN} ", style="kite.pending")
+            line.append(
+                f"provider retry {p.get('attempt')}/{p.get('max_attempts')} in {float(p.get('delay_s') or 0):.0f}s",
+                style="kite.pending bold",
+            )
+            err = str(p.get("error") or "").strip()
+            if err:
+                line.append(f"  ·  {err[:100]}", style="kite.muted")
+            line.append("\n")
+            self.console.print(line)
+            return
+
+        if kind == "provider_fault":
+            self._end_stream_line()
+            self._spin(False)
+            line = Text()
+            line.append(f"{GUTTER}{SYMBOL_WARN} ", style="kite.pending")
+            line.append("provider unavailable", style="kite.pending bold")
+            err = str(p.get("error") or "").strip()
+            if err:
+                line.append(f"  ·  {err[:120]}", style="kite.muted")
+            line.append("\n")
+            line.append(f"{GUTTER}{SYMBOL_OK} ", style="kite.success")
+            line.append("session saved — send another message to continue", style="kite.success")
+            if self.state.provider and self.state.model:
+                line.append(f"  ·  {self.state.provider}/{self.state.model}", style="kite.muted")
+            line.append("\n")
+            self.console.print(line)
+            return
+
         if kind == "approval":
             self._end_stream_line()
             self._spin(False)
@@ -718,6 +752,14 @@ class RunDisplay:
                     )
             elif status in {"Interrupted", "Denied"}:
                 self.console.print(Text(str(status).lower(), style="kite.pending"))
+            elif status == "ProviderFault":
+                err = str(p.get("error") or "provider error")
+                line = Text()
+                line.append(f"{GUTTER}{SYMBOL_WARN} ", style="kite.pending")
+                line.append("paused — provider fault", style="kite.pending")
+                line.append(f"  ·  {err[:100]}", style="kite.muted")
+                line.append("\n")
+                self.console.print(line)
             else:
                 self.console.print(render_error(str(status), show_trace_hint=False))
             self.print_status()

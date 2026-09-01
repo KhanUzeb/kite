@@ -84,7 +84,7 @@ class LitellmModel:
         resolved: ResolvedModel,
         registry: ToolRegistry | None = None,
         temperature: float = 0.0,
-        max_retries: int = 2,
+        max_retries: int = 3,
         on_event: Callable[[Event], None] | None = None,
         stream: bool = True,
         reasoning: str = "auto",

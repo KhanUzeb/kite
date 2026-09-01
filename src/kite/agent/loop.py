@@ -11,7 +11,16 @@ from collections.abc import Callable
 from pathlib import Path
 
 from kite.agent.events import Event
-from kite.agent.exceptions import FormatError, InterruptAgentFlow, Interrupted, LimitsExceeded, Submitted, TimeExceeded
+from kite.agent.exceptions import (
+    FormatError,
+    InterruptAgentFlow,
+    Interrupted,
+    LimitsExceeded,
+    ProviderFault,
+    Submitted,
+    TimeExceeded,
+)
+from kite.models.retry import is_transient_provider_error, retry_delay_s
 from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.loop_guard import LoopGuard
 from kite.agent.verification import VerificationCollector
@@ -97,6 +106,7 @@ class DefaultAgent:
         loop_hard_threshold: int = 5,
         long_task: bool = False,
         phase_checkpoint_interval: int = 10,
+        provider_max_retries: int = 4,
         cancel=None,
     ):
         self.model = model
@@ -135,6 +145,7 @@ class DefaultAgent:
         self.verify_before_submit = verify_before_submit
         self.long_task = long_task
         self.phase_checkpoint_interval = max(3, phase_checkpoint_interval)
+        self.provider_max_retries = max(1, int(provider_max_retries))
         self.cancel = cancel
         self._cost_warned = False
 
@@ -325,6 +336,7 @@ class DefaultAgent:
             )
 
         old_sigint = signal.getsignal(signal.SIGINT)
+        provider_fault: str | None = None
         try:
             def _on_sigint(signum, frame):
                 self.request_interrupt()
@@ -349,6 +361,17 @@ class DefaultAgent:
                     self.add_messages(*e.messages, _exit_msg("Interrupted"))
                 except InterruptAgentFlow as e:
                     self.add_messages(*e.messages)
+                except ProviderFault as e:
+                    provider_fault = e.error
+                    if self.session is not None:
+                        self.session.replace_messages(self.messages)
+                    self._emit(
+                        "provider_fault",
+                        error=e.error,
+                        attempts=e.attempts,
+                        recoverable=True,
+                    )
+                    break
                 except Exception as e:
                     self.add_messages(
                         _exit_msg(type(e).__name__, content=str(e), traceback=traceback.format_exc())
@@ -366,7 +389,15 @@ class DefaultAgent:
             self._flush_task_commit()
 
         result = self.messages[-1].get("extra", {}) if self.messages else {}
-        if result:
+        if provider_fault:
+            result = {
+                **(result or {}),
+                "exit_status": "ProviderFault",
+                "error": provider_fault,
+                "recoverable": True,
+                "cost": self.cost,
+            }
+        elif result:
             result = {**result, "verification": vsum, "verification_status": vsum.get("status")}
         if self.session is not None:
             self.session.set_exit(str(result.get("exit_status") or ""))
@@ -382,17 +413,46 @@ class DefaultAgent:
         if 0 < self.wall_time_limit_seconds <= int(time.time() - self._start_time):
             raise TimeExceeded(_exit_msg("TimeExceeded"))
         self.n_calls += 1
+        last_error: BaseException | None = None
+        attempts = 0
         try:
             messages = self.messages
             if self.hooks is not None:
                 messages = self.hooks.call("before_query", messages)
                 self.messages = messages
-            message = self.model.query(self.messages)
-            if self.hooks is not None:
-                message = self.hooks.call("after_query", message)
+            while attempts < self.provider_max_retries:
+                attempts += 1
+                try:
+                    message = self.model.query(self.messages)
+                    if self.hooks is not None:
+                        message = self.hooks.call("after_query", message)
+                    last_error = None
+                    break
+                except KeyboardInterrupt:
+                    self.request_interrupt()
+                    raise _user_interrupt() from None
+                except Exception as e:
+                    last_error = e
+                    if attempts >= self.provider_max_retries or not is_transient_provider_error(e):
+                        raise
+                    delay = retry_delay_s(attempts)
+                    self._emit(
+                        "provider_retry",
+                        attempt=attempts,
+                        max_attempts=self.provider_max_retries,
+                        delay_s=delay,
+                        error=str(e)[:240],
+                    )
+                    time.sleep(delay)
+            if last_error is not None:
+                raise last_error
         except KeyboardInterrupt:
             self.request_interrupt()
             raise _user_interrupt() from None
+        except Exception as e:
+            if is_transient_provider_error(e):
+                raise ProviderFault(str(e), attempts=attempts) from e
+            raise
         if self._interrupt:
             raise _user_interrupt()
         self.cost += message.get("extra", {}).get("cost", 0.0)

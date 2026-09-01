@@ -9,6 +9,7 @@ wall_time_limit_seconds = 0
 model_timeout_seconds = 180
 verify_before_submit = true
 loop_hard_threshold = 5
+provider_max_retries = 4
 max_consecutive_format_errors = 3
 auto_compact = true
 compaction_ratio = 0.80

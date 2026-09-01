@@ -27,3 +27,12 @@ class FormatError(InterruptAgentFlow):
 
 class Interrupted(InterruptAgentFlow):
     """User stopped the current turn; session stays alive."""
+
+
+class ProviderFault(InterruptAgentFlow):
+    """Provider/network error after retries — session preserved for continue."""
+
+    def __init__(self, error: str, *, attempts: int = 0):
+        self.error = error
+        self.attempts = attempts
+        super().__init__()

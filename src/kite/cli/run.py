@@ -152,6 +152,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         f"[bold]session[/]={sid}  "
         f"trajectory={ensure_home() / 'trajectories' / f'{sid}.json'}"
     )
+    if result.get("exit_status") == "ProviderFault":
+        console.print(
+            f"[kite.pending]provider fault[/] — session saved. "
+            f"[kite.muted]retry: kite resume {sid} \"continue\"[/]"
+        )
     return 0 if result.get("exit_status") == "Submitted" else 1
 
 
