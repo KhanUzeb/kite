@@ -54,6 +54,15 @@ def _exit_msg(status: str, *, content: str | None = None, submission: str = "", 
 
 
 _MAX_IDLE_TURNS = 4
+# Terse on purpose — these user nudges are re-injected into the model context.
+_IDLE_NUDGE = (
+    "No tool calls. Use tools or submit:\n"
+    "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+)
+_IDLE_STALL = (
+    "Stopped after {turns} idle turns (token protection). "
+    "Use tools, then: echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+)
 _CASUAL_CHAT = frozenset(
     {
         "hi",
@@ -542,22 +551,10 @@ class DefaultAgent:
             raise Submitted(_exit_msg("Submitted", content=content, submission=content))
         self._consecutive_no_tool_turns += 1
         if self.mode is AgentMode.BUILD and self._consecutive_no_tool_turns >= _MAX_IDLE_TURNS:
-            msg = (
-                f"Stopped after {self._consecutive_no_tool_turns} turns with no tool calls "
-                "(idle token protection). Use tools to continue work, then submit via:\n"
-                "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
-            )
+            msg = _IDLE_STALL.format(turns=self._consecutive_no_tool_turns)
             self.add_messages(_exit_msg("Stalled", content=msg))
             return []
-        return self.add_messages(
-            {
-                "role": "user",
-                "content": (
-                    "No tool calls in your last message. Keep working with tools, or finish with bash:\n"
-                    "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n## Done\n- …"
-                ),
-            }
-        )
+        return self.add_messages({"role": "user", "content": _IDLE_NUDGE})
 
     def _execute_parallel_actions(self, actions: list[dict], outputs: list[dict]) -> None:
         from concurrent.futures import ThreadPoolExecutor
