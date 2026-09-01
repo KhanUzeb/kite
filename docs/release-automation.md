@@ -5,7 +5,7 @@ After feature work is merged to `main`:
 ## 1. Bump and sync
 
 ```bash
-./scripts/bump_release.sh 0.7.3
+./scripts/bump_release.sh 0.8.0
 ```
 
 This runs `scripts/sync_version.py`, which updates:

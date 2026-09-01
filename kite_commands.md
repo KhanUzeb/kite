@@ -37,7 +37,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--cwd` | Workspace |
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
-| `--approval auto\|approve\|trust\|readonly` | Default: `auto` for `run`, `approve` for chat |
+| `--approval yolo\|auto\|supervised` | `yolo` = no prompts; `auto` = workspace-scoped; `supervised` = approve all mutations (default: `auto` for `run`, `supervised` for chat) |
 | `--steps` `--cost` `--time` | Limits |
 | `-v` / `-q` | Verbose tool bodies / quiet |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
@@ -75,14 +75,14 @@ These never go to the model.
 |---------|----------------|
 | `/plan` `/p` | Read-only mode, checklist |
 | `/build` `/b` | Apply edits; approval stays unless it was readonly |
-| `/approve auto\|approve\|trust\|readonly` | Autonomy for this session |
+| `/approve yolo\|auto\|supervised` | Autonomy: yolo (no prompts), auto (workspace-scoped), supervised (approve mutations) |
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off** = host mode) |
 | `/model [provider/id]` | Show or set model |
 | `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
 | `/select [provider]` | Interactive model picker (saved to config) |
 | `/models [provider]` | List live models for the current (or named) provider |
 | `/provider [name]` | Show or set provider |
-| `/login [provider]` | Save API key to `~/.kite/.env` (hidden input, owner-only file) |
+| `/login [provider]` | BYOK: save API key. BYOS: OAuth for `chatgpt`, `claude`, `grok` (also `kite keys --set <provider>`) |
 | `/logout provider` | Remove that provider's key from `~/.kite/.env` |
 | `/keys` | Show which provider keys are set |
 | `/thinking` `/fast` | Effort: extended thinking, or low-latency (if the model supports it) |

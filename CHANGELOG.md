@@ -2,6 +2,26 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-01
+
+### Added
+- **BYOS (Bring Your Own Subscription)** — OAuth login for ChatGPT/Codex, Claude, and Grok via `kite keys --set <provider>` or `/login` in the REPL; dynamic model lists from subscription APIs (`src/kite/providers/byos.py`).
+- **Approval modes** — `yolo` (no prompts), `auto` (auto inside workspace, ask outside), `supervised` (reads free; all mutations need approval); aliases on CLI and `/approve`.
+- **Submit gate** — blocks `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` when edits lack passing test/lint artifacts, tests failed, or summary claims success without evidence.
+- **Verification hardening** — progress-aware loop guard (reset on changed output, hard-stop at 5 repeats), post-edit verification nudges, broader test-command detection.
+- **Token optimizations** — 80% compaction ratio, fast deterministic compaction below 92% context, summary-aware observation elision (8k default), tool-pair-safe compaction tail.
+- **Durable session events** — JSONL event stream alongside transcript messages.
+- **Subagent timeout** — configurable `orchestrator_timeout_seconds` (default 300s).
+- **`api_styles` config** — per-provider route hint (`chat` | `messages` | `responses`) on `ResolvedModel`.
+- **BYOK model picker** — radiolist TUI for API-key providers; subscription providers skip live picker after OAuth.
+
+### Changed
+- Default `max_bash_output_chars` lowered to 32k; `system.md` trimmed with token-aware peek guidance and evidence-first verifiability rules.
+- `mode_build.md` documents harness submit blocking and required `## Verification` section.
+
+### Fixed
+- Circular import in `config/readiness.py` when loading OAuth provider modules.
+
 ## [0.7.2] - 2026-08-31
 
 ### Added
