@@ -5,13 +5,27 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 ## [0.8.1] - 2026-09-01
 
 ### Added
--
+- **`kite login`** — CLI for BYOK (hidden API key) and BYOS OAuth (`chatgpt`, `claude`, `grok`); complements `/login` and `kite keys --set`.
+- **`kite dashboard`** — session analytics: tool/API counts, estimated tokens, cache hits, cost, longest/recent sessions (`--session`, `--json`, `--watch`).
+- **`--long` task mode** — higher step/cost limits, phase checkpoints, `mode_long.md` prompt for multi-hour work.
+- **Token-efficient tools** — bash-first inspection (`rg`, `head`, `sed -n`); lean `read` (raw output by default); plan-mode read-only bash via `is_inspection_bash()`.
+- **UI polish** — unified approval panel; terminal-style bash tool cards; thinking collapsed by default (`/expand-thinking`, Ctrl+T).
+- **Colourful task list** — progress bar and badges in the REPL todo strip.
+- **Provider retry/continue** — transient provider faults retry with backoff; session preserved; `ProviderFault` recoverable in chat (`kite resume <id>` hint).
+- **`load_kite_env()`** — project `.env` first, then `~/.kite/.env` fills unset/empty keys; fixes `.env.example` placeholders blocking login-saved keys.
+- **Credential status helpers** — `provider_credential_status()`, `provider_needs_login()`; OAuth shows `linked` / `login required` in `/keys` and `kite providers`.
+- **Tool arg repair** — malformed model tool JSON repaired before execution (`models/tool_args.py`).
 
 ### Changed
--
+- **Setup wizard** — explains BYOK vs BYOS; links OAuth providers during setup; credential-ready banner includes subscriptions.
+- **Provider picker** — `display_name` + auth state (`linked`, `key set`, `login required`); subscription providers sort first on login pick.
+- **`kite providers`** — `auth` + `status` columns instead of bare `key?`.
+- **Slash command descriptions** — `/login`, `/logout`, `/keys` document both BYOK and BYOS paths.
+- **LiteLLM retries** — `num_retries=0` on model wrapper when agent loop handles `provider_max_retries` (avoids double retry).
 
 ### Fixed
--
+- **REPL `/keys`** — OAuth providers no longer show `missing oauth` when linked.
+- **Duplicate provider fault UI** — `agent_end` no longer re-renders `ProviderFault` after `provider_fault` event.
 
 ## [0.8.0] - 2026-09-01
 
@@ -109,28 +123,3 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - `/thinking` and `/fast` level menus when the provider advertises both effort modes.
 - Maintainer-only `kite maintainer dashboard` (requires `KITE_MAINTAINER_KEY`).
 - `CONTEXT.md` and `AGENTS.md` for agent-readable repo guidance.
-- CI workflow: pytest on push/PR batches with 5+ commits.
-
-### Changed
-- Nemotron and other reasoning models detected via name heuristic when API metadata is empty.
-- Project context discovery loads `CONTEXT.md` alongside `AGENTS.md`.
-
-## [0.6.6] - 2026-08-30
-
-### Added
-- Skill packs: install from npm, npx, or GitHub `owner/repo` into `~/.kite/skills` (`kite skills --add`, `skills/install.py`).
-- UI themes and fonts: `/theme` (auto, kite, dark, light, dim, mono) and `/font` (unicode, ascii), persisted in `~/.kite`.
-- Git-stat `+N,-M` counts shown on write/edit diffs and the plan checklist.
-
-### Changed
-- Lazy CLI imports for a cheaper REPL cold start.
-- Provider catalog and runtime config now support user overlays.
-- `kite run` accepts `--cwd` to target a directory other than the shell's working directory.
-
-## [0.6.5] - 2026-08-29
-
-### Added
-- Initial public-facing harness: mini-swe-agent loop, tau-style tools/providers/skills/guardrails, Rich TUI, sessions, and memory.
-- Multi-provider model resolution via LiteLLM (OpenAI, Anthropic, Groq, OpenCode Zen/Go, NVIDIA NIM, Ollama, and more).
-- Approval modes (`auto` / `approve` / `trust` / `readonly`) and plan/build modes.
-- MCP stdio client, subagent orchestrator, and trajectory import from Cursor/Claude/Aider/Codex.
