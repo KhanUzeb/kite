@@ -44,6 +44,8 @@ Shared flags on `run` / `chat` / `resume`:
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
 | `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. |
 
+**Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
+
 Housekeeping (no model):
 
 ```

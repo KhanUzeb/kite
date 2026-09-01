@@ -56,9 +56,10 @@ class WorkspaceContext:
             f"- execution_mode: {self.execution_mode.value}",
             f"- project_root: {self.project_root}",
             f"- execution_cwd: {self.execution_cwd}",
+            "- navigation: use set_cwd (or bash cwd=) when the user names a directory or work is outside execution_cwd",
         ]
         if self.execution_cwd != self.project_root:
-            lines.append("- note: execution cwd differs from project root; use set_cwd to work elsewhere")
+            lines.append("- note: execution cwd differs from project root")
         if len(self.roots) > 1:
             lines.append("- workspace_roots:")
             for root in self.roots:

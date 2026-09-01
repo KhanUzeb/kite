@@ -68,7 +68,8 @@ PARALLEL_SAFE_TOOLS = frozenset({"read", "grep", "glob", "ls"})
 MUTATING_TOOLS = frozenset({"write", "edit", "bash"})
 
 # Plan mode may write the live checklist so the user can see the proposed work.
-PLAN_TOOLS = frozenset({*READONLY_TOOLS, "todo_write", "todo_read", "task"})
+# Plan mode may run read-only bash (rg, head, cat, …) for token-efficient inspection.
+PLAN_TOOLS = frozenset({*READONLY_TOOLS, "todo_write", "todo_read", "task", "bash"})
 
 BUILD_TOOLS = frozenset({*READONLY_TOOLS, *MUTATING_TOOLS, "todo_write", "todo_read", "task"})
 

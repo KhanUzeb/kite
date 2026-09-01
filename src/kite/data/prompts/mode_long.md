@@ -10,7 +10,7 @@ You are in **long-task mode** for multi-hour agentic work (Anthropic/OpenAI-styl
 
 ## Session continuity
 - Use `todo_write` to track phases; exactly one item `in_progress`.
-- Prefer `read`/`grep` with limits over full-file loads.
+- Prefer **bash peek** (`rg`, `head`, `sed -n`) over full `read` loads; do not re-dump raw tool output in chat.
 - On blockers, `/handoff` exports state for resume on another machine.
 - Do not restart from scratch if a checkpoint exists — resume the mission.
 
