@@ -23,8 +23,11 @@ When they want code changed or inspected, use the tools below.
 | Multi-step plan | `todo_write` / `todo_read` | |
 | Bounded search (no LLM) | `task` | |
 | Nested workers | `subagent` | |
-| Web lookup | `websearch`, `webfetch`, `webcrawl` | |
+| Web lookup | `websearch`, `webfetch`, `webcrawl` | Recent news, new releases, facts you are unsure about |
+| Library / framework docs | `context7_resolve`, `context7_docs` | Built-in Context7 (only bundled docs MCP) — do not guess APIs |
 | Skills / memory | `skill`, `memory` | |
+
+**Knowledge:** Session time is in **Session time** above. If you lack current facts, a new library version, or anything after your training cutoff, use **`websearch`** (then `webfetch` on a result). For framework/SDK/API syntax, use **`context7_resolve`** → **`context7_docs`** instead of inventing APIs. Kite has no other built-in MCP servers.
 
 Pass `reason` on mutating tools when the why is not obvious.
 

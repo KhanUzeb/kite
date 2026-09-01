@@ -333,6 +333,10 @@ class AgentRuntime:
             from kite.tools.github import make_github_tools
 
             extras.extend(make_github_tools())
+        if rcfg.context7_enabled:
+            from kite.tools.context7 import make_context7_tools
+
+            extras.extend(make_context7_tools())
         if extras:
             tools = [*tools, *extras]
         registry = ToolRegistry(tools)

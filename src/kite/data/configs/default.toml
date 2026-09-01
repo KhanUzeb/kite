@@ -68,6 +68,10 @@ max_context_chars = 24000
 [github]
 enabled = false
 
+[context7]
+enabled = true
+# Optional: CONTEXT7_API_KEY in ~/.kite/.env for higher rate limits (built-in docs MCP)
+
 [cache]
 enabled = true  # pi-style prefix caching; Anthropic cache_control + usage tracking
 
