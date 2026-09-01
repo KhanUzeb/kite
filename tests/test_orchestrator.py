@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from kite.agent.orchestrator import SubagentOrchestrator
 
 
@@ -31,4 +33,16 @@ def test_run_one_failure_marks_task_failed() -> None:
     orch = SubagentOrchestrator(runner=runner)
     out = orch.run_one("fail", label="test")
     assert out["ok"] is False
+    assert orch.tasks[-1].status == "failed"
+
+
+def test_run_one_timeout() -> None:
+    def runner(_prompt: str) -> dict:
+        time.sleep(2)
+        return {"exit_status": "Submitted"}
+
+    orch = SubagentOrchestrator(runner=runner, timeout_seconds=1)
+    out = orch.run_one("slow", label="slow")
+    assert out["ok"] is False
+    assert out.get("error") == "timeout"
     assert orch.tasks[-1].status == "failed"
