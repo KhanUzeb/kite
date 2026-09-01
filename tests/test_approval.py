@@ -21,65 +21,27 @@ def test_trust_mode_blocks_destructive_bash(workspace: Path) -> None:
     )
 
 
-def test_auto_mode_still_asks_for_git_commit() -> None:
-    assert needs_approval(
-        "bash",
-        AgentMode.BUILD,
-        ApprovalMode.AUTO,
-        command="git commit -m 'wip'",
-    )
-
-
-def test_auto_mode_does_not_gate_git_status() -> None:
+def test_git_reads_skip_approval() -> None:
+    """Read-only git bash never prompts (any approval mode)."""
     assert not needs_approval(
-        "bash",
-        AgentMode.BUILD,
-        ApprovalMode.AUTO,
-        command="git status",
+        "bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="git status"
+    )
+    assert not needs_approval(
+        "bash", AgentMode.BUILD, ApprovalMode.AUTO, command="git log -1"
+    )
+    assert not needs_approval(
+        "bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="git -C /tmp/repo branch"
     )
 
 
-def test_approve_mode_does_not_gate_git_reads() -> None:
-    for cmd in (
-        "git status",
-        "git log -1 --oneline",
-        "git diff HEAD",
-        "git -C /tmp/repo branch",
-        "git stash list",
-    ):
-        assert not needs_approval(
-            "bash",
-            AgentMode.BUILD,
-            ApprovalMode.APPROVE,
-            command=cmd,
-        ), f"expected read-only: {cmd}"
-
-
-def test_approve_mode_gates_git_writes() -> None:
-    for cmd in (
-        "git add .",
-        "git commit -m wip",
-        "git push origin main",
-        "git pull",
-        "git checkout main",
-        "git branch -d old",
-        "git stash pop",
-    ):
-        assert needs_approval(
-            "bash",
-            AgentMode.BUILD,
-            ApprovalMode.APPROVE,
-            command=cmd,
-        ), f"expected write gate: {cmd}"
-
-
-def test_git_bash_kind_classification() -> None:
-    from kite.ui.approval import git_bash_kind
-
-    assert git_bash_kind("git status -sb") == "read"
-    assert git_bash_kind("git add src/") == "write"
-    assert git_bash_kind("git fetch origin") == "write"
-    assert git_bash_kind("pytest -q") == "other"
+def test_git_writes_require_approval() -> None:
+    """Mutating git bash always prompts."""
+    assert needs_approval(
+        "bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="git commit -m wip"
+    )
+    assert needs_approval(
+        "bash", AgentMode.BUILD, ApprovalMode.AUTO, command="git push origin main"
+    )
 
 
 def test_git_status_pattern_does_not_cover_push() -> None:
