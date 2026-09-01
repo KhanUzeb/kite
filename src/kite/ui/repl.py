@@ -1025,12 +1025,14 @@ class ChatSession:
         if not arg:
             self.console.print("[kite.error]/forget id or substring[/]")
             return
-        removed = self.memory.forget(arg)
-        if not removed:
-            self.console.print("[kite.muted]no matching notes[/]")
+        result = self.memory.forget(arg)
+        if result.total == 0:
+            self.console.print("[kite.muted]no matching notes or episodes[/]")
             return
-        for note in removed:
-            self.console.print(f"[kite.success]forgot[/] {note.scope}/{note.id}  {note.text}")
+        for note in result.notes:
+            self.console.print(f"[kite.success]forgot note[/] {note.scope}/{note.id}  {note.text}")
+        for ep in result.episodes:
+            self.console.print(f"[kite.success]forgot episode[/] {ep.id}  {ep.summary}")
 
     def _slash_status(self, _arg: str) -> None:
         from kite.ui.theme import current_font, theme_label
