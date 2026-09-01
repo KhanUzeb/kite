@@ -26,6 +26,7 @@ from kite.ui.tool_cards import (
     ToolCard,
     detail_from_args,
     line_count_from_output,
+    render_bash_command_block,
     render_parallel_batch_header,
     render_stream_tool_preview,
     render_tool_card_done,
@@ -65,6 +66,18 @@ def _tool_meta(duration_ms: int | None, exit_code: int | None) -> str:
     if exit_code is not None:
         bits.append(f"exit={exit_code}")
     return " ".join(bits)
+
+
+def render_thinking_summary(chars: int, lines: int, *, expanded_hint: bool = True) -> Text:
+    """Collapsed thinking row — expand with /expand-thinking."""
+    t = Text()
+    t.append(f"{GUTTER}{SYMBOL_REASON} ", style="kite.thinking")
+    t.append("thinking", style="kite.thinking bold")
+    t.append(f"  ·  {lines} line{'s' if lines != 1 else ''} · {chars:,} chars", style="kite.muted")
+    if expanded_hint:
+        t.append("  ·  /expand-thinking", style="kite.muted")
+    t.append("\n")
+    return t
 
 
 def render_reasoning_block(text: str, *, step: int | None = None) -> Text:
@@ -197,9 +210,11 @@ class RunDisplay:
         self._spinner_on = False
         self._anim_tick = 0
         self._thinking_open = False
+        self._thinking_buf: list[str] = []
         self._stream_coalesce = StreamCoalescer()
         self._pending_tool_name: str | None = None
         self._pending_tool_args: str = ""
+        self._last_todo_key: str = ""
         self._parallel_batch: int = 0
 
     def _touch_state(self) -> None:
@@ -233,21 +248,61 @@ class RunDisplay:
             self._saw_answer = True
         style = "kite.thinking" if channel == "thinking" else "kite.answer"
         prefix = CHANNEL_PREFIX.get(channel, "  ")
+        block = Text()
         parts = text.split("\n")
         for i, part in enumerate(parts):
             if i > 0:
-                self.console.print()
+                block.append("\n")
                 self._need_prefix = True
             if self._need_prefix and part:
                 indent = prefix if not self._did_first_line else "  "
-                self.console.print(indent, style=style, end="", highlight=False, markup=False)
+                block.append(indent, style=style)
                 self._need_prefix = False
                 self._did_first_line = True
             if part:
-                self.console.print(part, style=style, end="", highlight=False, markup=False)
+                block.append(part, style=style)
                 self._streaming = True
             elif i > 0:
                 self._streaming = True
+        if block.plain:
+            self.console.print(block, end="", highlight=False, markup=False)
+
+    def _thinking_text(self) -> str:
+        return "".join(self._thinking_buf)
+
+    def _finalize_thinking(self) -> None:
+        text = self._thinking_text().strip()
+        if not text:
+            self._thinking_buf.clear()
+            self._thinking_open = False
+            return
+        self.state.last_thinking = text
+        lines = len([ln for ln in text.splitlines() if ln.strip()]) or 1
+        chars = len(text)
+        if self.state.thinking_expanded:
+            self._stream_write(text, channel="thinking")
+            self._end_stream_line()
+        else:
+            self.console.print(render_thinking_summary(chars, lines), highlight=False)
+        self._thinking_buf.clear()
+        self._thinking_open = False
+
+    def _append_thinking(self, text: str) -> None:
+        if not text:
+            return
+        self._thinking_buf.append(text)
+        self.state.last_thinking = self._thinking_text()
+        if self.state.thinking_expanded:
+            if not self._thinking_open:
+                self.console.print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
+                self._thinking_open = True
+            self._coalesced_stream("thinking", text)
+            return
+        chars = len(self.state.last_thinking)
+        if not self._thinking_open:
+            self.console.print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
+            self._thinking_open = True
+        self._spin(True, f"thinking  {chars:,} chars")
 
     def _flush_stream_buffers(self) -> None:
         for channel, chunk in self._stream_coalesce.flush().items():
@@ -295,6 +350,10 @@ class RunDisplay:
     def print_plan(self) -> None:
         if self.quiet or not self.state.todos:
             return
+        key = "|".join(f"{t.id}:{t.status}:{t.content}" for t in self.state.todos)
+        if key == self._last_todo_key:
+            return
+        self._last_todo_key = key
         self.console.print(render_plan_tasks(self.state.todos, tick=self._anim_tick))
 
     def print_banner(self, task: str = "") -> None:
@@ -330,6 +389,7 @@ class RunDisplay:
             self.state.model = str(p.get("model") or self.state.model)
             self.state.interrupted = False
             self._thinking_open = False
+            self._thinking_buf.clear()
             self.print_banner(str(p.get("task") or "").strip())
             self.print_plan()
             self._channel = None
@@ -350,10 +410,7 @@ class RunDisplay:
         if kind == "stream_reasoning":
             text = p.get("text") or ""
             if text:
-                if not self._thinking_open:
-                    self.console.print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
-                    self._thinking_open = True
-                self._coalesced_stream("thinking", text)
+                self._append_thinking(str(text))
             else:
                 self._spin(True, "thinking")
             return
@@ -361,7 +418,9 @@ class RunDisplay:
         if kind == "stream_delta":
             text = p.get("text") or ""
             if text:
-                self._coalesced_stream("answer", text)
+                if self._thinking_buf:
+                    self._finalize_thinking()
+                self._coalesced_stream("answer", str(text))
             else:
                 self._spin(True, "thinking")
             return
@@ -378,9 +437,10 @@ class RunDisplay:
         if kind == "stream_end":
             self._flush_stream_buffers()
             self._flush_tool_preview()
+            if self._thinking_buf:
+                self._finalize_thinking()
             self._end_stream_line()
             self._channel = None
-            self._thinking_open = False
             self._spin(True, "working")
             return
 
@@ -418,13 +478,9 @@ class RunDisplay:
             )
             self.console.print(render_tool_card_start(card))
             if reason:
-                self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted"))
+                self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted italic"))
             if tool == "bash" and args.get("command"):
-                cmd = str(args["command"]).strip()
-                for cmd_line in cmd.splitlines()[:3]:
-                    self.console.print(Text(f"{GUTTER}{GUTTER}$ {cmd_line}", style="kite.muted"))
-                if cmd.count("\n") > 2:
-                    self.console.print(Text(f"{GUTTER}{GUTTER}…", style="kite.muted"))
+                self.console.print(render_bash_command_block(str(args["command"])))
             self._spin(True, f"working  {tool}")
             return
 
@@ -639,8 +695,6 @@ class RunDisplay:
         if kind == "approval":
             self._end_stream_line()
             self._spin(False)
-            tool = str(p.get("tool") or "action")
-            self.console.print(Text(f"{SYMBOL_WARN}  waiting for your OK on {tool}", style="kite.pending"))
             return
 
         if kind == "agent_end":

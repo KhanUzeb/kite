@@ -34,7 +34,7 @@ Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` 
 
 Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning auto|off|fast|thinking`. Shown on the footer when not `auto`.
 
-**Keyboard shortcuts** (composer): `Ctrl+O` toggle tool output expand · `Ctrl+P` plan · `Ctrl+B` build · `Ctrl+S` flash status on footer · `Ctrl+C` stop turn · `Tab` slash menu.
+**Keyboard shortcuts** (composer): `Ctrl+O` toggle tool output expand · `Ctrl+T` toggle thinking trace · `Ctrl+P` plan · `Ctrl+B` build · `Ctrl+S` flash status on footer · `Ctrl+C` stop turn · `Tab` slash menu.
 
 **Loaders** (beautifului-inspired, TTY-only): default pixel-grid loader with shimmer label and elapsed time. Override with `KITE_LOADER=grid|dots|orbit|wave|spin`.
 
@@ -42,7 +42,7 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 
 **Stream coalescing:** small `stream_delta` / reasoning chunks batch before Rich writes — less flicker on fast models.
 
-**Context meter** on footer: `ctx ████░░░░ 50%`. `/expand` toggles full tool output; `/collapse` resets.
+**Context meter** on footer: `ctx ████░░░░ 50%`. `/expand` toggles full tool output; `/collapse` resets. `/expand-thinking` shows the last model thinking trace (collapsed by default to save scrollback).
 
 ---
 

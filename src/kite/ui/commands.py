@@ -25,6 +25,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("checkpoint", "Save/list/restore transcript snapshot", hint="save|list|restore|show", group="session"),
     BuiltinCommand("handoff", "Export context for another agent", hint="[dir]", group="session"),
     BuiltinCommand("expand", "Toggle expanded tool output", group="session"),
+    BuiltinCommand("expand-thinking", "Show or hide model thinking trace", hint="collapse", group="session"),
     BuiltinCommand("collapse", "Collapse tool output (default)", group="session"),
     BuiltinCommand("cost", "Session tokens and USD", group="session"),
     BuiltinCommand("status", "Mode, model, effort, session id", group="session"),
