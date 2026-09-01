@@ -22,7 +22,7 @@ system = "system"
 instance = "instance"
 
 [tools]
-enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "set_cwd", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "subagent", "memory"]
+enabled = ["bash", "read", "write", "edit", "grep", "glob", "ls", "set_cwd", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "subagent", "memory"]
 bash_timeout_seconds = 120
 progress_interval_seconds = 5.0
 

@@ -17,6 +17,7 @@ from kite.agent.loop_guard import LoopGuard
 from kite.agent.verification import VerificationCollector
 from kite.memory.session import Session
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode, PARALLEL_SAFE_TOOLS
+from kite.guardrails.sandbox import is_inspection_bash
 from kite.prompts import load_prompt_template
 
 try:
@@ -515,6 +516,7 @@ class DefaultAgent:
             and tool in MUTATING_TOOLS
             and tool != "todo_write"
             and not submit_ok
+            and not (tool == "bash" and is_inspection_bash(cmd))
         )
         if plan_block:
             return _blocked(

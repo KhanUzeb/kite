@@ -14,7 +14,7 @@ from rich.text import Text
 
 from kite.config import kite_home
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
-from kite.guardrails.sandbox import resolve_in_workspace, workspace_root
+from kite.guardrails.sandbox import is_inspection_bash, resolve_in_workspace, workspace_root
 from kite.ui.diff import count_diff_lines, diff_path, render_diff_stat
 from kite.ui.style import GUTTER, SYMBOL_WARN
 
@@ -101,6 +101,8 @@ def needs_approval(
     if tool not in MUTATING_TOOLS:
         return False
     if mode is AgentMode.PLAN and tool != "todo_write":
+        if tool == "bash" and is_inspection_bash(command):
+            return False
         return True  # will be auto-denied by the agent; still surfaces
     if approval is ApprovalMode.READONLY:
         return True
@@ -285,7 +287,10 @@ def make_approver(
     def approve(tool: str, arguments: dict[str, Any], extra: dict[str, Any] | None = None) -> Decision:
         extra = extra or {}
         if mode is AgentMode.PLAN and tool != "todo_write":
-            return "deny"
+            if tool == "bash" and is_inspection_bash(str(arguments.get("command") or "")):
+                pass
+            else:
+                return "deny"
         if approval is ApprovalMode.READONLY and tool in MUTATING_TOOLS:
             return "deny"
         if not needs_approval(

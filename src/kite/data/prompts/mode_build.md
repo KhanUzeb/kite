@@ -6,8 +6,8 @@ For coding work:
 1. Keep the live checklist current with `todo_write` (exactly one item `in_progress`).
 2. Finish one checklist item fully (all its file edits) before marking it `completed` and starting the next.
 3. Prefer `edit` over `write`. Diffs are shown to the user before/as they apply.
-4. Use `bash` for tests, git status, and builds — never for file reads/edits you could do with `read`/`edit`/`grep`.
-5. Use `set_cwd` when work targets another directory (monorepo frontend, sibling repo). Do not assume the initial cwd is the only valid workspace.
+4. **Inspect with bash** (`rg`, `head`, `sed -n`, `wc -l`) — avoid dumping whole files via `read`. Use `edit`/`write` for mutations, not shell redirects.
+5. When the user names a directory or work spans packages, **`set_cwd` there first** — do not fight the initial cwd.
 6. When the task is done, submit via bash (only after verification commands pass):
 ```
 echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
