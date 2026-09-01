@@ -1,10 +1,10 @@
-# Kite v0.8.1 — Dashboard, long sessions, credential UX, provider retry
+# Kite v0.8.1 — Dashboard, credentials, agent hardening
 
 **Date:** 2026-09-01
 
 ## Highlights
 
-**0.8.1** builds on [v0.8.0](RELEASE-0.8.0.md) with a **session dashboard**, **long-task mode**, **token-efficient tool prompts**, **REPL UI polish**, **recoverable provider retry**, and clearer **BYOK vs BYOS** credential flows (`kite login`, `/keys` OAuth status, setup wizard).
+**0.8.1** builds on [v0.8.0](RELEASE-0.8.0.md) with a **per-user session dashboard**, **long-task mode**, **BYOK/BYOS credential UX**, **Context7 docs tools**, **mandatory approval for high-risk commands**, **smarter agent completion**, and **token-efficient** tool prompts.
 
 ---
 
@@ -12,12 +12,40 @@
 
 ```bash
 kite dashboard              # overview — sessions, tools, tokens, cache, cost
-kite dashboard --session ID # drill into one run
+kite dashboard --session ID # drill into one run (timeline, failures, verification)
 kite dashboard --watch 5    # refresh every 5s
 kite dashboard --json       # machine-readable
 ```
 
-Scans local JSONL sessions + stats sidecars under `~/.kite/sessions/`.
+Reads `~/.kite/sessions/` JSONL + stats sidecars for **your** machine only.
+
+---
+
+## BYOK / BYOS credentials
+
+| Type | Examples | Command | Storage |
+|------|----------|---------|---------|
+| **BYOK** | `groq`, `openai`, `anthropic` | `kite login groq` | `~/.kite/.env` |
+| **BYOS** | `chatgpt`, `claude`, `grok` | `kite login chatgpt` | `~/.kite/oauth/` |
+
+- New keys: **double-entry**, validation, masked fingerprint (`••••abcd`)
+- `/keys` and `kite keys` — type column (BYOK/BYOS), OAuth `linked` / `login required`
+- Model choice in `~/.kite/config.toml` — not `.env`
+
+---
+
+## Agent safety & completion
+
+- **Mandatory approval** — `sudo`, `rm`, package installs, `git commit/push`, `curl`, etc. always prompt (no yolo bypass)
+- **Git reads** — `git status`, `log`, `diff` run without prompts; writes still gated
+- **Completion** — agent must not claim done early; idle nudges; stops on tool errors with logs
+- **Submit gate** (from 0.8.0) — evidence required before declaring success
+
+---
+
+## Context7 & session time
+
+Built-in library docs via Context7 HTTP tools (`context7_resolve`, `context7_docs`). Optional `CONTEXT7_API_KEY` in `~/.kite/.env`. System prompt includes session UTC + local time.
 
 ---
 
@@ -28,41 +56,16 @@ kite run --long "refactor auth module"
 kite chat --long
 ```
 
-Higher step/cost limits, periodic phase checkpoints, and `mode_long.md` system guidance for multi-hour work.
+Higher limits, periodic checkpoints, `mode_long.md` guidance.
 
 ---
 
-## BYOK / BYOS credentials
+## Memory & `/help`
 
-| Type | Examples | Command | Storage |
-|------|----------|---------|---------|
-| **BYOK** | `groq`, `openai`, `anthropic` | `kite login groq` or `kite keys --set groq` | `~/.kite/.env` |
-| **BYOS** | `chatgpt`, `claude`, `grok` | `kite login chatgpt` or `/login chatgpt` | `~/.kite/oauth/` |
-
-- **`/keys`** and **`kite keys`** show `linked` / `login required` for OAuth
-- **Setup wizard** explains both paths and triggers OAuth when you pick a subscription provider
-- **Model choice** stays in `~/.kite/config.toml` — not in `.env`
-
----
-
-## Token-efficient tools
-
-Prompts favor **bash-first** inspection (`rg`, `head`, `sed -n`) over full-file `read`. `read` returns raw content by default (`numbered=true` optional). Plan mode allows read-only inspection bash.
-
----
-
-## REPL UI
-
-- Thinking **collapsed by default** — `/expand-thinking` or **Ctrl+T**
-- Unified **approval panel** (left bar); no duplicate “waiting for OK” line
-- **Terminal-style bash** blocks in tool cards
-- **Colourful task list** with progress bar
-
----
-
-## Provider retry
-
-Transient network/provider errors retry with exponential backoff (`provider_max_retries`, default 4). On exhaustion the session is **saved** — send another message or `kite resume <id>` to continue.
+- **Semantic** — `~/.kite/memory/MEMORY.md` + project `.kite/MEMORY.md`
+- **Episodic** — sqlite episode log under `~/.kite/memory/`
+- `/forget` removes matching notes **and** episodes
+- `/help` lists canonical commands + **legacy aliases** (`/select` → `/model select`, `/cost` → `/status`, …)
 
 ---
 
@@ -70,17 +73,17 @@ Transient network/provider errors retry with exponential backoff (`provider_max_
 
 ```bash
 git pull
+git checkout v0.8.1    # or merge main after release PR
 ./scripts/install.sh --no-clone
 pytest -q
 kite --version   # 0.8.1
 ```
 
-Link credentials:
-
 ```bash
-kite login groq       # BYOK — hidden key
-kite login chatgpt    # BYOS — OAuth subscription
-kite setup            # guided wizard (both paths)
+kite setup              # guided wizard
+kite login groq         # BYOK
+kite login chatgpt      # BYOS OAuth
+kite dashboard          # your local stats
 ```
 
 ---

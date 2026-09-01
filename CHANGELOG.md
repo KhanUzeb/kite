@@ -5,27 +5,33 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 ## [0.8.1] - 2026-09-01
 
 ### Added
-- **`kite login`** — CLI for BYOK (hidden API key) and BYOS OAuth (`chatgpt`, `claude`, `grok`); complements `/login` and `kite keys --set`.
-- **`kite dashboard`** — session analytics: tool/API counts, estimated tokens, cache hits, cost, longest/recent sessions (`--session`, `--json`, `--watch`).
-- **`--long` task mode** — higher step/cost limits, phase checkpoints, `mode_long.md` prompt for multi-hour work.
-- **Token-efficient tools** — bash-first inspection (`rg`, `head`, `sed -n`); lean `read` (raw output by default); plan-mode read-only bash via `is_inspection_bash()`.
-- **UI polish** — unified approval panel; terminal-style bash tool cards; thinking collapsed by default (`/expand-thinking`, Ctrl+T).
-- **Colourful task list** — progress bar and badges in the REPL todo strip.
-- **Provider retry/continue** — transient provider faults retry with backoff; session preserved; `ProviderFault` recoverable in chat (`kite resume <id>` hint).
-- **`load_kite_env()`** — project `.env` first, then `~/.kite/.env` fills unset/empty keys; fixes `.env.example` placeholders blocking login-saved keys.
-- **Credential status helpers** — `provider_credential_status()`, `provider_needs_login()`; OAuth shows `linked` / `login required` in `/keys` and `kite providers`.
+- **`kite login`** — CLI for BYOK (hidden API key, double-entry for new keys) and BYOS OAuth (`chatgpt`, `claude`, `grok`).
+- **`kite dashboard`** — per-user session analytics: tools, tokens, cache, cost, attention queue (`--session`, `--json`, `--watch`).
+- **`--long` task mode** — higher step/cost limits, phase checkpoints, `mode_long.md` for multi-hour work.
+- **Context7 docs tools** — built-in `context7_resolve` / `context7_docs` (optional `CONTEXT7_API_KEY`); session UTC/local time in system prompt.
+- **Token-efficient tools** — bash-first inspection; lean `read`; plan-mode read-only bash via `is_inspection_bash()`.
+- **UI polish** — unified approval panel; terminal-style bash cards; thinking collapsed by default (`/expand-thinking`, Ctrl+T); colourful task progress strip.
+- **Provider retry/continue** — exponential backoff on transient faults; session preserved (`kite resume <id>`).
+- **`load_kite_env()`** — project `.env` first; `~/.kite/.env` fills unset/empty keys (fixes `.env.example` placeholders).
+- **BYOK login UX** — validation, permission warnings, masked key fingerprints in `/keys` and success messages.
+- **Mandatory approval** — high-risk bash (sudo, rm, installs, git writes, curl, …) always prompts; no yolo/auto/trust bypass.
+- **Agent completion** — no early submit; idle nudges; stop on tool errors with logs.
+- **Git approval split** — `git status`/`log`/`diff` auto-allow; `git add`/`commit`/`push` always gated.
+- **Memory `ForgetResult`** — `/forget` and `memory` tool report removed notes **and** episodes.
 - **Tool arg repair** — malformed model tool JSON repaired before execution (`models/tool_args.py`).
 
 ### Changed
-- **Setup wizard** — explains BYOK vs BYOS; links OAuth providers during setup; credential-ready banner includes subscriptions.
-- **Provider picker** — `display_name` + auth state (`linked`, `key set`, `login required`); subscription providers sort first on login pick.
-- **`kite providers`** — `auth` + `status` columns instead of bare `key?`.
-- **Slash command descriptions** — `/login`, `/logout`, `/keys` document both BYOK and BYOS paths.
-- **LiteLLM retries** — `num_retries=0` on model wrapper when agent loop handles `provider_max_retries` (avoids double retry).
+- **Setup wizard** — BYOK vs BYOS paths; OAuth during setup; credential-ready banner.
+- **Provider picker** — BYOK/BYOS labels, auth state (`linked`, `key set`, `login required`).
+- **`/help`** — canonical slash list + **legacy aliases** section (`/select` → `/model select`, etc.).
+- **Memory prompt** — slimmer injection; semantic `MEMORY.md` + episodic sqlite.
+- **LiteLLM retries** — `num_retries=0` when agent loop handles `provider_max_retries`.
+- **Anti-bloat** — dead code removed; GitHub tools off by default; trimmed prompts.
 
 ### Fixed
-- **REPL `/keys`** — OAuth providers no longer show `missing oauth` when linked.
-- **Duplicate provider fault UI** — `agent_end` no longer re-renders `ProviderFault` after `provider_fault` event.
+- **REPL `/keys`** — OAuth shows `linked` / `login required`, not `missing oauth`.
+- **Duplicate provider fault UI** — `agent_end` no longer re-renders after `provider_fault`.
+- **Credential env loading** — empty project `KEY=` no longer blocks `~/.kite/.env` keys.
 
 ## [0.8.0] - 2026-09-01
 
