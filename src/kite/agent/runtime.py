@@ -319,6 +319,7 @@ class AgentRuntime:
                 reasoning=self.options.reasoning,
                 prompt_cache=prompt_cache,
                 timeout_seconds=rcfg.model_timeout_seconds,
+                observation_max_chars=rcfg.observation_max_chars,
             )
 
         session: Session | None = None
@@ -380,6 +381,8 @@ class AgentRuntime:
             auto_compact=rcfg.auto_compact and ucfg.auto_compact and not self.options.no_compact,
             compaction_reserve_tokens=rcfg.compaction_reserve_tokens,
             compaction_keep_recent_tokens=rcfg.compaction_keep_recent_tokens,
+            compaction_ratio=rcfg.compaction_ratio,
+            compaction_llm_ratio=rcfg.compaction_llm_ratio,
             mode=mode,
             approval=approval,
             approver=self.approver,

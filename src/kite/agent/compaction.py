@@ -20,6 +20,8 @@ class CompactionConfig:
     window: int = 128_000
     reserve_tokens: int = 16_384
     keep_recent_tokens: int = 20_000
+    compact_ratio: float = 0.80
+    compaction_llm_ratio: float = 0.92
 
 
 @dataclass
@@ -108,8 +110,15 @@ class LoopCompactor:
                     tokens=checkpoint.context_usage.get("total_tokens"),
                 )
 
-        if not force and (not self.config.enabled or not should_compact(usage, reserve=self.config.reserve_tokens)):
+        if not force and (
+            not self.config.enabled
+            or not should_compact(usage, reserve=self.config.reserve_tokens, ratio=self.config.compact_ratio)
+        ):
             return CompactionResult(messages=messages, usage=usage, compacted=False, before=before, after=before)
+
+        summarizer = self.summarizer
+        if summarizer and usage.ratio < self.config.compaction_llm_ratio:
+            summarizer = None
 
         result = run_compaction(
             messages,
@@ -118,7 +127,9 @@ class LoopCompactor:
             window=self.config.window,
             reserve_tokens=self.config.reserve_tokens,
             keep_recent_tokens=self.config.keep_recent_tokens,
-            summarizer=self.summarizer,
+            compact_ratio=self.config.compact_ratio,
+            compaction_llm_ratio=self.config.compaction_llm_ratio,
+            summarizer=summarizer,
             force=force,
             enabled=self.config.enabled,
             session_id=None,

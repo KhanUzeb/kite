@@ -11,6 +11,7 @@ from kite.agent.events import Event
 from kite.agent.exceptions import FormatError
 from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, split_reasoning
 from kite.models.cache import PromptCacheManager, parse_cache_usage
+from kite.context.observation import observation_content
 from kite.providers.resolve import ResolvedModel
 from kite.tools import ToolRegistry
 
@@ -87,6 +88,7 @@ class LitellmModel:
         reasoning: str = "auto",
         prompt_cache: PromptCacheManager | None = None,
         timeout_seconds: int = 180,
+        observation_max_chars: int = 8_000,
     ):
         self.resolved = resolved
         self.model_name = resolved.litellm_model
@@ -106,6 +108,7 @@ class LitellmModel:
         self.last_usage: dict[str, Any] = {}
         self.prompt_cache = prompt_cache
         self.timeout_seconds = timeout_seconds
+        self.observation_max_chars = observation_max_chars
         self.should_stop = lambda: False
 
     def _emit(self, kind: str, **payload: Any) -> None:
@@ -368,9 +371,7 @@ class LitellmModel:
         actions = message.get("extra", {}).get("actions", [])
         obs: list[dict] = []
         for action, output in zip(actions, outputs):
-            content = output.get("output") or output.get("error") or json.dumps(output, default=str)
-            if len(content) > 12_000:
-                content = content[:6_000] + "\n...<elided>...\n" + content[-4_000:]
+            content = observation_content(output, max_chars=self.observation_max_chars)
             if action.get("id"):
                 obs.append(
                     {
