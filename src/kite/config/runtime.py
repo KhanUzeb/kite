@@ -20,7 +20,7 @@ class GuardrailConfig:
     trusted_paths: list[str] = field(default_factory=list)  # relative subtrees with elevated bash trust
     deny_bash_patterns: list[str] = field(default_factory=list)
     block_secret_writes: bool = True
-    max_bash_output_chars: int = 100_000
+    max_bash_output_chars: int = 32_768
     max_read_chars: int = 200_000
 
     def host_access(self) -> bool:
@@ -87,6 +87,8 @@ class AgentRuntimeConfig:
     max_consecutive_format_errors: int = 3
     auto_compact: bool = True
     compaction_ratio: float = 0.80
+    compaction_llm_ratio: float = 0.92
+    observation_max_chars: int = 8_000
     compaction_reserve_tokens: int = 16_384
     compaction_keep_recent_tokens: int = 20_000
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
@@ -128,6 +130,8 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         max_consecutive_format_errors=int(agent.get("max_consecutive_format_errors", 3)),
         auto_compact=bool(agent.get("auto_compact", True)),
         compaction_ratio=float(agent.get("compaction_ratio", 0.80)),
+        compaction_llm_ratio=float(agent.get("compaction_llm_ratio", 0.92)),
+        observation_max_chars=int(agent.get("observation_max_chars", 8_000)),
         compaction_reserve_tokens=int(agent.get("compaction_reserve_tokens", 16_384)),
         compaction_keep_recent_tokens=int(agent.get("compaction_keep_recent_tokens", 20_000)),
         prompts=PromptsConfig(
@@ -147,7 +151,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             trusted_paths=list(guard.get("trusted_paths") or []),
             deny_bash_patterns=list(guard.get("deny_bash_patterns") or []),
             block_secret_writes=bool(guard.get("block_secret_writes", True)),
-            max_bash_output_chars=int(guard.get("max_bash_output_chars", 100_000)),
+            max_bash_output_chars=int(guard.get("max_bash_output_chars", 32_768)),
             max_read_chars=int(guard.get("max_read_chars", 200_000)),
         ),
         skills=SkillsConfig(

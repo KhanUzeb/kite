@@ -9,6 +9,9 @@ wall_time_limit_seconds = 0
 model_timeout_seconds = 180
 max_consecutive_format_errors = 3
 auto_compact = true
+compaction_ratio = 0.80
+compaction_llm_ratio = 0.92
+observation_max_chars = 8000
 compaction_reserve_tokens = 16384
 compaction_keep_recent_tokens = 20000
 
@@ -45,7 +48,7 @@ deny_bash_patterns = [
   "bcdedit",
 ]
 block_secret_writes = true
-max_bash_output_chars = 100000
+max_bash_output_chars = 32768
 max_read_chars = 200000
 
 [skills]

@@ -160,6 +160,25 @@ def should_compact(
     return usage.window > 0 and usage.total_tokens >= max(1, usage.window - reserve)
 
 
+def _message_segments(messages: list[dict]) -> list[list[dict]]:
+    """Group assistant tool_calls with their following tool results."""
+    segments: list[list[dict]] = []
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            seg = [m]
+            i += 1
+            while i < len(messages) and messages[i].get("role") == "tool":
+                seg.append(messages[i])
+                i += 1
+            segments.append(seg)
+        else:
+            segments.append([m])
+            i += 1
+    return segments
+
+
 def deterministic_summary(messages: list[dict], *, max_chars: int = 6_000) -> str:
     """Cheap offline summary when we don't want an extra LLM call."""
     lines = [f"Compacted {len(messages)} prior message(s)."]
@@ -202,15 +221,15 @@ def compact_messages(
     if body and body[0].get("role") == "system":
         head = [body.pop(0)]
 
-    # Walk from end accumulating tokens until keep_recent budget
+    # Walk from end by segment so tool results stay paired with tool_calls.
     kept_rev: list[dict] = []
     budget = 0
-    for m in reversed(body):
-        t = estimate_message_tokens(m)
-        if kept_rev and budget + t > keep_recent_tokens:
+    for segment in reversed(_message_segments(body)):
+        seg_tokens = sum(estimate_message_tokens(m) for m in segment)
+        if kept_rev and budget + seg_tokens > keep_recent_tokens:
             break
-        kept_rev.append(m)
-        budget += t
+        kept_rev.extend(reversed(segment))
+        budget += seg_tokens
     kept = list(reversed(kept_rev))
     dropped = body[: len(body) - len(kept)]
     if not dropped and force and len(body) > 4:
