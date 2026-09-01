@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from typing import Any
 
 from rich.console import Console
@@ -49,14 +50,12 @@ from kite.ui.style import (
     make_console,
 )
 
-
 def _format_duration(ms: int | None) -> str:
     if ms is None:
         return ""
     if ms < 1000:
         return f"{ms}ms"
     return f"{ms / 1000:.1f}s"
-
 
 def _tool_meta(duration_ms: int | None, exit_code: int | None) -> str:
     bits: list[str] = []
@@ -66,7 +65,6 @@ def _tool_meta(duration_ms: int | None, exit_code: int | None) -> str:
     if exit_code is not None:
         bits.append(f"exit={exit_code}")
     return " ".join(bits)
-
 
 def render_thinking_summary(chars: int, lines: int, *, expanded_hint: bool = True) -> Text:
     """Collapsed thinking row — expand with /expand-thinking."""
@@ -79,7 +77,6 @@ def render_thinking_summary(chars: int, lines: int, *, expanded_hint: bool = Tru
     t.append("\n")
     return t
 
-
 def render_reasoning_block(text: str, *, step: int | None = None) -> Text:
     """Structured reasoning cell — distinct from answer, never mixed."""
     t = Text()
@@ -91,7 +88,6 @@ def render_reasoning_block(text: str, *, step: int | None = None) -> Text:
         t.append(line + "\n", style="kite.thinking")
     return t
 
-
 def render_loop_warning(message: str) -> Text:
     t = Text()
     t.append(f"{SYMBOL_WARN} ", style="kite.pending")
@@ -99,7 +95,6 @@ def render_loop_warning(message: str) -> Text:
     t.append(message.strip(), style="kite.pending")
     t.append("\n")
     return t
-
 
 def _short_args(args: dict[str, Any], limit: int = 120) -> str:
     if not args:
@@ -115,7 +110,6 @@ def _short_args(args: dict[str, Any], limit: int = 120) -> str:
     if len(preview) > limit:
         preview = preview[: limit - 1] + "…"
     return preview
-
 
 def _collapse_text(text: str, *, expanded: bool, limit: int = COLLAPSE_LINES) -> Text:
     raw = text.rstrip("\n")
@@ -136,7 +130,6 @@ def _collapse_text(text: str, *, expanded: bool, limit: int = COLLAPSE_LINES) ->
         )
     return out
 
-
 def render_compact_boundary(
     before: int | str,
     after: int | str,
@@ -151,7 +144,6 @@ def render_compact_boundary(
     t.append("\n")
     return t
 
-
 def render_status(state: SessionUiState) -> Text:
     t = Text()
     t.append("kite", style="kite.brand")
@@ -164,7 +156,6 @@ def render_status(state: SessionUiState) -> Text:
         t.append(f" {SYMBOL_SEP} ", style="kite.muted")
         t.append(f" {SYMBOL_SEP} ".join(ctx), style="kite.muted")
     return t
-
 
 def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: str = "") -> Text:
     t = Text()
@@ -183,7 +174,6 @@ def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: 
     t.append("\n")
     return t
 
-
 def render_user_cell(task: str) -> Text:
     """Codex user cell: › first line, then a matching gutter."""
     t = Text()
@@ -193,6 +183,43 @@ def render_user_cell(task: str) -> Text:
         t.append(line + "\n", style="kite.user")
     return t
 
+_RENDER_EVENT_KINDS = (
+    "attach",
+    "route",
+    "agent_start",
+    "stream_start",
+    "stream_reasoning",
+    "stream_delta",
+    "stream_tool",
+    "stream_end",
+    "turn_start",
+    "turn_end",
+    "tool_start",
+    "tool_progress",
+    "tool_end",
+    "artifact",
+    "cost_estimate",
+    "cost_warning",
+    "loop_warning",
+    "todo",
+    "diff",
+    "context",
+    "compact",
+    "checkpoint",
+    "commit",
+    "interrupt",
+    "provider_retry",
+    "provider_fault",
+    "approval",
+    "agent_end",
+    "error",
+    "cost",
+    "cache_hit",
+    "subagent_start",
+    "subagent_end",
+    "warning",
+    "mode",
+)
 
 class RunDisplay:
     """Stateful event sink — the core render loop."""
@@ -224,6 +251,10 @@ class RunDisplay:
         self._pending_tool_args: str = ""
         self._last_todo_key: str = ""
         self._parallel_batch: int = 0
+        self._event_handlers: dict[str, Callable[[dict[str, Any]], None]] = {
+            kind: getattr(self, f"_on_{kind}")  # noqa: SLF001
+            for kind in _RENDER_EVENT_KINDS
+        }
 
     def _touch_state(self) -> None:
         self.state.touch()
@@ -371,8 +402,8 @@ class RunDisplay:
     def __call__(self, event: Event) -> None:
         if self.quiet:
             return
-        handler = getattr(self, f"_on_{event.kind}", None)
-        if callable(handler):
+        handler = self._event_handlers.get(event.kind)
+        if handler is not None:
             handler(event.payload)
 
     def _on_attach(self, p: dict[str, Any]) -> None:
@@ -382,7 +413,6 @@ class RunDisplay:
         extra = f"  {kind_label}" if kind_label and kind_label != "text" else ""
         self.console.print(f"[kite.muted]attach  {source}  {name}{extra}[/]")
 
-
     def _on_route(self, p: dict[str, Any]) -> None:
         reason = str(p.get("reason") or "")
         if reason == "vision":
@@ -391,7 +421,6 @@ class RunDisplay:
             )
         else:
             self.console.print("[kite.muted]no vision model configured — image noted but not sent[/]")
-
 
     def _on_agent_start(self, p: dict[str, Any]) -> None:
         self.state.provider = str(p.get("provider") or self.state.provider)
@@ -405,7 +434,6 @@ class RunDisplay:
         self._saw_answer = False
         self._spin(True, "thinking")
 
-
     def _on_stream_start(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self.state.provider = str(p.get("provider") or self.state.provider)
@@ -415,14 +443,12 @@ class RunDisplay:
         self._streaming = False
         self._spin(True, "thinking")
 
-
     def _on_stream_reasoning(self, p: dict[str, Any]) -> None:
         text = p.get("text") or ""
         if text:
             self._append_thinking(str(text))
         else:
             self._spin(True, "thinking")
-
 
     def _on_stream_delta(self, p: dict[str, Any]) -> None:
         text = p.get("text") or ""
@@ -433,7 +459,6 @@ class RunDisplay:
         else:
             self._spin(True, "thinking")
 
-
     def _on_stream_tool(self, p: dict[str, Any]) -> None:
         name = str(p.get("name") or "?")
         partial = str(p.get("partial_args") or "")
@@ -441,7 +466,6 @@ class RunDisplay:
         self._pending_tool_args = partial
         preview = partial[-40:] if partial else ""
         self._spin(True, f"preparing  {name}  {preview}".strip())
-
 
     def _on_stream_end(self, p: dict[str, Any]) -> None:
         self._flush_stream_buffers()
@@ -452,17 +476,14 @@ class RunDisplay:
         self._channel = None
         self._spin(True, "working")
 
-
     def _on_turn_start(self, p: dict[str, Any]) -> None:
         self.state.turn += 1
         self._touch_state()
-
 
     def _on_turn_end(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(True, "thinking")
         self._touch_state()
-
 
     def _on_tool_start(self, p: dict[str, Any]) -> None:
         self._flush_stream_buffers()
@@ -492,14 +513,12 @@ class RunDisplay:
             self.console.print(render_bash_command_block(str(args["command"])))
         self._spin(True, f"working  {tool}")
 
-
     def _on_tool_progress(self, p: dict[str, Any]) -> None:
         tool = str(p.get("tool") or "?")
         elapsed = int(p.get("elapsed_s") or 0)
         hint = str(p.get("hint") or "")
         label = f"working  {tool}  {elapsed}s{hint}"
         self._spin(True, label)
-
 
     def _on_tool_end(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -557,7 +576,6 @@ class RunDisplay:
             if redacted:
                 self.console.print(Text(f"{GUTTER}{GUTTER}· {redacted} secret(s) hidden", style="kite.muted"))
 
-
     def _on_artifact(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
@@ -585,12 +603,10 @@ class RunDisplay:
         for gap in p.get("gaps") or []:
             self.console.print(Text(f"{GUTTER}⚠ {gap}", style="kite.pending"))
 
-
     def _on_cost_estimate(self, p: dict[str, Any]) -> None:
         note = str(p.get("note") or "")
         if note:
             self.console.print(Text(f"{GUTTER}{note}", style="kite.muted"))
-
 
     def _on_cost_warning(self, p: dict[str, Any]) -> None:
         msg = str(p.get("message") or "cost warning")
@@ -609,17 +625,14 @@ class RunDisplay:
         line.append("\n")
         self.console.print(line)
 
-
     def _on_loop_warning(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
         self.console.print(render_loop_warning(str(p.get("message") or "")))
 
-
     def _on_todo(self, p: dict[str, Any]) -> None:
         self.state.set_todos(p.get("items") or [])
         self.print_plan()
-
 
     def _on_diff(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -630,7 +643,6 @@ class RunDisplay:
             self.console.print(Text(f"{GUTTER}{path}", style="kite.muted"))
         if diff:
             self.console.print(render_diff(diff, collapsed=not self.verbose))
-
 
     def _on_context(self, p: dict[str, Any]) -> None:
         total = p.get("total_tokens")
@@ -650,7 +662,6 @@ class RunDisplay:
                 bits.append(f"{ratio:.0%}" if isinstance(ratio, float) else str(ratio))
             self.console.print(f"[kite.muted]{SYMBOL_SEP} {' '.join(str(b) for b in bits)}[/]")
 
-
     def _on_compact(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         total = p.get("total_tokens")
@@ -667,14 +678,12 @@ class RunDisplay:
             )
         )
 
-
     def _on_checkpoint(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self.console.print(
             f"[kite.muted]◇ checkpoint[/]  {p.get('label', '')}  "
             f"[dim]{p.get('id', '')}[/]  ({p.get('tokens', '?')} tok)"
         )
-
 
     def _on_commit(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -693,13 +702,11 @@ class RunDisplay:
             line.append(f"  ({n} file{'s' if n != 1 else ''})", style="kite.muted")
         self.console.print(line)
 
-
     def _on_interrupt(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
         self.state.interrupted = True
         self.console.print(f"[kite.error]{SYMBOL_FAIL} stopped[/] [kite.muted]— steer with a follow-up to continue[/]")
-
 
     def _on_provider_retry(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -715,7 +722,6 @@ class RunDisplay:
             line.append(f"  ·  {err[:100]}", style="kite.muted")
         line.append("\n")
         self.console.print(line)
-
 
     def _on_provider_fault(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -734,11 +740,9 @@ class RunDisplay:
         line.append("\n")
         self.console.print(line)
 
-
     def _on_approval(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
-
 
     def _render_agent_end_status(self, p: dict[str, Any]) -> None:
         status = p.get("exit_status") or "done"
@@ -798,7 +802,6 @@ class RunDisplay:
         self._render_agent_end_status(p)
         self.print_status()
 
-
     def _on_error(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
@@ -809,14 +812,12 @@ class RunDisplay:
             render_error(msg, traceback_text=self.state.last_trace, show_trace_hint=not self.state.last_trace)
         )
 
-
     def _on_cost(self, p: dict[str, Any]) -> None:
         try:
             self.state.cost = float(p.get("cost") or self.state.cost)
         except (TypeError, ValueError):
             pass
         self._touch_state()
-
 
     def _on_cache_hit(self, p: dict[str, Any]) -> None:
         session = p.get("session") if isinstance(p.get("session"), dict) else {}
@@ -833,7 +834,6 @@ class RunDisplay:
                     f"[kite.muted]{GUTTER}cache hit  {hits} tokens ({self.state.cache_hit_ratio:.0%})[/]"
                 )
 
-
     def _on_subagent_start(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         label = str(p.get("label") or p.get("id") or "subagent")
@@ -841,7 +841,6 @@ class RunDisplay:
         self._touch_state()
         self.console.print(Text(f"{GUTTER}{SYMBOL_COLLAPSE} subagent  {label}", style="kite.plan"))
         self._spin(True, f"subagent  {label}")
-
 
     def _on_subagent_end(self, p: dict[str, Any]) -> None:
         self._spin(False)
@@ -856,12 +855,10 @@ class RunDisplay:
         if preview:
             self.console.print(Text(f"{GUTTER}{GUTTER}{preview[:100]}", style="kite.muted"))
 
-
     def _on_warning(self, p: dict[str, Any]) -> None:
         msg = str(p.get("message") or "").strip()
         if msg:
             self.console.print(Text(f"{GUTTER}{SYMBOL_WARN} {msg}", style="kite.muted"))
-
 
     def _on_mode(self, p: dict[str, Any]) -> None:
         try:
@@ -874,7 +871,6 @@ class RunDisplay:
             except ValueError:
                 pass
         self.print_status()
-
 
 def make_run_display(
     console: Console,
