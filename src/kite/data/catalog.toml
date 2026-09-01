@@ -19,6 +19,34 @@ default_model = ""
 docs_url = "https://platform.openai.com/docs"
 
 [[providers]]
+name = "chatgpt"
+display_name = "ChatGPT (subscription)"
+kind = "chatgpt"
+litellm_prefix = "chatgpt/"
+base_url = ""
+api_key_env = ""
+auth_kind = "oauth"
+oauth_provider = "chatgpt"
+models = []
+default_model = "gpt-5.6-luna"
+docs_url = "https://chatgpt.com"
+billing_note = "OAuth — uses your ChatGPT/Codex subscription, not API credits"
+
+[[providers]]
+name = "claude"
+display_name = "Claude (subscription)"
+kind = "anthropic"
+litellm_prefix = "anthropic/"
+base_url = "https://api.anthropic.com"
+api_key_env = ""
+auth_kind = "oauth"
+oauth_provider = "anthropic"
+models = []
+default_model = "claude-opus-5"
+docs_url = "https://claude.ai"
+billing_note = "OAuth — uses your Claude Max/Pro plan, not API credits"
+
+[[providers]]
 name = "anthropic"
 display_name = "Anthropic"
 kind = "anthropic"
@@ -26,8 +54,33 @@ litellm_prefix = "anthropic/"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 models = []
-default_model = ""
+default_model = "claude-opus-5"
 docs_url = "https://docs.anthropic.com"
+
+[[providers]]
+name = "grok"
+display_name = "Grok (subscription)"
+kind = "xai"
+litellm_prefix = "xai/"
+base_url = ""
+api_key_env = ""
+auth_kind = "oauth"
+oauth_provider = "xai"
+models = []
+default_model = "grok-4.6"
+docs_url = "https://x.ai"
+billing_note = "OAuth — uses your SuperGrok plan, not API credits"
+
+[[providers]]
+name = "xai"
+display_name = "xAI"
+kind = "xai"
+litellm_prefix = "xai/"
+base_url = "https://api.x.ai/v1"
+api_key_env = "XAI_API_KEY"
+models = []
+default_model = "grok-4.6"
+docs_url = "https://docs.x.ai"
 
 [[providers]]
 name = "openrouter"
@@ -102,9 +155,11 @@ kind = "openai-compatible"
 litellm_prefix = "openai/"
 base_url = "https://opencode.ai/zen/go/v1"
 api_key_env = "OPENCODE_API_KEY"
+auth_kind = "subscription"
 models = []
 default_model = ""
 docs_url = "https://opencode.ai/docs/zen/"
+billing_note = "Flat monthly subscription — not per-token API billing"
 
 [[providers]]
 name = "nvidia"

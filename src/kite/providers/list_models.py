@@ -132,6 +132,7 @@ def _openai_compat_base(spec: ProviderSpec, cfg: UserConfig) -> str:
         "opencode-zen": "https://opencode.ai/zen/v1",
         "opencode-go": "https://opencode.ai/zen/go/v1",
         "nvidia": "https://integrate.api.nvidia.com/v1",
+        "xai": "https://api.x.ai/v1",
     }
     return defaults.get(spec.name, "").rstrip("/")
 
@@ -439,6 +440,16 @@ def list_models_for_provider(
     cat = catalog or load_catalog()
     spec = provider if isinstance(provider, ProviderSpec) else cat.get(provider)
 
+    from kite.providers.byos import fetch_oauth_model_ids, has_oauth_session, is_oauth_provider
+
+    if is_oauth_provider(spec):
+        ids = fetch_oauth_model_ids(spec, refresh=refresh)
+        models = tuple(RemoteModel(id=m) for m in ids)
+        source = "oauth" if has_oauth_session(spec.oauth_provider or spec.name) else "catalog-fallback"
+        if not models:
+            return ListModelsResult(spec.name, (), source, error="No models — run: kite login " + spec.name)
+        return ListModelsResult(spec.name, models, source)
+
     cache_key = spec.name
     now = time.monotonic()
     if not refresh:
@@ -455,6 +466,8 @@ def list_models_for_provider(
         result = _fetch_gemini(spec, cfg)
     elif name == "ollama":
         result = _fetch_ollama(spec, cfg)
+    elif name == "xai" or kind == "xai":
+        result = _fetch_openai_compatible(spec, cfg)
     else:
         # openai, groq, openrouter, huggingface, openai-compatible, …
         result = _fetch_openai_compatible(spec, cfg)
