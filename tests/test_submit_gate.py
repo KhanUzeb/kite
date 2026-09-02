@@ -136,3 +136,41 @@ def test_submit_blocked_on_unfounded_claim() -> None:
 def test_idle_chat_submit_not_blocked() -> None:
     vc = VerificationCollector()
     assert vc.submit_block_reason("hello, all done!") is None
+
+
+def test_ls_does_not_count_as_test_evidence() -> None:
+    vc = VerificationCollector()
+    vc.on_tool_end("bash", {"command": "ls"}, {"ok": True, "returncode": 0, "output": "a.py"})
+    reason = vc.submit_block_reason("All tests pass.")
+    assert reason is not None
+    assert vc.status() == "partial"
+    assert not vc.has_passing_tests()
+
+
+def test_failed_then_passing_test_allows_submit() -> None:
+    vc = VerificationCollector()
+    vc.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+    vc.on_tool_end("bash", {"command": "pytest -q"}, {"ok": False, "returncode": 1, "output": "FAIL"})
+    assert vc.status() == "failed"
+    assert not vc.has_passing_tests()
+    vc.on_tool_end("bash", {"command": "pytest -q"}, {"ok": True, "returncode": 0, "output": "1 passed"})
+    assert vc.has_passing_tests()
+    assert vc.status() == "verified"
+    submission = "## Done\n- x\n## Changed\n- `a.py`\n## Verification\n- ✓ pytest -q"
+    assert vc.submit_block_reason(submission) is None
+
+
+def test_passing_then_failing_test_blocks_submit() -> None:
+    vc = VerificationCollector()
+    vc.on_tool_end("bash", {"command": "pytest"}, {"ok": True, "returncode": 0, "output": "ok"})
+    vc.on_tool_end("bash", {"command": "pytest"}, {"ok": False, "returncode": 1, "output": "FAIL"})
+    assert vc.status() == "failed"
+    assert not vc.has_passing_tests()
+    assert vc.submit_block_reason() is not None
+
+
+def test_done_claim_without_work_is_unfounded() -> None:
+    vc = VerificationCollector()
+    reason = vc.unfounded_claim_reason("I finished the refactor and it should work.")
+    assert reason is not None
+    assert "do not claim" in reason.lower() or "submit blocked" in reason.lower()
