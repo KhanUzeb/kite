@@ -11,12 +11,22 @@ from collections.abc import Callable
 from pathlib import Path
 
 from kite.agent.events import Event
-from kite.agent.exceptions import FormatError, InterruptAgentFlow, Interrupted, LimitsExceeded, Submitted, TimeExceeded
+from kite.agent.exceptions import (
+    FormatError,
+    InterruptAgentFlow,
+    Interrupted,
+    LimitsExceeded,
+    ProviderFault,
+    Submitted,
+    TimeExceeded,
+)
+from kite.models.retry import is_transient_provider_error, retry_delay_s
 from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.loop_guard import LoopGuard
 from kite.agent.verification import VerificationCollector
 from kite.memory.session import Session
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode, PARALLEL_SAFE_TOOLS
+from kite.guardrails.sandbox import is_inspection_bash
 from kite.prompts import load_prompt_template
 
 try:
@@ -43,6 +53,60 @@ def _exit_msg(status: str, *, content: str | None = None, submission: str = "", 
     }
 
 
+_MAX_IDLE_TURNS = 4
+# Terse on purpose — these user nudges are re-injected into the model context.
+_IDLE_NUDGE = (
+    "No tool calls. Use tools or submit:\n"
+    "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+)
+_IDLE_STALL = (
+    "Stopped after {turns} idle turns (token protection). "
+    "Use tools, then: echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+)
+_CASUAL_CHAT = frozenset(
+    {
+        "hi",
+        "hello",
+        "hey",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+        "cool",
+        "bye",
+        "goodbye",
+        "yo",
+        "sup",
+        "good morning",
+        "good night",
+        "thx",
+    }
+)
+
+
+def _is_casual_chat(content: str) -> bool:
+    """Short greetings / thanks — may end in chat without the formal submit marker."""
+    text = content.strip().lower()
+    if not text or len(text) > 200:
+        return False
+    normalized = text.rstrip("!?. ")
+    if normalized in _CASUAL_CHAT:
+        return True
+    if len(text) < 80 and text.endswith("?"):
+        task_verbs = ("fix", "implement", "add", "create", "refactor", "debug", "build", "write", "update")
+        if not any(v in text for v in task_verbs):
+            return True
+    return False
+
+
+def _allow_text_submit(content: str, *, mode: AgentMode, interactive: bool) -> bool:
+    if not content.strip():
+        return False
+    if mode is AgentMode.PLAN:
+        return True
+    if not interactive:
+        return False
+    return _is_casual_chat(content)
 def _user_interrupt() -> Interrupted:
     return Interrupted(
         {
@@ -77,6 +141,8 @@ class DefaultAgent:
         auto_compact: bool = True,
         compaction_reserve_tokens: int = 16_384,
         compaction_keep_recent_tokens: int = 20_000,
+        compaction_ratio: float = 0.80,
+        compaction_llm_ratio: float = 0.92,
         mode: AgentMode = AgentMode.BUILD,
         approval: ApprovalMode = ApprovalMode.AUTO,
         approver=None,
@@ -90,6 +156,11 @@ class DefaultAgent:
         verification: VerificationCollector | None = None,
         audit=None,
         tool_progress_interval_seconds: float = 5.0,
+        verify_before_submit: bool = True,
+        loop_hard_threshold: int = 5,
+        long_task: bool = False,
+        phase_checkpoint_interval: int = 10,
+        provider_max_retries: int = 4,
         cancel=None,
     ):
         self.model = model
@@ -109,6 +180,8 @@ class DefaultAgent:
         self.auto_compact = auto_compact
         self.compaction_reserve_tokens = compaction_reserve_tokens
         self.compaction_keep_recent_tokens = compaction_keep_recent_tokens
+        self.compaction_ratio = compaction_ratio
+        self.compaction_llm_ratio = compaction_llm_ratio
         self.mode = mode
         self.approval = approval
         self.approver = approver
@@ -123,6 +196,10 @@ class DefaultAgent:
         self.verification = verification or VerificationCollector()
         self.audit = audit
         self.tool_progress_interval_seconds = tool_progress_interval_seconds
+        self.verify_before_submit = verify_before_submit
+        self.long_task = long_task
+        self.phase_checkpoint_interval = max(3, phase_checkpoint_interval)
+        self.provider_max_retries = max(1, int(provider_max_retries))
         self.cancel = cancel
         self._cost_warned = False
 
@@ -130,11 +207,15 @@ class DefaultAgent:
         self.cost = 0.0
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
+        self._consecutive_no_tool_turns = 0
         self._start_time = time.time()
         self.last_usage_estimate = None
         self._compactor: LoopCompactor | None = None
         self._interrupt = False
-        self._loop_guard = LoopGuard()
+        self._loop_guard = LoopGuard(hard_threshold=loop_hard_threshold)
+        self._phase_markers: set[int] = set()
+        self.tool_call_count = 0
+        self.tool_counts: dict[str, int] = {}
         self._tool_started_at: float | None = None
         if hasattr(self.model, "should_stop"):
             self.model.should_stop = lambda: self._interrupt
@@ -173,7 +254,43 @@ class DefaultAgent:
             return
         self._emit_commit(self.checkpoints.record(path, self._active_task_label()))
 
+    def _maybe_phase_checkpoint(self) -> None:
+        """Long-task mode: periodic checkpoints (Anthropic/OpenAI-style session persistence)."""
+        if not self.long_task or self.n_calls <= 0 or self.session is None:
+            return
+        if self.n_calls % self.phase_checkpoint_interval != 0:
+            return
+        if self.n_calls in self._phase_markers:
+            return
+        self._phase_markers.add(self.n_calls)
+        from kite.memory.context_checkpoint import save_checkpoint
+
+        cp = save_checkpoint(
+            session_id=self.session.id,
+            messages=list(self.messages),
+            cwd=str(getattr(self.env, "cwd", "") or ""),
+            label=f"phase turn {self.n_calls}",
+            reason="auto",
+            todos=self.todos.read() if self.todos is not None else None,
+            system=self._full_system(),
+            window=self.context_window,
+        )
+        self.session.record_context_checkpoint(cp.id, label=cp.label, reason="auto")
+        self._emit(
+            "checkpoint",
+            id=cp.id,
+            label=cp.label,
+            reason="long_task_phase",
+            turn=self.n_calls,
+            tokens=cp.context_usage.get("total_tokens"),
+        )
+
     def _emit(self, kind: str, **payload) -> None:
+        if self.session is not None:
+            from kite.memory.session import DURABLE_EVENT_KINDS
+
+            if kind in DURABLE_EVENT_KINDS:
+                self.session.record_event(kind, payload)
         if self.on_event:
             self.on_event(Event(kind=kind, payload=payload))  # type: ignore[arg-type]
 
@@ -200,6 +317,8 @@ class DefaultAgent:
                     window=self.context_window,
                     reserve_tokens=self.compaction_reserve_tokens,
                     keep_recent_tokens=self.compaction_keep_recent_tokens,
+                    compact_ratio=self.compaction_ratio,
+                    compaction_llm_ratio=self.compaction_llm_ratio,
                 ),
                 system=self._full_system(),
                 tool_schemas=schemas,
@@ -272,6 +391,9 @@ class DefaultAgent:
             )
 
         old_sigint = signal.getsignal(signal.SIGINT)
+        provider_fault: str | None = None
+        run_error: str | None = None
+        run_traceback: str | None = None
         try:
             def _on_sigint(signum, frame):
                 self.request_interrupt()
@@ -284,6 +406,7 @@ class DefaultAgent:
                     self.step()
                     self.n_consecutive_format_errors = 0
                     self._emit("turn_end")
+                    self._maybe_phase_checkpoint()
                 except FormatError as e:
                     self.cost += e.messages[0].get("extra", {}).get("cost", 0.0) if e.messages else 0.0
                     self.n_consecutive_format_errors += 1
@@ -295,12 +418,24 @@ class DefaultAgent:
                     self.add_messages(*e.messages, _exit_msg("Interrupted"))
                 except InterruptAgentFlow as e:
                     self.add_messages(*e.messages)
-                except Exception as e:
-                    self.add_messages(
-                        _exit_msg(type(e).__name__, content=str(e), traceback=traceback.format_exc())
+                except ProviderFault as e:
+                    provider_fault = e.error
+                    if self.session is not None:
+                        self.session.replace_messages(self.messages)
+                    self._emit(
+                        "provider_fault",
+                        error=e.error,
+                        attempts=e.attempts,
+                        recoverable=True,
                     )
-                    self._emit("error", error=str(e), traceback=traceback.format_exc())
-                    raise
+                    break
+                except Exception as e:
+                    run_traceback = traceback.format_exc()
+                    run_error = str(e) or type(e).__name__
+                    if self.session is not None:
+                        self.session.replace_messages(self.messages)
+                    self._emit("error", error=run_error, traceback=run_traceback)
+                    break
 
                 if self.messages and self.messages[-1].get("role") == "exit":
                     break
@@ -312,7 +447,23 @@ class DefaultAgent:
             self._flush_task_commit()
 
         result = self.messages[-1].get("extra", {}) if self.messages else {}
-        if result:
+        if provider_fault:
+            result = {
+                **(result or {}),
+                "exit_status": "ProviderFault",
+                "error": provider_fault,
+                "recoverable": True,
+                "cost": self.cost,
+            }
+        elif run_error:
+            result = {
+                **(result or {}),
+                "exit_status": "Error",
+                "error": run_error,
+                "traceback": run_traceback or "",
+                "cost": self.cost,
+            }
+        elif result:
             result = {**result, "verification": vsum, "verification_status": vsum.get("status")}
         if self.session is not None:
             self.session.set_exit(str(result.get("exit_status") or ""))
@@ -328,17 +479,46 @@ class DefaultAgent:
         if 0 < self.wall_time_limit_seconds <= int(time.time() - self._start_time):
             raise TimeExceeded(_exit_msg("TimeExceeded"))
         self.n_calls += 1
+        last_error: BaseException | None = None
+        attempts = 0
         try:
             messages = self.messages
             if self.hooks is not None:
                 messages = self.hooks.call("before_query", messages)
                 self.messages = messages
-            message = self.model.query(self.messages)
-            if self.hooks is not None:
-                message = self.hooks.call("after_query", message)
+            while attempts < self.provider_max_retries:
+                attempts += 1
+                try:
+                    message = self.model.query(self.messages)
+                    if self.hooks is not None:
+                        message = self.hooks.call("after_query", message)
+                    last_error = None
+                    break
+                except KeyboardInterrupt:
+                    self.request_interrupt()
+                    raise _user_interrupt() from None
+                except Exception as e:
+                    last_error = e
+                    if attempts >= self.provider_max_retries or not is_transient_provider_error(e):
+                        raise
+                    delay = retry_delay_s(attempts)
+                    self._emit(
+                        "provider_retry",
+                        attempt=attempts,
+                        max_attempts=self.provider_max_retries,
+                        delay_s=delay,
+                        error=str(e)[:240],
+                    )
+                    time.sleep(delay)
+            if last_error is not None:
+                raise last_error
         except KeyboardInterrupt:
             self.request_interrupt()
             raise _user_interrupt() from None
+        except Exception as e:
+            if is_transient_provider_error(e):
+                raise ProviderFault(str(e), attempts=attempts) from e
+            raise
         if self._interrupt:
             raise _user_interrupt()
         self.cost += message.get("extra", {}).get("cost", 0.0)
@@ -358,77 +538,91 @@ class DefaultAgent:
         self.add_messages(message)
         return message
 
+    def _handle_no_actions(self, message: dict) -> list[dict]:
+        content = (message.get("content") or "").strip()
+        if _allow_text_submit(content, mode=self.mode, interactive=self.interactive):
+            if self.mode is AgentMode.BUILD and self.verification.has_edits():
+                reason = self.verification.submit_block_reason(
+                    content,
+                    require_verification=self.verify_before_submit,
+                )
+                if reason:
+                    return self.add_messages({"role": "user", "content": reason})
+            raise Submitted(_exit_msg("Submitted", content=content, submission=content))
+        self._consecutive_no_tool_turns += 1
+        if self.mode is AgentMode.BUILD and self._consecutive_no_tool_turns >= _MAX_IDLE_TURNS:
+            msg = _IDLE_STALL.format(turns=self._consecutive_no_tool_turns)
+            self.add_messages(_exit_msg("Stalled", content=msg))
+            return []
+        return self.add_messages({"role": "user", "content": _IDLE_NUDGE})
+
+    def _execute_parallel_actions(self, actions: list[dict], outputs: list[dict]) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        prepared: list[tuple[str, dict, dict]] = []
+        for action in actions:
+            if self._interrupt:
+                break
+            prepared.append(self._prepare_action(action))
+        for idx, (tool, args, _action) in enumerate(prepared, start=1):
+            self._emit(
+                "tool_start",
+                tool=tool,
+                arguments=args,
+                reason=args.get("reason"),
+                parallel_batch=len(prepared),
+                parallel_index=idx,
+            )
+        started = time.time()
+
+        def _worker(item: tuple[int, tuple[str, dict, dict]]) -> tuple[int, str, dict, dict, dict]:
+            idx, (tool, args, action) = item
+            return idx, tool, args, action, self._invoke_tool(tool, args, action)
+
+        results: dict[int, tuple[str, dict, dict, dict]] = {}
+        with ThreadPoolExecutor(max_workers=min(4, len(prepared))) as pool:
+            for row in pool.map(_worker, list(enumerate(prepared))):
+                idx, tool, args, action, out = row
+                results[idx] = (tool, args, action, out)
+        for idx in range(len(prepared)):
+            if idx not in results:
+                continue
+            tool, args, action, out = results[idx]
+            duration_ms = int((time.time() - started) * 1000)
+            self._after_tool(tool, args, action, out, duration_ms, outputs)
+
+    def _execute_sequential_actions(self, actions: list[dict], outputs: list[dict]) -> None:
+        for action in actions:
+            if self._interrupt:
+                outputs.append({"ok": False, "error": "interrupted", "output": "interrupted", "blocked": True})
+                break
+            tool, args, action = self._prepare_action(action)
+            self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
+            self._tool_started_at = time.time()
+            try:
+                out = self._invoke_tool(tool, args, action)
+            except Submitted:
+                self._emit("tool_end", tool=tool, ok=True, preview="submitted", output="", error="")
+                raise
+            duration_ms = None
+            if self._tool_started_at is not None:
+                duration_ms = int((time.time() - self._tool_started_at) * 1000)
+                self._tool_started_at = None
+            self._after_tool(tool, args, action, out, duration_ms, outputs)
+
     def execute_actions(self, message: dict) -> list[dict]:
         actions = message.get("extra", {}).get("actions", [])
         if not actions:
-            content = (message.get("content") or "").strip()
-            if (self.interactive or self.mode is AgentMode.PLAN) and content:
-                raise Submitted(_exit_msg("Submitted", content=content, submission=content))
-            return self.add_messages(
-                {
-                    "role": "user",
-                    "content": (
-                        "No tool calls in your last message. Use a tool, or submit via bash "
-                        "with COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT."
-                    ),
-                }
-            )
-        outputs = []
+            return self._handle_no_actions(message)
+        self._consecutive_no_tool_turns = 0
+        outputs: list[dict] = []
         parallel = len(actions) > 1 and all(
             str(a.get("tool") or "") in PARALLEL_SAFE_TOOLS for a in actions
         )
         if parallel:
-            from concurrent.futures import ThreadPoolExecutor
-
-            prepared: list[tuple[str, dict, dict]] = []
-            for action in actions:
-                if self._interrupt:
-                    break
-                prepared.append(self._prepare_action(action))
-            for idx, (tool, args, _action) in enumerate(prepared, start=1):
-                self._emit(
-                    "tool_start",
-                    tool=tool,
-                    arguments=args,
-                    reason=args.get("reason"),
-                    parallel_batch=len(prepared),
-                    parallel_index=idx,
-                )
-            started = time.time()
-
-            def _worker(item: tuple[int, tuple[str, dict, dict]]) -> tuple[int, str, dict, dict, dict]:
-                idx, (tool, args, action) = item
-                return idx, tool, args, action, self._invoke_tool(tool, args, action)
-
-            results: dict[int, tuple[str, dict, dict, dict]] = {}
-            with ThreadPoolExecutor(max_workers=min(4, len(prepared))) as pool:
-                for row in pool.map(_worker, list(enumerate(prepared))):
-                    idx, tool, args, action, out = row
-                    results[idx] = (tool, args, action, out)
-            for idx in range(len(prepared)):
-                if idx not in results:
-                    continue
-                tool, args, action, out = results[idx]
-                duration_ms = int((time.time() - started) * 1000)
-                self._after_tool(tool, args, action, out, duration_ms, outputs)
+            self._execute_parallel_actions(actions, outputs)
         else:
-            for action in actions:
-                if self._interrupt:
-                    outputs.append({"ok": False, "error": "interrupted", "output": "interrupted", "blocked": True})
-                    break
-                tool, args, action = self._prepare_action(action)
-                self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
-                self._tool_started_at = time.time()
-                try:
-                    out = self._invoke_tool(tool, args, action)
-                except Submitted:
-                    self._emit("tool_end", tool=tool, ok=True, preview="submitted", output="", error="")
-                    raise
-                duration_ms = None
-                if self._tool_started_at is not None:
-                    duration_ms = int((time.time() - self._tool_started_at) * 1000)
-                    self._tool_started_at = None
-                self._after_tool(tool, args, action, out, duration_ms, outputs)
+            self._execute_sequential_actions(actions, outputs)
         obs = self.add_messages(*self.model.format_observation_messages(message, outputs))
         if self._interrupt:
             raise _user_interrupt()
@@ -455,13 +649,39 @@ class DefaultAgent:
             and tool in MUTATING_TOOLS
             and tool != "todo_write"
             and not submit_ok
+            and not (tool == "bash" and is_inspection_bash(cmd))
         )
         if plan_block:
             return _blocked(
                 "blocked in plan mode — /build to apply edits",
                 "blocked in plan mode — switch to build to mutate the workspace",
             )
-        return self._run_gated(tool, args, action)
+        try:
+            return self._run_gated(tool, args, action)
+        except Submitted as submitted:
+            submission = ""
+            if submitted.messages:
+                extra = submitted.messages[0].get("extra") or {}
+                submission = str(extra.get("submission") or submitted.messages[0].get("content") or "")
+            reason = self.verification.submit_block_reason(
+                submission,
+                require_verification=self.verify_before_submit,
+            )
+            if reason:
+                self._emit(
+                    "submit_blocked",
+                    reason=reason,
+                    verification=self.verification.summary(),
+                )
+                return _blocked(
+                    reason,
+                    output=(
+                        f"{reason}\n\n"
+                        f"Verification status: {self.verification.status()}\n"
+                        + "\n".join(self.verification.render_lines())
+                    ),
+                )
+            raise
 
     def _after_tool(
         self,
@@ -520,16 +740,33 @@ class DefaultAgent:
                 )
         if out.get("ok") and tool in {"write", "edit"} and out.get("path"):
             self._note_edit(str(out["path"]))
-        loop_warn = self._loop_guard.record(tool, args)
-        if loop_warn:
-            self._emit("loop_warning", message=loop_warn, tool=tool)
+        loop = self._loop_guard.record(tool, args, out)
+        if loop.hard_stop:
+            self._emit("loop_hard_stop", message=loop.hard_stop, tool=tool)
+            out = _blocked(loop.hard_stop, output=loop.hard_stop)
+        elif loop.warning:
+            self._emit("loop_warning", message=loop.warning, tool=tool)
             existing = str(out.get("output") or out.get("error") or "")
-            out = {**out, "output": f"{loop_warn}\n\n{existing}".strip(), "loop_warning": True}
+            out = {**out, "output": f"{loop.warning}\n\n{existing}".strip(), "loop_warning": True}
         self.verification.on_tool_end(tool, args, out)
+        if out.get("blocked"):
+            pass
+        else:
+            self.tool_call_count += 1
+            self.tool_counts[tool] = self.tool_counts.get(tool, 0) + 1
+        nudge = self.verification.post_edit_nudge()
+        if nudge and out.get("ok") and tool in {"write", "edit"}:
+            existing = str(out.get("output") or "")
+            out = {**out, "output": f"{existing}\n\n{nudge}".strip()}
         if self.hooks is not None:
             self.hooks.call("after_tool", out, tool=tool, args=args)
         if self.audit is not None:
-            self.audit.log_tool(tool, ok=bool(out.get("ok")), duration_ms=duration_ms)
+            self.audit.log_tool(
+                tool,
+                ok=bool(out.get("ok")),
+                duration_ms=duration_ms,
+                session_id=self.session.id if self.session else "",
+            )
         outputs.append(out)
 
     def _run_gated(self, tool: str, args: dict, action: dict) -> dict:

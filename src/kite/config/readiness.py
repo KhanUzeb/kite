@@ -5,9 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from kite.config import UserConfig, kite_home
-from kite.providers.credentials import configured_providers
-from kite.providers.resolve import missing_credentials, missing_model, resolve_model
+from kite.config.user import UserConfig, kite_home
 from kite.util.tty import is_interactive_tty
 
 # Shown in setup wizard and fresh-install hints (free tiers / local).
@@ -35,6 +33,8 @@ def has_config_file() -> bool:
 
 
 def configured_provider_names() -> tuple[str, ...]:
+    from kite.providers.credentials import configured_providers
+
     return tuple(name for name, ok, _ in configured_providers() if ok)
 
 
@@ -55,6 +55,8 @@ def assess_setup_status(
     model: str | None = None,
     config: UserConfig | None = None,
 ) -> SetupStatus:
+    from kite.providers.resolve import missing_credentials, missing_model, resolve_model
+
     cfg = config or UserConfig.load()
     ready_names = configured_provider_names()
     resolved = resolve_model(provider=provider, model=model, config=cfg)
@@ -85,7 +87,7 @@ def assess_setup_status(
         if others:
             hints.append(f"Keys ready for: {', '.join(others)} — run /model select or kite setup")
     elif is_fresh_install():
-        hints.append("Free tier: groq.com → /login groq  ·  Local: ollama → /model ollama/<id>")
+        hints.append("Free tier BYOK: groq.com → /login groq  ·  BYOS: /login chatgpt|claude|grok")
         hints.append("Run kite setup or /setup for the guided wizard")
 
     if not has_config_file():
@@ -120,7 +122,7 @@ def format_setup_banner(status: SetupStatus) -> str:
         lines.append(f"  [kite.muted]{b}[/]")
     for h in status.hints[:3]:
         lines.append(f"  [kite.brand]{h}[/]")
-    lines.append("  [kite.muted]Fix:[/] [kite.brand]/setup[/]  or  [kite.brand]kite setup[/]  ·  [kite.brand]/login groq[/]")
+    lines.append("  [kite.muted]Fix:[/] [kite.brand]/setup[/]  or  [kite.brand]kite setup[/]  ·  [kite.brand]/login groq[/]  ·  [kite.brand]kite login chatgpt[/]")
     return "\n".join(lines)
 
 

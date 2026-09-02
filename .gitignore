@@ -13,3 +13,6 @@ trajectory.json
 # Generated design docs (source markdown is kept)
 *.pdf
 docs/*.pdf
+
+# Private maintainer dashboard (local only)
+dashboard.html

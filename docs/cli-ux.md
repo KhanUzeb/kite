@@ -1,7 +1,7 @@
 # Kite CLI UX
 
 **Agent:** kite
-**Version:** 0.7.2
+**Version:** 0.8.1
 **Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
@@ -26,7 +26,23 @@ Patterns we took, not invented:
 
 Switch in the REPL with `/plan` and `/build`. One-shot: `kite run --mode plan "…"`.
 
-Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` · `trust` · `readonly`.
+Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` · `trust` · `readonly` · `yolo`.
+
+**Mandatory approval** — high-risk actions **always** prompt, regardless of approval mode (including `yolo`), workspace location, or remembered patterns. No session/always shortcut on these prompts — only **once**, **deny**, or **stop**:
+
+| Category | Examples |
+|----------|----------|
+| Git history | `git commit`, `git push`, `git reset`, `git rebase`, `git clean` |
+| Destructive | `rm`, `rmdir`, `del`, `Remove-Item` |
+| Privileged | `sudo`, `su`, `doas` |
+| Package installs | `pip install`, `npm install`, `cargo install`, `brew install`, … |
+| Permissions | `chmod`, `chown`, `icacls`, `takeown` |
+| Network fetch | `curl`, `wget`, `Invoke-WebRequest` |
+| Remote / containers | `ssh`, `scp`, `docker run`, `kubectl apply` |
+| Outside workspace | any `bash` whose cwd escapes the project root |
+| Outside workspace writes | `write` / `edit` to paths outside the project |
+
+Regular in-workspace `write`/`edit` and safe bash (`git status`, `pytest`, `rg`) still follow the active approval mode.
 
 **Sandbox:** off by default (**host** mode). `/restricted on` clamps file/bash paths to the session cwd; footer shows `restricted` when active.
 
@@ -34,15 +50,21 @@ Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` 
 
 Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning auto|off|fast|thinking`. Shown on the footer when not `auto`.
 
-**Keyboard shortcuts** (composer): `Ctrl+O` toggle tool output expand · `Ctrl+P` plan · `Ctrl+B` build · `Ctrl+S` flash status on footer · `Ctrl+C` stop turn · `Tab` slash menu.
+**Keyboard shortcuts** (composer): `Ctrl+O` toggle tool output expand · `Ctrl+T` toggle thinking trace · `Ctrl+P` plan · `Ctrl+B` build · `Ctrl+S` flash status on footer · `Ctrl+C` stop turn · `Tab` slash menu.
 
 **Loaders** (beautifului-inspired, TTY-only): default pixel-grid loader with shimmer label and elapsed time. Override with `KITE_LOADER=grid|dots|orbit|wave|spin`.
 
-**Tool cards:** `▸ read  src/foo.py  …` while running (reason on the next line when provided); parallel read-only batches show `parallel N read-only tools` once. `✓ edit  1.2s  +2,-1` when done, with a muted one-line summary for reads (`42 lines  ·  preview…`). **Task rows** show `Running` / `Completed` / `To do` badges.
+**Tool cards:** `▸ read  src/foo.py  …` while running (reason on the next line when provided); parallel read-only batches show `parallel N read-only tools` once. `✓ edit  1.2s  +2,-1` when done, with a muted one-line summary for reads (`42 lines  ·  preview…`). **Task rows** show `Running` / `Completed` / `To do` badges with a coloured progress bar (`Tasks 2/5 ████░░`). Active item highlighted in cyan; done in green.
+
+**Provider retry:** transient network/rate-limit errors auto-retry with backoff (config: `provider_max_retries`). Session is preserved — send another message or `kite resume <id>` to continue.
+
+**Completion discipline:** build mode only ends with `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` (or a short casual chat like “hi”). Prose-only “I'm done” replies keep the agent working. After 4 no-tool turns, the run **stalls** (idle token protection) instead of burning more API calls. Successful submit shows **work complete** in the UI.
+
+**Fatal errors:** unexpected exceptions stop the run with `exit_status=Error`, print the message + traceback tail, and save `/trace` in the REPL — no silent re-raise.
 
 **Stream coalescing:** small `stream_delta` / reasoning chunks batch before Rich writes — less flicker on fast models.
 
-**Context meter** on footer: `ctx ████░░░░ 50%`. `/expand` toggles full tool output; `/collapse` resets.
+**Context meter** on footer: `ctx ████░░░░ 50%`. `/expand` toggles full tool output; `/collapse` resets. `/expand-thinking` shows the last model thinking trace (collapsed by default to save scrollback).
 
 ---
 

@@ -18,24 +18,29 @@ def test_trust_mode_blocks_destructive_bash(workspace: Path) -> None:
         AgentMode.BUILD,
         ApprovalMode.TRUST,
         command="rm -rf node_modules",
+        workspace_cwd=str(workspace),
     )
 
 
-def test_auto_mode_still_asks_for_git_commit() -> None:
-    assert needs_approval(
-        "bash",
-        AgentMode.BUILD,
-        ApprovalMode.AUTO,
-        command="git commit -m 'wip'",
-    )
-
-
-def test_auto_mode_does_not_gate_git_status() -> None:
+def test_git_reads_skip_approval(workspace: Path) -> None:
     assert not needs_approval(
-        "bash",
-        AgentMode.BUILD,
-        ApprovalMode.AUTO,
-        command="git status",
+        "bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="git status",
+        workspace_cwd=str(workspace),
+    )
+    assert not needs_approval(
+        "bash", AgentMode.BUILD, ApprovalMode.AUTO, command="git log -1",
+        workspace_cwd=str(workspace), bash_cwd=str(workspace),
+    )
+
+
+def test_git_writes_require_approval(workspace: Path) -> None:
+    assert needs_approval(
+        "bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="git commit -m wip",
+        workspace_cwd=str(workspace),
+    )
+    assert needs_approval(
+        "bash", AgentMode.BUILD, ApprovalMode.AUTO, command="git push origin main",
+        workspace_cwd=str(workspace), bash_cwd=str(workspace),
     )
 
 

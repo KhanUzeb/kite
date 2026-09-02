@@ -2,6 +2,57 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-09-01
+
+### Added
+- **`kite login`** — CLI for BYOK (hidden API key, double-entry for new keys) and BYOS OAuth (`chatgpt`, `claude`, `grok`).
+- **`kite dashboard`** — per-user session analytics: tools, tokens, cache, cost, attention queue (`--session`, `--json`, `--watch`).
+- **`--long` task mode** — higher step/cost limits, phase checkpoints, `mode_long.md` for multi-hour work.
+- **Context7 docs tools** — built-in `context7_resolve` / `context7_docs` (optional `CONTEXT7_API_KEY`); session UTC/local time in system prompt.
+- **Token-efficient tools** — bash-first inspection; lean `read`; plan-mode read-only bash via `is_inspection_bash()`.
+- **UI polish** — unified approval panel; terminal-style bash cards; thinking collapsed by default (`/expand-thinking`, Ctrl+T); colourful task progress strip.
+- **Provider retry/continue** — exponential backoff on transient faults; session preserved (`kite resume <id>`).
+- **`load_kite_env()`** — project `.env` first; `~/.kite/.env` fills unset/empty keys (fixes `.env.example` placeholders).
+- **BYOK login UX** — validation, permission warnings, masked key fingerprints in `/keys` and success messages.
+- **Mandatory approval** — high-risk bash (sudo, rm, installs, git writes, curl, …) always prompts; no yolo/auto/trust bypass.
+- **Agent completion** — no early submit; idle nudges; stop on tool errors with logs.
+- **Git approval split** — `git status`/`log`/`diff` auto-allow; `git add`/`commit`/`push` always gated.
+- **Memory `ForgetResult`** — `/forget` and `memory` tool report removed notes **and** episodes.
+- **Tool arg repair** — malformed model tool JSON repaired before execution (`models/tool_args.py`).
+
+### Changed
+- **Setup wizard** — BYOK vs BYOS paths; OAuth during setup; credential-ready banner.
+- **Provider picker** — BYOK/BYOS labels, auth state (`linked`, `key set`, `login required`).
+- **`/help`** — canonical slash list + **legacy aliases** section (`/select` → `/model select`, etc.).
+- **Memory prompt** — slimmer injection; semantic `MEMORY.md` + episodic sqlite.
+- **LiteLLM retries** — `num_retries=0` when agent loop handles `provider_max_retries`.
+- **Anti-bloat** — dead code removed; GitHub tools off by default; trimmed prompts.
+
+### Fixed
+- **REPL `/keys`** — OAuth shows `linked` / `login required`, not `missing oauth`.
+- **Duplicate provider fault UI** — `agent_end` no longer re-renders after `provider_fault`.
+- **Credential env loading** — empty project `KEY=` no longer blocks `~/.kite/.env` keys.
+
+## [0.8.0] - 2026-09-01
+
+### Added
+- **BYOS (Bring Your Own Subscription)** — OAuth login for ChatGPT/Codex, Claude, and Grok via `kite keys --set <provider>` or `/login` in the REPL; dynamic model lists from subscription APIs (`src/kite/providers/byos.py`).
+- **Approval modes** — `yolo` (no prompts), `auto` (auto inside workspace, ask outside), `supervised` (reads free; all mutations need approval); aliases on CLI and `/approve`.
+- **Submit gate** — blocks `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` when edits lack passing test/lint artifacts, tests failed, or summary claims success without evidence.
+- **Verification hardening** — progress-aware loop guard (reset on changed output, hard-stop at 5 repeats), post-edit verification nudges, broader test-command detection.
+- **Token optimizations** — 80% compaction ratio, fast deterministic compaction below 92% context, summary-aware observation elision (8k default), tool-pair-safe compaction tail.
+- **Durable session events** — JSONL event stream alongside transcript messages.
+- **Subagent timeout** — configurable `orchestrator_timeout_seconds` (default 300s).
+- **`api_styles` config** — per-provider route hint (`chat` | `messages` | `responses`) on `ResolvedModel`.
+- **BYOK model picker** — radiolist TUI for API-key providers; subscription providers skip live picker after OAuth.
+
+### Changed
+- Default `max_bash_output_chars` lowered to 32k; `system.md` trimmed with token-aware peek guidance and evidence-first verifiability rules.
+- `mode_build.md` documents harness submit blocking and required `## Verification` section.
+
+### Fixed
+- Circular import in `config/readiness.py` when loading OAuth provider modules.
+
 ## [0.7.2] - 2026-08-31
 
 ### Added
@@ -78,28 +129,3 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - `/thinking` and `/fast` level menus when the provider advertises both effort modes.
 - Maintainer-only `kite maintainer dashboard` (requires `KITE_MAINTAINER_KEY`).
 - `CONTEXT.md` and `AGENTS.md` for agent-readable repo guidance.
-- CI workflow: pytest on push/PR batches with 5+ commits.
-
-### Changed
-- Nemotron and other reasoning models detected via name heuristic when API metadata is empty.
-- Project context discovery loads `CONTEXT.md` alongside `AGENTS.md`.
-
-## [0.6.6] - 2026-08-30
-
-### Added
-- Skill packs: install from npm, npx, or GitHub `owner/repo` into `~/.kite/skills` (`kite skills --add`, `skills/install.py`).
-- UI themes and fonts: `/theme` (auto, kite, dark, light, dim, mono) and `/font` (unicode, ascii), persisted in `~/.kite`.
-- Git-stat `+N,-M` counts shown on write/edit diffs and the plan checklist.
-
-### Changed
-- Lazy CLI imports for a cheaper REPL cold start.
-- Provider catalog and runtime config now support user overlays.
-- `kite run` accepts `--cwd` to target a directory other than the shell's working directory.
-
-## [0.6.5] - 2026-08-29
-
-### Added
-- Initial public-facing harness: mini-swe-agent loop, tau-style tools/providers/skills/guardrails, Rich TUI, sessions, and memory.
-- Multi-provider model resolution via LiteLLM (OpenAI, Anthropic, Groq, OpenCode Zen/Go, NVIDIA NIM, Ollama, and more).
-- Approval modes (`auto` / `approve` / `trust` / `readonly`) and plan/build modes.
-- MCP stdio client, subagent orchestrator, and trajectory import from Cursor/Claude/Aider/Codex.

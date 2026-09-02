@@ -20,7 +20,7 @@ class GuardrailConfig:
     trusted_paths: list[str] = field(default_factory=list)  # relative subtrees with elevated bash trust
     deny_bash_patterns: list[str] = field(default_factory=list)
     block_secret_writes: bool = True
-    max_bash_output_chars: int = 100_000
+    max_bash_output_chars: int = 32_768
     max_read_chars: int = 200_000
 
     def host_access(self) -> bool:
@@ -86,6 +86,9 @@ class AgentRuntimeConfig:
     wall_time_limit_seconds: int = 0
     max_consecutive_format_errors: int = 3
     auto_compact: bool = True
+    compaction_ratio: float = 0.80
+    compaction_llm_ratio: float = 0.92
+    observation_max_chars: int = 8_000
     compaction_reserve_tokens: int = 16_384
     compaction_keep_recent_tokens: int = 20_000
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
@@ -93,15 +96,20 @@ class AgentRuntimeConfig:
     guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
-    github_tools: bool = True
+    github_tools: bool = False
+    context7_enabled: bool = True
     role: str = "auto"
     prompt_cache_enabled: bool = True
     orchestrator_max_workers: int = 3
     orchestrator_step_limit: int = 10
     orchestrator_cost_limit: float = 1.0
+    orchestrator_timeout_seconds: int = 300
     ui_theme: str = "auto"
     ui_font: str = "unicode"
     model_timeout_seconds: int = 180
+    verify_before_submit: bool = True
+    loop_hard_threshold: int = 5
+    provider_max_retries: int = 4
 
     def with_overrides(self, **kwargs: Any) -> AgentRuntimeConfig:
         return replace(self, **{k: v for k, v in kwargs.items() if v is not None})
@@ -123,8 +131,14 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         cost_limit=float(agent.get("cost_limit", 5.0)),
         wall_time_limit_seconds=int(agent.get("wall_time_limit_seconds", 0)),
         model_timeout_seconds=int(agent.get("model_timeout_seconds", 180)),
+        verify_before_submit=bool(agent.get("verify_before_submit", True)),
+        loop_hard_threshold=int(agent.get("loop_hard_threshold", 5)),
+        provider_max_retries=int(agent.get("provider_max_retries", 4)),
         max_consecutive_format_errors=int(agent.get("max_consecutive_format_errors", 3)),
         auto_compact=bool(agent.get("auto_compact", True)),
+        compaction_ratio=float(agent.get("compaction_ratio", 0.80)),
+        compaction_llm_ratio=float(agent.get("compaction_llm_ratio", 0.92)),
+        observation_max_chars=int(agent.get("observation_max_chars", 8_000)),
         compaction_reserve_tokens=int(agent.get("compaction_reserve_tokens", 16_384)),
         compaction_keep_recent_tokens=int(agent.get("compaction_keep_recent_tokens", 20_000)),
         prompts=PromptsConfig(
@@ -144,7 +158,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             trusted_paths=list(guard.get("trusted_paths") or []),
             deny_bash_patterns=list(guard.get("deny_bash_patterns") or []),
             block_secret_writes=bool(guard.get("block_secret_writes", True)),
-            max_bash_output_chars=int(guard.get("max_bash_output_chars", 100_000)),
+            max_bash_output_chars=int(guard.get("max_bash_output_chars", 32_768)),
             max_read_chars=int(guard.get("max_read_chars", 200_000)),
         ),
         skills=SkillsConfig(
@@ -158,12 +172,14 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             tree_max_entries=int(context.get("tree_max_entries", 80)),
             max_context_chars=int(context.get("max_context_chars", 24_000)),
         ),
-        github_tools=bool((data.get("github") or {}).get("enabled", True)),
+        github_tools=bool((data.get("github") or {}).get("enabled", False)),
+        context7_enabled=bool((data.get("context7") or {}).get("enabled", True)),
         role=str(agent.get("role", "auto")),
         prompt_cache_enabled=bool(cache.get("enabled", True)),
         orchestrator_max_workers=int(orch.get("max_workers", 3)),
         orchestrator_step_limit=int(orch.get("step_limit", 10)),
         orchestrator_cost_limit=float(orch.get("cost_limit", 1.0)),
+        orchestrator_timeout_seconds=int(orch.get("timeout_seconds", 300)),
         ui_theme=str(ui.get("theme") or "auto"),
         ui_font=str(ui.get("font") or "unicode"),
     )

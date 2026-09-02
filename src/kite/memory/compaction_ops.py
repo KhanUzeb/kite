@@ -71,12 +71,14 @@ def run_compaction(
     meta: dict[str, Any] | None = None,
     checkpoint_before: bool = True,
     checkpoint_ratio: float = 0.72,
+    compact_ratio: float = 0.80,
+    compaction_llm_ratio: float = 0.92,
 ) -> CompactionRunResult:
     usage = estimate_usage(system=system, messages=messages, tool_schemas=tool_schemas, window=window)
     before = len(messages)
     checkpoint: ContextCheckpoint | None = None
 
-    will_compact = force or (enabled and should_compact(usage, reserve=reserve_tokens))
+    will_compact = force or (enabled and should_compact(usage, reserve=reserve_tokens, ratio=compact_ratio))
     if will_compact and checkpoint_before and session_id:
         checkpoint = maybe_checkpoint_before_compact(
             session_id=session_id,
@@ -100,10 +102,14 @@ def run_compaction(
             checkpoint=checkpoint,
         )
 
+    effective_summarizer = summarizer
+    if effective_summarizer and usage.ratio < compaction_llm_ratio:
+        effective_summarizer = None
+
     compacted = compact_messages(
         messages,
         keep_recent_tokens=keep_recent_tokens,
-        summarizer=summarizer,
+        summarizer=effective_summarizer,
         force=force,
     )
     after = len(compacted)

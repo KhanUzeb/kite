@@ -27,6 +27,23 @@ class ToolCard:
     parallel_index: int = 1
 
 
+TOOL_BAR = "│ "
+
+
+def render_bash_command_block(command: str, *, max_lines: int = 8) -> Text:
+    """Terminal-style command preview for tool_start / approval."""
+    block = Text()
+    lines = (command or "").strip().splitlines() or [""]
+    shown = lines[:max_lines]
+    for cmd_line in shown:
+        block.append(f"{GUTTER}{TOOL_BAR}", style="kite.muted")
+        block.append("$ ", style="kite.tool bold")
+        block.append(cmd_line + "\n", style="")
+    if len(lines) > max_lines:
+        block.append(f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines\n", style="kite.muted")
+    return block
+
+
 def truncate_preview(text: str, limit: int = 72) -> str:
     raw = (text or "").replace("\n", " ").strip()
     if len(raw) <= limit:
@@ -82,7 +99,7 @@ def render_tool_card_start(card: ToolCard, *, running: bool = True) -> Text:
         line.append(card.detail, style="kite.muted")
     if running:
         line.append(f" {glyph('sep')} ", style="kite.muted")
-        line.append(glyph("reason"), style="kite.pending")
+        line.append("running", style="kite.pending italic")
     line.append("\n")
     return line
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 class StreamCoalescer:
     """Batch small stream_delta / stream_reasoning pieces."""
 
-    def __init__(self, *, min_chars: int = 20, flush_chars: int = 160) -> None:
+    def __init__(self, *, min_chars: int = 32, flush_chars: int = 256) -> None:
         self.min_chars = min_chars
         self.flush_chars = flush_chars
         self._buffers: dict[str, str] = {}

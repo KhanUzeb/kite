@@ -11,7 +11,7 @@ from kite.agent.cancel import CancelToken
 from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
 from kite.agent.events import Event
-from kite.agent.mode import AgentMode, ApprovalMode, tools_for_mode
+from kite.agent.mode import AgentMode, ApprovalMode, parse_approval_mode, tools_for_mode
 from kite.agent.role import AgentRole, parse_role, tools_for_role
 from kite.cli.slash import expand_prompt_slash
 from kite.config import AgentRuntimeConfig, UserConfig, ensure_home, load_runtime_config
@@ -58,6 +58,7 @@ class RuntimeOptions:
     reasoning: str = "auto"
     role: str = "auto"
     attachments: list | None = None
+    long_task: bool = False
     execution_mode: str | None = None  # restricted | host — overrides runtime TOML
 
 
@@ -97,6 +98,45 @@ class AgentRuntime:
     def _on_event(self, event: Event) -> None:
         for listener in list(self._listeners):
             listener(event)
+
+    def _persist_session_stats(self, session: Session, result: dict, *, agent: DefaultAgent | None) -> None:
+        from kite.memory.session_analytics import SessionStats, save_session_stats
+
+        cache_hits = 0
+        estimated = 0
+        if agent is not None:
+            usage = agent.last_usage_estimate
+            if usage is not None:
+                estimated = usage.total_tokens
+            prompt_cache = getattr(getattr(agent, "model", None), "prompt_cache", None)
+            if prompt_cache is not None:
+                cache_hits = int(prompt_cache.stats.cache_hit_tokens)
+        meta = session.meta
+        stats = SessionStats(
+            session_id=session.id,
+            created_at=meta.created_at,
+            updated_at=meta.updated_at,
+            duration_s=max(0.0, meta.updated_at - meta.created_at),
+            provider=meta.provider,
+            model=meta.model,
+            task=meta.task,
+            label=meta.label,
+            cwd=meta.cwd,
+            exit_status=str(result.get("exit_status") or meta.exit_status),
+            verification_status=str(result.get("verification_status") or ""),
+            last_error=str(result.get("error") or "")[:240],
+            mode=getattr(agent, "mode", None).value if agent and getattr(agent, "mode", None) else "",
+            approval=getattr(agent, "approval", None).value if agent and getattr(agent, "approval", None) else "",
+            tool_calls=getattr(agent, "tool_call_count", 0) if agent else 0,
+            tool_counts=dict(getattr(agent, "tool_counts", {}) or {}),
+            api_calls=getattr(agent, "n_calls", 0) if agent else 0,
+            cost=getattr(agent, "cost", 0.0) if agent else 0.0,
+            estimated_tokens=estimated,
+            cache_hit_tokens=cache_hits,
+            turn_count=getattr(agent, "n_calls", 0) if agent else 0,
+            message_count=len(session.messages) if hasattr(session, "messages") else 0,
+        )
+        save_session_stats(stats)
 
     def prepare(self) -> tuple[AgentRuntimeConfig, ResolvedModel, str]:
         ensure_home()
@@ -140,6 +180,11 @@ class AgentRuntime:
         if role is not AgentRole.AUTO:
             try:
                 extra_sections.append(load_prompt_template(f"role_{role.value}"))
+            except (FileNotFoundError, OSError):
+                pass
+        if self.options.long_task:
+            try:
+                extra_sections.append(load_prompt_template("mode_long"))
             except (FileNotFoundError, OSError):
                 pass
 
@@ -233,10 +278,7 @@ class AgentRuntime:
             mode = AgentMode(self.options.mode or "build")
         except ValueError:
             mode = AgentMode.BUILD
-        try:
-            approval = ApprovalMode(self.options.approval or "auto")
-        except ValueError:
-            approval = ApprovalMode.AUTO
+        approval = parse_approval_mode(self.options.approval or "auto", default=ApprovalMode.AUTO)
 
         enabled = tools_for_mode(mode, rcfg.tools.enabled)
         role = parse_role(self.options.role or rcfg.role, mode=mode.value)
@@ -266,6 +308,7 @@ class AgentRuntime:
             runner=_subagent_runner,
             on_event=self._on_event,
             max_workers=rcfg.orchestrator_max_workers,
+            timeout_seconds=rcfg.orchestrator_timeout_seconds,
         )
 
         if self.slots.tools is not None:
@@ -296,6 +339,10 @@ class AgentRuntime:
             from kite.tools.github import make_github_tools
 
             extras.extend(make_github_tools())
+        if rcfg.context7_enabled:
+            from kite.tools.context7 import make_context7_tools
+
+            extras.extend(make_context7_tools())
         if extras:
             tools = [*tools, *extras]
         registry = ToolRegistry(tools)
@@ -319,6 +366,7 @@ class AgentRuntime:
                 reasoning=self.options.reasoning,
                 prompt_cache=prompt_cache,
                 timeout_seconds=rcfg.model_timeout_seconds,
+                observation_max_chars=rcfg.observation_max_chars,
             )
 
         session: Session | None = None
@@ -358,14 +406,22 @@ class AgentRuntime:
         audit = AuditLog()
         verification = VerificationCollector()
 
+        step_limit = self.options.step_limit if self.options.step_limit is not None else rcfg.step_limit
+        cost_limit = self.options.cost_limit if self.options.cost_limit is not None else rcfg.cost_limit
+        if self.options.long_task:
+            if self.options.step_limit is None:
+                step_limit = max(step_limit, 120)
+            if self.options.cost_limit is None:
+                cost_limit = max(cost_limit, 25.0)
+
         agent = DefaultAgent(
             model,
             env,
             system_prompt=system,
             instance_prompt=instance,
             project_context="",
-            step_limit=self.options.step_limit if self.options.step_limit is not None else rcfg.step_limit,
-            cost_limit=self.options.cost_limit if self.options.cost_limit is not None else rcfg.cost_limit,
+            step_limit=step_limit,
+            cost_limit=cost_limit,
             wall_time_limit_seconds=(
                 self.options.wall_time_limit_seconds
                 if self.options.wall_time_limit_seconds is not None
@@ -380,6 +436,8 @@ class AgentRuntime:
             auto_compact=rcfg.auto_compact and ucfg.auto_compact and not self.options.no_compact,
             compaction_reserve_tokens=rcfg.compaction_reserve_tokens,
             compaction_keep_recent_tokens=rcfg.compaction_keep_recent_tokens,
+            compaction_ratio=rcfg.compaction_ratio,
+            compaction_llm_ratio=rcfg.compaction_llm_ratio,
             mode=mode,
             approval=approval,
             approver=self.approver,
@@ -393,6 +451,10 @@ class AgentRuntime:
             verification=verification,
             audit=audit,
             tool_progress_interval_seconds=rcfg.tools.progress_interval_seconds,
+            verify_before_submit=rcfg.verify_before_submit,
+            loop_hard_threshold=rcfg.loop_hard_threshold,
+            provider_max_retries=rcfg.provider_max_retries,
+            long_task=self.options.long_task,
             cancel=cancel,
         )
         self.last_agent = agent
@@ -417,6 +479,15 @@ class AgentRuntime:
         else:
             result = agent.run(task)
         if session is not None:
-            audit.log_run(session.id, str(result.get("exit_status") or ""), verification=verification.summary())
+            verification_summary = verification.summary()
+            audit.log_run(
+                session.id,
+                str(result.get("exit_status") or ""),
+                verification=verification_summary,
+                api_calls=getattr(self.last_agent, "n_calls", 0),
+                cost=getattr(self.last_agent, "cost", 0.0),
+                tool_calls=getattr(self.last_agent, "tool_call_count", 0),
+            )
+            self._persist_session_stats(session, result, agent=self.last_agent)
         self.hooks.fire("after_run", result=result, task=task)
         return result

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from kite.config import AgentRuntimeConfig, PromptsConfig
 from kite.context.discovery import ProjectContext
+from kite.context.clock import session_time_section
 from kite.skills.loader import Skill, build_skill_index
 
 
@@ -36,7 +37,7 @@ def assemble_system_prompt(
 ) -> str:
     prompts: PromptsConfig = config.prompts
     base = override_system or load_prompt_template(prompts.system)
-    parts = [base.strip()]
+    parts = [session_time_section(), base.strip()]
 
     if project_context is not None:
         rendered = project_context.render_for_prompt(max_chars=config.context.max_context_chars)

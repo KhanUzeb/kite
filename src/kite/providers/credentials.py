@@ -12,6 +12,13 @@ from typing import TYPE_CHECKING
 
 from kite.config import UserConfig, ensure_home, kite_home
 from kite.providers.catalog import load_catalog
+from kite.providers.byos import (
+    credential_label,
+    has_oauth_session,
+    is_oauth_provider,
+    login_oauth,
+    logout_oauth,
+)
 from kite.providers.keys import api_key_env_names, api_key_for
 
 if TYPE_CHECKING:
@@ -21,6 +28,136 @@ if TYPE_CHECKING:
 def env_file_path() -> Path:
     ensure_home()
     return kite_home() / ".env"
+
+
+def load_kite_env() -> None:
+    """Load project .env then ~/.kite/.env.
+
+    Non-empty project values win. Kite home fills keys still unset or left
+    empty (``KEY=`` placeholders from a copied ``.env.example``).
+    """
+    from dotenv import dotenv_values, load_dotenv
+
+    project_env = Path.cwd() / ".env"
+    if project_env.is_file():
+        load_dotenv(project_env)
+    path = env_file_path()
+    if not path.is_file():
+        return
+    for key, val in dotenv_values(path).items():
+        if not val:
+            continue
+        if not (os.getenv(key) or "").strip():
+            os.environ[key] = val
+
+
+
+def context7_api_key() -> str | None:
+    """Optional Context7 API key for built-in docs tools (higher rate limits)."""
+    load_kite_env()
+    key = (os.getenv("CONTEXT7_API_KEY") or "").strip()
+    return key or None
+
+
+def provider_credential_status(*, ok: bool, env_col: str) -> str:
+    """Human-readable credential status for CLI/REPL tables."""
+    if env_col == "local":
+        return "local"
+    if env_col == "—":
+        return "n/a"
+    if env_col == "oauth":
+        return "linked" if ok else "login required"
+    return "set" if ok else "missing"
+
+
+def credential_type_label(spec) -> str:
+    """BYOK, BYOS, local, or — for UI tables."""
+    if spec.name == "ollama":
+        return "local"
+    if is_oauth_provider(spec):
+        return "BYOS"
+    if api_key_env_names(spec):
+        return "BYOK"
+    return "—"
+
+
+def mask_api_key_fingerprint(value: str) -> str:
+    """Show last four chars only — safe for status displays."""
+    text = (value or "").strip()
+    if len(text) < 4:
+        return "••••"
+    return f"••••{text[-4:]}"
+
+
+def api_key_fingerprint(spec) -> str:
+    """Masked fingerprint for a provider's primary API key, if set."""
+    if is_oauth_provider(spec) or spec.name == "ollama":
+        return ""
+    key = api_key_for(spec)
+    return mask_api_key_fingerprint(key) if key else ""
+
+
+def validate_api_key(value: str) -> str | None:
+    """Return an error message, or None when the key looks acceptable."""
+    text = (value or "").strip()
+    if not text:
+        return "API key cannot be empty"
+    if "\n" in text or "\r" in text:
+        return "API key must be a single line"
+    if len(text) < 8:
+        return "API key looks too short — check for typos"
+    if text.isspace():
+        return "API key cannot be whitespace only"
+    return None
+
+
+def env_file_permission_warning(path: Path | None = None) -> str | None:
+    """Warn when ~/.kite/.env is group/world readable (Unix)."""
+    target = path or env_file_path()
+    if not target.is_file() or os.name == "nt":
+        return None
+    mode = stat.S_IMODE(target.stat().st_mode)
+    if mode & 0o077:
+        return f"{target} is readable by others ({oct(mode)}) — run: chmod 600 {target}"
+    return None
+
+
+def prompt_api_key(
+    env_var: str,
+    *,
+    replacing: bool = False,
+    console: Console | None = None,
+) -> tuple[str | None, str | None]:
+    """Prompt for a BYOK key. Returns (secret, error). Both None means cancelled."""
+    if replacing:
+        secret = read_secret(f"{env_var} (hidden): ")
+        if secret is None:
+            return None, None
+        err = validate_api_key(secret)
+        return (None, err) if err else (secret, None)
+
+    secret = read_secret(f"{env_var} (hidden): ")
+    if secret is None:
+        return None, None
+    err = validate_api_key(secret)
+    if err:
+        return None, err
+    confirm = read_secret(f"{env_var} confirm (hidden): ")
+    if confirm is None:
+        return None, None
+    if secret != confirm:
+        return None, "keys did not match — nothing saved"
+    return secret, None
+
+
+def provider_needs_login(spec) -> bool:
+    """True when setup/login should prompt before using this provider."""
+    if spec.name == "ollama":
+        return False
+    if is_oauth_provider(spec):
+        return not has_oauth_session(spec.oauth_provider or spec.name)
+    envs = api_key_env_names(spec)
+    return bool(envs) and not api_key_for(spec)
 
 
 def read_env_lines(path: Path) -> list[str]:
@@ -140,9 +277,12 @@ def configured_providers() -> list[tuple[str, bool, str]]:
         if spec.name == "ollama":
             rows.append((spec.name, True, "local"))
             continue
+        if is_oauth_provider(spec):
+            rows.append((spec.name, has_oauth_session(spec.oauth_provider or spec.name), "oauth"))
+            continue
         envs = api_key_env_names(spec)
         if not envs:
-            rows.append((spec.name, False, "—"))
+            rows.append((spec.name, False, credential_label(spec)))
             continue
         ok = bool(api_key_for(spec))
         rows.append((spec.name, ok, envs[0]))
@@ -157,10 +297,13 @@ def resolve_provider_name(raw: str) -> str:
 
 
 def loginable_providers() -> list[tuple[str, str, str]]:
-    """(name, display_name, primary_env) for providers that accept API keys."""
+    """(name, display_name, auth hint) for providers that accept login."""
     rows: list[tuple[str, str, str]] = []
     for spec in load_catalog().list():
         if spec.name == "ollama":
+            continue
+        if is_oauth_provider(spec):
+            rows.append((spec.name, spec.display_name, "oauth"))
             continue
         envs = api_key_env_names(spec)
         if not envs:
@@ -186,31 +329,43 @@ def login_provider(
     if spec.name == "ollama":
         return 0, "ollama is local — no API key needed", spec.name
 
+    if is_oauth_provider(spec):
+        return login_oauth(spec, set_default=set_default, console=console)
+
     env_names = api_key_env_names(spec)
     if not env_names:
         return 0, f"{spec.display_name} does not use an API key", spec.name
 
     primary = env_names[0]
     path = env_file_path()
+    replacing = bool(api_key_for(spec))
 
     if console is not None:
-        console.print(f"[dim]{spec.display_name}[/]  →  [cyan]{path}[/]")
-        if spec.docs_url:
-            console.print(f"[dim]Get a key:[/] {spec.docs_url}")
-        if api_key_for(spec):
-            console.print(f"[dim]Replacing existing {primary}[/]")
+        from kite.ui.credentials import render_byok_login_panel
 
-    secret = read_secret(f"{primary} (hidden): ")
-    if secret is None:
+        console.print(
+            render_byok_login_panel(
+                spec,
+                env_path=str(path),
+                env_var=primary,
+                replacing=replacing,
+            )
+        )
+        perm_warn = env_file_permission_warning(path)
+        if perm_warn:
+            console.print(f"[yellow]{perm_warn}[/]")
+
+    secret, err = prompt_api_key(primary, replacing=replacing, console=console)
+    if secret is None and err is None:
         return 130, "cancelled", None
-    if not secret:
-        return 2, "empty key — nothing saved", None
+    if err:
+        return 2, err, None
 
     saved = write_api_key(primary, secret)
     for alias in env_names[1:]:
         remove_api_key(alias)
 
-    msg = f"saved {primary} → {saved}"
+    msg = f"saved {primary} → {saved}  ({mask_api_key_fingerprint(secret)})"
     if set_default:
         cfg = UserConfig.load()
         cfg.default_provider = spec.name
@@ -229,6 +384,11 @@ def logout_provider(provider: str) -> tuple[int, str]:
 
     if spec.name == "ollama":
         return 0, "ollama has no stored key"
+
+    if is_oauth_provider(spec):
+        if logout_oauth(spec):
+            return 0, f"removed OAuth session for {spec.name}"
+        return 0, f"no OAuth session for {spec.name}"
 
     env_names = api_key_env_names(spec)
     if not env_names:

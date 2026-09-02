@@ -47,6 +47,8 @@ DEFAULT_TOOL_METADATA: dict[str, ToolMetadata] = {
     "webfetch": _meta(read_only=True, network=True, expensive=True),
     "websearch": _meta(read_only=True, network=True, expensive=True),
     "webcrawl": _meta(read_only=True, network=True, expensive=True),
+    "context7_resolve": _meta(read_only=True, network=True, expensive=True),
+    "context7_docs": _meta(read_only=True, network=True, expensive=True),
     "subagent": _meta(read_only=True, expensive=True),
     "task": _meta(read_only=True, expensive=True),
     "write": _meta(mutating=True),

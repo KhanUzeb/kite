@@ -33,3 +33,29 @@ def test_empty_run_is_idle() -> None:
     assert vc.status() == "idle"
     assert vc.has_work() is False
     assert vc.summary()["status"] == "idle"
+
+
+def test_edits_without_tests_need_verification() -> None:
+    vc = VerificationCollector()
+    vc.on_tool_end("edit", {"path": "x.py"}, {"ok": True, "path": "x.py", "diff": "d"})
+    assert vc.needs_tests() is True
+    reason = vc.submit_block_reason("## Done\nx\n## Changed\n`x.py`\n## Verification\n- ✓ ok")
+    assert reason is not None
+
+
+def test_python_m_pytest_detected() -> None:
+    vc = VerificationCollector()
+    vc.on_tool_end(
+        "bash",
+        {"command": "python -m pytest tests/ -q"},
+        {"ok": True, "returncode": 0, "output": "ok"},
+    )
+    assert any(a.kind == "test" for a in vc.artifacts)
+
+
+def test_post_edit_nudge() -> None:
+    vc = VerificationCollector()
+    vc.on_tool_end("write", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+    nudge = vc.post_edit_nudge()
+    assert nudge is not None
+    assert "verification" in nudge.lower()

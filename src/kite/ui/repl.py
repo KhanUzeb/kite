@@ -12,7 +12,7 @@ from rich.text import Text
 
 from kite.commands.loader import project_commands_dir, write_command_stub
 from kite.config import UserConfig, kite_home
-from kite.agent.mode import AgentMode, ApprovalMode, default_approval
+from kite.agent.mode import AgentMode, ApprovalMode, default_approval, approval_display_name, parse_approval_mode
 from kite.plugins.loader import project_plugins_dir, write_plugin_stub
 from kite.cli.slash import CommandIndex, SlashResult, help_text, invalidate_command_index, resolve_slash
 from kite.tools.store import TodoStore
@@ -713,6 +713,9 @@ class ChatSession:
             mode = "expanded" if self.state.expanded_all else "collapsed"
             return f"tool output {mode}"
 
+        def _toggle_thinking() -> str:
+            return self._toggle_thinking_display()
+
         def _plan() -> str:
             self._apply_plan_mode()
             return "plan mode"
@@ -728,6 +731,7 @@ class ChatSession:
 
         bindings = make_repl_key_bindings(
             on_toggle_expand=lambda: self._flash_note(_toggle_expand()),
+            on_toggle_thinking=lambda: self._flash_note(_toggle_thinking()),
             on_plan=lambda: self._flash_note(_plan()),
             on_build=lambda: self._flash_note(_build()),
             on_status=lambda: self._flash_note(_status()),
@@ -750,26 +754,51 @@ class ChatSession:
         return line
 
     def _show_keys(self) -> None:
-        from kite.providers.credentials import configured_providers, env_file_path
+        from kite.config import UserConfig
+        from kite.providers.catalog import load_catalog
+        from kite.providers.credentials import (
+            api_key_fingerprint,
+            configured_providers,
+            env_file_path,
+        )
+        from kite.ui.credentials import render_credentials_table_rows
 
+        cfg = UserConfig.load()
         rows = configured_providers()
+        catalog = load_catalog()
+        fingerprints: dict[str, str] = {}
         for name, ok, env in rows:
-            if env == "local":
-                status = "local"
-            elif env == "—":
-                status = "n/a"
-            else:
-                status = "set" if ok else "missing"
-            self.console.print(f"  {name:<14}{status:<8}{env}")
-        self.console.print(f"[kite.muted]file[/]  {env_file_path()}  ·  /login provider  ·  /logout provider")
+            if not ok or env in {"local", "oauth", "—"}:
+                continue
+            try:
+                fp = api_key_fingerprint(catalog.get(name))
+            except KeyError:
+                continue
+            if fp:
+                fingerprints[name] = fp
+
+        self.console.print(
+            render_credentials_table_rows(
+                rows,
+                default_provider=cfg.default_provider,
+                fingerprints=fingerprints,
+            )
+        )
+        self.console.print(
+            f"[kite.muted]BYOK[/]  {env_file_path()}  "
+            f"[kite.muted]BYOS[/]  ~/.kite/oauth/  "
+            f"[kite.muted]·[/]  /login provider  ·  /logout provider"
+        )
 
     def _login_provider(self, arg: str) -> None:
+        from kite.providers.byos import is_oauth_provider
+        from kite.providers.catalog import load_catalog
         from kite.providers.credentials import login_provider
         from kite.providers.select import select_provider_interactive
 
         provider = arg.strip()
         if not provider:
-            picked = select_provider_interactive(self.console)
+            picked = select_provider_interactive(self.console, oauth_first=True)
             if not picked:
                 return
             provider = picked
@@ -785,7 +814,17 @@ class ChatSession:
             self.provider = resolved
             self.state.provider = resolved
             self._model_cache = []
-            self.console.print("[kite.muted]Tip:[/]  /select to pick a model")
+            try:
+                spec = load_catalog().get(resolved)
+            except KeyError:
+                spec = None
+            if spec is not None and is_oauth_provider(spec):
+                self.console.print(
+                    "[kite.muted]Tip:[/]  subscription linked — "
+                    "/model to view default or send a message"
+                )
+            else:
+                self.console.print("[kite.muted]Tip:[/]  /select to pick a model")
 
     def _logout_provider(self, arg: str) -> None:
         from kite.providers.credentials import logout_provider
@@ -836,6 +875,7 @@ class ChatSession:
             "sandbox": self._slash_restricted,
             "cost": self._slash_cost,
             "expand": self._slash_expand,
+            "expand-thinking": self._slash_expand_thinking,
             "collapse": self._slash_collapse,
             "trace": self._slash_trace,
             "undo": self._slash_undo,
@@ -905,13 +945,17 @@ class ChatSession:
         self.console.print("[kite.build]build mode[/]  edits are on")
 
     def _slash_approve(self, arg: str) -> None:
-        try:
-            self.state.approval = ApprovalMode(arg or "approve")
-        except ValueError:
-            self.console.print("[kite.error]use /approve auto|approve|readonly[/]")
+        if not (arg or "").strip():
+            self.console.print(
+                "[kite.muted]yolo[/] — everything, no prompts\n"
+                "[kite.muted]auto[/] — auto in workspace; ask outside project folder\n"
+                "[kite.muted]supervised[/] — reads free; write/bash need approval"
+            )
             return
+        mode = parse_approval_mode(arg or None, default=self.state.approval)
+        self.state.approval = mode
         self._invalidate_harness()
-        self.console.print(f"[kite.pending]approval[/] {self.state.approval.value}")
+        self.console.print(f"[kite.pending]approval[/] {approval_display_name(mode)}")
 
     def _slash_restricted(self, arg: str) -> None:
         token = (arg or "").strip().lower()
@@ -944,6 +988,27 @@ class ChatSession:
         self.state.expanded_all = not self.state.expanded_all
         mode = "expanded" if self.state.expanded_all else "collapsed"
         self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
+
+    def _slash_expand_thinking(self, arg: str) -> None:
+        note = self._toggle_thinking_display(arg=arg)
+        self.console.print(f"[kite.muted]{note}[/]")
+
+    def _toggle_thinking_display(self, *, arg: str = "") -> str:
+        from kite.ui.render import render_reasoning_block
+
+        token = (arg or "").strip().lower()
+        if token == "collapse":
+            self.state.thinking_expanded = False
+            return "thinking collapsed (summary only)"
+        if token == "expand":
+            self.state.thinking_expanded = True
+        else:
+            self.state.thinking_expanded = not self.state.thinking_expanded
+        if self.state.thinking_expanded:
+            if self.state.last_thinking.strip():
+                self.console.print(render_reasoning_block(self.state.last_thinking), highlight=False)
+            return "thinking expanded"
+        return "thinking collapsed (summary only)"
 
     def _slash_collapse(self, _arg: str) -> None:
         self.state.expanded_all = False
@@ -1025,12 +1090,14 @@ class ChatSession:
         if not arg:
             self.console.print("[kite.error]/forget id or substring[/]")
             return
-        removed = self.memory.forget(arg)
-        if not removed:
-            self.console.print("[kite.muted]no matching notes[/]")
+        result = self.memory.forget(arg)
+        if result.total == 0:
+            self.console.print("[kite.muted]no matching notes or episodes[/]")
             return
-        for note in removed:
-            self.console.print(f"[kite.success]forgot[/] {note.scope}/{note.id}  {note.text}")
+        for note in result.notes:
+            self.console.print(f"[kite.success]forgot note[/] {note.scope}/{note.id}  {note.text}")
+        for ep in result.episodes:
+            self.console.print(f"[kite.success]forgot episode[/] {ep.id}  {ep.summary}")
 
     def _slash_status(self, _arg: str) -> None:
         from kite.ui.theme import current_font, theme_label
@@ -1401,6 +1468,13 @@ class ChatSession:
         if harness.last_session:
             self._session_id = harness.last_session.id
         extra = result or {}
+        if extra.get("exit_status") == "ProviderFault":
+            self.state.last_error = str(extra.get("error") or "provider fault")
+            return
+        if extra.get("exit_status") in {"Error", "Stalled", "LimitsExceeded", "TimeExceeded"}:
+            self.state.last_error = str(extra.get("error") or extra.get("submission") or extra.get("exit_status"))
+            self.state.last_trace = str(extra.get("traceback") or "")
+            return
         if extra.get("cost") is not None:
             try:
                 self.state.cost = float(extra["cost"])
