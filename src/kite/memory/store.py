@@ -26,12 +26,7 @@ class ForgetResult:
 
 def _migrate_jsonl(semantic: SemanticStore) -> None:
     """Fold legacy notes.jsonl into MEMORY.md once."""
-    pairs = (
-        ("user", semantic.user_path().parent / "notes.jsonl", semantic.user_path()),
-        ("project", semantic.project_path().parent / "memory" / "notes.jsonl", semantic.project_path()),
-    )
-    # user jsonl lived at ~/.kite/memory/notes.jsonl; project at .kite/memory/notes.jsonl
-    extra = [
+    extra: list[tuple[MemoryScope, Path]] = [
         ("user", semantic.user_path().parent / "notes.jsonl"),
         ("project", semantic.root / ".kite" / "memory" / "notes.jsonl"),
     ]
@@ -48,7 +43,7 @@ def _migrate_jsonl(semantic: SemanticStore) -> None:
             lines = path.read_text(encoding="utf-8").splitlines()
         except OSError:
             continue
-        existing = semantic.notes(scope=scope)  # type: ignore[arg-type]
+        existing = semantic.notes(scope=scope)
         existing_ids = {n.id for n in existing}
         existing_text = {n.text.lower() for n in existing}
         moved = 0
@@ -68,7 +63,7 @@ def _migrate_jsonl(semantic: SemanticStore) -> None:
             if nid in existing_ids or text.lower() in existing_text:
                 continue
             try:
-                semantic.remember(text, scope=scope)  # type: ignore[arg-type]
+                semantic.remember(text, scope=scope)
                 moved += 1
             except ValueError:
                 continue

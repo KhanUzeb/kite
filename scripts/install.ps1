@@ -150,7 +150,8 @@ Write-Host "  kite setup                 # guided API key + model picker (or .\s
 Write-Host "  kite providers             # readiness + credential status"
 Write-Host "  kite models -p groq --select"
 Write-Host ""
-Write-Host "Contributors: pytest  |  optional: .\scripts\install.ps1 -Verify"
+Write-Host "Package: .\scripts\pkg.ps1 update | reinstall | uninstall
+Contributors: pytest  |  optional: .\scripts\install.ps1 -Verify"
 Write-Host ""
 Write-Host "Docs: $readme"
 Write-Host "      $commands"

@@ -146,15 +146,16 @@ class SemanticStore:
         if not q:
             return []
         removed: list[Note] = []
-        for scope in ("user", "project"):
-            path = self.path_for(scope)  # type: ignore[arg-type]
+        scopes: tuple[MemoryScope, ...] = ("user", "project")
+        for scope in scopes:
+            path = self.path_for(scope)
             raw = _read(path)
             if not raw.strip():
                 continue
             pin, _ = _split_notes(raw)
             kept: list[Note] = []
             dirty = False
-            for note in parse_notes(raw, scope=scope):  # type: ignore[arg-type]
+            for note in parse_notes(raw, scope=scope):
                 if q == note.id.lower() or q in note.text.lower():
                     removed.append(note)
                     dirty = True

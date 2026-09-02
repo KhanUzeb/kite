@@ -13,6 +13,16 @@ cd kite
 
 This creates a venv, installs Kite in editable mode, seeds `~/.kite/.env` from `.env.example` when missing, and bootstraps `~/.kite/` (sessions, checkpoints, skills, config). Use `./scripts/install.sh --verify` to run pytest after install.
 
+Package maintenance (not `kite` CLI subcommands):
+
+```bash
+./scripts/pkg.sh update       # git pull + editable reinstall
+./scripts/pkg.sh reinstall    # force reinstall in .venv
+./scripts/pkg.sh uninstall    # pip uninstall (--remove-venv optional)
+```
+
+Windows: `.\scripts\pkg.ps1 update|reinstall|uninstall`
+
 Then run the suite:
 
 ```bash

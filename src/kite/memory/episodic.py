@@ -58,7 +58,7 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 
 def _row(row: sqlite3.Row) -> Episode:
-    scope = row["scope"] if row["scope"] in {"user", "project"} else "user"
+    scope: MemoryScope = "project" if row["scope"] == "project" else "user"
     return Episode(
         id=str(row["id"]),
         created=float(row["created"] or 0),
@@ -67,7 +67,7 @@ def _row(row: sqlite3.Row) -> Episode:
         summary=str(row["summary"] or ""),
         payload=str(row["payload"] or ""),
         cwd=str(row["cwd"] or ""),
-        scope=scope,  # type: ignore[arg-type]
+        scope=scope,
     )
 
 
@@ -154,8 +154,9 @@ class EpisodicStore:
         if not q:
             return []
         removed: list[Episode] = []
-        for scope in ("user", "project"):
-            path = self.path_for(scope)  # type: ignore[arg-type]
+        scopes: tuple[MemoryScope, ...] = ("user", "project")
+        for scope in scopes:
+            path = self.path_for(scope)
             if not path.is_file():
                 continue
             conn = _connect(path)
