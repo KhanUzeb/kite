@@ -22,6 +22,13 @@ if TYPE_CHECKING:
 _OAUTH_MODEL_TTL = 300.0  # 5 min — matches Codex client cache cadence
 _oauth_model_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
 
+
+def clear_oauth_model_cache(provider: str | None = None) -> None:
+    if provider:
+        _oauth_model_cache.pop(provider, None)
+        return
+    _oauth_model_cache.clear()
+
 OAuthModelFetcher = Callable[[], tuple[str, ...]]
 
 ANTHROPIC_OAUTH_PREFIX = "sk-ant-oat"
@@ -406,13 +413,52 @@ def fetch_oauth_model_ids(spec: ProviderSpec, *, refresh: bool = False) -> tuple
     return models
 
 
-def _login_message(provider: str, spec: ProviderSpec) -> str:
-    labels = {
-        "chatgpt": "ChatGPT/Codex subscription",
-        "xai": "Grok subscription",
-        "anthropic": "Claude Max/Pro subscription",
-    }
-    return labels.get(provider, spec.display_name)
+def _open_browser(url: str) -> bool:
+    import webbrowser
+
+    try:
+        if webbrowser.open(url, new=2):
+            return True
+    except Exception:
+        pass
+    if os.name == "nt":
+        try:
+            os.startfile(url)  # type: ignore[attr-defined]
+            return True
+        except OSError:
+            return False
+    return False
+
+
+def _show_byos_panel(
+    spec: ProviderSpec,
+    *,
+    url: str,
+    console: Console | None,
+    user_code: str = "",
+    browser_opened: bool | None = False,
+    extra: str = "",
+) -> None:
+    from kite.ui.credentials import render_byos_login_panel
+
+    panel = render_byos_login_panel(
+        spec,
+        url=url,
+        user_code=user_code,
+        browser_opened=browser_opened,
+        extra=extra,
+    )
+    if console is not None:
+        console.print(panel)
+        return
+    print(str(panel), flush=True)
+
+
+def _wait(console: Console | None, message: str, work):
+    if console is not None:
+        with console.status(message):
+            return work()
+    return work()
 
 
 def login_oauth(
@@ -425,118 +471,150 @@ def login_oauth(
     from kite.config import UserConfig
 
     provider = spec.oauth_provider or spec.name
-    label = _login_message(provider, spec)
-    if console is not None:
-        console.print(f"[dim]{label}[/] — OAuth login. Uses your plan, not API credits.")
-
     if provider == "chatgpt":
-        code, msg = _login_chatgpt_oauth()
-        if code == 0:
-            _oauth_model_cache.pop("chatgpt", None)
+        code, msg = _login_chatgpt_oauth(spec, console=console)
     elif provider == "xai":
-        code, msg = _login_xai_oauth()
-        if code == 0:
-            _oauth_model_cache.pop("xai", None)
+        code, msg = _login_xai_oauth(spec, console=console)
     elif provider == "anthropic":
-        code, msg = _login_anthropic_oauth()
-        if code == 0:
-            _oauth_model_cache.pop("anthropic", None)
+        code, msg = _login_anthropic_oauth(spec, console=console)
     else:
         return 2, f"OAuth not implemented for '{provider}'", None
 
     if code != 0:
         return code, msg, None
 
+    _oauth_model_cache.pop(provider, None)
     if set_default:
         cfg = UserConfig.load()
         cfg.default_provider = spec.name
+        if spec.default_model:
+            cfg.default_model = spec.default_model
+            cfg.provider_defaults[spec.name] = spec.default_model
         cfg.save()
         msg += f"  ·  default provider → {spec.name}"
 
     return 0, msg, spec.name
 
 
-def _login_chatgpt_oauth() -> tuple[int, str]:
+def _login_chatgpt_oauth(spec: ProviderSpec, *, console: Console | None) -> tuple[int, str]:
     try:
+        from litellm.llms.chatgpt.common_utils import CHATGPT_DEVICE_VERIFY_URL
+
         auth = _chatgpt_authenticator()
-        _secure(Path(auth.auth_file))
-        token = auth.get_access_token()
-        if not token:
-            return 2, "ChatGPT OAuth login failed — no access token"
-        fetch_oauth_model_ids(
-            ProviderSpec(
-                name="chatgpt",
-                display_name="ChatGPT",
-                kind="chatgpt",
-                litellm_prefix="chatgpt/",
-                base_url="",
-                api_key_env="",
-                models=(),
-                default_model="",
-                auth_kind="oauth",
-                oauth_provider="chatgpt",
-            ),
-            refresh=True,
+        if has_oauth_session("chatgpt"):
+            token = auth.get_access_token()
+            if token:
+                return 0, f"ChatGPT subscription already linked → {auth.auth_file}"
+
+        if console is not None:
+            console.print("[dim]Starting ChatGPT device login…[/]")
+        device = auth._request_device_code()
+        auth._record_device_code_request()
+        user_code = str(device.get("user_code") or "")
+        verify = CHATGPT_DEVICE_VERIFY_URL
+        browse = f"{verify}?user_code={user_code}" if user_code else verify
+        opened = _open_browser(browse)
+        _show_byos_panel(
+            spec,
+            url=verify,
+            console=console,
+            user_code=user_code,
+            browser_opened=opened,
         )
+        auth_code = _wait(
+            console,
+            "Waiting for you to authenticate in the browser…",
+            lambda: auth._poll_for_authorization_code(device),
+        )
+        tokens = auth._exchange_code_for_tokens(auth_code)
+        auth._write_auth_file(auth._build_auth_record(tokens))
+        _secure(Path(auth.auth_file))
+        if not auth.get_access_token():
+            return 2, "ChatGPT OAuth login failed — no access token"
         return 0, f"ChatGPT subscription linked → {auth.auth_file}"
+    except KeyboardInterrupt:
+        return 130, "cancelled"
     except Exception as exc:  # noqa: BLE001
         return 2, f"ChatGPT OAuth login failed: {exc}"
 
 
-def _login_xai_oauth() -> tuple[int, str]:
+def _login_xai_oauth(spec: ProviderSpec, *, console: Console | None) -> tuple[int, str]:
     try:
         auth = _xai_authenticator()
-        _secure(Path(auth.auth_file))
-        auth.login()
-        token = auth.get_access_token()
-        if not token:
-            return 2, "xAI OAuth login failed — no access token"
-        fetch_oauth_model_ids(
-            ProviderSpec(
-                name="grok",
-                display_name="Grok",
-                kind="xai",
-                litellm_prefix="xai/",
-                base_url="",
-                api_key_env="",
-                models=(),
-                default_model="",
-                auth_kind="oauth",
-                oauth_provider="xai",
-            ),
-            refresh=True,
+        if has_oauth_session("xai"):
+            token = auth.get_access_token()
+            if token:
+                return 0, f"Grok subscription already linked → {auth.auth_file}"
+
+        _show_byos_panel(
+            spec,
+            url="https://auth.x.ai",
+            console=console,
+            extra="Complete sign-in in the browser, then return here.",
+            browser_opened=None,
         )
+        _wait(console, "Waiting for xAI sign-in in your browser…", lambda: auth.login(force=True))
+        _secure(Path(auth.auth_file))
+        if not auth.get_access_token():
+            return 2, "xAI OAuth login failed — no access token"
         return 0, f"Grok subscription linked → {auth.auth_file}"
+    except KeyboardInterrupt:
+        return 130, "cancelled"
     except Exception as exc:  # noqa: BLE001
         return 2, f"xAI OAuth login failed: {exc}"
 
 
-def _login_anthropic_oauth() -> tuple[int, str]:
+def _prompt_claude_token(console: Console | None) -> str | None:
+    from kite.util.tty import is_interactive_tty
+
+    if not is_interactive_tty(require_stdout=False):
+        return None
+    try:
+        from rich.prompt import Prompt
+
+        raw = Prompt.ask(
+            "Paste token from `claude setup-token` (hidden, Enter to skip)",
+            password=True,
+            default="",
+            console=console,
+        )
+    except (EOFError, KeyboardInterrupt):
+        return None
+    token = (raw or "").strip()
+    return token or None
+
+
+def _login_anthropic_oauth(spec: ProviderSpec, *, console: Console | None) -> tuple[int, str]:
     imported = _import_claude_cli_credentials()
     if imported is not None:
         _write_auth("anthropic", imported)
-        fetch_oauth_model_ids(
-            ProviderSpec(
-                name="claude",
-                display_name="Claude",
-                kind="anthropic",
-                litellm_prefix="anthropic/",
-                base_url="https://api.anthropic.com",
-                api_key_env="",
-                models=(),
-                default_model="",
-                auth_kind="oauth",
-                oauth_provider="anthropic",
-            ),
-            refresh=True,
-        )
+        return 0, f"Claude subscription linked from {_claude_credentials_path()}"
+
+    opened = _open_browser("https://claude.ai")
+    _show_byos_panel(
+        spec,
+        url="https://claude.ai",
+        console=console,
+        browser_opened=opened,
+        extra="Sign in, then run `claude setup-token` and paste the token here — or log in with Claude Code first.",
+    )
+    pasted = _prompt_claude_token(console)
+    if pasted:
+        if not pasted.startswith(ANTHROPIC_OAUTH_PREFIX):
+            return 2, f"That doesn't look like a Claude OAuth token (expected {ANTHROPIC_OAUTH_PREFIX}…)"
+        _write_auth("anthropic", {"access_token": pasted, "source": "pasted"})
+        return 0, f"Claude subscription linked → {oauth_auth_file('anthropic')}"
+
+    imported = _import_claude_cli_credentials()
+    if imported is not None:
+        _write_auth("anthropic", imported)
         return 0, f"Claude subscription linked from {_claude_credentials_path()}"
 
     claude_path = _claude_credentials_path()
     return (
         2,
-        "Claude OAuth not found. Log in with Claude Code first "
-        f"(creates {claude_path}), or run: claude setup-token",
+        "Claude OAuth not found. Sign in at claude.ai, run `claude setup-token` and "
+        f"paste the token, or log in with Claude Code (creates {claude_path}).",
     )
 
 

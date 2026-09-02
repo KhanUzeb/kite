@@ -101,6 +101,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not task.strip() and attachments:
         task = "Look at the attached files."
     if not task.strip():
+        from kite.ui.pick import can_prompt
+
+        if can_prompt() and not args.stdin:
+            try:
+                task = console.input("[kite.brand]Task[/]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[yellow]Cancelled[/]")
+                return 130
+    if not task.strip():
         console.print("[red]Provide a task, --stdin, or --attach[/]")
         return 2
     harness = Harness(
@@ -134,6 +143,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         else:
             console.print(f"[red]{e}[/]")
         return 1
+    finally:
+        harness.teardown_jobs()
 
     sid = harness.last_session.id if harness.last_session else ""
     if getattr(args, "json", False):
@@ -184,8 +195,48 @@ def cmd_chat(args: argparse.Namespace) -> int:
     return session.run()
 
 
+def _session_pick_items(rows) -> list[tuple[str, str]]:
+    items: list[tuple[str, str]] = []
+    for meta in rows:
+        label = (
+            f"{meta.id}  {meta.provider}/{meta.model}  "
+            f"{meta.exit_status or '-'}  {(meta.label or meta.task or '')[:40]}"
+        )
+        items.append((meta.id, label))
+    return items
+
+
+def _pick_session_id(console, *, title: str = "Pick a session") -> str | None:
+    from kite.memory.session import list_sessions
+    from kite.ui.pick import numbered_pick
+
+    rows = list_sessions(limit=20)
+    if not rows:
+        console.print("[dim]no sessions[/]")
+        return None
+    return numbered_pick(
+        console,
+        _session_pick_items(rows),
+        current=None,
+        title=title,
+        noun="session",
+    )
+
+
 def cmd_resume(args: argparse.Namespace) -> int:
     from kite.agent.harness import Harness, HarnessConfig
+
+    if not getattr(args, "session", None):
+        from kite.ui.pick import can_prompt
+
+        console = _console()
+        if not can_prompt():
+            console.print("[red]session id required[/]  —  kite resume <id>  or run in a terminal to pick")
+            return 2
+        picked = _pick_session_id(console, title="Resume a session")
+        if not picked:
+            return 130
+        args.session = picked
 
     follow = args.message or args.task
     if not follow:
@@ -229,6 +280,8 @@ def cmd_resume(args: argparse.Namespace) -> int:
     except Exception as e:
         console.print(f"[red]{e}[/]")
         return 1
+    finally:
+        harness.teardown_jobs()
     console.print(f"[bold]exit[/]={result.get('exit_status')}  session={args.session}")
     return 0 if result.get("exit_status") == "Submitted" else 1
 
@@ -239,6 +292,7 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 
     from kite.config import kite_home
     from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
+    from kite.ui.pick import can_prompt, confirm, numbered_pick
 
     console = _console()
     if args.delete_all:
@@ -247,8 +301,13 @@ def cmd_sessions(args: argparse.Namespace) -> int:
             console.print("[dim]no sessions[/]")
             return 0
         if not args.yes:
-            console.print(f"[red]delete {len(rows)} sessions? pass -y to confirm[/]")
-            return 1
+            if can_prompt():
+                if not confirm(console, f"Delete {len(rows)} sessions?", default=False):
+                    console.print("[yellow]Cancelled[/]")
+                    return 130
+            else:
+                console.print(f"[red]delete {len(rows)} sessions? pass -y to confirm[/]")
+                return 1
         deleted = delete_all_sessions()
         console.print(f"deleted {len(deleted)} session{'s' if len(deleted) != 1 else ''}")
         return 0
@@ -274,6 +333,55 @@ def cmd_sessions(args: argparse.Namespace) -> int:
         return 0
 
     rows = list_sessions(limit=args.limit)
+    if can_prompt() and rows:
+        sid = numbered_pick(
+            console,
+            _session_pick_items(rows),
+            current=None,
+            title=f"Sessions in {kite_home() / 'sessions'}",
+            noun="session",
+        )
+        if not sid:
+            return 0
+        action = numbered_pick(
+            console,
+            [
+                ("open", "open in chat"),
+                ("show", "print transcript"),
+                ("delete", "delete this session"),
+            ],
+            current="open",
+            title=sid,
+            noun="action",
+        )
+        if action == "open":
+            args.session = sid
+            if not getattr(args, "cwd", None):
+                args.cwd = os.getcwd()
+            for name, default in (
+                ("provider", None),
+                ("model", None),
+                ("mode", "build"),
+                ("approval", None),
+                ("config", None),
+                ("verbose", False),
+            ):
+                if not hasattr(args, name):
+                    setattr(args, name, default)
+            return cmd_chat(args)
+        if action == "show":
+            args.show = sid
+            return cmd_sessions(args)
+        if action == "delete":
+            if not confirm(console, f"Delete {sid}?", default=False):
+                console.print("[yellow]Cancelled[/]")
+                return 130
+            gone = delete_session(sid)
+            extra = " + trajectory" if gone.trajectory else ""
+            console.print(f"deleted {gone.id}{extra}")
+            return 0
+        return 0
+
     table = Table(title=f"Sessions in {kite_home() / 'sessions'}")
     table.add_column("id")
     table.add_column("model")
@@ -325,13 +433,30 @@ def cmd_providers(_args: argparse.Namespace) -> int:
         console.print("[yellow]Not ready[/] — run [cyan]kite setup[/] or [cyan]/setup[/] in the REPL")
         for hint in status.hints[:2]:
             console.print(f"[dim]{hint}[/]")
+    from kite.ui.pick import can_prompt, numbered_pick
+
+    if can_prompt():
+        from kite.providers.select import connect_interactive
+
+        picked = numbered_pick(
+            console,
+            [(p.name, f"{p.display_name}  ({p.name})") for p in catalog.list()],
+            current=cfg.default_provider,
+            title="Connect a provider (empty = done)",
+            noun="provider",
+        )
+        if picked:
+            code, _, _ = connect_interactive(
+                console, provider=picked, persist=True, login_if_needed=True
+            )
+            return code
     return 0
 
 
 def _select_model_interactive(console, provider: str) -> int:
-    from kite.providers.select import select_model_interactive
+    from kite.providers.select import connect_interactive
 
-    code, _, _ = select_model_interactive(console, provider, persist=True)
+    code, _, _ = connect_interactive(console, provider=provider, persist=True, login_if_needed=True)
     return code
 
 
@@ -346,10 +471,26 @@ def cmd_models(args: argparse.Namespace) -> int:
     cfg = UserConfig.load()
     catalog = load_catalog()
 
-    if args.select:
-        provider = args.provider or cfg.default_provider or "openai"
-        return _select_model_interactive(console, provider)
+    from kite.ui.pick import can_prompt
 
+    if args.select or (can_prompt() and not getattr(args, "list", False)):
+        from kite.providers.list_models import clear_model_list_cache
+        from kite.providers.select import connect_interactive
+
+        if getattr(args, "refresh", False):
+            clear_model_list_cache(args.provider)
+        code, _, _ = connect_interactive(
+            console,
+            provider=args.provider,
+            persist=True,
+            login_if_needed=True,
+        )
+        return code
+
+    if getattr(args, "refresh", False):
+        from kite.providers.list_models import clear_model_list_cache
+
+        clear_model_list_cache(args.provider)
     names = [args.provider] if args.provider else [p.name for p in catalog.list()]
     exit_code = 0
     for name in names:
@@ -361,7 +502,12 @@ def cmd_models(args: argparse.Namespace) -> int:
             continue
 
         console.print(f"[dim]Fetching[/] {spec.display_name} ({spec.name})…")
-        result = list_models_for_provider(spec, config=cfg, catalog=catalog)
+        result = list_models_for_provider(
+            spec,
+            config=cfg,
+            catalog=catalog,
+            refresh=bool(getattr(args, "refresh", False)),
+        )
         table = Table(title=f"{spec.display_name} ({spec.name}) — live")
         table.add_column("model")
         table.add_column("context")
@@ -529,6 +675,19 @@ def cmd_skills(args: argparse.Namespace) -> int:
         label = f"{s.name} ~" if s.source == "user" else s.name
         table.add_row(label, (s.description or "")[:60], str(s.path))
     console.print(table)
+    from kite.ui.pick import can_prompt, numbered_pick
+
+    if can_prompt() and skills:
+        picked = numbered_pick(
+            console,
+            [(s.name, f"{s.name}  {(s.description or '')[:50]}") for s in skills],
+            current=None,
+            title="Show a skill (empty = done)",
+            noun="skill",
+        )
+        if picked:
+            args.show = picked
+            return cmd_skills(args)
     return 0
 
 
@@ -687,8 +846,25 @@ def cmd_cloud(args: argparse.Namespace) -> int:
         return 0
     if args.action == "apply":
         if not args.task_id:
-            console.print("[red]task id required[/]")
-            return 2
+            from kite.ui.pick import can_prompt, numbered_pick
+
+            if not can_prompt() or not cloud_dir.is_dir():
+                console.print("[red]task id required[/]")
+                return 2
+            files = sorted(cloud_dir.glob("*.json"))
+            if not files:
+                console.print("[dim]no cloud tasks[/]")
+                return 1
+            picked = numbered_pick(
+                console,
+                [(p.stem, p.name) for p in files],
+                current=None,
+                title="Apply a cloud task",
+                noun="task",
+            )
+            if not picked:
+                return 130
+            args.task_id = picked
         path = cloud_dir / f"{args.task_id}.json"
         if not path.is_file():
             console.print(f"[red]not found: {path}[/]")
@@ -783,8 +959,8 @@ def build_parser() -> argparse.ArgumentParser:
     chat.add_argument("--session", help="Open an existing session id")
     chat.set_defaults(func=cmd_chat)
 
-    resume = sub.add_parser("resume", help="Continue an existing session (omit message to open chat)")
-    resume.add_argument("session", help="Session id (or prefix)")
+    resume = sub.add_parser("resume", help="Continue an existing session (omit id to pick)")
+    resume.add_argument("session", nargs="?", help="Session id (omit to pick in a terminal)")
     resume.add_argument("message", nargs="?", help="Follow-up message")
     resume.add_argument("--task", help="Alias for follow-up message")
     _add_run_flags(resume)
@@ -829,8 +1005,20 @@ def build_parser() -> argparse.ArgumentParser:
     login.set_defaults(func=cmd_login, set_default=True)
 
     keys = sub.add_parser("keys", help="Show credential status or set a BYOK API key")
-    keys.add_argument("--set", metavar="PROVIDER", help="Paste a key for this provider (hidden input)")
-    keys.add_argument("--logout", metavar="PROVIDER", help="Remove a provider key from ~/.kite/.env")
+    keys.add_argument(
+        "--set",
+        nargs="?",
+        const="",
+        metavar="PROVIDER",
+        help="Paste a key (omit provider to pick)",
+    )
+    keys.add_argument(
+        "--logout",
+        nargs="?",
+        const="",
+        metavar="PROVIDER",
+        help="Remove a provider key or OAuth session (omit to pick)",
+    )
     keys.set_defaults(func=cmd_keys)
 
     maintainer = sub.add_parser("maintainer", help=argparse.SUPPRESS)
@@ -839,12 +1027,22 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--json", action="store_true")
     dashboard.set_defaults(func=cmd_maintainer_dashboard)
 
-    models = sub.add_parser("models", help="List models for a provider")
+    models = sub.add_parser("models", help="Pick a live model (or --list to dump)")
     models.add_argument("-p", "--provider", help="Filter one provider")
     models.add_argument(
         "--select",
         action="store_true",
         help="Interactively pick a model and save it to ~/.kite/config.toml",
+    )
+    models.add_argument(
+        "--list",
+        action="store_true",
+        help="Print the model table instead of opening the picker",
+    )
+    models.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Bypass the model-list cache and re-fetch from the provider API",
     )
     models.set_defaults(func=cmd_models)
 
