@@ -5,7 +5,7 @@
 **Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
-Optimize for **trust, legibility, and speed of comprehension**. The user should always know what the agent is doing and why, and be able to stop or steer it in under a second.
+Keep the session readable: the user should always know what the agent is doing and why, and be able to stop or steer it quickly.
 
 Patterns we took, not invented:
 
@@ -21,14 +21,16 @@ Patterns we took, not invented:
 
 | Mode | Tools | Approval default | What it produces |
 |------|--------|------------------|------------------|
-| **plan** | read, grep, glob, ls, task, webfetch, websearch, webcrawl, skill, memory, todo_* | `readonly` | A live checklist. No file mutations. |
-| **build** | all tools | `approve` (chat) / `auto` (one-shot `kite run`) | Diffs, git checkpoints, gated bash. |
+| **plan** | read/grep/glob/ls, inspection `bash`, `task`/`subagent`, web/Context7, skill, memory, `todo_*` | `readonly` | A live checklist + risks/open questions. No file mutations; no submit-as-done. |
+| **build** | all tools | `approve` (chat) / `auto` (one-shot `kite run`) | Diffs, git checkpoints, gated bash. Executes the plan checklist if one exists. |
 
-Switch in the REPL with `/plan` and `/build`. One-shot: `kite run --mode plan "…"`.
+Switch in the REPL with `/plan` and `/build` (also Ctrl+P / Ctrl+B, F3 / F4). One-shot: `kite run --mode plan "…"`.
+
+**Plan → build:** `/plan` explores and writes the checklist; `/build` keeps that list and applies it. Footer shows `plan · readonly` (and `list done/total` when a checklist is present).
 
 Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` · `trust` · `readonly` · `yolo`.
 
-**Mandatory approval** — high-risk actions **always** prompt, regardless of approval mode (including `yolo`), workspace location, or remembered patterns. No session/always shortcut on these prompts — only **once**, **deny**, or **stop**:
+**Mandatory approval:** high-risk actions always prompt, regardless of approval mode (including `yolo`), workspace location, or remembered patterns. No session/always shortcut on these prompts: only **once**, **deny**, or **stop**:
 
 | Category | Examples |
 |----------|----------|
@@ -46,25 +48,55 @@ Regular in-workspace `write`/`edit` and safe bash (`git status`, `pytest`, `rg`)
 
 **Sandbox:** off by default (**host** mode). `/restricted on` clamps file/bash paths to the session cwd; footer shows `restricted` when active.
 
-**Slash menu:** scroll the `/` completion dropdown with the mouse wheel (or ↑/↓ when the menu is open). Long lists show a scrollbar.
+**Slash menu:** `Tab` cycles completions. `Enter` always sends the line (it does not accept a hidden completion). Use ↑/↓ when the menu is open. Mouse wheel scrolling of the `/` dropdown needs `KITE_MOUSE=1` (that captures the mouse and disables native drag-select).
+
+**Copy / paste:** Mouse capture is **off** by default so the terminal keeps drag-select, copy, and right-click paste. In the composer: `Ctrl+V` / `Shift+Insert` paste from the OS clipboard; `Ctrl+Insert` copies the composer selection. Set `KITE_MOUSE=1` only if you want wheel-scroll on the slash menu (then use Shift+drag in most terminals to select text).
 
 Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning auto|off|fast|thinking`. Shown on the footer when not `auto`.
 
-**Keyboard shortcuts** (composer): `Ctrl+O` toggle tool output expand · `Ctrl+T` toggle thinking trace · `Ctrl+P` plan · `Ctrl+B` build · `Ctrl+S` flash status on footer · `Ctrl+C` stop turn · `Tab` slash menu.
+**Keyboard shortcuts** (composer, `eager` so they beat emacs readline):
+
+| Key | Action |
+|-----|--------|
+| `Esc` / `Ctrl+C` | **Stop** the running turn (session stays). Idle `Ctrl+C` clears the line; it does not quit. |
+| `Ctrl+G` | **Steer:** stop and send the composer text as the next turn. Idle: no-op. |
+| `Enter` | Send the line. While working: **queue** a follow-up (slash commands wait until the turn ends) |
+| `Ctrl+V` / `Shift+Insert` | Paste OS clipboard into the composer |
+| `Ctrl+Insert` | Copy composer selection to OS clipboard |
+| `Ctrl+O` / `F6` | Toggle tool output expand |
+| `Ctrl+T` / `F7` | Toggle thinking trace (expanded by default) |
+| `Ctrl+P` / `F3` | Plan mode |
+| `Ctrl+B` / `F4` | Build mode |
+| `F2` | Flash status on footer (`Ctrl+S` is not bound; terminals use it for XOFF) |
+| `F5` | Refresh live models from the API, then pick |
+| `Ctrl+D` / `/quit` | Close the REPL |
+| `Tab` | Cycle slash completions (`Enter` always submits) |
+
+While a turn is running the composer stays live (placeholder: `Enter queue · Esc stop · Ctrl+G steer`). After stop, keep typing in the **same session** until `/quit` or `Ctrl+D`.
 
 **Loaders** (beautifului-inspired, TTY-only): default pixel-grid loader with shimmer label and elapsed time. Override with `KITE_LOADER=grid|dots|orbit|wave|spin`.
 
 **Tool cards:** `▸ read  src/foo.py  …` while running (reason on the next line when provided); parallel read-only batches show `parallel N read-only tools` once. `✓ edit  1.2s  +2,-1` when done, with a muted one-line summary for reads (`42 lines  ·  preview…`). **Task rows** show `Running` / `Completed` / `To do` badges with a coloured progress bar (`Tasks 2/5 ████░░`). Active item highlighted in cyan; done in green.
 
-**Provider retry:** transient network/rate-limit errors auto-retry with backoff (config: `provider_max_retries`). Session is preserved — send another message or `kite resume <id>` to continue.
+**Provider retry:** transient network/rate-limit errors auto-retry with backoff (config: `provider_max_retries`). Session is preserved; send another message or `kite resume <id>` to continue.
 
-**Completion discipline:** build mode only ends with `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` (or a short casual chat like “hi”). Prose-only “I'm done” replies keep the agent working. After 4 no-tool turns, the run **stalls** (idle token protection) instead of burning more API calls. Successful submit shows **work complete** in the UI.
+**Completion discipline:** build mode only ends with `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` (or a short casual chat like "hi"). Prose-only "I'm done" replies keep the agent working. After 4 no-tool turns, the run stalls (idle token protection) instead of burning more API calls. Successful submit shows **work complete** in the UI.
 
-**Fatal errors:** unexpected exceptions stop the run with `exit_status=Error`, print the message + traceback tail, and save `/trace` in the REPL — no silent re-raise.
+**Fatal errors:** unexpected exceptions stop the run with `exit_status=Error`, print the message + traceback tail, and save `/trace` in the REPL. No silent re-raise.
 
-**Stream coalescing:** small `stream_delta` / reasoning chunks batch before Rich writes — less flicker on fast models.
+**BYOS login** (`kite login chatgpt|claude|grok` or `/login`): after you pick a subscription provider, Kite opens your browser and shows a left-bar panel. ChatGPT uses a device code you type on the page; Grok completes in the browser callback; Claude imports Claude Code or accepts a pasted `claude setup-token`. Waiting line until you finish or Ctrl+C.
 
-**Context meter** on footer: `ctx ████░░░░ 50%`. `/expand` toggles full tool output; `/collapse` resets. `/expand-thinking` shows the last model thinking trace (collapsed by default to save scrollback).
+**Numbered pickers** (TTY): empty `/approve`, `/theme`, `/font`, `/reasoning`, `/restricted`, `/resume`, `/sessions`, `/logout`, `/skills` open a left-bar numbered list (type a number, id, or empty to cancel). The same picker is used by `kite sessions`, `kite resume`, `kite models`, `kite providers`, `kite keys`, and `kite skills` when stdin is a terminal. Piped/CI runs still dump tables (`kite models --list`). `kite run` with no task asks **Task:** instead of exiting. Interactive prompts stay in the left bar; there is no right-hand sidebar.
+
+**Background jobs:** one `JobRegistry` per session tracks bash started with `background=true` and live `subagent` workers. Footer shows `jobs N`. `/jobs` lists active jobs (left-bar pick to kill). `/kill id` or `/kill all` stops them. Quitting the REPL (`/quit`, Ctrl+D) kills remaining jobs.
+
+**Parallel helpers:** `task` fans out cheap search-style prompts (no nested LLM). `subagent` runs bounded nested agent turns and registers each worker in the same job registry. Stream rows: `▸ subagent` / `✓ subagent` (and job start/end events for background bash).
+
+**Busy chrome:** while a turn runs, stop / steer / queue live on the composer and footer only. Esc, Ctrl+C, or `/stop` cancels the turn; Ctrl+G or `/steer …` injects a correction as the next turn; Enter queues chat follow-ups. SIGINT handling for the agent loop stays on the main thread.
+
+---
+
+**Context meter** on footer: `ctx ████░░░░ 50%`. `/expand` toggles full tool output; `/collapse` resets. Thinking traces stream **expanded by default**; `/expand-thinking collapse` or `Ctrl+T` collapses to a summary. Double-click the composer (or `Ctrl+T` / `/expand-thinking`) to expand again.
 
 ---
 
@@ -151,14 +183,18 @@ Thinking and answer never share a block. The model id is not reprinted as a spee
 
 | Token | Color | Use |
 |-------|--------|-----|
-| brand | cyan | product name, composer |
-| thinking | italic dim | internal chain-of-thought |
-| success | green | applied, done, allow |
-| pending | yellow | approval, in-progress, effort badge |
-| error | red | blocked, fail, interrupt |
-| muted | dim | collapsed output, meta |
-| kite.diff.add | green | insertions, `+125` |
-| kite.diff.del | red | deletions, `-21` |
+| brand | bold cyan | product name, composer, `/` menu |
+| thinking | italic muted | internal chain-of-thought |
+| success | bright green | applied, done, allow |
+| pending | bright yellow | approval, in-progress, effort badge |
+| error | bright red | blocked, fail, interrupt |
+| muted | `#6e6e6e` | collapsed output, meta |
+| kite.diff.add | bright green | insertions, `+125`, `+` lines |
+| kite.diff.del | bright red | deletions, `-21`, `-` lines |
+| kite.diff.hunk | bright cyan | `@@` hunk headers |
+| kite.diff.ctx | muted grey | unchanged context lines |
+
+Dark themes use a near-black `/` completion menu (`#050505`) with cyan slash labels. `/theme dark` deepens muted greys further.
 
 **Symbols (never color alone)**
 
@@ -168,7 +204,7 @@ Thinking and answer never share a block. The model id is not reprinted as a spee
 
 - 2-space gutter; subsequent lines of a cell align under the glyph
 - Tool output collapsed to 4 lines (`COLLAPSE_LINES`); `/expand` toggles, `/collapse` resets
-- Diffs: `+125,-21` (green/red) then a `++++----` bar, then the first 40 hunk lines (`▸ +N lines  /expand`)
+- Diffs: `+125,-21` (bright green/red) then a `++++----` bar, then colour-coded hunk lines (`+` green, `-` red, `@@` cyan, context muted). First 40 lines by default (`▸ +N lines  /expand`)
 - Footer: one line, `·` separators, includes effort when not `auto`
 - No panels around you / result / help
 
@@ -189,7 +225,7 @@ Implemented in `src/kite/ui/render.py` (`RunDisplay.__call__`):
 
 Slash commands are parsed before any natural-language turn. Builtins (`/plan`, `/build`, `/checkpoint`, `/handoff`, `/compact`, `/select`, `/thinking`, `/fast`, `/undo`, `/memory`, `/effort`, …) never hit the model. Skills (`/commit`), bundled prompts (`/explain` `/fix` `/pr`), `.kite/commands/*.md`, `~/.kite/commands/*.md`, and plugin commands expand into the turn. Full map: [kite_commands.md](../kite_commands.md). Type `/` for the dropdown (name + one-line description).
 
-Interrupt: **Ctrl+C** requests end-to-end interrupt (model stream + long bash) without killing the REPL; type a correction and continue. `/undo` resets the last `kite:` **git** task commit. `/checkpoint restore` rewinds the **transcript** without touching git.
+Interrupt: **Esc** or **Ctrl+C** stops the current turn (model stream + bash) without killing the REPL. **Ctrl+G** steers: stop and send the composer text as the next turn. **Enter** while working queues a follow-up. Type another message in the **same session** until `/quit` or `Ctrl+D`. `/undo` resets the last `kite:` **git** task commit. `/checkpoint restore` rewinds the **transcript** without touching git.
 
 ---
 
