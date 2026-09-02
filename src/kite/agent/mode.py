@@ -13,11 +13,11 @@ class AgentMode(str, Enum):
 class ApprovalMode(str, Enum):
     """How much autonomy is granted — surfaced in the prompt itself."""
 
-    AUTO = "auto"  # auto in workspace; ask for paths/bash outside workspace
-    TRUST = "trust"  # approve-for-me: auto in workspace, ask on destructive bash
-    APPROVE = "approve"  # supervised — reads free; every mutation needs approval
-    YOLO = "yolo"  # no approval prompts (still respects plan/readonly)
-    READONLY = "readonly"  # never mutate (plan default)
+    AUTO = "auto"
+    TRUST = "trust"
+    APPROVE = "approve"
+    YOLO = "yolo"
+    READONLY = "readonly"
 
 
 # User-facing aliases (supervised / auto / yolo) map to canonical modes.
@@ -65,12 +65,14 @@ READONLY_TOOLS = frozenset(
 # Read-only tools safe to run concurrently in one model turn (deterministic order preserved).
 PARALLEL_SAFE_TOOLS = frozenset({"read", "grep", "glob", "ls"})
 
-# Mutating / side-effecting — gated, and blocked entirely in plan mode.
+# Mutating / side-effecting — gated; write/edit never offered in plan mode.
+# bash is mutating by default but plan mode still exposes it for inspection-only
+# commands (enforced in the agent loop + is_inspection_bash).
 MUTATING_TOOLS = frozenset({"write", "edit", "bash"})
 
-# Plan mode may write the live checklist so the user can see the proposed work.
-# Plan mode may run read-only bash (rg, head, cat, …) for token-efficient inspection.
-PLAN_TOOLS = frozenset({*READONLY_TOOLS, "todo_write", "todo_read", "task", "bash"})
+# Plan schema: read-only tools + checklist + bash (inspection only at runtime).
+# Never include write/edit — keep this set aligned with mode_plan.md.
+PLAN_TOOLS = frozenset({*READONLY_TOOLS, "todo_write", "bash"})
 
 BUILD_TOOLS = frozenset({*READONLY_TOOLS, *MUTATING_TOOLS, "todo_write", "todo_read", "task"})
 

@@ -76,11 +76,13 @@ def test_interactive_build_does_not_early_submit_on_prose() -> None:
     )
     with pytest.raises(Submitted):
         agent.execute_actions({"role": "assistant", "content": "hi", "extra": {"actions": []}})
-    # task-like prose should nudge, not submit
+    # task-like prose should block the claim, not submit
     agent.execute_actions(
         {"role": "assistant", "content": "All tests pass. Task complete.", "extra": {"actions": []}}
     )
     assert agent._consecutive_no_tool_turns == 1
+    blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
+    assert "Submit blocked" in blob or "claims" in blob.lower()
     assert any(m.get("role") == "user" for m in agent.messages)
 
 
@@ -113,3 +115,92 @@ def test_run_stops_on_error_without_raising(monkeypatch) -> None:
     assert result.get("exit_status") == "Error"
     assert "provider exploded" in str(result.get("error"))
     assert result.get("traceback")
+
+
+def test_run_from_worker_thread_skips_sigint(monkeypatch) -> None:
+    """REPL turns run off the main thread — must not call signal.signal."""
+    import signal
+    import threading
+
+    sig_calls: list[tuple] = []
+
+    def _tracking_signal(sig, handler):
+        sig_calls.append((threading.current_thread().name, sig, handler))
+        raise AssertionError("signal.signal must not be called off the main thread")
+
+    monkeypatch.setattr(signal, "signal", _tracking_signal)
+    monkeypatch.setattr("kite.models.retry.is_transient_provider_error", lambda _e: False)
+
+    agent = DefaultAgent(
+        _BoomModel(),
+        _StubEnv(),
+        interactive=False,
+        mode=AgentMode.BUILD,
+        provider_max_retries=1,
+    )
+    box: dict[str, object] = {}
+
+    def worker() -> None:
+        try:
+            box["result"] = agent.run("do something")
+        except Exception as e:  # noqa: BLE001 — capture for assertion
+            box["error"] = e
+
+    t = threading.Thread(target=worker, name="kite-turn-test")
+    t.start()
+    t.join(timeout=15)
+    assert not t.is_alive()
+    assert "error" not in box, box.get("error")
+    result = box["result"]
+    assert isinstance(result, dict)
+    assert result.get("exit_status") == "Error"
+    assert sig_calls == []
+
+
+class _FailEnv:
+    def execute(self, action: dict, cwd: str = "") -> dict:
+        return {"ok": False, "output": "boom", "error": "boom", "returncode": 1}
+
+
+def test_consecutive_tool_failures_nudge_not_to_claim_done() -> None:
+    model = _TextOnlyModel("x")
+    agent = DefaultAgent(
+        model,
+        _FailEnv(),
+        interactive=True,
+        mode=AgentMode.BUILD,
+        provider_max_retries=1,
+    )
+    turn = {
+        "role": "assistant",
+        "content": "",
+        "extra": {"actions": [{"tool": "bash", "id": "1", "arguments": {"command": "pytest -q"}}]},
+    }
+    for _ in range(3):
+        agent.execute_actions(turn)
+    blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
+    assert "Do not claim the task is done" in blob
+    assert agent._tool_fail_streak == 3
+
+
+def test_inspection_bash_failure_does_not_count_as_tool_streak() -> None:
+    model = _TextOnlyModel("x")
+    agent = DefaultAgent(
+        model,
+        _FailEnv(),
+        interactive=True,
+        mode=AgentMode.BUILD,
+        provider_max_retries=1,
+    )
+    turn = {
+        "role": "assistant",
+        "content": "",
+        "extra": {
+            "actions": [{"tool": "bash", "id": "1", "arguments": {"command": "rg foo src"}}]
+        },
+    }
+    for _ in range(3):
+        agent.execute_actions(turn)
+    blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
+    assert "Do not claim the task is done" not in blob
+    assert agent._tool_fail_streak == 0

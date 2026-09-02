@@ -63,6 +63,11 @@ _IDLE_STALL = (
     "Stopped after {turns} idle turns (token protection). "
     "Use tools, then: echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
 )
+_TOOL_FAIL_STREAK_NUDGE_AFTER = 3
+_TOOL_FAIL_NUDGE = (
+    "Last {n} tool calls failed. Read the errors. Do not claim the task is done. "
+    "Fix the failure or submit honestly with what is still broken."
+)
 _CASUAL_CHAT = frozenset(
     {
         "hi",
@@ -107,6 +112,8 @@ def _allow_text_submit(content: str, *, mode: AgentMode, interactive: bool) -> b
     if not interactive:
         return False
     return _is_casual_chat(content)
+
+
 def _user_interrupt() -> Interrupted:
     return Interrupted(
         {
@@ -208,6 +215,7 @@ class DefaultAgent:
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
         self._consecutive_no_tool_turns = 0
+        self._tool_fail_streak = 0
         self._start_time = time.time()
         self.last_usage_estimate = None
         self._compactor: LoopCompactor | None = None
@@ -390,7 +398,11 @@ class DefaultAgent:
                 self.model.format_message(role="user", content=content),
             )
 
-        old_sigint = signal.getsignal(signal.SIGINT)
+        # SIGINT handlers may only be installed on the main thread. REPL turns
+        # run on a worker (kite-turn); Esc/Ctrl+C/Ctrl+G cancel via composer.
+        install_sigint = threading.current_thread() is threading.main_thread()
+        old_sigint = None
+        sigint_installed = False
         provider_fault: str | None = None
         run_error: str | None = None
         run_traceback: str | None = None
@@ -398,7 +410,13 @@ class DefaultAgent:
             def _on_sigint(signum, frame):
                 self.request_interrupt()
 
-            signal.signal(signal.SIGINT, _on_sigint)
+            if install_sigint:
+                try:
+                    old_sigint = signal.getsignal(signal.SIGINT)
+                    signal.signal(signal.SIGINT, _on_sigint)
+                    sigint_installed = True
+                except ValueError:
+                    pass
             while True:
                 try:
                     self._emit("turn_start")
@@ -440,7 +458,11 @@ class DefaultAgent:
                 if self.messages and self.messages[-1].get("role") == "exit":
                     break
         finally:
-            signal.signal(signal.SIGINT, old_sigint)
+            if sigint_installed:
+                try:
+                    signal.signal(signal.SIGINT, old_sigint)
+                except ValueError:
+                    pass
             self.save(self.output_path)
             vsum = self.verification.summary()
             self._emit("artifact", **vsum)
@@ -554,6 +576,10 @@ class DefaultAgent:
             msg = _IDLE_STALL.format(turns=self._consecutive_no_tool_turns)
             self.add_messages(_exit_msg("Stalled", content=msg))
             return []
+        if self.mode is AgentMode.BUILD and self.verify_before_submit and content:
+            reason = self.verification.unfounded_claim_reason(content)
+            if reason:
+                return self.add_messages({"role": "user", "content": reason})
         return self.add_messages({"role": "user", "content": _IDLE_NUDGE})
 
     def _execute_parallel_actions(self, actions: list[dict], outputs: list[dict]) -> None:
@@ -637,6 +663,19 @@ class DefaultAgent:
             args = action.get("arguments") if isinstance(action.get("arguments"), dict) else args
         return tool, args, action
 
+    def _counts_as_tool_failure(self, tool: str, args: dict, out: dict) -> bool:
+        if out.get("ok") or out.get("blocked"):
+            return False
+        if tool in {"read", "grep", "glob", "ls", "websearch"}:
+            return False
+        if tool == "bash":
+            cmd = str(args.get("command") or "")
+            if self.verification._looks_like_test(cmd):
+                return True
+            if is_inspection_bash(cmd):
+                return False
+        return True
+
     def _invoke_tool(self, tool: str, args: dict, action: dict) -> dict:
         cmd = str(args.get("command") or "").strip()
         submit_ok = (
@@ -644,12 +683,11 @@ class DefaultAgent:
             and "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in cmd
             and "&&" not in cmd
         )
+        # Plan: no write/edit, no mutating bash, no submit-as-done (text reply ends the turn).
         plan_block = (
             self.mode is AgentMode.PLAN
             and tool in MUTATING_TOOLS
-            and tool != "todo_write"
-            and not submit_ok
-            and not (tool == "bash" and is_inspection_bash(cmd))
+            and not (tool == "bash" and is_inspection_bash(cmd) and not submit_ok)
         )
         if plan_block:
             return _blocked(
@@ -754,6 +792,14 @@ class DefaultAgent:
         else:
             self.tool_call_count += 1
             self.tool_counts[tool] = self.tool_counts.get(tool, 0) + 1
+        if self._counts_as_tool_failure(tool, args, out):
+            self._tool_fail_streak += 1
+            if self._tool_fail_streak >= _TOOL_FAIL_STREAK_NUDGE_AFTER:
+                existing = str(out.get("output") or out.get("error") or "")
+                fail_nudge = _TOOL_FAIL_NUDGE.format(n=self._tool_fail_streak)
+                out = {**out, "output": f"{existing}\n\n{fail_nudge}".strip()}
+        elif not out.get("blocked"):
+            self._tool_fail_streak = 0
         nudge = self.verification.post_edit_nudge()
         if nudge and out.get("ok") and tool in {"write", "edit"}:
             existing = str(out.get("output") or "")

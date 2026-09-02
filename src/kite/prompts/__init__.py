@@ -26,6 +26,32 @@ def load_prompt_template(name: str) -> str:
     return _load_packaged_prompt(name)
 
 
+def _read_prompt_file(*candidates: Path) -> str | None:
+    for path in candidates:
+        try:
+            if path.is_file():
+                text = path.read_text(encoding="utf-8").strip()
+                if text:
+                    return text
+        except OSError:
+            continue
+    return None
+
+
+def discover_system_prompt_files(cwd: str | Path | None = None) -> tuple[str | None, str | None]:
+    """Pi/Prime-style SYSTEM.md (replace) and APPEND_SYSTEM.md (append).
+
+    Precedence for each file: project `.kite/` then `~/.kite/`.
+    """
+    from kite.config.user import kite_home
+
+    root = Path(cwd or ".").expanduser().resolve()
+    home = kite_home()
+    override = _read_prompt_file(root / ".kite" / "SYSTEM.md", home / "SYSTEM.md")
+    append = _read_prompt_file(root / ".kite" / "APPEND_SYSTEM.md", home / "APPEND_SYSTEM.md")
+    return override, append
+
+
 def assemble_system_prompt(
     *,
     config: AgentRuntimeConfig,
@@ -33,11 +59,29 @@ def assemble_system_prompt(
     skills: list[Skill] | None = None,
     extra_sections: list[str] | None = None,
     override_system: str | None = None,
+    append_system: str | None = None,
     memory: str | None = None,
+    cwd: str | Path | None = None,
 ) -> str:
+    """Assemble the immutable-ish base prompt + optional append + live context.
+
+    Override precedence (first wins): explicit ``override_system`` → discovered
+    ``SYSTEM.md`` → bundled ``data/prompts/system.md``.
+
+    Append (after base, before project context): explicit ``append_system`` then
+    discovered ``APPEND_SYSTEM.md`` (explicit wins if both set — we only use one
+    append source: explicit if provided, else discovered).
+    """
     prompts: PromptsConfig = config.prompts
-    base = override_system or load_prompt_template(prompts.system)
-    parts = [session_time_section(), base.strip()]
+    discovered_override, discovered_append = discover_system_prompt_files(
+        cwd if cwd is not None else (project_context.root if project_context else None)
+    )
+    base = (override_system or discovered_override or load_prompt_template(prompts.system)).strip()
+    parts = [session_time_section(), base]
+
+    append = (append_system if append_system is not None else discovered_append) or ""
+    if append.strip():
+        parts.append(append.strip())
 
     if project_context is not None:
         rendered = project_context.render_for_prompt(max_chars=config.context.max_context_chars)

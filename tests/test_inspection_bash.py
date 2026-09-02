@@ -23,28 +23,23 @@ def test_inspection_bash_blocks_mutations() -> None:
 def test_plan_mode_allows_inspection_bash(workspace, tmp_path) -> None:
     from kite.agent.loop import DefaultAgent
     from kite.agent.mode import AgentMode
-    from kite.context.workspace import ExecutionSession, WorkspaceContext
     from kite.env.local import LocalEnvironment
     from kite.tools import ToolRegistry
     from kite.guardrails import GuardrailConfig, GuardrailPolicy
     from kite.tools.coding import make_coding_tools
 
-    note = tmp_path / "note.txt"
-    note.write_text("hello", encoding="utf-8")
-    ws = WorkspaceContext.discover(workspace)
-    exec_sess = ExecutionSession(ws)
     tools = make_coding_tools(
         cwd=str(workspace),
         guardrails=GuardrailPolicy(GuardrailConfig(), workspace),
-        execution=exec_sess,
         enabled=["bash"],
     )
     env = LocalEnvironment(registry=ToolRegistry(tools))
     agent = DefaultAgent(object(), env, mode=AgentMode.PLAN)
-    action = {"tool": "bash", "arguments": {"command": f"cat {note}"}}
-    out = agent._invoke_tool("bash", {"command": f"cat {note}"}, action)
+    # echo is inspection-safe and works on Windows cmd + Unix shells
+    action = {"tool": "bash", "arguments": {"command": "echo plan-peek-ok"}}
+    out = agent._invoke_tool("bash", {"command": "echo plan-peek-ok"}, action)
     assert out.get("ok") is True
-    assert "hello" in str(out.get("output") or "")
+    assert "plan-peek-ok" in str(out.get("output") or "")
 
 
 def test_plan_mode_blocks_mutating_bash(workspace) -> None:

@@ -59,3 +59,10 @@ def test_post_edit_nudge() -> None:
     nudge = vc.post_edit_nudge()
     assert nudge is not None
     assert "verification" in nudge.lower()
+
+
+def test_unfounded_done_claim() -> None:
+    vc = VerificationCollector()
+    reason = vc.unfounded_claim_reason("Task complete — looks fine.")
+    assert reason is not None
+    assert vc.submit_block_reason("hello, all done!") is None

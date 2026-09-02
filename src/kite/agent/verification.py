@@ -8,7 +8,8 @@ from typing import Any, Literal
 
 VerificationStatus = Literal["verified", "partial", "unverified", "failed", "idle"]
 
-_STRONG_CLAIM_RE = re.compile(
+# Explicit test/build/lint success — needs a recorded passing check, not `ls`.
+_EVIDENCE_CLAIM_RE = re.compile(
     r"\b("
     r"tests?\s+pass(?:ed|ing)?|all\s+tests?\s+pass|"
     r"build\s+succeeds?|lint\s+clean|no\s+errors?|"
@@ -16,6 +17,17 @@ _STRONG_CLAIM_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+# Narrated completion without evidence. Keep "all done" out — casual chat uses it.
+_DONE_CLAIM_RE = re.compile(
+    r"\b("
+    r"task\s+complete|i(?:'ve| have)?\s+finished|"
+    r"should\s+(?:work|pass)|looks\s+(?:good|fine)|"
+    r"we(?:'re| are)\s+done|successfully\s+(?:implemented|fixed|completed)|"
+    r"fully\s+implemented|all\s+good"
+    r")\b",
+    re.IGNORECASE,
+)
+_TEST_GAP_PREFIX = "test command failed"
 
 
 @dataclass
@@ -95,9 +107,12 @@ class VerificationCollector:
             preview = (str(result.get("output") or "")[:200]).replace("\n", " ")
             self._add("command", cmd[:120], ok=ok, detail=preview)
             if self._looks_like_test(cmd):
-                self._add("test", f"exit={rc}  {cmd[:80]}", ok=ok and rc == 0, detail=preview)
-                if not ok or rc != 0:
-                    self.gaps.append(f"test command failed (exit {rc}): {cmd[:80]}")
+                passed = ok and rc == 0
+                self._add("test", f"exit={rc}  {cmd[:80]}", ok=passed, detail=preview)
+                if passed:
+                    self.gaps = [g for g in self.gaps if not g.startswith(_TEST_GAP_PREFIX)]
+                else:
+                    self.gaps.append(f"{_TEST_GAP_PREFIX} (exit {rc}): {cmd[:80]}")
 
     def _looks_like_test(self, cmd: str) -> bool:
         lowered = cmd.lower()
@@ -109,24 +124,52 @@ class VerificationCollector:
     def has_edits(self) -> bool:
         return bool(self.diffs or self.paths_touched)
 
-    def has_passing_tests(self) -> bool:
+    def _latest_test(self) -> Artifact | None:
         tests = [a for a in self.artifacts if a.kind == "test"]
-        return bool(tests) and all(a.ok for a in tests)
+        return tests[-1] if tests else None
+
+    def has_passing_tests(self) -> bool:
+        latest = self._latest_test()
+        return latest is not None and latest.ok
 
     def needs_tests(self) -> bool:
         return self.has_edits() and not self.has_passing_tests()
 
     def status(self) -> VerificationStatus:
+        latest = self._latest_test()
+        if latest is not None and not latest.ok:
+            return "failed"
         if self.gaps:
             return "failed"
-        tests = [a for a in self.artifacts if a.kind == "test"]
-        if tests and all(a.ok for a in tests):
+        if latest is not None and latest.ok:
             return "verified"
         if self.diffs or any(a.kind == "command" and a.ok for a in self.artifacts):
             return "partial"
         if self.artifacts:
             return "unverified"
         return "idle"
+
+    def unfounded_claim_reason(self, text: str) -> str | None:
+        """Block narrated success that is not backed by a recorded passing check."""
+        body = (text or "").strip()
+        if not body:
+            return None
+        if _EVIDENCE_CLAIM_RE.search(body) and not self.has_passing_tests():
+            return (
+                "Submit blocked: summary claims tests/build passed but no passing verification command "
+                "was recorded in this session. Run the check first, then cite its output."
+            )
+        if _DONE_CLAIM_RE.search(body) and not self.has_passing_tests():
+            if self.has_edits():
+                return (
+                    "Submit blocked: workspace was edited but no passing test/lint command was recorded. "
+                    "Run pytest, ruff, npm test, or your project's check command, then submit again."
+                )
+            return (
+                "Do not claim the task is done. No edits or verification were recorded this session. "
+                "Use tools, then submit with evidence — do not narrate completion."
+            )
+        return None
 
     def has_work(self) -> bool:
         return bool(self.artifacts or self.diffs or self.gaps)
@@ -153,11 +196,9 @@ class VerificationCollector:
                 "Run pytest, ruff, npm test, or your project's check command, then submit again."
             )
 
-        if body and _STRONG_CLAIM_RE.search(body) and st not in {"verified", "partial"}:
-            return (
-                "Submit blocked: summary claims tests/build passed but no passing verification command "
-                "was recorded in this session. Run the check first, then cite its output."
-            )
+        claim = self.unfounded_claim_reason(body)
+        if claim:
+            return claim
 
         if require_verification_section and self.has_edits() and body:
             if "## verification" not in body.lower():
