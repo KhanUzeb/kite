@@ -31,6 +31,7 @@ from kite.providers.resolve import ResolvedModel, missing_credentials, missing_m
 from kite.skills.loader import load_skills
 from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
+from kite.tools.jobs import JobRegistry
 from kite.tools.store import TodoStore
 
 
@@ -81,10 +82,20 @@ class AgentRuntime:
     extra_tools: list[Any] = field(default_factory=list)
     last_agent: DefaultAgent | None = field(default=None, init=False)
     _audit_listener_attached: bool = field(default=False, init=False)
+    job_registry: JobRegistry | None = None
+    cancel_token: CancelToken | None = None  # inject for nested/subagent runs
 
     def request_interrupt(self) -> None:
         if self.last_agent is not None:
             self.last_agent.request_interrupt()
+        if self.cancel_token is not None:
+            self.cancel_token.request()
+
+    def teardown_jobs(self) -> int:
+        """Kill remaining background bash/subagent jobs (session or one-shot exit)."""
+        if self.job_registry is None:
+            return 0
+        return self.job_registry.kill_all()
 
     def subscribe(self, listener: Callable[[Event], None]) -> Callable[[], None]:
         self._listeners.append(listener)
@@ -198,6 +209,7 @@ class AgentRuntime:
                 extra_sections=extra_sections,
                 override_system=self.options.system_prompt_override,
                 memory=memory_text,
+                cwd=cwd,
             )
         else:
             system = assemble_system_prompt(
@@ -207,6 +219,7 @@ class AgentRuntime:
                 extra_sections=extra_sections,
                 override_system=self.options.system_prompt_override,
                 memory=memory_text,
+                cwd=cwd,
             )
         return rcfg, resolved, system
 
@@ -262,7 +275,8 @@ class AgentRuntime:
         task = expand_prompt_slash(task, cwd, extra_skill_dirs=rcfg.skills.dirs)
         mem = self.slots.memory or MemoryStore.open(cwd)
         self.hooks.fire("before_run", task=task, cwd=cwd)
-        cancel = CancelToken()
+        # Injected cancel (nested subagent) wins; otherwise fresh token per turn.
+        cancel = self.cancel_token or CancelToken()
 
         workspace = WorkspaceContext.discover(
             cwd,
@@ -284,7 +298,12 @@ class AgentRuntime:
         role = parse_role(self.options.role or rcfg.role, mode=mode.value)
         enabled = tools_for_role(role, enabled)
 
-        def _subagent_runner(prompt: str) -> dict:
+        if self.job_registry is None:
+            self.job_registry = JobRegistry(on_event=self._on_event)
+        else:
+            self.job_registry.set_on_event(self._on_event)
+
+        def _subagent_runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
             from kite.agent.harness import Harness, HarnessConfig
 
             h = Harness(
@@ -301,14 +320,16 @@ class AgentRuntime:
                 ),
                 user_config=ucfg,
             )
+            h.job_registry = self.job_registry
             h.subscribe(self._on_event)
-            return h.run(prompt)
+            return h.run(prompt, cancel=cancel)
 
         orchestrator = SubagentOrchestrator(
             runner=_subagent_runner,
             on_event=self._on_event,
             max_workers=rcfg.orchestrator_max_workers,
             timeout_seconds=rcfg.orchestrator_timeout_seconds,
+            jobs=self.job_registry,
         )
 
         if self.slots.tools is not None:
@@ -333,6 +354,7 @@ class AgentRuntime:
                 orchestrator=orchestrator,
                 execution=execution,
                 cancel=cancel,
+                jobs=self.job_registry,
             )
         extras = list(self.extra_tools)
         if rcfg.github_tools:

@@ -16,7 +16,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from kite.guardrails import GuardrailPolicy, redact_secrets
-from kite.memory.store import MemoryStore
+from kite.memory.store import MemoryScope, MemoryStore
 from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
 from kite.tools.store import TodoStore
@@ -92,6 +92,7 @@ def make_coding_tools(
     orchestrator=None,
     execution: ExecutionSession | None = None,
     cancel: CancelToken | None = None,
+    jobs=None,
 ) -> list[Tool]:
     def _root() -> str:
         if execution is not None:
@@ -233,6 +234,7 @@ def make_coding_tools(
     def bash(args: dict[str, Any]) -> dict[str, Any]:
         command = str(args["command"])
         workdir = str(args.get("cwd") or _root())
+        background = bool(args.get("background"))
         # Last-line sandbox: never launch a shell outside the workspace root.
         try:
             from kite.guardrails.sandbox import clamp_cwd, workspace_root
@@ -245,8 +247,31 @@ def make_coding_tools(
             if clamped is None:
                 return {"ok": False, "error": reason, "output": reason, "blocked": True}
             workdir = str(clamped)
-        except Exception:
-            workdir = _root()
+        except Exception as e:
+            reason = f"cwd sandbox check failed: {e}"
+            return {"ok": False, "error": reason, "output": reason, "blocked": True}
+        if background:
+            if jobs is None:
+                return {
+                    "ok": False,
+                    "error": "background jobs not configured",
+                    "output": "background jobs not configured",
+                }
+            try:
+                job = jobs.spawn_bash(
+                    command,
+                    cwd=workdir,
+                    env=os.environ | {"PAGER": "cat", "GIT_PAGER": "cat"},
+                )
+            except OSError as e:
+                return {"ok": False, "returncode": -1, "output": "", "error": str(e)}
+            return {
+                "ok": True,
+                "job_id": job.id,
+                "pid": job.pid,
+                "command": command,
+                "output": f"background job {job.id} (pid {job.pid})",
+            }
         try:
             limit = int(args.get("timeout") or timeout)
             proc = subprocess.Popen(
@@ -566,9 +591,8 @@ def make_coding_tools(
 
     def memory_op(args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "list").lower()
-        scope = str(args.get("scope") or "user").lower()
-        if scope not in {"user", "project"}:
-            scope = "user"
+        scope_raw = str(args.get("scope") or "user").lower()
+        scope: MemoryScope = "project" if scope_raw == "project" else "user"
         if action == "list":
             notes = mem.notes()
             lines = [f"{n.scope}/{n.id}  {n.text}" for n in notes]
@@ -578,7 +602,7 @@ def make_coding_tools(
             if not text:
                 return {"ok": False, "error": "text required", "output": "text required"}
             try:
-                note = mem.remember(text, scope=scope)  # type: ignore[arg-type]
+                note = mem.remember(text, scope=scope)
             except ValueError as e:
                 return {"ok": False, "error": str(e), "output": str(e)}
             return {"ok": True, "output": f"remembered {note.scope}/{note.id}: {note.text}", "id": note.id}
@@ -663,7 +687,8 @@ def make_coding_tools(
                     "Primary inspection and execution tool. Fresh subprocess each call — "
                     "use set_cwd or cwd= for directory changes. "
                     "Token-efficient reads: rg/grep/find, wc -l, head/tail, sed -n '10,40p', "
-                    "cat only for small files. Tests, git, builds, and edits via shell when needed."
+                    "cat only for small files. Tests, git, builds, and edits via shell when needed. "
+                    "Set background=true for long-running servers; track with /jobs and /kill."
                 ),
                 parameters={
                     "type": "object",
@@ -671,6 +696,10 @@ def make_coding_tools(
                         "command": {"type": "string"},
                         "cwd": {"type": "string", "description": "Working directory (~, relative, or absolute)"},
                         "timeout": {"type": "integer"},
+                        "background": {
+                            "type": "boolean",
+                            "description": "Spawn without waiting; returns job_id (default false)",
+                        },
                         **reason_prop,
                     },
                     "required": ["command"],

@@ -38,6 +38,8 @@ EventKind = Literal[
     "cost_warning",
     "subagent_start",
     "subagent_end",
+    "job_start",
+    "job_end",
     "cache_hit",
     "warning",
     "checkpoint",

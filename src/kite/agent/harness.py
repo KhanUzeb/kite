@@ -19,6 +19,7 @@ from kite.agent.events import Event
 from kite.agent.hooks import SLOTS, HarnessSlots, HookBus
 from kite.memory.session import Session
 from kite.agent.runtime import AgentRuntime, RuntimeOptions
+from kite.tools.jobs import JobRegistry
 from kite.tools.store import TodoStore
 
 
@@ -63,6 +64,7 @@ class Harness:
     approver: object | None = None
     checkpoints: object | None = None
     todos: TodoStore | None = None
+    job_registry: JobRegistry | None = None
     _extensions_loaded: bool = field(default=False, init=False)
 
     def use(self, slot: str, impl: Any) -> Harness:
@@ -122,25 +124,44 @@ class Harness:
         runtime.slots = self.slots
         runtime.hooks = self.hooks
         runtime.extra_tools = self.extra_tools
+        if self.job_registry is not None:
+            runtime.job_registry = self.job_registry
         return runtime
 
-    def run(self, task: str) -> dict:
+    def run(self, task: str, *, cancel=None) -> dict:
         self._load_extensions()
         runtime = self._runtime or self._make_runtime()
         self._runtime = runtime
         runtime.slots = self.slots
         runtime.hooks = self.hooks
         runtime.extra_tools = self.extra_tools
+        if self.job_registry is not None:
+            runtime.job_registry = self.job_registry
+        # Always assign: None → runtime creates a fresh CancelToken for this turn.
+        runtime.cancel_token = cancel
         if self.approver is not None:
             runtime.approver = self.approver  # type: ignore[assignment]
         if self.checkpoints is not None:
             runtime.checkpoints = self.checkpoints
         if self.todos is not None:
             runtime.todos = self.todos
-        result = runtime.run(task)
+        try:
+            result = runtime.run(task)
+        finally:
+            if cancel is None:
+                runtime.cancel_token = None
         self.last_session = runtime.last_session
+        if self.job_registry is None and runtime.job_registry is not None:
+            self.job_registry = runtime.job_registry
         return result
 
     def request_interrupt(self) -> None:
         if self._runtime is not None:
             self._runtime.request_interrupt()
+
+    def teardown_jobs(self) -> int:
+        if self.job_registry is not None:
+            return self.job_registry.kill_all()
+        if self._runtime is not None:
+            return self._runtime.teardown_jobs()
+        return 0

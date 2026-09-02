@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from dataclasses import dataclass, field
 from typing import Any
 
+from kite.agent.cancel import CancelToken
 from kite.agent.events import Event
 
 
@@ -16,10 +17,11 @@ class SubagentTask:
     id: str
     prompt: str
     label: str
-    status: str = "queued"  # queued | running | done | failed
+    status: str = "queued"  # queued | running | done | failed | killed
     exit_status: str = ""
     summary: str = ""
     ok: bool = False
+    cancel: CancelToken | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,11 +38,12 @@ class SubagentTask:
 class SubagentOrchestrator:
     """Dispatch bounded nested agent runs; emit manager events for the TUI."""
 
-    runner: Callable[[str], dict[str, Any]]
+    runner: Callable[..., dict[str, Any]]
     on_event: Callable[[Event], None] | None = None
     max_workers: int = 3
     timeout_seconds: int = 300
     tasks: list[SubagentTask] = field(default_factory=list)
+    jobs: Any | None = None  # JobRegistry | None
 
     def _emit(self, kind: str, **payload: Any) -> None:
         if self.on_event:
@@ -49,11 +52,20 @@ class SubagentOrchestrator:
     def manager_view(self) -> list[dict[str, Any]]:
         return [t.to_dict() for t in self.tasks]
 
+    def _call_runner(self, prompt: str, cancel: CancelToken) -> dict[str, Any]:
+        try:
+            return self.runner(prompt, cancel=cancel)
+        except TypeError:
+            return self.runner(prompt)
+
     def run_one(self, prompt: str, *, label: str = "") -> dict[str, Any]:
         tid = uuid.uuid4().hex[:8]
         title = label or prompt[:60].replace("\n", " ")
-        task = SubagentTask(id=tid, prompt=prompt, label=title, status="running")
+        cancel = CancelToken()
+        task = SubagentTask(id=tid, prompt=prompt, label=title, status="running", cancel=cancel)
         self.tasks.append(task)
+        if self.jobs is not None:
+            self.jobs.register_subagent(job_id=tid, label=title, prompt=prompt, cancel=cancel)
         self._emit("subagent_start", id=tid, label=title, prompt=prompt[:300], manager=self.manager_view())
 
         try:
@@ -61,26 +73,40 @@ class SubagentOrchestrator:
                 from concurrent.futures import Future
 
                 with ThreadPoolExecutor(max_workers=1) as pool:
-                    fut: Future[dict[str, Any]] = pool.submit(self.runner, prompt)
+                    fut: Future[dict[str, Any]] = pool.submit(self._call_runner, prompt, cancel)
                     result = fut.result(timeout=self.timeout_seconds)
             else:
-                result = self.runner(prompt)
-            submission = str(result.get("submission") or result.get("content") or "")
-            status = str(result.get("exit_status") or "done")
-            ok = status == "Submitted"
-            summary = submission[:4000] if submission else f"exit={status}"
-            task.status = "done" if ok else "failed"
-            task.exit_status = status
-            task.summary = summary
-            task.ok = ok
-            out = {
-                "ok": ok,
-                "output": summary,
-                "subagent_id": tid,
-                "exit_status": status,
-                "manager": self.manager_view(),
-            }
+                result = self._call_runner(prompt, cancel)
+            if cancel.is_set():
+                task.status = "killed"
+                task.summary = "cancelled"
+                task.ok = False
+                out = {
+                    "ok": False,
+                    "output": "cancelled",
+                    "subagent_id": tid,
+                    "error": "cancelled",
+                    "cancelled": True,
+                    "manager": self.manager_view(),
+                }
+            else:
+                submission = str(result.get("submission") or result.get("content") or "")
+                status = str(result.get("exit_status") or "done")
+                ok = status == "Submitted"
+                summary = submission[:4000] if submission else f"exit={status}"
+                task.status = "done" if ok else "failed"
+                task.exit_status = status
+                task.summary = summary
+                task.ok = ok
+                out = {
+                    "ok": ok,
+                    "output": summary,
+                    "subagent_id": tid,
+                    "exit_status": status,
+                    "manager": self.manager_view(),
+                }
         except FuturesTimeout:
+            cancel.request()
             task.status = "failed"
             task.summary = f"subagent timed out after {self.timeout_seconds}s"
             task.ok = False
@@ -96,6 +122,12 @@ class SubagentOrchestrator:
             task.summary = str(e)
             task.ok = False
             out = {"ok": False, "output": str(e), "subagent_id": tid, "error": str(e), "manager": self.manager_view()}
+
+        if self.jobs is not None:
+            # Avoid double job_end if /kill already marked the job
+            existing = self.jobs.get(tid)
+            if existing is not None and existing.status == "running":
+                self.jobs.mark_done(tid, ok=bool(out.get("ok")), status="killed" if cancel.is_set() else None)
 
         self._emit(
             "subagent_end",
@@ -154,3 +186,20 @@ class SubagentOrchestrator:
         if not prompt:
             return {"ok": False, "error": "prompt or prompts required", "output": "prompt or prompts required"}
         return self.run_one(prompt, label=str(args.get("label") or ""))
+
+    def kill(self, task_id: str) -> bool:
+        for task in self.tasks:
+            if task.id == task_id and task.status == "running" and task.cancel is not None:
+                task.cancel.request()
+                task.status = "killed"
+                return True
+        return False
+
+    def kill_all(self) -> int:
+        n = 0
+        for task in self.tasks:
+            if task.status == "running" and task.cancel is not None:
+                task.cancel.request()
+                task.status = "killed"
+                n += 1
+        return n
