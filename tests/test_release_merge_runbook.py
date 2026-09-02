@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNBOOK = ROOT / "docs" / "agent-pr-merge-runbook.md"
@@ -19,6 +22,7 @@ def test_merge_runbook_exists_and_targets_pr_18() -> None:
     assert "verify_release_pr.sh" in text
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="verify_release_pr.sh requires bash")
 def test_verify_release_script_help() -> None:
     assert VERIFY.is_file()
     proc = subprocess.run(

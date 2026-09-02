@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from pathlib import Path
@@ -15,6 +16,12 @@ from kite.agent.mode import PARALLEL_SAFE_TOOLS
 from kite.env.local import LocalEnvironment
 from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
+
+
+def _sleep_cmd(seconds: float) -> str:
+    if sys.platform == "win32":
+        return f'{sys.executable} -c "import time; time.sleep({seconds})"'
+    return f"sleep {seconds}"
 
 
 def test_parallel_safe_tools_subset_of_readonly():
@@ -33,7 +40,7 @@ def test_bash_honours_cancel_token(workspace: Path):
         cancel.request()
 
     threading.Thread(target=_cancel_soon, daemon=True).start()
-    out = env.execute({"tool": "bash", "arguments": {"command": "sleep 5 && echo done"}})
+    out = env.execute({"tool": "bash", "arguments": {"command": f"{_sleep_cmd(5)} && echo done"}})
     assert out.get("cancelled") is True
     assert out["ok"] is False
 
