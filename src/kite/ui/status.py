@@ -34,7 +34,9 @@ def status_context_parts(state: SessionUiState) -> list[str]:
         parts.append(reasoning_badge(state.reasoning) or state.reasoning)
     if state.pending_attach:
         parts.append(f"+{state.pending_attach}")
-    if state.active_subagents:
+    if state.active_jobs:
+        parts.append(f"jobs {state.active_jobs}")
+    elif state.active_subagents:
         parts.append(f"agents {state.active_subagents}")
     meter = context_meter(state.context_pct)
     if meter:
@@ -46,6 +48,10 @@ def status_context_parts(state: SessionUiState) -> list[str]:
     parts.append(f"${state.cost:.3f}")
     if state.git_branch:
         parts.append(state.git_branch)
+    if state.busy:
+        parts.append("working")
+    if state.queued:
+        parts.append(f"queued {state.queued}")
     if state.interrupted:
         parts.append("interrupted")
     return parts
@@ -53,7 +59,11 @@ def status_context_parts(state: SessionUiState) -> list[str]:
 
 def format_status_tail(state: SessionUiState) -> str:
     """Everything after the kite brand — shared by render + composer toolbar."""
-    mode_bits = [state.mode.value, approval_display_name(state.approval)]
+    mode_label = "plan" if state.mode is AgentMode.PLAN else state.mode.value
+    mode_bits = [mode_label, approval_display_name(state.approval)]
+    if state.mode is AgentMode.PLAN and state.todos:
+        done = sum(1 for t in state.todos if t.status == "completed")
+        mode_bits.append(f"list {done}/{len(state.todos)}")
     if state.sandbox_restricted:
         mode_bits.append("restricted")
     parts = [*mode_bits, *status_context_parts(state)]

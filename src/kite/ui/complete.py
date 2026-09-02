@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,21 +34,48 @@ except Exception:  # pragma: no cover
     _PT = False
 
 
+@dataclass(frozen=True)
+class ComposerResult:
+    """One composer submission. `eof` leaves the REPL; empty text is a no-op."""
+
+    kind: str  # text | stop | steer | eof | empty
+    text: str = ""
+
+
 def _pt_style(*, dark: bool) -> Any:
     if not _PT:
         return None
+    if dark:
+        return Style.from_dict(
+            {
+                "prompt": "ansibrightcyan bold",
+                "placeholder": "#4a4a4a",
+                "bottom-toolbar": "noreverse #5c5c5c bg:#050505",
+                "completion-menu": "bg:#050505 #b8b8b8",
+                "completion-menu.completion": "bg:#050505 #b8b8b8",
+                "completion-menu.completion.current": "bg:#003333 #a8ffff bold",
+                "completion-menu.meta.completion": "#555555",
+                "completion-menu.meta.completion.current": "#7a9a9a",
+                "completion-menu.multi-column-meta": "bg:#0a0a0a #555555",
+                "scrollbar.background": "bg:#0a0a0a",
+                "scrollbar.button": "bg:#2a2a2a",
+                "auto-suggestion": "#3a3a3a",
+            }
+        )
     return Style.from_dict(
         {
-            "prompt": "ansicyan" if dark else "ansiblue",
-            "placeholder": "#5a5a5a" if dark else "#888888",
-            "bottom-toolbar": "noreverse #6e6e6e bg:#121212" if dark else "noreverse #555555 bg:#f4f4f4",
-            "completion-menu": "bg:#141414 #c8c8c8" if dark else "bg:#ffffff #222222",
-            "completion-menu.completion": "bg:#141414 #c8c8c8" if dark else "bg:#ffffff #222222",
-            "completion-menu.completion.current": "bg:#1a2e2e #e8ffff" if dark else "bg:#e0f0ff #000000",
-            "completion-menu.meta.completion": "#6e6e6e" if dark else "#777777",
-            "completion-menu.meta.completion.current": "#9aa8a8" if dark else "#555555",
-            "scrollbar.background": "bg:#1a1a1a" if dark else "bg:#eeeeee",
-            "scrollbar.button": "bg:#3a3a3a" if dark else "bg:#cccccc",
+            "prompt": "ansiblue bold",
+            "placeholder": "#888888",
+            "bottom-toolbar": "noreverse #555555 bg:#f0f0f0",
+            "completion-menu": "bg:#ffffff #222222",
+            "completion-menu.completion": "bg:#ffffff #222222",
+            "completion-menu.completion.current": "bg:#d6ebff #000000 bold",
+            "completion-menu.meta.completion": "#777777",
+            "completion-menu.meta.completion.current": "#444444",
+            "completion-menu.multi-column-meta": "bg:#f4f4f4 #777777",
+            "scrollbar.background": "bg:#eeeeee",
+            "scrollbar.button": "bg:#cccccc",
+            "auto-suggestion": "#aaaaaa",
         }
     )
 
@@ -132,7 +160,7 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                 yield Completion(
                     spec.name,
                     start_position=-len(cmd),
-                    display=_slash_display(spec, index),
+                    display=_slash_completion_display(spec, index),
                     display_meta=meta[:72],
                 )
             return
@@ -154,23 +182,11 @@ class SlashCompleter(Completer):  # type: ignore[misc]
 
         if routed in {"thinking", "fast"}:
             choices = effort_menu(self._support(), routed)
+        elif cmd == "model" or routed in {"models", "select", "provider", "refresh"}:
+            yield from self._model_arg_completions(cmd, rest, routed=routed)
+            return
         elif cmd in ARG_CHOICES:
             choices = list(ARG_CHOICES[cmd])
-        elif cmd == "model" or routed in {"models", "select", "provider"}:
-            parts = rest.split()
-            sub = parts[0].lower() if parts else ""
-            if routed in {"select"} or sub == "select":
-                for name in self._providers_factory():
-                    choices.append((name, "provider"))
-            elif routed in {"models"} or sub == "list":
-                for name in self._providers_factory():
-                    choices.append((name, "provider"))
-            elif routed == "provider" or sub == "provider":
-                for name in self._providers_factory():
-                    choices.append((name, "provider"))
-            else:
-                for mid in self._models_factory():
-                    choices.append((str(mid), "model"))
         elif cmd in {"login", "logout", "signin", "signout"}:
             from kite.providers.credentials import loginable_providers
 
@@ -223,6 +239,68 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                 continue
             yield Completion(value, start_position=start, display=value, display_meta=meta[:60])
 
+    def _models_for(self, provider: str | None = None) -> list[str]:
+        try:
+            out = self._models_factory(provider)  # type: ignore[call-arg]
+        except TypeError:
+            out = self._models_factory()
+        return [str(m) for m in out]
+
+    def _model_arg_completions(self, cmd: str, rest: str, *, routed: str):
+        """Completions for /model, /models, /select, /provider — real model ids, not loops."""
+        parts = rest.split()
+        trailing = bool(rest) and rest.endswith(" ")
+        prefix = parts[-1] if parts and not trailing else ""
+        start = -len(prefix) if prefix else 0
+        choices: list[tuple[str, str]] = []
+
+        sub = parts[0].lower() if parts else ""
+        want_providers = False
+        model_provider: str | None = None
+
+        if routed == "select" or (cmd == "model" and sub == "select"):
+            want_providers = True
+            if sub == "select" and (len(parts) > 1 or trailing):
+                # /model select <provider> — still providers only
+                pass
+        elif routed == "provider" or (cmd == "model" and sub == "provider"):
+            want_providers = True
+        elif cmd == "model" and sub == "list":
+            want_providers = True
+        elif routed == "models":
+            if not parts or (len(parts) == 1 and not trailing):
+                choices.append(("refresh", "re-fetch models from API, then pick"))
+                want_providers = True
+            elif sub in {"refresh", "r"}:
+                want_providers = True
+            else:
+                model_provider = parts[0]
+        elif cmd == "model" and sub == "refresh":
+            want_providers = True
+        elif cmd == "model":
+            # /model <list|select|refresh|id> — verbs + live model ids for current provider
+            choices.extend(ARG_CHOICES.get("model", []))
+            for mid in self._models_for(None):
+                choices.append((mid, "model"))
+        elif routed == "refresh":
+            want_providers = True
+        else:
+            for mid in self._models_for(None):
+                choices.append((mid, "model"))
+
+        if want_providers:
+            for name in self._providers_factory():
+                choices.append((name, "provider"))
+        elif model_provider is not None:
+            for mid in self._models_for(model_provider):
+                choices.append((mid, "model"))
+
+        needle = prefix.lower()
+        for value, meta in choices:
+            if needle and needle not in value.lower():
+                continue
+            yield Completion(value, start_position=start, display=value, display_meta=meta[:60])
+
 
 def _slash_display(spec: SlashSpec, index: CommandIndex) -> str:
     mark = ""
@@ -231,6 +309,15 @@ def _slash_display(spec: SlashSpec, index: CommandIndex) -> str:
         if skill is not None and skill.source == "user":
             mark = f" {glyph('home')}"
     return f"/{spec.name}{mark}"
+
+
+def _slash_completion_display(spec: SlashSpec, index: CommandIndex) -> Any:
+    """Colored slash label for the dark completion menu."""
+    label = _slash_display(spec, index)
+    if not _PT:
+        return label
+    brand = brand_ansi()
+    return HTML(f"<style fg='{brand}'><b>{_escape_html(label)}</b></style>")
 
 
 def _session_rows() -> list[tuple[str, str]]:
@@ -291,13 +378,21 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
 def _toolbar_html(state: SessionUiState) -> Any:
     tail = format_status_tail(state)
     brand = brand_ansi()
-    muted = "#888888" if not is_dark() else "#6e6e6e"
+    muted = "#555555" if is_dark() else "#666666"
     flash = ""
     if state.flash:
         flash = f"  {glyph('sep')} {_escape_html(state.flash)}"
+    hints = ""
+    if state.busy:
+        bits = ["Esc stop", "Ctrl+G steer"]
+        if state.queued:
+            bits.append(f"queued {state.queued}")
+        if state.budget_limit is not None and state.budget_limit > 0:
+            bits.append(f"budget ≤${state.budget_limit:.2f}")
+        hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
     return HTML(
-        f"<style fg='{brand}'>kite</style>"
-        f"<style fg='{muted}'> {glyph('sep')} {_escape_html(tail)}{flash}</style>"
+        f"<style fg='{brand}'><b>kite</b></style>"
+        f"<style fg='{muted}'> {glyph('sep')} {_escape_html(tail)}{flash}{hints}</style>"
     )
 
 
@@ -308,6 +403,17 @@ def _escape_html(text: str) -> str:
 def history_path() -> Path:
     ensure_home()
     return kite_home() / "history"
+
+
+def _mouse_support_enabled() -> bool:
+    """Off by default so the terminal keeps drag-select, copy, and right-click paste.
+
+    Set KITE_MOUSE=1 to capture the mouse for slash-menu wheel scrolling
+    (native selection then needs Shift+drag in most terminals).
+    """
+    import os
+
+    return os.environ.get("KITE_MOUSE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def make_prompt_session(
@@ -325,7 +431,8 @@ def make_prompt_session(
         "complete_while_typing": True,
         "auto_suggest": AutoSuggestFromHistory(),
         "style": prompt_style(),
-        "mouse_support": True,
+        # False restores OS/terminal copy-paste, drag-select, and right-click.
+        "mouse_support": _mouse_support_enabled(),
         "reserve_space_for_menu": 8,
     }
     if key_bindings is not None:
@@ -339,65 +446,295 @@ def make_repl_key_bindings(
     *,
     on_toggle_expand: Callable[[], str] | None = None,
     on_toggle_thinking: Callable[[], str] | None = None,
+    on_expand_thinking: Callable[[], str | None] | None = None,
     on_plan: Callable[[], str] | None = None,
     on_build: Callable[[], str] | None = None,
     on_status: Callable[[], str] | None = None,
+    is_busy: Callable[[], bool] | None = None,
+    action_slot: dict[str, str] | None = None,
 ) -> Any:
-    """Keyboard shortcuts while the composer is focused."""
+    """Keyboard shortcuts while the composer is focused.
+
+    Custom bindings use eager=True so they win over emacs Ctrl+P/B/T/O.
+    Ctrl+S is not bound — terminals steal it for XOFF; use F2 for status.
+    Mouse is off by default (see ``_mouse_support_enabled``) so drag-copy and
+    right-click paste stay with the terminal.
+    """
     if not _PT:
         return None
+    from prompt_toolkit.filters import Condition
     from prompt_toolkit.key_binding import KeyBindings
 
     bindings = KeyBindings()
+    slot = action_slot if action_slot is not None else {}
 
-    @bindings.add("c-o")
+    def _busy() -> bool:
+        return bool(is_busy and is_busy())
+
+    busy = Condition(_busy)
+
+    def _fire(cb: Callable[[], str] | None, event) -> None:  # noqa: ANN001
+        if cb:
+            cb()
+        event.app.invalidate()
+
+    @bindings.add("c-o", eager=True)
+    @bindings.add("f6", eager=True)
     def _expand(event) -> None:  # noqa: ANN001
-        if on_toggle_expand:
-            on_toggle_expand()
-        event.app.invalidate()
+        _fire(on_toggle_expand, event)
 
-    @bindings.add("c-t")
+    @bindings.add("c-t", eager=True)
+    @bindings.add("f7", eager=True)
     def _thinking(event) -> None:  # noqa: ANN001
-        if on_toggle_thinking:
-            on_toggle_thinking()
-        event.app.invalidate()
+        _fire(on_toggle_thinking, event)
 
-    @bindings.add("c-p")
+    @bindings.add("c-p", eager=True)
+    @bindings.add("f3", eager=True)
     def _plan(event) -> None:  # noqa: ANN001
-        if on_plan:
-            on_plan()
-        event.app.invalidate()
+        _fire(on_plan, event)
 
-    @bindings.add("c-b")
+    @bindings.add("c-b", eager=True)
+    @bindings.add("f4", eager=True)
     def _build(event) -> None:  # noqa: ANN001
-        if on_build:
-            on_build()
-        event.app.invalidate()
+        _fire(on_build, event)
 
-    @bindings.add("c-s")
+    @bindings.add("f2", eager=True)
     def _status(event) -> None:  # noqa: ANN001
-        if on_status:
-            on_status()
-        event.app.invalidate()
+        _fire(on_status, event)
 
-    def _scroll_completions(event, *, forward: bool) -> None:  # noqa: ANN001
-        buff = event.app.current_buffer
-        if buff.complete_state is None:
+    idle = Condition(lambda: not _busy())
+
+    @bindings.add("f5", eager=True, filter=idle)
+    def _refresh_models(event) -> None:  # noqa: ANN001
+        slot["kind"] = "submit"
+        event.app.exit(result="/refresh")
+
+    @bindings.add("escape", eager=True, filter=busy)
+    def _stop(event) -> None:  # noqa: ANN001
+        slot["kind"] = "stop"
+        event.app.exit(result="")
+
+    @bindings.add("c-g", eager=True, filter=busy)
+    def _steer(event) -> None:  # noqa: ANN001
+        slot["kind"] = "steer"
+        event.app.exit(result=event.current_buffer.text)
+
+    @bindings.add("enter", eager=True)
+    def _submit(event) -> None:  # noqa: ANN001
+        # complete_while_typing keeps an invisible menu open; default Enter
+        # then "accepts" the completion instead of sending the line.
+        # prompt_toolkit stores this as c-m (ControlM).
+        buf = event.current_buffer
+        buf.complete_state = None
+        buf.validate_and_handle()
+
+    def _paste_system_clipboard(event) -> None:  # noqa: ANN001
+        """Ctrl+V / Shift+Insert — paste OS clipboard into the composer."""
+        text = _read_os_clipboard()
+        if not text:
             return
-        if forward:
-            buff.complete_next()
-        else:
-            buff.complete_previous()
+        buf = event.current_buffer
+        buf.cut_selection()
+        buf.insert_text(text.replace("\r\n", "\n").replace("\r", "\n"))
 
-    @bindings.add("<scroll-up>")
-    def _scroll_up(event) -> None:  # noqa: ANN001
-        _scroll_completions(event, forward=False)
+    def _copy_selection(event) -> None:  # noqa: ANN001
+        """Ctrl+Insert — copy composer selection to OS clipboard."""
+        buf = event.current_buffer
+        data = buf.copy_selection()
+        if data is None:
+            return
+        text = data.text if hasattr(data, "text") else str(data)
+        if text:
+            _write_os_clipboard(text)
 
-    @bindings.add("<scroll-down>")
-    def _scroll_down(event) -> None:  # noqa: ANN001
-        _scroll_completions(event, forward=True)
+    @bindings.add("c-v", eager=True)
+    @bindings.add("s-insert", eager=True)
+    def _paste(event) -> None:  # noqa: ANN001
+        _paste_system_clipboard(event)
+
+    @bindings.add("c-insert", eager=True)
+    def _copy(event) -> None:  # noqa: ANN001
+        _copy_selection(event)
+
+    # Optional mouse wheel for slash menu when KITE_MOUSE=1
+    if _mouse_support_enabled():
+
+        def _scroll_completions(event, *, forward: bool) -> None:  # noqa: ANN001
+            buff = event.app.current_buffer
+            if buff.complete_state is None:
+                return
+            if forward:
+                buff.complete_next()
+            else:
+                buff.complete_previous()
+
+        @bindings.add("<scroll-up>")
+        def _scroll_up(event) -> None:  # noqa: ANN001
+            _scroll_completions(event, forward=False)
+
+        @bindings.add("<scroll-down>")
+        def _scroll_down(event) -> None:  # noqa: ANN001
+            _scroll_completions(event, forward=True)
+
+        # Double-click expand thinking only when we own the mouse.
+        if on_expand_thinking is not None:
+            import time
+
+            from prompt_toolkit.keys import Keys
+            from prompt_toolkit.mouse_events import MouseButton, MouseEventType
+
+            last_click = {"t": 0.0, "x": -99, "y": -99}
+
+            def _is_double_click(x: int, y: int) -> bool:
+                now = time.monotonic()
+                hit = (
+                    now - float(last_click["t"]) < 0.45
+                    and abs(x - int(last_click["x"])) <= 2
+                    and abs(y - int(last_click["y"])) <= 2
+                )
+                last_click["t"] = now
+                last_click["x"] = x
+                last_click["y"] = y
+                return hit
+
+            def _handle_mouse_expand(x: int, y: int, button: Any, event_type: Any, event) -> Any:  # noqa: ANN001
+                if _busy():
+                    return NotImplemented
+                button_s = str(getattr(button, "value", button))
+                type_s = str(getattr(event_type, "value", event_type))
+                is_left = button in {MouseButton.LEFT, "LEFT"} or button_s.upper() == "LEFT"
+                is_down = (
+                    event_type in {MouseEventType.MOUSE_DOWN, "MOUSE_DOWN"} or type_s == "MOUSE_DOWN"
+                )
+                if not (is_left and is_down):
+                    return NotImplemented
+                if not _is_double_click(x, y):
+                    return NotImplemented
+                note = on_expand_thinking()
+                if note:
+                    event.app.invalidate()
+                return None
+
+            @bindings.add(Keys.WindowsMouseEvent, eager=True)
+            def _win_mouse(event) -> Any:  # noqa: ANN001
+                try:
+                    button, event_type, x_s, y_s = str(event.data or "").split(";")
+                    return _handle_mouse_expand(int(x_s), int(y_s), button, event_type, event)
+                except Exception:
+                    return NotImplemented
+
+            @bindings.add(Keys.Vt100MouseEvent, eager=True)
+            def _vt_mouse(event) -> Any:  # noqa: ANN001
+                raw = str(event.data or "")
+                try:
+                    if not raw.startswith("<") or not raw.endswith("M"):
+                        return NotImplemented
+                    parts = raw[1:-1].split(";")
+                    if len(parts) < 3:
+                        return NotImplemented
+                    code, x_s, y_s = int(parts[0]), int(parts[1]), int(parts[2])
+                    if (code & 3) != 0:
+                        return NotImplemented
+                    return _handle_mouse_expand(
+                        int(x_s) - 1,
+                        int(y_s) - 1,
+                        MouseButton.LEFT,
+                        MouseEventType.MOUSE_DOWN,
+                        event,
+                    )
+                except Exception:
+                    return NotImplemented
 
     return bindings
+
+
+def _read_os_clipboard() -> str:
+    try:
+        import sys
+
+        if sys.platform == "win32":
+            import ctypes
+
+            CF_UNICODETEXT = 13
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            user32.OpenClipboard(0)
+            try:
+                handle = user32.GetClipboardData(CF_UNICODETEXT)
+                if not handle:
+                    return ""
+                ptr = kernel32.GlobalLock(handle)
+                try:
+                    return ctypes.wstring_at(ptr) if ptr else ""
+                finally:
+                    kernel32.GlobalUnlock(handle)
+            finally:
+                user32.CloseClipboard()
+    except Exception:
+        pass
+    try:
+        import subprocess
+
+        for cmd in (
+            ["pbpaste"],
+            ["xclip", "-selection", "clipboard", "-o"],
+            ["wl-paste", "-n"],
+        ):
+            try:
+                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=2)
+                return out.decode("utf-8", errors="replace")
+            except (FileNotFoundError, subprocess.SubprocessError, OSError):
+                continue
+    except Exception:
+        pass
+    return ""
+
+
+def _write_os_clipboard(text: str) -> None:
+    try:
+        import sys
+
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            CF_UNICODETEXT = 13
+            GMEM_MOVEABLE = 0x0002
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+            kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+            kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+            kernel32.GlobalLock.restype = ctypes.c_void_p
+            encoded = text.encode("utf-16-le") + b"\x00\x00"
+            user32.OpenClipboard(0)
+            try:
+                user32.EmptyClipboard()
+                handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(encoded))
+                ptr = kernel32.GlobalLock(handle)
+                ctypes.memmove(ptr, encoded, len(encoded))
+                kernel32.GlobalUnlock(handle)
+                user32.SetClipboardData(CF_UNICODETEXT, handle)
+            finally:
+                user32.CloseClipboard()
+            return
+    except Exception:
+        pass
+    try:
+        import subprocess
+
+        for cmd in (
+            ["pbcopy"],
+            ["xclip", "-selection", "clipboard"],
+            ["wl-copy"],
+        ):
+            try:
+                subprocess.run(cmd, input=text.encode("utf-8"), check=True, timeout=2)
+                return
+            except (FileNotFoundError, subprocess.SubprocessError, OSError):
+                continue
+    except Exception:
+        pass
 
 
 def read_repl_line(
@@ -405,10 +742,21 @@ def read_repl_line(
     session: Any,
     state: SessionUiState,
     fallback: Callable[[], str | None],
-) -> str | None:
+    busy: bool = False,
+    action_slot: dict[str, str] | None = None,
+) -> ComposerResult:
     """prompt_toolkit input with `/` dropdown; Rich Prompt if unavailable."""
     if session is None:
-        return fallback()
+        raw = fallback()
+        if raw is None:
+            return ComposerResult("eof")
+        text = raw.strip()
+        if not text:
+            return ComposerResult("empty")
+        return ComposerResult("text", text)
+
+    slot = action_slot if action_slot is not None else {}
+    slot["kind"] = "submit"
 
     def _invalidate() -> None:
         try:
@@ -421,15 +769,40 @@ def read_repl_line(
     state._refresh = _invalidate
     placeholder_fg = "#888888" if not is_dark() else "#555555"
     brand = brand_ansi()
+    # Busy chrome (Esc/Ctrl+G/queued/budget) lives on the footer toolbar only.
+    placeholder = "type to queue…" if busy else "/ commands · @file attach · Ctrl+D quit"
     try:
-        return session.prompt(
-            HTML(f"<style fg='{brand}'>{glyph('prompt')}</style> "),
-            placeholder=HTML(f"<style fg='{placeholder_fg}'>/ commands · @file attach</style>"),
-            bottom_toolbar=lambda: _toolbar_html(state),
-        )
+        from prompt_toolkit.patch_stdout import patch_stdout
+
+        with patch_stdout(raw=True):
+            text = session.prompt(
+                HTML(f"<style fg='{brand}'>{glyph('prompt')}</style> "),
+                placeholder=HTML(f"<style fg='{placeholder_fg}'>{placeholder}</style>"),
+                bottom_toolbar=lambda: _toolbar_html(state),
+                refresh_interval=0.4 if busy else 0,
+            )
     except EOFError:
-        return None
+        return ComposerResult("eof")
     except KeyboardInterrupt:
-        return None
+        typed = ""
+        try:
+            typed = str(session.default_buffer.text or "").strip()
+        except Exception:
+            typed = ""
+        if busy:
+            if typed:
+                return ComposerResult("steer", typed)
+            return ComposerResult("stop")
+        return ComposerResult("empty")
     finally:
         state._refresh = None
+
+    kind = slot.get("kind") or "submit"
+    text = (text or "").strip()
+    if kind == "stop":
+        return ComposerResult("stop")
+    if kind == "steer":
+        return ComposerResult("steer", text)
+    if not text:
+        return ComposerResult("empty")
+    return ComposerResult("text", text)

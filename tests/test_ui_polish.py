@@ -1,4 +1,4 @@
-"""UI polish — thinking collapse, approval panel, bash blocks."""
+"""UI polish — thinking expand default, approval panel, bash blocks."""
 
 from __future__ import annotations
 
@@ -15,21 +15,34 @@ from kite.ui.tool_cards import render_bash_command_block
 from tests.conftest import strip_ansi
 
 
-def _display(*, thinking_expanded: bool = False) -> tuple[StringIO, RunDisplay]:
+def _display(*, thinking_expanded: bool | None = None) -> tuple[StringIO, RunDisplay]:
     buf = StringIO()
     console = Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME)
-    state = SessionUiState(thinking_expanded=thinking_expanded)
+    state = SessionUiState()
+    if thinking_expanded is not None:
+        state.thinking_expanded = thinking_expanded
     return buf, RunDisplay(console, state=state, quiet=False)
 
 
-def test_thinking_collapses_to_summary_by_default() -> None:
+def test_thinking_expanded_by_default() -> None:
+    assert SessionUiState().thinking_expanded is True
     buf, display = _display()
+    display(Event("stream_start", payload={}))
+    display(Event("stream_reasoning", payload={"text": "visible by default"}))
+    display(Event("stream_end", payload={}))
+    out = strip_ansi(buf.getvalue())
+    assert "visible by default" in out
+
+
+def test_thinking_collapses_to_summary_when_disabled() -> None:
+    buf, display = _display(thinking_expanded=False)
     display(Event("stream_start", payload={}))
     display(Event("stream_reasoning", payload={"text": "step one\nstep two\n"}))
     display(Event("stream_end", payload={}))
     out = strip_ansi(buf.getvalue())
     assert "thinking" in out.lower()
     assert "2 lines" in out
+    assert "ctrl+t" in out.lower()
     assert display.state.last_thinking.strip()
 
 
@@ -69,3 +82,33 @@ def test_render_thinking_summary_hint() -> None:
     out = strip_ansi(line.plain)
     assert "1,200 chars" in out
     assert "expand-thinking" in out
+    assert "ctrl+t" in out.lower()
+
+
+def test_double_click_expand_registers_only_with_kite_mouse(monkeypatch) -> None:
+    from kite.ui.complete import make_repl_key_bindings
+
+    monkeypatch.delenv("KITE_MOUSE", raising=False)
+    off = make_repl_key_bindings(on_expand_thinking=lambda: None)
+    if off is None:
+        return
+    off_keys = {getattr(k, "value", str(k)) for b in off.bindings for k in b.keys}
+    assert not any("mouse-event" in k for k in off_keys)
+
+    monkeypatch.setenv("KITE_MOUSE", "1")
+    on = make_repl_key_bindings(on_expand_thinking=lambda: None)
+    if on is None:
+        return
+    on_keys = {getattr(k, "value", str(k)) for b in on.bindings for k in b.keys}
+    assert any("mouse-event" in k for k in on_keys)
+
+
+def test_expand_thinking_callback_noop_when_already_expanded() -> None:
+    calls: list[str] = []
+
+    def expand() -> str | None:
+        calls.append("hit")
+        return None  # already expanded
+
+    assert expand() is None
+    assert calls == ["hit"]

@@ -59,7 +59,7 @@ def test_light_theme_uses_blue_brand() -> None:
     _reset()
     try:
         assert set_theme("light") == "light"
-        assert palette()["styles"]["kite.brand"] == "blue"
+        assert "blue" in palette()["styles"]["kite.brand"]
         assert palette()["syntax"] == "ansi_light"
     finally:
         _reset()

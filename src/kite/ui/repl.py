@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+import threading
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -17,7 +19,7 @@ from kite.plugins.loader import project_plugins_dir, write_plugin_stub
 from kite.cli.slash import CommandIndex, SlashResult, help_text, invalidate_command_index, resolve_slash
 from kite.tools.store import TodoStore
 from kite.ui.git import GitCheckpoints
-from kite.ui.complete import SlashCompleter, make_prompt_session, make_repl_key_bindings, read_repl_line
+from kite.ui.complete import ComposerResult, SlashCompleter, make_prompt_session, make_repl_key_bindings, read_repl_line
 from kite.ui.render import RunDisplay, render_compact_boundary, render_status
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_PROMPT, make_console
@@ -72,9 +74,17 @@ class ChatSession:
         self._model_resolved = False
         self._prompt = None
         self._model_cache: list[str] = []
+        self._model_cache_provider: str | None = None
         self._pending_open = session_id
         self._flash: str = ""
         self._slash_handler_map: dict[str, Callable[[str], None]] | None = None
+        self._inbox: deque[str] = deque()
+        self._composer_action: dict[str, str] = {"kind": "submit"}
+        self._busy = False
+        self._quit_after_turn = False
+        from kite.tools.jobs import JobRegistry
+
+        self.jobs = JobRegistry(on_event=self.display)
         self._sync_from_config()
 
     def _sync_from_config(self) -> None:
@@ -134,13 +144,18 @@ class ChatSession:
         banner = Text()
         banner.append("kite", style="kite.brand")
         banner.append("  ", style="kite.muted")
-        banner.append(model_line, style="kite.muted")
+        banner.append(model_line, style="kite.highlight")
         banner.append("  ·  ", style="kite.muted")
-        banner.append("/help", style="kite.muted")
+        banner.append("Esc", style="kite.pending")
+        banner.append(" stop", style="kite.muted")
         banner.append("  ·  ", style="kite.muted")
-        banner.append("Ctrl+O tools", style="kite.muted")
+        banner.append("Ctrl+G", style="kite.pending")
+        banner.append(" steer", style="kite.muted")
         banner.append("  ·  ", style="kite.muted")
-        banner.append("/setup", style="kite.muted")
+        banner.append("F3", style="kite.plan")
+        banner.append(" plan", style="kite.muted")
+        banner.append("  ·  ", style="kite.muted")
+        banner.append("/help", style="kite.brand")
         self.console.print(banner)
 
         status = assess_setup_status(provider=self.provider, model=self.model)
@@ -218,6 +233,7 @@ class ChatSession:
             h.config.follow_up = follow_up
             h.config.session_id = self._session_id
             h.config.attachments = list(self.attachments)
+            h.job_registry = self.jobs
             return h
 
         h = Harness(
@@ -237,6 +253,7 @@ class ChatSession:
                 execution_mode=self._execution_mode(),
             )
         )
+        h.job_registry = self.jobs
         h.subscribe(self.display)
         self._harness = h
         self._harness_key = key
@@ -247,18 +264,19 @@ class ChatSession:
 
         return [p.name for p in load_catalog().list()]
 
-    def _model_ids(self) -> list[str]:
-        if self._model_cache:
-            return self._model_cache
-        provider, _ = self._effective_model_pair()
+    def _model_ids(self, provider: str | None = None) -> list[str]:
+        provider = (provider or self.provider or self.state.provider or "").strip()
         if not provider:
             return []
+        if self._model_cache and getattr(self, "_model_cache_provider", None) == provider:
+            return self._model_cache
         try:
             from kite.providers.list_models import list_models_for_provider
 
             result = list_models_for_provider(provider)
             if result.ok:
                 self._model_cache = [m.id for m in result.models]
+                self._model_cache_provider = provider
         except Exception:
             return []
         return self._model_cache
@@ -332,8 +350,18 @@ class ChatSession:
         from kite.ui.theme import THEME_NAMES, set_theme, theme_label
 
         if not raw.strip():
-            self.console.print(f"[kite.muted]theme[/]  {theme_label()}  ·  /theme {'|'.join(THEME_NAMES)}")
-            return
+            from kite.ui.theme import THEME_HELP
+
+            picked = self._pick(
+                [(name, THEME_HELP.get(name, name)) for name in THEME_NAMES],
+                title="Color palette",
+                current=theme_label().split(" ", 1)[0],
+                noun="theme",
+            )
+            if not picked:
+                self.console.print(f"[kite.muted]theme[/]  {theme_label()}")
+                return
+            raw = picked
         name = set_theme(raw, persist=True)
         if name is None:
             self.console.print(f"[kite.muted]/theme {'|'.join(THEME_NAMES)}[/]")
@@ -342,14 +370,51 @@ class ChatSession:
         self.console.print(f"[kite.muted]theme[/]  {theme_label()}")
         self.console.print("[kite.brand]kite[/]  [kite.success]ok[/]  [kite.pending]wait[/]  [kite.error]err[/]  [kite.muted]muted[/]")
 
+    def _pick(
+        self,
+        items: list[tuple[str, str]],
+        *,
+        title: str,
+        current: str | None = None,
+        noun: str = "item",
+    ) -> str | None:
+        from kite.ui.pick import numbered_pick
+
+        return numbered_pick(self.console, items, current=current, title=title, noun=noun)
+
+    def _pick_session(self, title: str) -> str | None:
+        from kite.memory.session import list_sessions
+
+        rows = list_sessions(limit=20)
+        if not rows:
+            self.console.print("[kite.muted]no sessions[/]")
+            return None
+        items = [
+            (
+                meta.id,
+                f"{meta.id}  {meta.provider}/{meta.model}  {(meta.label or meta.task or '')[:40]}"
+                + ("  *" if meta.id == self._session_id else ""),
+            )
+            for meta in rows
+        ]
+        return self._pick(items, title=title, current=self._session_id, noun="session")
+
     def _set_font(self, raw: str) -> None:
         from kite.ui.theme import FONT_NAMES, glyph_preview, set_font
 
         if not raw.strip():
-            from kite.ui.theme import current_font
+            from kite.ui.theme import FONT_HELP, current_font
 
-            self.console.print(f"[kite.muted]font[/]  {current_font()}  ·  /font {'|'.join(FONT_NAMES)}")
-            return
+            picked = self._pick(
+                [(name, FONT_HELP.get(name, name)) for name in FONT_NAMES],
+                title="Glyph pack",
+                current=current_font(),
+                noun="font",
+            )
+            if not picked:
+                self.console.print(f"[kite.muted]font[/]  {current_font()}")
+                return
+            raw = picked
         name = set_font(raw, persist=True)
         if name is None:
             self.console.print(f"[kite.muted]/font {'|'.join(FONT_NAMES)}[/]")
@@ -603,6 +668,7 @@ class ChatSession:
 
         if lower == "list" or lower.startswith("list "):
             provider = token[4:].strip() if lower.startswith("list ") else (self.provider or self.state.provider or "").strip()
+            provider = provider.split()[0] if provider else provider
             if not provider:
                 self.console.print("[kite.error]/model list <provider>[/]")
                 return
@@ -617,6 +683,7 @@ class ChatSession:
                 self.console.print(f"[kite.error]{result.error or 'no models'}[/]")
                 return
             self._model_cache = [m.id for m in result.models]
+            self._model_cache_provider = provider
             shown = result.models[:80]
             for m in shown:
                 win = f"  {m.context_window}" if m.context_window else ""
@@ -627,37 +694,28 @@ class ChatSession:
             self.console.print("[kite.muted]  /model select[/] to pick one")
             return
 
-        if lower == "select" or lower.startswith("select "):
-            from kite.providers.select import select_model_interactive, select_provider_interactive
-
-            provider = token[6:].strip() if lower.startswith("select ") else (self.provider or self.state.provider or "").strip()
-            if not provider:
-                picked = select_provider_interactive(self.console)
-                if not picked:
-                    return
-                provider = picked
-            code, picked_provider, model = select_model_interactive(self.console, provider, persist=True)
-            if code == 0 and picked_provider and model:
-                self.provider = picked_provider
-                self.model = model
-                self.state.provider = picked_provider
-                self.state.model = model
-                self._model_cache = []
-                self._model_resolved = True
-                self._invalidate_harness()
+        if lower == "refresh" or lower.startswith("refresh "):
+            provider = token[7:].strip() if lower.startswith("refresh ") else ""
+            self._refresh_models(provider)
             return
 
-        if lower.startswith("provider "):
-            name = token.split(None, 1)[1].strip()
+        if lower == "select" or lower.startswith("select "):
+            provider = token[6:].strip() if lower.startswith("select ") else (self.provider or self.state.provider or "").strip()
+            self._connect_flow(provider or None)
+            return
+
+        if lower == "provider" or lower.startswith("provider "):
+            name = token.split(None, 1)[1].strip() if lower.startswith("provider ") else ""
             if not name:
-                self.console.print("[kite.error]/model provider <name>[/]")
+                self._connect_flow()
                 return
             self.provider = name
             self.state.provider = name
             self._model_cache = []
+            self._model_cache_provider = None
             self._model_resolved = False
             self._invalidate_harness()
-            self.console.print(f"[kite.muted]provider[/]  {name}")
+            self.console.print(f"[kite.muted]provider[/]  {name}  ·  /select or /login to continue")
             return
 
         if token:
@@ -674,6 +732,7 @@ class ChatSession:
             self.state.provider = self.provider or self.state.provider
             self.state.model = self.model or self.state.model
             self._model_cache = []
+            self._model_cache_provider = None
             self._model_resolved = True
             self._invalidate_harness()
             if save:
@@ -695,7 +754,7 @@ class ChatSession:
         cfg = UserConfig.load()
         self.console.print(
             f"session {provider}/{model or '—'}  ·  config {cfg.default_provider}/{cfg.default_model or '—'}\n"
-            f"[kite.muted]/model list <provider>  ·  /model select  ·  /model groq/id --save[/]"
+            f"[kite.muted]/login  ·  /select  ·  /provider  ·  /model list[/]"
         )
 
     def _ensure_prompt(self):
@@ -716,9 +775,16 @@ class ChatSession:
         def _toggle_thinking() -> str:
             return self._toggle_thinking_display()
 
+        def _expand_thinking_if_collapsed() -> str | None:
+            if self.state.thinking_expanded:
+                return None
+            note = self._toggle_thinking_display(arg="expand")
+            self._flash_note(note)
+            return note
+
         def _plan() -> str:
             self._apply_plan_mode()
-            return "plan mode"
+            return "plan · checklist only — /build to apply"
 
         def _build() -> str:
             self._apply_build_mode()
@@ -732,9 +798,12 @@ class ChatSession:
         bindings = make_repl_key_bindings(
             on_toggle_expand=lambda: self._flash_note(_toggle_expand()),
             on_toggle_thinking=lambda: self._flash_note(_toggle_thinking()),
+            on_expand_thinking=_expand_thinking_if_collapsed,
             on_plan=lambda: self._flash_note(_plan()),
             on_build=lambda: self._flash_note(_build()),
             on_status=lambda: self._flash_note(_status()),
+            is_busy=lambda: self._busy,
+            action_slot=self._composer_action,
         )
         self._prompt = make_prompt_session(completer, key_bindings=bindings)
         return self._prompt
@@ -748,9 +817,13 @@ class ChatSession:
                 default="",
                 show_default=False,
             )
-        except (EOFError, KeyboardInterrupt):
-            self.console.print("\n[kite.muted]bye[/]")
+        except EOFError:
             return None
+        except KeyboardInterrupt:
+            if self._busy:
+                return "/stop"
+            self.console.print("[kite.muted]Ctrl+D or /quit to leave[/]")
+            return ""
         return line
 
     def _show_keys(self) -> None:
@@ -790,61 +863,64 @@ class ChatSession:
             f"[kite.muted]·[/]  /login provider  ·  /logout provider"
         )
 
-    def _login_provider(self, arg: str) -> None:
-        from kite.providers.byos import is_oauth_provider
-        from kite.providers.catalog import load_catalog
-        from kite.providers.credentials import login_provider
-        from kite.providers.select import select_provider_interactive
+    def _apply_connected(self, provider: str, model: str) -> None:
+        self.provider = provider
+        self.model = model
+        self.state.provider = provider
+        self.state.model = model
+        self._model_cache = []
+        self._model_cache_provider = None
+        self._model_resolved = True
+        self._invalidate_harness()
 
-        provider = arg.strip()
-        if not provider:
-            picked = select_provider_interactive(self.console, oauth_first=True)
-            if not picked:
-                return
-            provider = picked
-        code, msg, resolved = login_provider(provider, set_default=True, console=self.console)
-        if code == 130:
-            self.console.print("[kite.muted]cancelled[/]")
-            return
-        if code != 0:
-            self.console.print(f"[kite.error]{msg}[/]")
-            return
-        self.console.print(f"[kite.success]{msg}[/]")
-        if resolved:
-            self.provider = resolved
-            self.state.provider = resolved
-            self._model_cache = []
-            try:
-                spec = load_catalog().get(resolved)
-            except KeyError:
-                spec = None
-            if spec is not None and is_oauth_provider(spec):
-                self.console.print(
-                    "[kite.muted]Tip:[/]  subscription linked — "
-                    "/model to view default or send a message"
-                )
-            else:
-                self.console.print("[kite.muted]Tip:[/]  /select to pick a model")
+    def _connect_flow(self, provider: str | None = None, *, force_login: bool = False) -> None:
+        from kite.providers.select import connect_interactive
+
+        code, picked, model = connect_interactive(
+            self.console,
+            provider=provider or None,
+            oauth_first=True,
+            persist=True,
+            login_if_needed=True,
+            force_login=force_login,
+        )
+        if code == 0 and picked and model:
+            self._apply_connected(picked, model)
+
+    def _login_provider(self, arg: str) -> None:
+        self._connect_flow(arg.strip() or None, force_login=True)
 
     def _logout_provider(self, arg: str) -> None:
         from kite.providers.credentials import logout_provider
 
         provider = arg.strip()
         if not provider:
-            self.console.print("[kite.error]/logout provider[/]")
-            return
+            from kite.providers.credentials import configured_providers
+
+            linked = [
+                (name, f"{name}  {env}")
+                for name, ok, env in configured_providers()
+                if ok and env != "local"
+            ]
+            if not linked:
+                self.console.print("[kite.muted]no linked providers[/]  ·  /login")
+                return
+            provider = self._pick(linked, title="Log out a provider", noun="provider") or ""
+            if not provider:
+                return
         code, msg = logout_provider(provider)
         style = "kite.success" if code == 0 else "kite.error"
         self.console.print(f"[{style}]{msg}[/]")
 
-    def _read_input(self) -> str | None:
+    def _read_input(self) -> ComposerResult:
         session = self._ensure_prompt()
-        if session is None:
-            return self._read_input_rich()
-        line = read_repl_line(session=session, state=self.state, fallback=self._read_input_rich)
-        if line is None:
-            self.console.print("\n[kite.muted]bye[/]")
-        return line
+        return read_repl_line(
+            session=session,
+            state=self.state,
+            fallback=self._read_input_rich,
+            busy=self._busy,
+            action_slot=self._composer_action,
+        )
 
     def _index(self) -> CommandIndex:
         return CommandIndex.load(self.cwd)
@@ -891,6 +967,7 @@ class ChatSession:
             "select": self._slash_model_select,
             "models": self._slash_model_list,
             "provider": self._slash_model_provider,
+            "refresh": self._slash_refresh_models,
             "thinking": self._slash_thinking,
             "fast": self._slash_fast,
             "reasoning": self._slash_reasoning,
@@ -913,6 +990,10 @@ class ChatSession:
             "remember": self._remember,
             "forget": self._slash_forget,
             "status": self._slash_status,
+            "stop": self._slash_stop,
+            "steer": self._slash_steer,
+            "jobs": self._slash_jobs,
+            "kill": self._slash_kill,
             "resume": self._slash_resume,
             "session": self._handle_session,
             "home": self._slash_home,
@@ -938,21 +1019,35 @@ class ChatSession:
 
     def _slash_plan(self, _arg: str) -> None:
         self._apply_plan_mode()
-        self.console.print("[kite.plan]plan mode[/]  read-only — I'll suggest, not edit")
+        self.console.print(
+            "[kite.plan]plan mode[/]  inspect + checklist only — no edits; /build when ready"
+        )
 
     def _slash_build(self, _arg: str) -> None:
         self._apply_build_mode()
-        self.console.print("[kite.build]build mode[/]  edits are on")
+        n = len(self.state.todos)
+        if n:
+            self.console.print(
+                f"[kite.build]build mode[/]  edits on — continuing {n} checklist item(s)"
+            )
+        else:
+            self.console.print("[kite.build]build mode[/]  edits are on")
 
     def _slash_approve(self, arg: str) -> None:
-        if not (arg or "").strip():
-            self.console.print(
-                "[kite.muted]yolo[/] — everything, no prompts\n"
-                "[kite.muted]auto[/] — auto in workspace; ask outside project folder\n"
-                "[kite.muted]supervised[/] — reads free; write/bash need approval"
+        token = (arg or "").strip()
+        if not token:
+            from kite.ui.commands import ARG_CHOICES
+
+            picked = self._pick(
+                ARG_CHOICES["approve"],
+                title="Approval mode",
+                current=approval_display_name(self.state.approval),
+                noun="mode",
             )
-            return
-        mode = parse_approval_mode(arg or None, default=self.state.approval)
+            if not picked:
+                return
+            token = picked
+        mode = parse_approval_mode(token or None, default=self.state.approval)
         self.state.approval = mode
         self._invalidate_harness()
         self.console.print(f"[kite.pending]approval[/] {approval_display_name(mode)}")
@@ -960,8 +1055,16 @@ class ChatSession:
     def _slash_restricted(self, arg: str) -> None:
         token = (arg or "").strip().lower()
         if token in ("", "toggle"):
-            self.state.sandbox_restricted = not self.state.sandbox_restricted
-        elif token in ("on", "true", "1", "yes"):
+            picked = self._pick(
+                [("on", "clamp paths to session cwd"), ("off", "host mode (default)")],
+                title="Sandbox",
+                current="on" if self.state.sandbox_restricted else "off",
+                noun="mode",
+            )
+            if not picked:
+                return
+            token = picked
+        if token in ("on", "true", "1", "yes"):
             self.state.sandbox_restricted = True
         elif token in ("off", "false", "0", "no"):
             self.state.sandbox_restricted = False
@@ -1048,13 +1151,77 @@ class ChatSession:
             self._sync_from_config()
 
     def _slash_model_select(self, arg: str) -> None:
-        self._model_cmd(f"select {arg}".strip())
+        self._connect_flow(arg.strip() or None)
+
+    def _slash_refresh_models(self, arg: str) -> None:
+        self._refresh_models(arg.strip())
 
     def _slash_model_list(self, arg: str) -> None:
-        self._model_cmd(f"list {arg}".strip())
+        """Pick a live model for a provider and save it to ~/.kite/config.toml."""
+        bits = arg.split()
+        if bits and bits[0].lower() in {"refresh", "r"}:
+            self._refresh_models(" ".join(bits[1:]).strip())
+            return
+        if not bits:
+            self._connect_flow()
+            return
+
+        from kite.providers.catalog import load_catalog
+
+        catalog = load_catalog()
+
+        def _as_provider(name: str) -> str | None:
+            try:
+                return catalog.get(name).name
+            except KeyError:
+                return None
+
+        providers = [_as_provider(b) for b in bits]
+        if all(providers):
+            names = list(dict.fromkeys(p for p in providers if p))
+            if len(names) == 1:
+                self._connect_flow(names[0])
+                return
+            picked = self._pick([(name, name) for name in names], title="Provider", noun="provider")
+            if picked:
+                self._connect_flow(picked)
+            return
+
+        provider = _as_provider(bits[0])
+        if not provider:
+            self.console.print(f"[kite.error]unknown provider[/]  {bits[0]}")
+            return
+        model = " ".join(bits[1:]).strip()
+        if not model:
+            self._connect_flow(provider)
+            return
+        from kite.config import UserConfig
+
+        self._apply_connected(provider, model)
+        cfg = UserConfig.load()
+        cfg.default_provider = provider
+        cfg.default_model = model
+        cfg.provider_defaults[provider] = model
+        path = cfg.save()
+        self.console.print(f"[kite.success]saved[/] {provider}/{model}  →  {path}")
+
+    def _refresh_models(self, provider_arg: str = "") -> None:
+        """Clear caches and re-open the live model picker from the provider API."""
+        from kite.providers.list_models import clear_model_list_cache
+
+        provider = (provider_arg or self.provider or self.state.provider or "").strip() or None
+        clear_model_list_cache(provider)
+        self._model_cache = []
+        self._model_cache_provider = None
+        label = provider or "all providers"
+        self.console.print(f"[kite.muted]refreshed[/]  {label}  ·  fetching from API…")
+        self._connect_flow(provider)
 
     def _slash_model_provider(self, arg: str) -> None:
-        self._model_cmd(f"provider {arg}".strip())
+        if arg.strip():
+            self._model_cmd(f"provider {arg}".strip())
+            return
+        self._connect_flow()
 
     def _slash_thinking(self, arg: str) -> None:
         self._set_reasoning(arg, command="thinking")
@@ -1064,16 +1231,21 @@ class ChatSession:
 
     def _slash_reasoning(self, arg: str) -> None:
         if not arg:
-            from kite.models.reasoning import reasoning_badge
+            from kite.ui.commands import ARG_CHOICES
 
-            badge = reasoning_badge(self.state.reasoning) or self.state.reasoning
-            info = self._reasoning_info()
-            extra = ""
-            if info is not None and info.can_both:
-                think = "|".join(info.thinking_levels())
-                fast = "|".join(info.fast_levels())
-                extra = f"  ·  /thinking {think}  /fast {fast}"
-            self.console.print(f"[kite.muted]effort[/]  {badge}{extra}")
+            picked = self._pick(
+                ARG_CHOICES["reasoning"],
+                title="Effort",
+                current=self.state.reasoning.split(":", 1)[0],
+                noun="effort",
+            )
+            if not picked:
+                from kite.models.reasoning import reasoning_badge
+
+                badge = reasoning_badge(self.state.reasoning) or self.state.reasoning
+                self.console.print(f"[kite.muted]effort[/]  {badge}")
+                return
+            self._set_reasoning(picked)
             return
         self._set_reasoning(arg)
 
@@ -1110,11 +1282,97 @@ class ChatSession:
             f"effort {self.state.reasoning} · "
             f"theme {theme_label()} · font {current_font()} · "
             f"${self.state.cost:.4f} · session {sid}"
+            + (f" · queued {len(self._inbox)}" if self._inbox else "")
         )
+
+    def _slash_stop(self, _arg: str) -> None:
+        if not self._busy:
+            self.console.print("[kite.muted]nothing running[/]  — session stays open")
+            return
+        self._request_stop()
+
+    def _slash_steer(self, arg: str) -> None:
+        text = (arg or "").strip()
+        if not text:
+            self.console.print("[kite.muted]/steer follow-up text[/]  or type while working, then Ctrl+G")
+            return
+        self._queue_steer(text)
+        if self._busy:
+            self._request_stop()
+        else:
+            self._run_task(text)
+
+    def _slash_jobs(self, _arg: str) -> None:
+        rows = self.jobs.list(active_only=True)
+        if not rows:
+            self.console.print("[kite.muted]no background jobs[/]  · bash background=true or live subagents")
+            return
+        items = [
+            (
+                job.id,
+                f"{job.kind:8}  {job.display_label(width=44)}"
+                + (f"  pid {job.pid}" if job.pid else ""),
+            )
+            for job in rows
+        ]
+        picked = self._pick(items, title="Background jobs (pick to kill)", noun="job")
+        if not picked:
+            return
+        if self.jobs.kill(picked):
+            self.state.active_jobs = self.jobs.active_count()
+            self.state.touch()
+            self.console.print(f"[kite.success]killed[/] {picked}")
+        else:
+            self.console.print(f"[kite.muted]already gone[/] {picked}")
+
+    def _slash_kill(self, arg: str) -> None:
+        token = (arg or "").strip().lower()
+        if not token:
+            from kite.ui.commands import ARG_CHOICES
+
+            rows = self.jobs.list(active_only=True)
+            choices = [("all", "kill every background job and live subagent")]
+            choices.extend(
+                (
+                    job.id,
+                    f"{job.kind}  {job.display_label(width=40)}"
+                    + (f"  pid {job.pid}" if job.pid else ""),
+                )
+                for job in rows
+            )
+            if len(choices) == 1 and not rows:
+                self.console.print("[kite.muted]no jobs to kill[/]  · /kill id|all")
+                return
+            picked = self._pick(choices, title="Kill job", noun="job")
+            if not picked:
+                return
+            token = picked
+        if token == "all":
+            n = self.jobs.kill_all()
+            self.state.active_jobs = self.jobs.active_count()
+            self.state.touch()
+            self.console.print(f"[kite.success]killed[/] {n} job{'s' if n != 1 else ''}")
+            return
+        if self.jobs.kill(token):
+            self.state.active_jobs = self.jobs.active_count()
+            self.state.touch()
+            self.console.print(f"[kite.success]killed[/] {token}")
+        else:
+            self.console.print(f"[kite.error]no running job[/] {token}")
+
+    def _teardown_jobs(self) -> None:
+        n = self.jobs.kill_all()
+        self.state.active_jobs = 0
+        self.state.touch()
+        if n:
+            self.console.print(f"[kite.muted]stopped {n} background job{'s' if n != 1 else ''}[/]")
 
     def _slash_resume(self, arg: str) -> None:
         if not arg:
-            self.console.print("[kite.error]/resume <session-id>[/]  ·  /sessions")
+            sid = self._pick_session("Resume a session")
+            if not sid:
+                return
+            self._open_session(sid)
             return
         self._open_session(arg)
 
@@ -1207,7 +1465,7 @@ class ChatSession:
         self.console.print(f"[kite.success]opened[/] {session.id}  — type to pick up where you left off")
 
     def _handle_session(self, arg: str) -> None:
-        from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
+        from kite.memory.session import delete_all_sessions, delete_session, load_session
 
         raw = arg.strip()
         verb, _, rest = raw.partition(" ")
@@ -1220,19 +1478,41 @@ class ChatSession:
                 self.console.print("[kite.muted]no session yet[/]  ·  /sessions")
             return
         if verb in {"list", "ls"}:
-            rows = list_sessions(limit=20)
-            if not rows:
-                self.console.print("[kite.muted]no sessions[/]")
+            sid = self._pick_session("Sessions")
+            if not sid:
                 return
-            table = kite_table("sessions")
-            table.add_column("id")
-            table.add_column("model")
-            table.add_column("label")
-            for meta in rows:
-                mark = " · current" if meta.id == self._session_id else ""
-                table.add_row(meta.id, f"{meta.provider}/{meta.model}", (meta.label or "")[:50] + mark)
-            self.console.print(table)
-            self.console.print("[kite.muted]/session open <id>  ·  /session show <id>[/]")
+            action = self._pick(
+                [
+                    ("open", "continue this chat"),
+                    ("show", "print transcript"),
+                    ("delete", "delete this session"),
+                ],
+                title=sid,
+                current="open",
+                noun="action",
+            )
+            if action == "open":
+                self._open_session(sid)
+            elif action == "show":
+                try:
+                    self._print_session(load_session(sid), tail=20)
+                except (OSError, ValueError) as e:
+                    self.console.print(f"[kite.error]{e}[/]")
+            elif action == "delete":
+                from kite.ui.pick import confirm
+
+                if not confirm(self.console, f"Delete {sid}?", default=False):
+                    self.console.print("[kite.muted]cancelled[/]")
+                    return
+                try:
+                    gone = delete_session(sid)
+                except (OSError, ValueError) as e:
+                    self.console.print(f"[kite.error]{e}[/]")
+                    return
+                if gone.id == self._session_id:
+                    self._reset_chat()
+                extra = " + trajectory" if gone.trajectory else ""
+                self.console.print(f"[kite.success]removed[/] {gone.id}{extra}")
             return
         if verb in {"show", "cat", "view"}:
             target = rest or self._session_id
@@ -1248,7 +1528,10 @@ class ChatSession:
             return
         if verb in {"open", "resume", "use"}:
             if not rest:
-                self.console.print("[kite.error]/session open <id>[/]  ·  /sessions")
+                sid = self._pick_session("Open a session")
+                if not sid:
+                    return
+                self._open_session(sid)
                 return
             self._open_session(rest)
             return
@@ -1314,6 +1597,15 @@ class ChatSession:
             mark = f" {glyph('home')}" if skill.source == "user" else ""
             table.add_row(f"/{skill.name}{mark}", (skill.description or "")[:70])
         self.console.print(table)
+        if not index.skills:
+            return
+        picked = self._pick(
+            [(s.name, f"{s.name}  {(s.description or '')[:50]}") for s in index.skills],
+            title="Show a skill (empty = done)",
+            noun="skill",
+        )
+        if picked:
+            self._show_skills(picked)
 
     def _handle_commands(self, arg: str) -> None:
         if arg.startswith("new "):
@@ -1408,21 +1700,83 @@ class ChatSession:
             self.console.print(f"  {ep.id}  {ep.kind}  {ep.summary}")
 
     def _remember(self, arg: str) -> None:
-        scope = "user"
+        from kite.memory.store import MemoryScope
+
+        scope: MemoryScope = "user"
         text = arg.strip()
         head, _, tail = text.partition(" ")
-        if head.lower() in {"user", "project"}:
-            scope = head.lower()
+        if head.lower() == "project":
+            scope = "project"
+            text = tail.strip()
+        elif head.lower() == "user":
             text = tail.strip()
         if not text:
             self.console.print("[kite.error]/remember [user|project] text[/]")
             return
         try:
-            note = self.memory.remember(text, scope=scope)  # type: ignore[arg-type]
+            note = self.memory.remember(text, scope=scope)
         except ValueError as e:
             self.console.print(f"[kite.error]{e}[/]")
             return
         self.console.print(f"[kite.success]remembered[/] {note.scope}/{note.id}  {note.text}")
+
+    def _sync_queue_count(self) -> None:
+        self.state.queued = len(self._inbox)
+        self.state.touch()
+
+    def _queue_message(self, text: str) -> None:
+        text = text.strip()
+        if not text:
+            return
+        self._inbox.append(text)
+        self._sync_queue_count()
+        self._flash_note(f"queued {len(self._inbox)}")
+        self.console.print(f"[kite.muted]queued[/]  {text[:80]}{'…' if len(text) > 80 else ''}")
+
+    def _queue_steer(self, text: str) -> None:
+        text = text.strip()
+        if text:
+            self._inbox.appendleft(text)
+            self._sync_queue_count()
+            self._flash_note("steering")
+            self.console.print(f"[kite.pending]steer[/]  {text[:80]}{'…' if len(text) > 80 else ''}")
+
+    def _request_stop(self) -> None:
+        if self._harness is not None:
+            self._harness.request_interrupt()
+        self.state.interrupted = True
+        self._flash_note("stopping…")
+
+    def _wake_composer(self) -> None:
+        prompt = self._prompt
+        if prompt is None:
+            return
+        app = getattr(prompt, "app", None)
+        if app is None or not getattr(app, "is_running", False):
+            return
+
+        def _exit() -> None:
+            try:
+                if getattr(app, "is_running", False):
+                    app.exit(result="")
+            except Exception:
+                pass
+
+        loop = getattr(app, "loop", None) or getattr(app, "_loop", None)
+        if loop is not None:
+            try:
+                loop.call_soon_threadsafe(_exit)
+                return
+            except Exception:
+                return
+        try:
+            app.call_from_executor(_exit)
+        except Exception:
+            return
+
+    def _bind_session(self, harness) -> None:
+        if harness.last_session:
+            self._session_id = harness.last_session.id
 
     def _run_task(self, task: str) -> None:
         from kite.ui.attach import collect_turn_attachments
@@ -1448,26 +1802,77 @@ class ChatSession:
         harness.approver = self._approver()
         harness.checkpoints = self.git
         harness.todos = self.todos
-        try:
-            result = harness.run(task)
-        except KeyboardInterrupt:
-            self.display.close()
-            self.console.print("[kite.error]stopped[/]  [kite.muted]type a correction to steer[/]")
-            if harness.last_session:
-                self._session_id = harness.last_session.id
+        self._busy = True
+        self.state.busy = True
+        self.state.interrupted = False
+        done = threading.Event()
+        box: dict = {}
+
+        def worker() -> None:
+            try:
+                box["result"] = harness.run(task)
+            except KeyboardInterrupt:
+                box["interrupted"] = True
+            except Exception as e:
+                box["err"] = e
+            finally:
+                done.set()
+                self._busy = False
+                self.state.busy = False
+                self._wake_composer()
+
+        threading.Thread(target=worker, daemon=True, name="kite-turn").start()
+        while not done.is_set():
+            got = self._read_input()
+            if done.is_set():
+                break
+            if got.kind == "eof":
+                self._quit_after_turn = True
+                self._request_stop()
+                break
+            if got.kind == "stop":
+                self._request_stop()
+                break
+            if got.kind == "steer":
+                self._queue_steer(got.text)
+                self._request_stop()
+                break
+            if got.kind == "text":
+                line = got.text
+                low = line.lower()
+                if low in {"/stop", "/s"}:
+                    self._request_stop()
+                    break
+                if low in {"/quit", "/q", "/exit"}:
+                    self._quit_after_turn = True
+                    self._request_stop()
+                    break
+                if low.startswith("/steer "):
+                    self._queue_steer(line.split(" ", 1)[1])
+                    self._request_stop()
+                    break
+                if line.startswith("/"):
+                    self.console.print(
+                        "[kite.muted]still working[/]  — Esc/Ctrl+C stop · Ctrl+G steer · Enter queues chat"
+                    )
+                    continue
+                self._queue_message(line)
+        done.wait()
+        self._busy = False
+        self.state.busy = False
+        self.display.close()
+        self._bind_session(harness)
+        if box.get("err") is not None:
+            err = box["err"]
+            self.state.last_error = str(err)
+            self.console.print(f"[kite.error]✗ {escape(str(err))}[/]  [kite.muted]/trace[/]")
             return
-        except Exception as e:
-            self.display.close()
-            self.state.last_error = str(e)
-            self.console.print(f"[kite.error]✗ {escape(str(e))}[/]  [kite.muted]/trace[/]")
-            return
-        finally:
-            self.display.close()
         self.attachments = []
         self._sync_attach_count()
-        if harness.last_session:
-            self._session_id = harness.last_session.id
-        extra = result or {}
+        extra = box.get("result") or {}
+        if extra.get("exit_status") == "Interrupted" or box.get("interrupted"):
+            self.state.interrupted = True
+            self.console.print("[kite.muted]session kept[/]  — type to continue, Ctrl+G after a stop to steer")
         if extra.get("exit_status") == "ProviderFault":
             self.state.last_error = str(extra.get("error") or "provider fault")
             return
@@ -1492,15 +1897,33 @@ class ChatSession:
             self._pending_open = None
 
         while True:
-            line = self._read_input()
-            if line is None:
+            if self._quit_after_turn:
+                self._teardown_jobs()
+                self.console.print("[kite.muted]bye[/]")
                 return 0
-            line = line.strip()
-            if not line:
-                continue
+            if self._inbox:
+                line = self._inbox.popleft()
+                self._sync_queue_count()
+                self.console.print(f"[kite.muted]› queued[/]  {line[:80]}{'…' if len(line) > 80 else ''}")
+            else:
+                got = self._read_input()
+                if got.kind == "eof":
+                    self._teardown_jobs()
+                    self.console.print("\n[kite.muted]bye[/]")
+                    return 0
+                if got.kind == "stop":
+                    self.console.print("[kite.muted]nothing running[/]  — session stays open")
+                    continue
+                if got.kind == "empty":
+                    continue
+                line = got.text
+                if not line:
+                    continue
             parsed = resolve_slash(line, self._index())
             if parsed.kind != "not_slash":
                 if not self._handle_slash(line, parsed):
+                    self._teardown_jobs()
+                    self.console.print("[kite.muted]bye[/]")
                     return 0
                 continue
             self._run_task(line)

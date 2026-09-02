@@ -65,13 +65,13 @@ def _tool_meta(duration_ms: int | None, exit_code: int | None) -> str:
     return " ".join(bits)
 
 def render_thinking_summary(chars: int, lines: int, *, expanded_hint: bool = True) -> Text:
-    """Collapsed thinking row — expand with /expand-thinking."""
+    """Collapsed thinking row — expand with Ctrl+T or /expand-thinking."""
     t = Text()
     t.append(f"{GUTTER}{SYMBOL_REASON} ", style="kite.thinking")
     t.append("thinking", style="kite.thinking bold")
     t.append(f"  ·  {lines} line{'s' if lines != 1 else ''} · {chars:,} chars", style="kite.muted")
     if expanded_hint:
-        t.append("  ·  /expand-thinking", style="kite.muted")
+        t.append("  ·  Ctrl+T · /expand-thinking", style="kite.muted")
     t.append("\n")
     return t
 
@@ -200,6 +200,8 @@ _RENDER_EVENT_KINDS = (
     "cache_hit",
     "subagent_start",
     "subagent_end",
+    "job_start",
+    "job_end",
     "warning",
     "mode",
 )
@@ -543,9 +545,8 @@ class RunDisplay:
             self.console.print(summary_line)
 
         if isinstance(diff, str) and diff.strip():
-            self.console.print(
-                render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all))
-            )
+            # Always show colour-coded hunks (first preview window); /expand for full.
+            self.console.print(render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all)))
         elif not ok:
             err = str(p.get("error") or p.get("output") or "")
             if err:
@@ -587,6 +588,16 @@ class RunDisplay:
             self.console.print(Text(f"{GUTTER}⚠ {gap}", style="kite.pending"))
 
     def _on_cost_estimate(self, p: dict[str, Any]) -> None:
+        try:
+            limit = float(p.get("cost_limit") or 0)
+        except (TypeError, ValueError):
+            limit = 0.0
+        if limit > 0:
+            self.state.budget_limit = limit
+            self._touch_state()
+        # Prefer toolbar chip while composer is active — avoid mid-prompt scrollprint.
+        if self.state.busy:
+            return
         note = str(p.get("note") or "")
         if note:
             self.console.print(Text(f"{GUTTER}{note}", style="kite.muted"))
@@ -782,6 +793,8 @@ class RunDisplay:
     def _on_agent_end(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
+        self.state.budget_limit = None
+        self._touch_state()
         self._render_agent_end_status(p)
         self.print_status()
 
@@ -837,6 +850,38 @@ class RunDisplay:
         preview = str(p.get("preview") or "")
         if preview:
             self.console.print(Text(f"{GUTTER}{GUTTER}{preview[:100]}", style="kite.muted"))
+
+    def _on_job_start(self, p: dict[str, Any]) -> None:
+        try:
+            active = int(p.get("active") or 0)
+            self.state.active_jobs = active if active else self.state.active_jobs + 1
+        except (TypeError, ValueError):
+            self.state.active_jobs += 1
+        self._touch_state()
+        kind = str(p.get("kind") or "job")
+        if kind == "bash":
+            label = str(p.get("label") or p.get("command") or p.get("id") or "job")
+            self.console.print(
+                Text(f"{GUTTER}{SYMBOL_COLLAPSE} job  {kind}  {label}", style="kite.muted")
+            )
+
+    def _on_job_end(self, p: dict[str, Any]) -> None:
+        try:
+            if "active" in p:
+                self.state.active_jobs = max(0, int(p.get("active") or 0))
+            else:
+                self.state.active_jobs = max(0, self.state.active_jobs - 1)
+        except (TypeError, ValueError):
+            self.state.active_jobs = max(0, self.state.active_jobs - 1)
+        self._touch_state()
+        kind = str(p.get("kind") or "")
+        if kind == "bash":
+            ok = p.get("ok", True)
+            mark = SYMBOL_OK if ok else SYMBOL_FAIL
+            style = "kite.success" if ok else "kite.muted"
+            label = str(p.get("label") or p.get("id") or "job")
+            status = str(p.get("status") or ("done" if ok else "ended"))
+            self.console.print(Text(f"{GUTTER}{mark} job  {kind}  {label}  {status}", style=style))
 
     def _on_warning(self, p: dict[str, Any]) -> None:
         msg = str(p.get("message") or "").strip()

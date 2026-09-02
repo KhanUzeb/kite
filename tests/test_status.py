@@ -45,6 +45,25 @@ def test_format_status_tail_includes_cache_and_agents() -> None:
     assert "$0.120" in tail
 
 
+def test_format_status_tail_plan_shows_checklist_progress() -> None:
+    from kite.agent.mode import AgentMode, ApprovalMode
+    from kite.ui.state import TodoItem
+
+    state = SessionUiState(
+        mode=AgentMode.PLAN,
+        approval=ApprovalMode.READONLY,
+        model="m",
+        todos=[
+            TodoItem(id="1", content="explore", status="completed"),
+            TodoItem(id="2", content="ship", status="pending"),
+        ],
+    )
+    tail = format_status_tail(state)
+    assert "plan" in tail
+    assert "readonly" in tail
+    assert "list 1/2" in tail
+
+
 def test_render_status_matches_format_status_tail() -> None:
     state = SessionUiState(
         provider="groq",

@@ -92,3 +92,48 @@ def test_render_diff_leads_with_stat() -> None:
     assert "+2,-1" in plain
     assert "src/foo.py" in plain
     assert "+new" in plain
+
+
+def test_render_diff_color_codes_hunk_lines() -> None:
+    diff = (
+        "--- a/src/foo.py\n"
+        "+++ b/src/foo.py\n"
+        "@@ -1,3 +1,3 @@\n"
+        " keep\n"
+        "-old\n"
+        "+new\n"
+    )
+    text = render_diff(diff)
+    styles = {span.style for span in text.spans}
+    assert "kite.diff.add" in styles
+    assert "kite.diff.del" in styles
+    assert "kite.diff.hunk" in styles
+    assert "kite.diff.ctx" in styles
+    assert "kite.diff.meta" in styles
+
+
+def test_dark_palette_is_near_black_ready() -> None:
+    from kite.ui.theme import palette, reset_prefs, set_theme
+
+    reset_prefs(theme="auto", font="unicode")
+    try:
+        set_theme("dark")
+        styles = palette()["styles"]
+        assert "bright_cyan" in styles["kite.brand"] or "cyan" in styles["kite.brand"]
+        assert "bright_green" in styles["kite.diff.add"] or "green" in styles["kite.diff.add"]
+        assert "kite.diff.ctx" in styles
+    finally:
+        reset_prefs(theme="auto", font="unicode")
+
+
+def test_pt_style_dark_menu_is_near_black() -> None:
+    from kite.ui.complete import _PT, _pt_style
+
+    if not _PT:
+        return
+    style = _pt_style(dark=True)
+    assert style is not None
+    rules = dict(style.style_rules)
+    assert "bg:#050505" in rules["completion-menu"]
+    assert "ansibrightcyan" in rules["prompt"]
+

@@ -25,6 +25,46 @@ def test_warning_event_prints_muted_line() -> None:
     assert "filesystem mount failed" in out
 
 
+def test_cost_estimate_stores_budget_skips_print_when_busy() -> None:
+    buf, display = _display()
+    display.state.busy = True
+    display(
+        Event(
+            "cost_estimate",
+            payload={
+                "cost_limit": 5.0,
+                "step_limit": 40,
+                "note": "Budget: ≤$5.00 across up to 40 model calls",
+            },
+        )
+    )
+    assert display.state.budget_limit == 5.0
+    assert "Budget" not in buf.getvalue()
+
+
+def test_cost_estimate_prints_when_idle() -> None:
+    buf, display = _display()
+    display.state.busy = False
+    display(
+        Event(
+            "cost_estimate",
+            payload={
+                "cost_limit": 3.0,
+                "note": "Budget: ≤$3.00 across up to 40 model calls",
+            },
+        )
+    )
+    assert display.state.budget_limit == 3.0
+    assert "Budget" in buf.getvalue()
+
+
+def test_agent_end_clears_budget_limit() -> None:
+    buf, display = _display()
+    display.state.budget_limit = 5.0
+    display(Event("agent_end", payload={"exit_status": "Submitted", "submission": "done"}))
+    assert display.state.budget_limit is None
+
+
 def test_idle_verification_is_silent() -> None:
     buf, display = _display()
     display(Event("artifact", payload={"status": "idle", "artifact_count": 0, "diff_count": 0, "gaps": [], "artifacts": []}))

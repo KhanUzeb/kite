@@ -15,21 +15,25 @@ class BuiltinCommand:
 
 
 BUILTINS: tuple[BuiltinCommand, ...] = (
-    BuiltinCommand("plan", "Read-only mode — produce a checklist", aliases=("p",), group="session"),
-    BuiltinCommand("build", "Apply edits, gated bash", aliases=("b",), group="session"),
-    BuiltinCommand("approve", "Autonomy: yolo|auto|supervised", hint="yolo|auto|supervised|trust|readonly", group="session"),
-    BuiltinCommand("restricted", "Path sandbox — off by default (host mode)", hint="on|off", aliases=("sandbox",), group="session"),
+    BuiltinCommand("plan", "Read-only — explore, checklist, then stop", aliases=("p",), group="session"),
+    BuiltinCommand("build", "Apply edits from the checklist", aliases=("b",), group="session"),
+    BuiltinCommand("approve", "Autonomy: yolo|auto|supervised", hint="[yolo|auto|supervised]", group="session"),
+    BuiltinCommand("restricted", "Path sandbox — off by default (host mode)", hint="[on|off]", aliases=("sandbox",), group="session"),
     BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
     BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),
     BuiltinCommand("compact", "Summarize older turns now (OpenRouter free)", group="session"),
     BuiltinCommand("checkpoint", "Save/list/restore transcript snapshot", hint="save|list|restore|show", group="session"),
     BuiltinCommand("handoff", "Export context for another agent", hint="[dir]", group="session"),
     BuiltinCommand("expand", "Toggle expanded tool output", group="session"),
-    BuiltinCommand("expand-thinking", "Show or hide model thinking trace", hint="collapse", group="session"),
+    BuiltinCommand("expand-thinking", "Show or hide model thinking trace (expanded by default)", hint="collapse", group="session"),
     BuiltinCommand("collapse", "Collapse tool output (default)", group="session"),
     BuiltinCommand("status", "Mode, model, effort, cost, session id", group="session"),
+    BuiltinCommand("stop", "Stop the current turn — session stays open", group="session"),
+    BuiltinCommand("steer", "Stop and inject a correction as the next turn", hint="text", group="session"),
+    BuiltinCommand("jobs", "List background bash jobs and live subagents", group="session"),
+    BuiltinCommand("kill", "Kill a background job or subagent", hint="[id|all]", group="session"),
     BuiltinCommand("session", "Show, list, open, or delete transcripts", hint="[list|show|open|delete]", aliases=("sessions",), group="session"),
-    BuiltinCommand("resume", "Continue a saved session", hint="id", group="session"),
+    BuiltinCommand("resume", "Continue a saved session", hint="[id]", group="session"),
     BuiltinCommand("init", "Write KITE.md project memory", group="session"),
     BuiltinCommand("trace", "Last error traceback", group="session"),
     BuiltinCommand("home", "Show ~/.kite paths", group="session"),
@@ -40,7 +44,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("setup", "First-run wizard (BYOK key or BYOS OAuth + model)", group="model"),
     BuiltinCommand(
         "login",
-        "Link provider — BYOK API key or BYOS OAuth subscription",
+        "Link provider (opens browser for BYOS) then pick a model",
         hint="provider",
         aliases=("signin",),
         group="model",
@@ -54,9 +58,10 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     ),
     BuiltinCommand("keys", "Show BYOK keys and BYOS OAuth link status", group="model"),
     BuiltinCommand("model", "Show, set, list, or pick model", hint="list|select|provider/id", group="model"),
-    BuiltinCommand("models", "List live models for the current provider", group="model"),
+    BuiltinCommand("models", "Pick a live model and save it to config", hint="[provider|refresh]", group="model"),
     BuiltinCommand("select", "Interactive model picker (saved to ~/.kite/config.toml)", hint="[provider]", group="model"),
-    BuiltinCommand("provider", "Show or set provider", hint="name", group="model"),
+    BuiltinCommand("provider", "Show or pick provider, then a model", hint="[name]", group="model"),
+    BuiltinCommand("refresh", "Re-fetch live models from the API, then pick", hint="[provider]", group="model"),
     BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
     BuiltinCommand("memory", "Semantic MEMORY.md + episodic log", hint="semantic|episodic", aliases=("mem",), group="memory"),
     BuiltinCommand("remember", "Append a semantic note", hint="[user|project] text", group="memory"),
@@ -101,7 +106,7 @@ LEGACY_HELP: dict[str, str] = {
 
 ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "approve": [
-        ("yolo", "no prompts — everything allowed"),
+        ("yolo", "skip in-workspace prompts; high-risk still asks"),
         ("auto", "auto in workspace; ask outside project"),
         ("supervised", "reads free; write/bash need approval"),
         ("approve", "alias for supervised"),
@@ -121,15 +126,19 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "model": [
         ("list", "live models for provider"),
         ("select", "interactive picker"),
+        ("refresh", "re-fetch models from API"),
+    ],
+    "models": [
+        ("refresh", "re-fetch models from API, then pick"),
     ],
     "mode": [
-        ("plan", "read-only checklist"),
-        ("build", "apply edits"),
+        ("plan", "explore + checklist, no edits"),
+        ("build", "apply checklist / edits"),
     ],
     "theme": [
         ("auto", "follow the terminal"),
-        ("kite", "cyan brand on dark"),
-        ("dark", "cyan brand, dark composer"),
+        ("kite", "bright cyan on dark"),
+        ("dark", "near-black UI, bright cyan accents"),
         ("light", "blue brand on light terminals"),
         ("dim", "low-contrast"),
         ("mono", "no color, bold errors only"),
@@ -137,6 +146,9 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "font": [
         ("unicode", "✓ ⚠ › — default"),
         ("ascii", "+ ! > — plain ASCII"),
+    ],
+    "kill": [
+        ("all", "kill every background job and live subagent"),
     ],
     "checkpoint": [
         ("save", "snapshot current transcript"),
