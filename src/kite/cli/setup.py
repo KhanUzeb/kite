@@ -22,7 +22,7 @@ from kite.providers.credentials import (
 from kite.providers.catalog import load_catalog
 from kite.providers.byos import is_oauth_provider
 from kite.providers.keys import api_key_for
-from kite.providers.select import select_model_interactive, select_provider_interactive
+from kite.providers.select import connect_interactive, select_provider_interactive
 
 # Re-export for tests and legacy imports.
 __all__ = [
@@ -90,28 +90,14 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
             "[cyan]chatgpt[/]/[cyan]claude[/]/[cyan]grok[/] (BYOS subscription)."
         )
 
-    picked = provider or select_provider_interactive(console)
+    picked = provider or select_provider_interactive(console, oauth_first=True)
     if not picked:
         console.print("[dim]Run [cyan]kite setup[/] or [cyan]/setup[/] in the REPL when ready.[/]")
         return 130
 
-    catalog = load_catalog()
-    try:
-        spec = catalog.get(picked)
-    except KeyError as e:
-        console.print(f"[red]{e}[/]")
-        return 2
-
-    if provider_needs_login(spec):
-        code, msg, _ = login_provider(picked, set_default=True, console=console)
-        if code == 130:
-            return 130
-        if code != 0:
-            console.print(f"[yellow]{msg}[/]")
-            return code
-        console.print(f"[green]{msg}[/]")
-
-    code, picked_provider, model = select_model_interactive(console, picked, persist=True)
+    code, picked_provider, model = connect_interactive(
+        console, provider=picked, persist=True, login_if_needed=True, oauth_first=True
+    )
     if code != 0 or not picked_provider or not model:
         return code or 130
 
@@ -168,14 +154,27 @@ def cmd_keys(args) -> int:
     env_path = env_file_path()
     catalog = load_catalog()
     cfg = UserConfig.load()
+    rows = configured_providers()
 
-    if getattr(args, "logout", None):
-        code, msg = logout_provider(args.logout)
+    if getattr(args, "logout", None) is not None:
+        provider = (args.logout or "").strip()
+        if not provider:
+            from kite.ui.pick import numbered_pick
+
+            linked = [(name, f"{name}  {env}") for name, ok, env in rows if ok and env != "local"]
+            if not linked:
+                console.print("[yellow]No linked providers to log out[/]")
+                return 1
+            provider = numbered_pick(
+                console, linked, current=None, title="Log out a provider", noun="provider"
+            )
+            if not provider:
+                return 130
+        code, msg = logout_provider(provider)
         style = "green" if code == 0 else "red"
         console.print(f"[{style}]{msg}[/]")
         return code
 
-    rows = configured_providers()
     table = Table(title="Provider credentials")
     table.add_column("provider")
     table.add_column("type")
@@ -226,8 +225,15 @@ def cmd_keys(args) -> int:
         for hint in status.hints[:2]:
             console.print(f"[dim]{hint}[/]")
 
-    if getattr(args, "set", None):
-        code, msg, _ = login_provider(args.set, set_default=False, console=console)
+    if getattr(args, "set", None) is not None:
+        provider = (args.set or "").strip()
+        if not provider:
+            from kite.providers.select import select_provider_interactive
+
+            provider = select_provider_interactive(console) or ""
+            if not provider:
+                return 130
+        code, msg, _ = login_provider(provider, set_default=False, console=console)
         if code == 130:
             console.print("\n[yellow]Cancelled[/]")
             return 130
@@ -235,44 +241,53 @@ def cmd_keys(args) -> int:
             console.print(f"[red]{msg}[/]")
             return code
         console.print(f"[green]{msg}[/]")
-        if needs_model_after_key(args.set):
-            console.print("[dim]Next:[/] [cyan]kite models -p {0} --select[/]".format(args.set))
+        if needs_model_after_key(provider):
+            console.print("[dim]Next:[/] [cyan]kite models -p {0} --select[/]".format(provider))
+        return 0
+
+    from kite.ui.pick import can_prompt, numbered_pick
+
+    if can_prompt():
+        picked = numbered_pick(
+            console,
+            [(name, f"{name}  {env}") for name, _ok, env in rows],
+            current=cfg.default_provider,
+            title="Link a provider (empty = done)",
+            noun="provider",
+        )
+        if picked:
+            code, msg, _ = login_provider(picked, set_default=False, console=console)
+            if code == 130:
+                console.print("\n[yellow]Cancelled[/]")
+                return 130
+            if code != 0:
+                console.print(f"[red]{msg}[/]")
+                return code
+            console.print(f"[green]{msg}[/]")
+            if needs_model_after_key(picked):
+                console.print("[dim]Next:[/] [cyan]kite models -p {0}[/]".format(picked))
     return 0
 
 
 def cmd_login(args) -> int:
-    """Link BYOK API key or BYOS OAuth subscription for a provider."""
-    from kite.providers.select import select_provider_interactive
+    """Link BYOK API key or BYOS OAuth subscription, then pick a model."""
+    from kite.providers.select import connect_interactive
     from kite.ui.style import make_console
 
     console = make_console(stderr=True)
-    provider = getattr(args, "provider", None)
-    if not provider:
-        picked = select_provider_interactive(console, oauth_first=True)
-        if not picked:
-            console.print("\n[yellow]Cancelled[/]")
-            return 130
-        provider = picked
-
-    code, msg, resolved = login_provider(
-        provider,
-        set_default=getattr(args, "set_default", True),
-        console=console,
+    code, resolved, model = connect_interactive(
+        console,
+        provider=getattr(args, "provider", None),
+        oauth_first=True,
+        persist=getattr(args, "set_default", True),
+        force_login=True,
     )
     if code == 130:
-        console.print("\n[yellow]Cancelled[/]")
         return 130
     if code != 0:
-        console.print(f"[red]{msg}[/]")
         return code
-    console.print(f"[green]{msg}[/]")
-    if resolved and needs_model_after_key(resolved):
-        catalog = load_catalog()
-        spec = catalog.get(resolved)
-        if is_oauth_provider(spec):
-            console.print("[dim]Next:[/] model uses your subscription — run [cyan]kite models -p {0}[/]".format(resolved))
-        else:
-            console.print("[dim]Next:[/] [cyan]kite models -p {0} --select[/]".format(resolved))
+    if resolved and model:
+        console.print(f"[dim]Ready[/]  [cyan]{resolved}/{model}[/]")
     return 0
 
 

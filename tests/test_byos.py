@@ -143,7 +143,7 @@ def test_import_claude_credentials(kite_home: Path, monkeypatch, tmp_path: Path)
     imported = _import_claude_cli_credentials()
     assert imported is not None
     assert imported["access_token"] == "sk-ant-oat01-test"
-    code, msg = _login_anthropic_oauth()
+    code, msg = _login_anthropic_oauth(load_catalog().get("claude"), console=None)
     assert code == 0
     assert has_oauth_session("anthropic")
 

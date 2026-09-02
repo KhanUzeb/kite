@@ -18,6 +18,26 @@ from kite.providers.keys import api_key_env_names, api_key_for
 _LIST_CACHE: dict[str, tuple[float, "ListModelsResult"]] = {}
 _LIST_TTL = 90.0
 
+
+def clear_model_list_cache(provider: str | None = None) -> None:
+    """Drop cached live model lists (and matching OAuth model cache)."""
+    if provider:
+        _LIST_CACHE.pop(provider, None)
+        try:
+            from kite.providers.byos import clear_oauth_model_cache
+
+            clear_oauth_model_cache(provider)
+        except Exception:
+            pass
+        return
+    _LIST_CACHE.clear()
+    try:
+        from kite.providers.byos import clear_oauth_model_cache
+
+        clear_oauth_model_cache()
+    except Exception:
+        pass
+
 # Modality ids that are useless for the coding agent (not a hard model allowlist).
 _NON_CHAT_HINTS = (
     "rerank",
