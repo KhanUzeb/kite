@@ -122,7 +122,6 @@ def estimate_usage(
     window: int = DEFAULT_WINDOW,
 ) -> ContextUsage:
     system_tokens = estimate_text_tokens(system)
-    # skip system role duplicates in messages list if present
     msg_tokens = 0
     count = 0
     for m in messages:
@@ -132,10 +131,8 @@ def estimate_usage(
         count += 1
     tool_tokens = estimate_tool_schema_tokens(tool_schemas or [])
     total = system_tokens + msg_tokens + tool_tokens
-    # If first message is system and we also passed system string, avoid double count
     if messages and messages[0].get("role") == "system" and system:
         total -= estimate_text_tokens(str(messages[0].get("content") or ""))
-        # still count overhead once
     return ContextUsage(
         total_tokens=max(0, total),
         system_tokens=system_tokens,
@@ -215,13 +212,11 @@ def compact_messages(
     if len(messages) < 6 and not force:
         return messages
 
-    # Always keep leading system message if present
     head: list[dict] = []
     body = list(messages)
     if body and body[0].get("role") == "system":
         head = [body.pop(0)]
 
-    # Walk from end by segment so tool results stay paired with tool_calls.
     kept_rev: list[dict] = []
     budget = 0
     for segment in reversed(_message_segments(body)):

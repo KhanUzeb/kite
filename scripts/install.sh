@@ -182,6 +182,7 @@ REPL tips (after kite setup):
   Ctrl+C                     interrupt current turn (REPL stays open)
   Ctrl+O / Ctrl+P / Ctrl+B   expand tools / plan / build
 
+Package: ./scripts/pkg.sh update | reinstall | uninstall
 Contributors: pytest  ·  optional: ./scripts/install.sh --verify
 Docs: ${INSTALL_DIR}/README.md  ·  ${INSTALL_DIR}/kite_commands.md
 EOF

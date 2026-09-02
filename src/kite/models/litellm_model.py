@@ -345,28 +345,30 @@ class LitellmModel:
             reasoning=think,
         )
 
+    def _query_stream_with_fallback(self, messages: list[dict]) -> dict:
+        try:
+            return self._query_stream(messages)
+        except FormatError:
+            raise
+        except Exception as e:
+            if not looks_like_reasoning_error(e):
+                return self._query_blocking(messages)
+            self.reasoning_mode = "off"
+            self._drop_reasoning = True
+            try:
+                return self._query_stream(messages)
+            except Exception:
+                return self._query_blocking(messages)
+
     def query(self, messages: list[dict]) -> dict:
         import litellm
 
         if is_oauth_provider(self.resolved.spec):
             ensure_oauth_env(self.resolved.spec)
 
-        # Quiet LiteLLM's banner / provider tips on errors.
         litellm.suppress_debug_info = True
         if self.stream:
-            try:
-                return self._query_stream(messages)
-            except FormatError:
-                raise
-            except Exception as e:
-                if looks_like_reasoning_error(e):
-                    self.reasoning_mode = "off"
-                    self._drop_reasoning = True
-                    try:
-                        return self._query_stream(messages)
-                    except Exception:
-                        return self._query_blocking(messages)
-                return self._query_blocking(messages)
+            return self._query_stream_with_fallback(messages)
         return self._query_blocking(messages)
 
     def format_observation_messages(

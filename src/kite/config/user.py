@@ -7,10 +7,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-try:
-    import tomli_w
-except ImportError:  # pragma: no cover
-    tomli_w = None  # type: ignore
+import tomli_w
 
 
 _ensured: set[str] = set()
@@ -125,27 +122,8 @@ class UserConfig:
             "theme": self.theme,
             "font": self.font,
         }
-        # tomli_w cannot serialize None; omit null optional fields
         payload = {k: v for k, v in payload.items() if v is not None}
-        if tomli_w is None:
-            # Minimal TOML writer fallback
-            lines = []
-            for k, v in payload.items():
-                if isinstance(v, bool):
-                    lines.append(f"{k} = {'true' if v else 'false'}")
-                elif isinstance(v, str) or v is None:
-                    if v is None:
-                        continue
-                    lines.append(f'{k} = "{v}"')
-                elif isinstance(v, (int, float)):
-                    lines.append(f"{k} = {v}")
-                elif isinstance(v, dict):
-                    lines.append(f"\n[{k}]")
-                    for dk, dv in v.items():
-                        lines.append(f'{dk} = "{dv}"')
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        else:
-            path.write_text(tomli_w.dumps(payload), encoding="utf-8")
+        path.write_text(tomli_w.dumps(payload), encoding="utf-8")
         _invalidate_user_config_cache()
         return path
 
