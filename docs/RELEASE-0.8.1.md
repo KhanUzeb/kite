@@ -30,6 +30,7 @@ Reads `~/.kite/sessions/` JSONL + stats sidecars for **your** machine only.
 
 - New keys: **double-entry**, validation, masked fingerprint (`••••abcd`)
 - `/keys` and `kite keys` — type column (BYOK/BYOS), OAuth `linked` / `login required`
+- BYOS login **opens a browser** and shows a device code (ChatGPT) or in-browser sign-in (Grok); Claude can paste `claude setup-token`
 - Model choice in `~/.kite/config.toml` — not `.env`
 
 ---
@@ -38,7 +39,7 @@ Reads `~/.kite/sessions/` JSONL + stats sidecars for **your** machine only.
 
 - **Mandatory approval** — `sudo`, `rm`, package installs, `git commit/push`, `curl`, etc. always prompt (no yolo bypass)
 - **Git reads** — `git status`, `log`, `diff` run without prompts; writes still gated
-- **Completion** — agent must not claim done early; idle nudges; stops on tool errors with logs
+- **Completion** — agent must not claim done early; idle turns that narrate success are blocked; consecutive failed tools get a “don’t claim done” nudge
 - **Submit gate** (from 0.8.0) — evidence required before declaring success
 
 ---
@@ -72,11 +73,19 @@ Higher limits, periodic checkpoints, `mode_long.md` guidance.
 ## Upgrade
 
 ```bash
-git pull
-git checkout v0.8.1    # or merge main after release PR
+./scripts/pkg.sh update       # git pull + editable reinstall (existing checkout)
+# or first-time / fresh venv:
 ./scripts/install.sh --no-clone
 pytest -q
 kite --version   # 0.8.1
+```
+
+Reinstall or remove the package (keeps `~/.kite/`):
+
+```bash
+./scripts/pkg.sh reinstall
+./scripts/pkg.sh uninstall          # pip uninstall only
+./scripts/pkg.sh uninstall --remove-venv
 ```
 
 ```bash

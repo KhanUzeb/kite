@@ -49,17 +49,22 @@ Shared flags on `run` / `chat` / `resume`:
 Housekeeping (no model):
 
 ```
+kite sessions                  # TTY: pick to open / show / delete
 kite sessions [--limit N] [--show id] [--tail N]
 kite sessions --delete <id> [<id> ...]
-kite sessions --delete-all -y
+kite sessions --delete-all     # TTY confirms; else pass -y
 kite setup [-p provider]       # first-run wizard: credentials + model
-kite login [provider]          # BYOK hidden key or BYOS OAuth (chatgpt/claude/grok)
-kite keys [--set provider]     # show status or paste BYOK API keys (hidden input)
-kite keys --logout provider    # remove BYOK key or BYOS OAuth session
-kite providers
-kite models [-p provider] [--select]
+kite login [provider]          # pick provider if omitted → BYOK key or BYOS browser → pick model
+kite keys                      # TTY: status then pick a provider to link
+kite keys [--set [provider]]   # paste BYOK API keys (hidden); omit provider to pick
+kite keys --logout [provider]  # unlink BYOK/BYOS; omit provider to pick
+kite providers                 # status; TTY then pick to connect
+kite models [-p provider]      # TTY: pick a live model (saved). --list dumps the table
+kite models --refresh          # bypass cache; re-fetch from the provider API
+kite models --select           # same picker
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
 kite context [--json]
+kite skills                    # TTY: pick a skill to show
 kite skills [--show name] [--add pkg]
 kite commands
 kite plugins
@@ -68,9 +73,7 @@ kite runtime-config [--config name]
 kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
 ```
 
-`kite dashboard` is **per-user** — it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
-
-```
+`kite dashboard` is per-user: it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
 
 ---
 
@@ -80,37 +83,41 @@ These never go to the model.
 
 | Command | What it does |
 |---------|----------------|
-| `/plan` `/p` | Read-only mode, checklist |
-| `/build` `/b` | Apply edits; approval stays unless it was readonly |
-| `/approve yolo\|auto\|supervised` | Autonomy: yolo (no prompts), auto (workspace-scoped), supervised (approve mutations) |
-| `/restricted on\|off` `/sandbox` | Path sandbox (default **off** = host mode) |
+| `/plan` `/p` | Read-only: explore + checklist (no edits); switch to `/build` to apply |
+| `/build` `/b` | Apply edits; continues existing plan checklist; approval leaves `readonly` → supervised |
+| `/approve yolo\|auto\|supervised` | Autonomy. Empty: numbered picker. yolo skips in-workspace prompts; high-risk still asks |
+| `/restricted on\|off` `/sandbox` | Path sandbox (default **off**). Empty: pick on/off |
+| `/theme [auto\|kite\|dark\|light\|dim\|mono]` | Color palette. Empty: pick |
+| `/font [unicode\|ascii]` | Glyph pack. Empty: pick |
+| `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort. Empty: pick |
 | `/model [provider/id]` | Show or set model |
 | `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
-| `/select [provider]` | Interactive model picker (saved to config) |
-| `/models [provider]` | List live models for the current (or named) provider |
-| `/provider [name]` | Show or set provider |
-| `/login [provider]` | Link provider — **BYOK**: hidden API key (double-entry for new keys) → `~/.kite/.env`; **BYOS**: OAuth → `~/.kite/oauth/` |
-| `/logout provider` | Unlink — removes BYOK key from `.env` or BYOS OAuth session |
+| `/select [provider]` | Pick provider if needed, login if unlinked, then pick a live model (saved) |
+| `/models [provider [model]]` | Pick a live model and save to `~/.kite/config.toml`. Empty: pick provider first. Two+ provider names: pick among them |
+| `/models refresh [provider]` `/refresh` | Clear the model cache, re-fetch from the provider API, then pick (also **F5**) |
+| `/provider [name]` | Empty: same connect flow as `/select`. With a name: set provider |
+| `/login [provider]` | Always (re)link credentials, then pick a model. BYOS opens a browser + device code |
+| `/logout [provider]` | Unlink; omit provider to pick |
+| `/sessions` `/session list` | Numbered picker: open / show / delete |
+| `/session open [id]` `/resume [id]` | Continue that chat; omit id to pick |
 | `/keys` | Credential status with type (BYOK/BYOS), masked key fingerprint, OAuth link state |
-| `/thinking` `/fast` | Effort: extended thinking, or low-latency (if the model supports it) |
-| `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort; shown on the footer |
+| `/thinking` `/fast` | Effort shortcuts (`/reasoning thinking` / `/reasoning fast`) |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
 | `/clear` `/new` | Fresh chat session (memory notes stay) |
 | `/compact` | Summarize older turns now; ctx meter updates immediately |
 | `/cost` | USD + context |
-| `/status` | Mode, approval, model, cost, session id |
+| `/stop` | Stop the current turn; session stays open |
+| `/steer text` | Stop and run `text` as the next turn |
+| `/jobs` | List background bash jobs and live subagents (pick to kill) |
+| `/kill [id\|all]` | Kill one background job/subagent, or all. Empty: pick |
 | `/session` | Current session id |
-| `/sessions` `/session list` | Recent transcripts |
 | `/session show [id]` | Print a transcript (current if omitted) |
-| `/session open <id>` `/resume <id>` | Continue that chat |
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Toggle expanded tool output |
 | `/collapse` | Collapse tool output (default) |
 | `/trace` | Last traceback |
-| `/theme [auto\|kite|dark|light|dim|mono]` | Color palette (saved in `~/.kite/config.toml`) |
-| `/font [unicode\|ascii]` | Glyph pack for this terminal |
-| `/skills [name]` | List skills, or print one. User-home skills show `~` |
+| `/skills [name]` | List skills, or print one. Empty: pick to show. User-home skills show `~` |
 | `/skills add pkg` | Install from npm, npx, or GitHub `owner/repo` into `~/.kite/skills` |
 | `/commands` | List markdown slash prompts |
 | `/commands new name` | Write `.kite/commands/name.md` |
@@ -134,11 +141,21 @@ Ctrl+C stops the **current turn**, not the process.
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+O` | Toggle expanded tool output (`/expand`) |
-| `Ctrl+P` | Plan mode |
-| `Ctrl+B` | Build mode |
-| `Ctrl+S` | Flash status on the footer |
-| `Tab` / `/` | Slash command menu with descriptions |
+| `Esc` / `Ctrl+C` | Stop the running turn (session stays). Idle `Ctrl+C` clears the line; does not quit |
+| `Ctrl+G` | Steer: stop and send the composer text as the next turn |
+| `Enter` | Send the line. While working, queues a chat follow-up |
+| `Ctrl+V` / `Shift+Insert` | Paste OS clipboard into the composer |
+| `Ctrl+Insert` | Copy composer selection to OS clipboard |
+| `Ctrl+O` / `F6` | Toggle expanded tool output (`/expand`) |
+| `Ctrl+P` / `F3` | Plan mode |
+| `Ctrl+B` / `F4` | Build mode |
+| `Ctrl+T` / `F7` | Toggle thinking trace (expanded by default) |
+| `F2` | Flash status on the footer (`Ctrl+S` is not bound; terminals use it for XOFF) |
+| `F5` | Refresh live models from the API, then pick |
+| `Tab` | Cycle slash completions (`Enter` always submits) |
+| `Ctrl+D` / `/quit` | Close the REPL |
+
+Drag-select, copy, and right-click paste stay with the terminal (mouse capture off by default). Set `KITE_MOUSE=1` for slash-menu wheel scroll (then use Shift+drag to select in most terminals).
 
 `/thinking` and `/fast` appear in the menu only when the current model’s API advertises both effort modes (e.g. OpenRouter, Groq, Nemotron). Use `/reasoning` when only one mode exists.
 
@@ -166,6 +183,9 @@ These **are** the next user turn. Overlay (later wins): bundled → `~/.kite/com
 | `/debug` | `/skill debug` |
 | `/review` | `/skill review` |
 | `/test` | `/skill test` |
+| `/orchestrate` | `/skill orchestrate` (todo + task + subagent fan-out) |
+| `/research` | `/skill research` (Context7 / websearch / webfetch) |
+| `/pr` | `/skill pr` (branch check, gh pr create) |
 
 If a project command is also named `commit`, `/commit` runs the markdown file; `/skill:commit` still loads the skill.
 
@@ -234,12 +254,23 @@ Build mode adds: `write` `edit` `bash`.
   approvals.json
 
 <repo>/.kite/
+  SYSTEM.md                 # optional: replace bundled system prompt (pi/Prime style)
+  APPEND_SYSTEM.md          # optional: append after the base prompt
   commands/*.md
   skills/
   plugins/
   memory/notes.jsonl
   MEMORY.md
 ```
+
+**System prompt overrides** (same idea as pi / Prime Agent):
+
+| File | Effect |
+|------|--------|
+| `.kite/SYSTEM.md` or `~/.kite/SYSTEM.md` | Replace the bundled base prompt (project wins) |
+| `.kite/APPEND_SYSTEM.md` or `~/.kite/APPEND_SYSTEM.md` | Append after the base (project wins); skills/context still follow |
+
+Harness override (`--system-prompt` / config) still beats discovered `SYSTEM.md`.
 
 Human commits are the source of truth for the project. Checkpoint `kite:` commits exist so `/undo` can revert agent edits without touching your own history.
 
@@ -253,6 +284,15 @@ Human commits are the source of truth for the project. Checkpoint `kite:` commit
 git clone https://github.com/KhanUzeb/kite.git && cd kite
 ./scripts/install.sh                    # macOS/Linux
 # .\scripts\install.ps1                 # Windows PowerShell
+```
+
+Package maintenance (not `kite` CLI subcommands):
+
+```bash
+./scripts/pkg.sh update       # git pull + editable reinstall
+./scripts/pkg.sh reinstall
+./scripts/pkg.sh uninstall    # optional --remove-venv
+# Windows: .\scripts\pkg.ps1 update|reinstall|uninstall
 ```
 
 One-liner (default install dir `~/kite` or `%USERPROFILE%\kite`):

@@ -26,7 +26,7 @@ src/kite/
   context/        Project discovery, workspace/execution cwd, token estimate
   providers/      Catalog, resolve model, list_models, credentials, select
   models/         LiteLLM wrapper, reasoning effort, prompt cache
-  tools/          Coding tools (read/write/edit/bash/set_cwd/…), metadata, web, github
+  tools/          Coding tools (read/write/edit/bash/set_cwd/…), jobs registry, metadata, web, github
   guardrails/     Path sandbox, execution mode, bash policy, secret redaction
   ui/             REPL, render, approval, complete, theme, status
   memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic
@@ -74,7 +74,7 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 4. **New CLI subcommands** — `cli/run.py` `build_parser()` + handler module.
 5. **Provider behavior** — `providers/` + `models/reasoning.py`; don’t hardcode model id lists.
 6. **Secrets** — `providers/credentials.py` writes `~/.kite/.env` with owner-only perms; never log key values.
-7. **Docs** — User-facing behavior changes need `kite_commands.md` and/or `docs/cli-ux.md`. Glossary changes → `CONTEXT.md`. Prompt changes → `data/prompts/system.md`.
+7. **Docs** — User-facing behavior changes need `kite_commands.md` and/or `docs/cli-ux.md`. Glossary changes → `CONTEXT.md`. Prompt changes → `data/prompts/system.md`. Project/user overrides: `.kite/SYSTEM.md` / `APPEND_SYSTEM.md` (same idea as pi / Prime Agent).
 
 ---
 
@@ -86,7 +86,7 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 | `kite run "…"` | `cli/run.py` `cmd_run` |
 | `/login groq` | `providers/credentials.py` → `ui/repl.py` |
 | Model resolution | `providers/resolve.py` |
-| Tool execution | `env/local.py` + `tools/coding.py` + `guardrails/` |
+| Tool execution | `env/local.py` + `tools/coding.py` + `tools/jobs.py` + `guardrails/` |
 | Context compaction | `agent/compaction.py` + `memory/compaction_ops.py` |
 | Checkpoints / handoff | `memory/context_checkpoint.py` + `memory/handoff.py` + `ui/repl.py` |
 | Benchmarks | `bench/` + `cli/bench.py` |
