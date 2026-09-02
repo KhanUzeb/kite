@@ -2,6 +2,23 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-09-02
+
+### Added
+- **JobRegistry** - unified background bash (ackground=true) and live subagents; /jobs, /kill [id|all], kill-on-quit; footer jobs N.
+- **Busy composer** - Esc/Ctrl+C//stop, Ctrl+G//steer, Enter queues; busy chrome on footer/composer; main-thread SIGINT.
+- **Left-bar pickers** - numbered TTY menus for approve/theme/skills/sessions/models and related CLI flows.
+- **Bundled skills** - /orchestrate, /research, /pr.
+- **SYSTEM.md / APPEND_SYSTEM.md** - project or user system prompt replace/append.
+- **Package scripts** - scripts/pkg.sh / pkg.ps1 update|reinstall|uninstall.
+
+### Changed
+- Plan/build handoff - plan writes checklist + risks; build continues the list.
+- Thinking traces expanded by default; mouse capture off by default; clipboard shortcuts in composer.
+- Submit gate blocks narrated done without a recorded passing check.
+
+### Fixed
+- BYOS login opens browser + left-bar device/code flow; interactive select/setup polish.
 ## [0.8.1] - 2026-09-01
 
 ### Added
