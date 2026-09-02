@@ -76,6 +76,26 @@ def sessions_dir() -> Path:
     return kite_home() / "sessions"
 
 
+# Event kinds persisted for crash-safe rollout replay (not re-fed to the model).
+DURABLE_EVENT_KINDS = frozenset(
+    {
+        "agent_start",
+        "agent_end",
+        "turn_start",
+        "turn_end",
+        "tool_start",
+        "tool_end",
+        "approval",
+        "compact",
+        "checkpoint",
+        "todo",
+        "interrupt",
+        "subagent_start",
+        "subagent_end",
+    }
+)
+
+
 @dataclass
 class SessionMeta:
     id: str
@@ -196,6 +216,25 @@ class Session:
             "label": label,
             "reason": reason,
             "updated_at": time.time(),
+        }
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        self.meta.updated_at = time.time()
+        self._touch_meta_timestamp(path)
+
+    def record_event(self, kind: str, payload: dict[str, Any] | None = None) -> None:
+        """Append a durable rollout event — survives crashes between model turns."""
+        if kind not in DURABLE_EVENT_KINDS:
+            return
+        path = self._session_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.is_file() or path.stat().st_size == 0:
+            self._write_meta()
+        row = {
+            "type": "event",
+            "kind": kind,
+            "ts": time.time(),
+            "payload": payload or {},
         }
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")

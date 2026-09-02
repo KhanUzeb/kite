@@ -48,6 +48,8 @@ class SessionUiState:
     todos: list[TodoItem] = field(default_factory=list)
     last_tool: ToolBlock | None = None
     expanded_all: bool = False
+    thinking_expanded: bool = False
+    last_thinking: str = ""
     reasoning: str = "auto"
     pending_attach: int = 0
     cache_hit_tokens: int = 0

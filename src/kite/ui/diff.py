@@ -5,7 +5,6 @@ from __future__ import annotations
 import difflib
 from pathlib import Path
 
-from rich.syntax import Syntax
 from rich.text import Text
 
 from kite.ui.style import (
@@ -15,7 +14,6 @@ from kite.ui.style import (
     PREVIEW_FILE_MAX_BYTES,
     SYMBOL_COLLAPSE,
     SYMBOL_EXPAND,
-    syntax_theme,
 )
 
 
@@ -218,37 +216,6 @@ def render_diff(
     return body
 
 
-def guess_lexer(path: str) -> str:
-    ext = Path(path).suffix.lower().lstrip(".")
-    return {
-        "py": "python",
-        "ts": "typescript",
-        "tsx": "tsx",
-        "js": "javascript",
-        "jsx": "jsx",
-        "go": "go",
-        "rs": "rust",
-        "toml": "toml",
-        "md": "markdown",
-        "json": "json",
-        "yml": "yaml",
-        "yaml": "yaml",
-        "sh": "bash",
-        "ps1": "powershell",
-    }.get(ext, "text")
-
-
-def syntax_block(code: str, path: str, console) -> Syntax:
-    return Syntax(
-        code,
-        guess_lexer(path),
-        theme=syntax_theme(console),
-        line_numbers=False,
-        word_wrap=False,
-        background_color="default",
-    )
-
-
 __all__ = [
     "make_unified_diff",
     "count_diff_lines",
@@ -259,6 +226,4 @@ __all__ = [
     "file_contains",
     "render_diff",
     "render_diff_stat",
-    "guess_lexer",
-    "syntax_block",
 ]

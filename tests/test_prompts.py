@@ -23,13 +23,10 @@ class _StubEnv:
         return {"ok": True, "output": ""}
 
 
-def test_instance_prompt_wraps_task_without_legacy_boilerplate() -> None:
+def test_instance_prompt_is_task_only() -> None:
     cfg = load_runtime_config()
     text = assemble_instance_prompt(config=cfg, task="hi")
-    assert text.startswith("hi")
-    assert "Please solve this task" not in text
-    assert "Inspect before editing" not in text
-    assert "structured summary" in text
+    assert text.strip() == "hi"
 
 
 def test_system_prompt_matches_effort_on_greetings() -> None:
@@ -71,5 +68,14 @@ def test_oneshot_still_applies_instance_template() -> None:
 def test_assemble_system_includes_effort_section() -> None:
     cfg = load_runtime_config()
     text = assemble_system_prompt(config=cfg)
+    assert "## Session time" in text
+    assert "UTC:" in text
     assert "## Effort" in text
     assert "Don't open the repo, load a skill, or start a checklist" in text
+
+
+def test_system_prompt_mentions_context7_and_websearch() -> None:
+    system = load_prompt_template("system")
+    assert "context7_resolve" in system
+    assert "websearch" in system
+    assert "no other built-in mcp servers" in system.lower()

@@ -11,6 +11,9 @@ from kite.agent.events import Event
 from kite.agent.exceptions import FormatError
 from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, split_reasoning
 from kite.models.cache import PromptCacheManager, parse_cache_usage
+from kite.context.observation import observation_content
+from kite.models.tool_args import repair_tool_arguments
+from kite.providers.byos import ensure_oauth_env, is_oauth_provider
 from kite.providers.resolve import ResolvedModel
 from kite.tools import ToolRegistry
 
@@ -81,12 +84,13 @@ class LitellmModel:
         resolved: ResolvedModel,
         registry: ToolRegistry | None = None,
         temperature: float = 0.0,
-        max_retries: int = 2,
+        max_retries: int = 3,
         on_event: Callable[[Event], None] | None = None,
         stream: bool = True,
         reasoning: str = "auto",
         prompt_cache: PromptCacheManager | None = None,
         timeout_seconds: int = 180,
+        observation_max_chars: int = 8_000,
     ):
         self.resolved = resolved
         self.model_name = resolved.litellm_model
@@ -106,6 +110,7 @@ class LitellmModel:
         self.last_usage: dict[str, Any] = {}
         self.prompt_cache = prompt_cache
         self.timeout_seconds = timeout_seconds
+        self.observation_max_chars = observation_max_chars
         self.should_stop = lambda: False
 
     def _emit(self, kind: str, **payload: Any) -> None:
@@ -192,16 +197,15 @@ class LitellmModel:
             tc = tool_calls_acc[idx]
             name = tc.get("name") or ""
             raw_args = tc.get("arguments") or "{}"
-            try:
-                args = json.loads(raw_args) if raw_args.strip() else {}
-            except json.JSONDecodeError as e:
+            args, err = repair_tool_arguments(raw_args)
+            if args is None:
                 raise FormatError(
                     {
                         "role": "user",
-                        "content": f"Invalid tool arguments JSON: {e}",
+                        "content": err or "Invalid tool arguments JSON",
                         "extra": {"interrupt_type": "FormatError", "cost": cost},
                     }
-                ) from e
+                )
             if not isinstance(args, dict):
                 args = {"value": args}
             actions.append({"tool": name, "arguments": args, "id": tc.get("id")})
@@ -344,6 +348,9 @@ class LitellmModel:
     def query(self, messages: list[dict]) -> dict:
         import litellm
 
+        if is_oauth_provider(self.resolved.spec):
+            ensure_oauth_env(self.resolved.spec)
+
         # Quiet LiteLLM's banner / provider tips on errors.
         litellm.suppress_debug_info = True
         if self.stream:
@@ -368,9 +375,7 @@ class LitellmModel:
         actions = message.get("extra", {}).get("actions", [])
         obs: list[dict] = []
         for action, output in zip(actions, outputs):
-            content = output.get("output") or output.get("error") or json.dumps(output, default=str)
-            if len(content) > 12_000:
-                content = content[:6_000] + "\n...<elided>...\n" + content[-4_000:]
+            content = observation_content(output, max_chars=self.observation_max_chars)
             if action.get("id"):
                 obs.append(
                     {

@@ -226,10 +226,10 @@ def expand_prompt_slash(
 
 
 def help_text(index: CommandIndex) -> str:
-    from kite.ui.commands import BUILTINS
+    from kite.ui.commands import BUILTINS, LEGACY_ALIASES, LEGACY_HELP
 
     labels = {
-        "chat": "chat",
+        "session": "session",
         "model": "model & keys",
         "memory": "memory",
         "extensions": "skills & commands",
@@ -237,17 +237,27 @@ def help_text(index: CommandIndex) -> str:
     }
     groups: dict[str, list] = {}
     for builtin in BUILTINS:
-        key = builtin.group or "chat"
+        key = builtin.group or "session"
         groups.setdefault(key, []).append(builtin)
 
-    lines: list[str] = ["Type a task or /command. Legacy: /select /models /provider /cost still work.", ""]
-    for group, items in groups.items():
+    lines: list[str] = ["Type a task or /command.", ""]
+    for group in ("session", "model", "memory", "extensions", "attach"):
+        items = groups.get(group)
+        if not items:
+            continue
         if len(lines) > 2:
             lines.append("")
         lines.append(labels.get(group, group))
         for b in items:
             hint = f" {b.hint}" if b.hint else ""
-            lines.append(f"  /{b.name:<14}{hint}  {b.description}".rstrip())
+            alias_note = ""
+            if b.aliases:
+                alias_note = f"  (/{', /'.join(b.aliases)})"
+            lines.append(f"  /{b.name:<14}{hint}{alias_note}  {b.description}".rstrip())
+
+    lines.extend(["", "legacy aliases (still work)"])
+    for name in sorted(LEGACY_ALIASES):
+        lines.append(f"  /{name:<14}{LEGACY_HELP.get(name, '→ /' + LEGACY_ALIASES[name])}")
 
     lines.extend(["", "prompts (expand into your next turn)"])
     seen: set[str] = set()

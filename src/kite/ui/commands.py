@@ -17,7 +17,7 @@ class BuiltinCommand:
 BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("plan", "Read-only mode — produce a checklist", aliases=("p",), group="session"),
     BuiltinCommand("build", "Apply edits, gated bash", aliases=("b",), group="session"),
-    BuiltinCommand("approve", "Autonomy for this session", hint="auto|approve|readonly", group="session"),
+    BuiltinCommand("approve", "Autonomy: yolo|auto|supervised", hint="yolo|auto|supervised|trust|readonly", group="session"),
     BuiltinCommand("restricted", "Path sandbox — off by default (host mode)", hint="on|off", aliases=("sandbox",), group="session"),
     BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
     BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),
@@ -25,9 +25,9 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("checkpoint", "Save/list/restore transcript snapshot", hint="save|list|restore|show", group="session"),
     BuiltinCommand("handoff", "Export context for another agent", hint="[dir]", group="session"),
     BuiltinCommand("expand", "Toggle expanded tool output", group="session"),
+    BuiltinCommand("expand-thinking", "Show or hide model thinking trace", hint="collapse", group="session"),
     BuiltinCommand("collapse", "Collapse tool output (default)", group="session"),
-    BuiltinCommand("cost", "Session tokens and USD", group="session"),
-    BuiltinCommand("status", "Mode, model, effort, session id", group="session"),
+    BuiltinCommand("status", "Mode, model, effort, cost, session id", group="session"),
     BuiltinCommand("session", "Show, list, open, or delete transcripts", hint="[list|show|open|delete]", aliases=("sessions",), group="session"),
     BuiltinCommand("resume", "Continue a saved session", hint="id", group="session"),
     BuiltinCommand("init", "Write KITE.md project memory", group="session"),
@@ -37,20 +37,28 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("quit", "Leave the REPL", aliases=("q", "exit"), group="session"),
     BuiltinCommand("theme", "Color palette", hint="auto|kite|dark|light|dim|mono", group="session"),
     BuiltinCommand("font", "Glyphs for this terminal", hint="unicode|ascii", group="session"),
-    BuiltinCommand("setup", "First-run wizard (API key + model)", group="model"),
-    BuiltinCommand("login", "Save provider API key to ~/.kite/.env (hidden input)", hint="provider", aliases=("signin",), group="model"),
-    BuiltinCommand("logout", "Remove provider API key from ~/.kite/.env", hint="provider", aliases=("signout",), group="model"),
-    BuiltinCommand("keys", "Show which provider API keys are set", group="model"),
+    BuiltinCommand("setup", "First-run wizard (BYOK key or BYOS OAuth + model)", group="model"),
+    BuiltinCommand(
+        "login",
+        "Link provider — BYOK API key or BYOS OAuth subscription",
+        hint="provider",
+        aliases=("signin",),
+        group="model",
+    ),
+    BuiltinCommand(
+        "logout",
+        "Unlink provider — remove API key or OAuth session",
+        hint="provider",
+        aliases=("signout",),
+        group="model",
+    ),
+    BuiltinCommand("keys", "Show BYOK keys and BYOS OAuth link status", group="model"),
     BuiltinCommand("model", "Show, set, list, or pick model", hint="list|select|provider/id", group="model"),
     BuiltinCommand("models", "List live models for the current provider", group="model"),
     BuiltinCommand("select", "Interactive model picker (saved to ~/.kite/config.toml)", hint="[provider]", group="model"),
     BuiltinCommand("provider", "Show or set provider", hint="name", group="model"),
-    BuiltinCommand("thinking", "Thinking level (only if this API has thinking and fast)", hint="level", group="model"),
-    BuiltinCommand("fast", "Fast level (only if this API has thinking and fast)", hint="level", group="model"),
     BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
-    BuiltinCommand("memory", "Semantic markdown + episodic sqlite", hint="semantic|episodic", aliases=("mem",), group="memory"),
-    BuiltinCommand("semantic", "Show markdown semantic memory", group="memory"),
-    BuiltinCommand("episodic", "Show sqlite episode log", group="memory"),
+    BuiltinCommand("memory", "Semantic MEMORY.md + episodic log", hint="semantic|episodic", aliases=("mem",), group="memory"),
     BuiltinCommand("remember", "Append a semantic note", hint="[user|project] text", group="memory"),
     BuiltinCommand("forget", "Drop matching notes or episodes", hint="id|substring", group="memory"),
     BuiltinCommand("skills", "List, show, or install a skill", hint="[add pkg]|name", group="extensions"),
@@ -70,11 +78,8 @@ for _b in BUILTINS:
     for _a in _b.aliases:
         ALIASES[_a] = _b.name
 
-# Legacy shortcuts — still parsed; also listed in /help when not duplicated above.
+# Legacy shortcuts — still parsed; listed under “legacy aliases” in /help.
 LEGACY_ALIASES: dict[str, str] = {
-    "provider": "model",
-    "models": "model",
-    "select": "model",
     "cost": "status",
     "collapse": "expand",
     "thinking": "reasoning",
@@ -84,11 +89,24 @@ LEGACY_ALIASES: dict[str, str] = {
     "skill": "skills",
 }
 
+LEGACY_HELP: dict[str, str] = {
+    "cost": "→ /status (includes cost)",
+    "collapse": "→ /collapse (same as /expand off)",
+    "thinking": "→ /reasoning thinking",
+    "fast": "→ /reasoning fast",
+    "semantic": "→ /memory semantic",
+    "episodic": "→ /memory episodic",
+    "skill": "→ /skills",
+}
+
 ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "approve": [
-        ("auto", "run tools without asking"),
-        ("approve", "ask before mutating"),
-        ("readonly", "block writes and bash"),
+        ("yolo", "no prompts — everything allowed"),
+        ("auto", "auto in workspace; ask outside project"),
+        ("supervised", "reads free; write/bash need approval"),
+        ("approve", "alias for supervised"),
+        ("trust", "auto writes; safe bash in workspace"),
+        ("readonly", "block mutations"),
     ],
     "restricted": [
         ("on", "clamp paths to session cwd"),

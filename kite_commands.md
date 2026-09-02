@@ -37,11 +37,14 @@ Shared flags on `run` / `chat` / `resume`:
 | `--cwd` | Workspace |
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
-| `--approval auto\|approve\|trust\|readonly` | Default: `auto` for `run`, `approve` for chat |
+| `--approval yolo\|auto\|supervised` | `yolo` = no prompts; `auto` = workspace-scoped; `supervised` = approve all mutations (default: `auto` for `run`, `supervised` for chat) |
 | `--steps` `--cost` `--time` | Limits |
+| `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `-v` / `-q` | Verbose tool bodies / quiet |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
 | `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. |
+
+**Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
 
 Housekeeping (no model):
 
@@ -49,9 +52,10 @@ Housekeeping (no model):
 kite sessions [--limit N] [--show id] [--tail N]
 kite sessions --delete <id> [<id> ...]
 kite sessions --delete-all -y
-kite setup [-p provider]       # first-run wizard: key + model
-kite keys [--set provider]     # show or paste API keys (hidden input)
-kite keys --logout provider    # remove a stored key
+kite setup [-p provider]       # first-run wizard: credentials + model
+kite login [provider]          # BYOK hidden key or BYOS OAuth (chatgpt/claude/grok)
+kite keys [--set provider]     # show status or paste BYOK API keys (hidden input)
+kite keys --logout provider    # remove BYOK key or BYOS OAuth session
 kite providers
 kite models [-p provider] [--select]
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
@@ -61,9 +65,12 @@ kite commands
 kite plugins
 kite memory [--remember text] [--forget query] [--project]
 kite runtime-config [--config name]
+kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
 ```
 
-You can also drop a path into the prompt with `@screenshot.png` or `@C:\path\spec.md`.
+`kite dashboard` is **per-user** — it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
+
+```
 
 ---
 
@@ -75,16 +82,16 @@ These never go to the model.
 |---------|----------------|
 | `/plan` `/p` | Read-only mode, checklist |
 | `/build` `/b` | Apply edits; approval stays unless it was readonly |
-| `/approve auto\|approve\|trust\|readonly` | Autonomy for this session |
+| `/approve yolo\|auto\|supervised` | Autonomy: yolo (no prompts), auto (workspace-scoped), supervised (approve mutations) |
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off** = host mode) |
 | `/model [provider/id]` | Show or set model |
 | `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
 | `/select [provider]` | Interactive model picker (saved to config) |
 | `/models [provider]` | List live models for the current (or named) provider |
 | `/provider [name]` | Show or set provider |
-| `/login [provider]` | Save API key to `~/.kite/.env` (hidden input, owner-only file) |
-| `/logout provider` | Remove that provider's key from `~/.kite/.env` |
-| `/keys` | Show which provider keys are set |
+| `/login [provider]` | Link provider — **BYOK**: hidden API key (double-entry for new keys) → `~/.kite/.env`; **BYOS**: OAuth → `~/.kite/oauth/` |
+| `/logout provider` | Unlink — removes BYOK key from `.env` or BYOS OAuth session |
+| `/keys` | Credential status with type (BYOK/BYOS), masked key fingerprint, OAuth link state |
 | `/thinking` `/fast` | Effort: extended thinking, or low-latency (if the model supports it) |
 | `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort; shown on the footer |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |

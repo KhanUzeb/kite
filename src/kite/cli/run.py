@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from kite.agent.mode import AgentMode, ApprovalMode, default_approval
+from kite.agent.mode import AgentMode, ApprovalMode, default_approval, parse_approval_mode
 
 
 def _console():
@@ -25,12 +25,10 @@ def _parse_mode(raw: str | None) -> AgentMode:
 
 
 def _parse_approval(raw: str | None, mode: AgentMode) -> ApprovalMode:
+    fallback = ApprovalMode.AUTO if mode is AgentMode.BUILD else ApprovalMode.READONLY
     if raw:
-        try:
-            return ApprovalMode(raw.lower())
-        except ValueError:
-            return default_approval(mode)
-    return ApprovalMode.AUTO if mode is AgentMode.BUILD else ApprovalMode.READONLY
+        return parse_approval_mode(raw, default=default_approval(mode))
+    return fallback
 
 
 def _load_attachments(paths: list[str], task: str, cwd: str):
@@ -44,7 +42,7 @@ def _load_attachments(paths: list[str], task: str, cwd: str):
 
 
 def _wire_display(harness, console, args: argparse.Namespace):
-    from kite.cli.display import make_run_display
+    from kite.ui.render import make_run_display
     from kite.agent.mode import ApprovalMode
     from kite.ui.git import GitCheckpoints, git_branch
     from kite.ui.state import SessionUiState
@@ -124,6 +122,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             interactive=False,
             attachments=attachments,
             role=getattr(args, "role", "auto"),
+            long_task=bool(getattr(args, "long", False)),
         )
     )
     _wire_display(harness, console, args)
@@ -153,6 +152,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         f"[bold]session[/]={sid}  "
         f"trajectory={ensure_home() / 'trajectories' / f'{sid}.json'}"
     )
+    if result.get("exit_status") == "ProviderFault":
+        console.print(
+            f"[kite.pending]provider fault[/] — session saved. "
+            f"[kite.muted]retry: kite resume {sid} \"continue\"[/]"
+        )
+    elif result.get("exit_status") == "Error":
+        console.print(f"[red]{result.get('error')}[/]")
+        if result.get("traceback"):
+            console.print("[dim]See session log or re-run with -v for full traceback[/]")
     return 0 if result.get("exit_status") == "Submitted" else 1
 
 
@@ -212,6 +220,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             approval=approval.value,
             interactive=False,
             attachments=attachments,
+            long_task=bool(getattr(args, "long", False)),
         )
     )
     _wire_display(harness, console, args)
@@ -281,24 +290,23 @@ def cmd_providers(_args: argparse.Namespace) -> int:
 
     from kite.config import UserConfig, assess_setup_status
     from kite.providers.catalog import load_catalog
-    from kite.providers.keys import api_key_for
+    from kite.providers.credentials import configured_providers, provider_credential_status
 
     console = _console()
     catalog = load_catalog()
     cfg = UserConfig.load()
     status = assess_setup_status()
+    cred_rows = {name: (ok, env) for name, ok, env in configured_providers()}
     table = Table(title="Providers")
     table.add_column("name")
+    table.add_column("display")
     table.add_column("selected model")
-    table.add_column("api_key_env")
-    table.add_column("key?")
-    table.add_column("docs")
+    table.add_column("auth")
+    table.add_column("status")
     for p in catalog.list():
-        key_ok = "—"
-        if p.api_key_env:
-            key_ok = "yes" if api_key_for(p) else "missing"
-        elif p.name == "ollama":
-            key_ok = "local"
+        ok, env_col = cred_rows.get(p.name, (False, p.api_key_env or "—"))
+        auth = env_col if env_col in {"local", "oauth", "—"} else (p.api_key_env or "—")
+        cred_status = provider_credential_status(ok=ok, env_col=env_col)
         selected = (
             cfg.provider_defaults.get(p.name)
             or (cfg.default_model if p.name == cfg.default_provider else None)
@@ -306,9 +314,11 @@ def cmd_providers(_args: argparse.Namespace) -> int:
             or "(live)"
         )
         mark = " *" if p.name == cfg.default_provider else ""
-        table.add_row(p.name + mark, selected, p.api_key_env or "-", key_ok, p.docs_url[:40])
+        table.add_row(p.name + mark, p.display_name, selected, auth, cred_status)
     console.print(table)
-    console.print("[dim]* = default provider · models fetched live via API key[/]")
+    console.print(
+        "[dim]* = default · BYOK = API key · BYOS = oauth subscription (chatgpt/claude/grok)[/]"
+    )
     if status.ready:
         console.print(f"[green]Ready[/]  {status.default_provider}/{status.default_model}")
     else:
@@ -722,15 +732,20 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--approval",
-        choices=["auto", "trust", "approve", "readonly"],
+        choices=["auto", "supervised", "yolo", "trust", "approve", "readonly"],
         default=None,
-        help="Autonomy: auto | trust (approve-for-me) | approve | readonly",
+        help="Autonomy: auto | supervised (approve) | yolo | trust | readonly",
     )
     p.add_argument(
         "--role",
         choices=["auto", "architect", "implementer", "debugger"],
         default="auto",
         help="Agent persona — architect/debugger/implementer",
+    )
+    p.add_argument(
+        "--long",
+        action="store_true",
+        help="Long-running agentic task: higher limits, phase checkpoints, mode_long prompt",
     )
     p.add_argument("--json", action="store_true", help="Emit final trajectory JSON on stdout (CI-friendly)")
 
@@ -792,14 +807,28 @@ def build_parser() -> argparse.ArgumentParser:
     providers = sub.add_parser("providers", help="List providers + credential status")
     providers.set_defaults(func=cmd_providers)
 
-    from kite.cli.setup import cmd_keys, cmd_setup
+    from kite.cli.setup import cmd_keys, cmd_login, cmd_setup
     from kite.cli.stats import cmd_maintainer_dashboard
+    from kite.cli.dashboard import cmd_dashboard
 
-    setup = sub.add_parser("setup", help="First-run wizard — API key, provider, model")
+    setup = sub.add_parser("setup", help="First-run wizard — credentials, provider, model")
     setup.add_argument("-p", "--provider", help="Skip provider picker")
     setup.set_defaults(func=cmd_setup)
 
-    keys = sub.add_parser("keys", help="Show API key status or set a provider key")
+    login = sub.add_parser(
+        "login",
+        help="Link provider — BYOK API key (hidden) or BYOS OAuth subscription",
+    )
+    login.add_argument("provider", nargs="?", help="Provider name (chatgpt, groq, claude, …)")
+    login.add_argument(
+        "--no-set-default",
+        action="store_false",
+        dest="set_default",
+        help="Do not set this provider as default in ~/.kite/config.toml",
+    )
+    login.set_defaults(func=cmd_login, set_default=True)
+
+    keys = sub.add_parser("keys", help="Show credential status or set a BYOK API key")
     keys.add_argument("--set", metavar="PROVIDER", help="Paste a key for this provider (hidden input)")
     keys.add_argument("--logout", metavar="PROVIDER", help="Remove a provider key from ~/.kite/.env")
     keys.set_defaults(func=cmd_keys)
@@ -887,6 +916,13 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--json", action="store_true")
     audit.set_defaults(func=cmd_audit)
 
+    dashboard = sub.add_parser("dashboard", help="Interactive harness stats — sessions, tools, tokens, cache")
+    dashboard.add_argument("--session", help="Drill into one session id")
+    dashboard.add_argument("--limit", type=int, default=200, help="Max sessions to scan")
+    dashboard.add_argument("--watch", type=int, default=0, metavar="SEC", help="Refresh every N seconds")
+    dashboard.add_argument("--json", action="store_true")
+    dashboard.set_defaults(func=cmd_dashboard)
+
     cloud = sub.add_parser("cloud", help="Cloud/local task parity — list and apply saved outputs")
     cloud.add_argument("action", choices=["list", "apply"], nargs="?", default="list")
     cloud.add_argument("task_id", nargs="?", help="Task id for apply")
@@ -909,14 +945,9 @@ def main(argv: list[str] | None = None) -> int:
         print(__version__)
         return 0
 
-    from dotenv import load_dotenv
+    from kite.providers.credentials import load_kite_env
 
-    from kite.config import kite_home
-
-    load_dotenv()
-    env_file = kite_home() / ".env"
-    if env_file.is_file():
-        load_dotenv(env_file)
+    load_kite_env()
 
     parser = build_parser()
     args = parser.parse_args(argv)

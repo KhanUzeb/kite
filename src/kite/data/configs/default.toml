@@ -7,8 +7,14 @@ step_limit = 40
 cost_limit = 5.0
 wall_time_limit_seconds = 0
 model_timeout_seconds = 180
+verify_before_submit = true
+loop_hard_threshold = 5
+provider_max_retries = 4
 max_consecutive_format_errors = 3
 auto_compact = true
+compaction_ratio = 0.80
+compaction_llm_ratio = 0.92
+observation_max_chars = 8000
 compaction_reserve_tokens = 16384
 compaction_keep_recent_tokens = 20000
 
@@ -17,7 +23,7 @@ system = "system"
 instance = "instance"
 
 [tools]
-enabled = ["read", "write", "edit", "bash", "grep", "glob", "ls", "set_cwd", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "subagent", "memory"]
+enabled = ["bash", "read", "write", "edit", "grep", "glob", "ls", "set_cwd", "skill", "todo_write", "todo_read", "task", "webfetch", "websearch", "webcrawl", "subagent", "memory"]
 bash_timeout_seconds = 120
 progress_interval_seconds = 5.0
 
@@ -45,7 +51,7 @@ deny_bash_patterns = [
   "bcdedit",
 ]
 block_secret_writes = true
-max_bash_output_chars = 100000
+max_bash_output_chars = 32768
 max_read_chars = 200000
 
 [skills]
@@ -60,7 +66,11 @@ tree_max_entries = 80
 max_context_chars = 24000
 
 [github]
+enabled = false
+
+[context7]
 enabled = true
+# Optional: CONTEXT7_API_KEY in ~/.kite/.env for higher rate limits (built-in docs MCP)
 
 [cache]
 enabled = true  # pi-style prefix caching; Anthropic cache_control + usage tracking

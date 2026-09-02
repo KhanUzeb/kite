@@ -159,17 +159,25 @@ def make_coding_tools(
             return _io_fail(path, e)
         start = int(args.get("offset", 1))
         limit = args.get("limit")
+        numbered = bool(args.get("numbered"))
         lines = text.splitlines(keepends=True)
         chunk = lines[start - 1 :] if start > 1 else lines
         if limit is not None:
             chunk = chunk[: int(limit)]
-        numbered = "".join(f"{i + start:6}|{line}" for i, line in enumerate(chunk))
+        if numbered:
+            body = "".join(f"{i + start:6}|{line}" for i, line in enumerate(chunk))
+        else:
+            body = "".join(chunk)
         truncated = False
         if limit is None and len(lines) > 800:
-            numbered = "".join(f"{i + start:6}|{line}" for i, line in enumerate(lines[:400]))
-            numbered += f"\n... [{len(lines) - 400} lines truncated; pass offset/limit] ...\n"
+            chunk = lines[:400]
+            if numbered:
+                body = "".join(f"{i + start:6}|{line}" for i, line in enumerate(chunk))
+            else:
+                body = "".join(chunk)
+            body += f"\n... [{len(lines) - 400} lines truncated; use bash: wc -l / head / sed -n, or read offset/limit] ...\n"
             truncated = True
-        return {"ok": True, "path": str(path), "output": numbered, "truncated": truncated}
+        return {"ok": True, "path": str(path), "output": body, "truncated": truncated}
 
     def write_file(args: dict[str, Any]) -> dict[str, Any]:
         path = _resolve(str(args["path"]), _root())
@@ -578,11 +586,12 @@ def make_coding_tools(
             query = str(args.get("text") or args.get("query") or "").strip()
             if not query:
                 return {"ok": False, "error": "text required", "output": "text required"}
-            removed = mem.forget(query)
-            if not removed:
-                return {"ok": True, "output": "no matching notes", "count": 0}
-            lines = [f"forgot {n.scope}/{n.id}: {n.text}" for n in removed]
-            return {"ok": True, "output": "\n".join(lines), "count": len(removed)}
+            result = mem.forget(query)
+            if result.total == 0:
+                return {"ok": True, "output": "no matches", "count": 0}
+            lines = [f"forgot {n.scope}/{n.id}: {n.text}" for n in result.notes]
+            lines.extend(f"forgot episode {e.id}: {e.summary}" for e in result.episodes)
+            return {"ok": True, "output": "\n".join(lines), "count": result.total}
         return {"ok": False, "error": "action must be list|remember|forget", "output": "action must be list|remember|forget"}
 
     reason_prop = {"reason": {"type": "string", "description": "One-line why, shown in the UI"}}
@@ -592,13 +601,18 @@ def make_coding_tools(
             "read",
             Tool(
                 name="read",
-                description="Read a text file. Optional 1-based offset and line limit. Huge files auto-truncate. Directories are listed (use ls, or read a file inside).",
+                description=(
+                    "Bounded file read — fallback when bash peek is not enough. "
+                    "Prefer bash (rg, head, sed -n, wc -l) for search and peeking; "
+                    "read adds line numbers only when numbered=true. Large files auto-truncate."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "path": {"type": "string"},
-                        "offset": {"type": "integer"},
-                        "limit": {"type": "integer"},
+                        "offset": {"type": "integer", "description": "1-based start line"},
+                        "limit": {"type": "integer", "description": "Max lines to return"},
+                        "numbered": {"type": "boolean", "description": "Prefix line numbers (costs tokens)"},
                     },
                     "required": ["path"],
                 },
@@ -645,12 +659,17 @@ def make_coding_tools(
             "bash",
             Tool(
                 name="bash",
-                description="Run a shell command in a fresh subprocess (state does not persist). Highest privilege — gated.",
+                description=(
+                    "Primary inspection and execution tool. Fresh subprocess each call — "
+                    "use set_cwd or cwd= for directory changes. "
+                    "Token-efficient reads: rg/grep/find, wc -l, head/tail, sed -n '10,40p', "
+                    "cat only for small files. Tests, git, builds, and edits via shell when needed."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "command": {"type": "string"},
-                        "cwd": {"type": "string"},
+                        "cwd": {"type": "string", "description": "Working directory (~, relative, or absolute)"},
                         "timeout": {"type": "integer"},
                         **reason_prop,
                     },
@@ -663,7 +682,7 @@ def make_coding_tools(
             "grep",
             Tool(
                 name="grep",
-                description="Search file contents. Uses ripgrep (rg) when installed.",
+                description="Convenience content search (wraps rg). Prefer bash `rg` when you need tighter control or piping.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -681,7 +700,7 @@ def make_coding_tools(
             "glob",
             Tool(
                 name="glob",
-                description="List files matching a glob pattern under root.",
+                description="Convenience file pattern match. Prefer bash `find` or `rg --files` for scoped discovery.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -698,7 +717,7 @@ def make_coding_tools(
             "ls",
             Tool(
                 name="ls",
-                description="List a directory (names only, dirs end with /).",
+                description="Convenience directory listing. Prefer bash `ls` when already in a shell chain.",
                 parameters={
                     "type": "object",
                     "properties": {"path": {"type": "string"}},
@@ -711,7 +730,11 @@ def make_coding_tools(
             "set_cwd",
             Tool(
                 name="set_cwd",
-                description="Change the session working directory for file tools and bash. Can move outside the project root when the user asks (sandbox follows the new cwd). Protected system paths are still blocked.",
+                description=(
+                    "Move the session working directory for all tools and bash defaults. "
+                    "Call this when the user names a directory ('go to X and …'). "
+                    "Works outside project_root in host mode; sandbox follows the new cwd."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {

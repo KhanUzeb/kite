@@ -204,6 +204,51 @@ def check_dangerous(command: str) -> str:
     return ""
 
 
+_CHAIN_SPLIT = re.compile(r"\s*&&\s*|\s*;\s*|\s*\|\s*")
+
+_INSPECTION_HEAD = re.compile(
+    r"(?i)^\s*("
+    r"git\s+(status|diff|log|show|branch|stash\s+list|rev-parse|describe)"
+    r"|ls\b|dir\b|cat\b|head\b|tail\b|rg\b|grep\b|find\b|fd\b"
+    r"|pwd\b|echo\b|which\b|where\b|type\b|wc\b|file\b|stat\b|tree\b|realpath\b"
+    r"|sed\s+-n"
+    r"|pytest\b|npm\s+test\b|cargo\s+test\b|go\s+test\b|make\s+test\b"
+    r"|node\s+--version|python3?\s+--version|uv\s+--version"
+    r")\b"
+)
+
+_MUTATING_BASH = re.compile(
+    r"(?i)\b("
+    r"rm|mv|cp|chmod|chown|mkdir|touch|tee|truncate|install\b"
+    r"|sed\s+-i|nano\b|vim?\b|emacs\b"
+    r"|git\s+(add|commit|push|reset|checkout|merge|rebase|stash\s+(push|pop|apply)|clean)"
+    r"|pip\s+install|npm\s+install|cargo\s+install|apt\s+install|brew\s+install"
+    r")\b"
+)
+
+
+def is_inspection_bash(command: str) -> bool:
+    """True when bash only explores (read-only). Allowed in plan mode."""
+    cmd = (command or "").strip()
+    if not cmd:
+        return False
+    if check_dangerous(cmd):
+        return False
+    if _MUTATING_BASH.search(cmd):
+        return False
+    if re.search(r"(?i)(^|[^<])>>?[^>]", cmd):
+        return False
+    segments = [s.strip() for s in _CHAIN_SPLIT.split(cmd) if s.strip()]
+    if not segments:
+        return False
+    for seg in segments:
+        if _CD.match(seg):
+            continue
+        if not _INSPECTION_HEAD.match(seg):
+            return False
+    return True
+
+
 def cwd_in_trusted(cwd: Path, workspace: Path, trusted: list[str]) -> bool:
     """True when cwd sits inside a configured trusted subtree."""
     if not trusted:

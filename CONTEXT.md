@@ -94,6 +94,8 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Custom tool** — A programmatic tool registered via `Harness.extra_tools` or `.kite/extensions/*.py` (`ExtensionAPI.register_tool`). Replaces the removed MCP stdio integration; legacy `[[mcp]]` keys in runtime TOML are ignored.
 
+**Context7 (built-in)** — The only bundled docs integration: `context7_resolve` + `context7_docs` call the Context7 HTTP API (MCP-compatible workflow). Optional `CONTEXT7_API_KEY` in `~/.kite/.env`. No other MCP servers are built in.
+
 **Execution cwd** — Session working directory for file tools and bash. `set_cwd` can move outside the project root when asked; the sandbox then follows that directory (protected system paths still blocked). Default is **host** mode; use `/restricted on` for a tighter sandbox.
 
 ---
