@@ -1,0 +1,149 @@
+"""Composer stop / steer / queue — keep the same session after interrupt."""
+
+from __future__ import annotations
+
+from contextlib import nullcontext
+from unittest.mock import MagicMock
+
+import pytest
+
+from kite.ui.complete import ComposerResult, read_repl_line
+from kite.ui.state import SessionUiState
+
+
+def test_idle_ctrl_c_does_not_quit(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "prompt_toolkit.patch_stdout.patch_stdout",
+        lambda raw=False: nullcontext(),
+    )
+    session = MagicMock()
+    session.prompt.side_effect = KeyboardInterrupt()
+    session.default_buffer.text = ""
+    result = read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None)
+    assert result.kind == "empty"
+
+
+def test_busy_ctrl_c_with_text_steers(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "prompt_toolkit.patch_stdout.patch_stdout",
+        lambda raw=False: nullcontext(),
+    )
+    session = MagicMock()
+    session.prompt.side_effect = KeyboardInterrupt()
+    session.default_buffer.text = "use grep not find"
+    result = read_repl_line(
+        session=session,
+        state=SessionUiState(),
+        fallback=lambda: None,
+        busy=True,
+    )
+    assert result.kind == "steer"
+    assert result.text == "use grep not find"
+
+
+def test_busy_ctrl_c_empty_stops(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "prompt_toolkit.patch_stdout.patch_stdout",
+        lambda raw=False: nullcontext(),
+    )
+    session = MagicMock()
+    session.prompt.side_effect = KeyboardInterrupt()
+    session.default_buffer.text = ""
+    result = read_repl_line(
+        session=session,
+        state=SessionUiState(),
+        fallback=lambda: None,
+        busy=True,
+    )
+    assert result.kind == "stop"
+
+
+def test_eof_quits(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "prompt_toolkit.patch_stdout.patch_stdout",
+        lambda raw=False: nullcontext(),
+    )
+    session = MagicMock()
+    session.prompt.side_effect = EOFError()
+    result = read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None)
+    assert result.kind == "eof"
+
+
+def test_queue_steer_order(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "kite.providers.resolve.resolve_model",
+        lambda **_: MagicMock(provider="groq", model="test"),
+    )
+    from kite.ui.repl import ChatSession
+
+    chat = ChatSession(cwd=str(tmp_path))
+    chat._queue_message("later")
+    chat._queue_steer("first")
+    assert list(chat._inbox) == ["first", "later"]
+    assert chat.state.queued == 2
+
+
+def test_slash_stop_idle(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "kite.providers.resolve.resolve_model",
+        lambda **_: MagicMock(provider="groq", model="test"),
+    )
+    from kite.ui.repl import ChatSession
+
+    chat = ChatSession(cwd=str(tmp_path))
+    chat._slash_stop("")
+    assert chat._session_id is None
+
+
+def test_parse_stop_and_steer_builtins() -> None:
+    from kite.ui.commands import parse_slash
+
+    assert parse_slash("/stop").command == "stop"
+    r = parse_slash("/steer use grep")
+    assert r.command == "steer"
+    assert r.arg == "use grep"
+
+
+def test_busy_placeholder_is_quiet(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "prompt_toolkit.patch_stdout.patch_stdout",
+        lambda raw=False: nullcontext(),
+    )
+    captured: dict[str, object] = {}
+    session = MagicMock()
+
+    def _prompt(*_a, **kwargs):
+        captured["placeholder"] = kwargs.get("placeholder")
+        raise EOFError()
+
+    session.prompt.side_effect = _prompt
+    read_repl_line(
+        session=session,
+        state=SessionUiState(busy=True),
+        fallback=lambda: None,
+        busy=True,
+    )
+    ph = str(captured.get("placeholder") or "")
+    assert "Esc" not in ph
+    assert "Ctrl+G" not in ph
+    assert "type to queue" in ph.lower()
+
+
+def test_busy_toolbar_has_steer_and_budget() -> None:
+    from kite.ui.complete import _toolbar_html
+
+    state = SessionUiState(busy=True, queued=2, budget_limit=5.0)
+    html = str(_toolbar_html(state))
+    assert "Esc stop" in html
+    assert "Ctrl+G steer" in html
+    assert "queued 2" in html
+    assert "budget ≤$5.00" in html
+
+
+def test_idle_toolbar_omits_steer_hints() -> None:
+    from kite.ui.complete import _toolbar_html
+
+    html = str(_toolbar_html(SessionUiState(busy=False, queued=0)))
+    assert "Esc stop" not in html
+    assert "Ctrl+G steer" not in html
+    assert "budget" not in html

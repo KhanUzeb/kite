@@ -370,6 +370,14 @@ def needs_approval(
     return True
 
 
+_GIT_WRITE_BASH = re.compile(r"(?i)bash:git\s+(commit|push|reset|rebase)")
+_GIT_WRITE_STORED = re.compile(r"(?i)git\s+(commit|push|reset|rebase)")
+
+
+def _fnmatch_git_write_overbroad(pattern: str, stored: str) -> bool:
+    return bool(_GIT_WRITE_BASH.search(pattern) and not _GIT_WRITE_STORED.search(stored))
+
+
 @dataclass
 class ApprovalPolicy:
     """In-memory + on-disk pattern memory."""
@@ -403,10 +411,8 @@ class ApprovalPolicy:
         for stored in (*self.always_patterns, *self.session_patterns):
             if pattern != stored and not fnmatch(pattern, stored):
                 continue
-            # Approving `git status` used to match `bash:git*` and then allow push.
-            if re.search(r"(?i)bash:git\s+(commit|push|reset|rebase)", pattern):
-                if not re.search(r"(?i)git\s+(commit|push|reset|rebase)", stored):
-                    continue
+            if _fnmatch_git_write_overbroad(pattern, stored):
+                continue
             return True
         return False
 
@@ -466,13 +472,18 @@ def render_approval_panel(
                 body.append("\n")
             preview = "\n".join(diff.splitlines()[:40])
             for line in preview.splitlines():
-                style = "kite.diff.meta"
-                if line.startswith("+") and not line.startswith("+++"):
+                if line.startswith("+++") or line.startswith("---"):
+                    style = "kite.diff.meta"
+                elif line.startswith("+"):
                     style = "kite.diff.add"
-                elif line.startswith("-") and not line.startswith("---"):
+                elif line.startswith("-"):
                     style = "kite.diff.del"
                 elif line.startswith("@@"):
                     style = "kite.diff.hunk"
+                elif line.startswith(" ") or not line:
+                    style = "kite.diff.ctx"
+                else:
+                    style = "kite.diff.meta"
                 body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
                 body.append(line + "\n", style=style)
             extra = max(0, len(diff.splitlines()) - 40)

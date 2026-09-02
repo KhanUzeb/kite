@@ -45,6 +45,51 @@ def render_byok_login_panel(
     return body
 
 
+def render_byos_login_panel(
+    spec: ProviderSpec,
+    *,
+    url: str,
+    user_code: str = "",
+    browser_opened: bool | None = False,
+    extra: str = "",
+) -> Text:
+    """Left-bar login panel for subscription OAuth (browser + optional device code)."""
+    body = Text()
+    body.append(f"{GUTTER}┊ ", style="kite.pending")
+    body.append("BYOS login", style="kite.pending bold")
+    body.append(f"  ·  {spec.display_name}\n", style="kite.muted")
+    body.append(f"{GUTTER}┊ ", style="kite.muted")
+    body.append("Uses your subscription plan — not API credits.\n", style="kite.muted")
+    if browser_opened is True:
+        body.append(f"{GUTTER}┊ ", style="kite.success")
+        body.append(f"{SYMBOL_OK} ", style="kite.success")
+        body.append("Opened your browser. Sign in there.\n", style="kite.success")
+    elif browser_opened is None:
+        body.append(f"{GUTTER}┊ ", style="kite.pending")
+        body.append("A browser window will open. Sign in there.\n", style="kite.pending")
+    else:
+        body.append(f"{GUTTER}┊ ", style="kite.pending")
+        body.append(f"{SYMBOL_WARN} ", style="kite.pending")
+        body.append("Could not open a browser — open this URL:\n", style="kite.pending")
+    body.append(f"{GUTTER}┊ ", style="kite.muted")
+    body.append(f"  {url}\n", style="cyan")
+    if user_code:
+        body.append(f"{GUTTER}┊\n", style="kite.muted")
+        body.append(f"{GUTTER}┊ ", style="kite.pending")
+        body.append("Enter this code if asked:\n", style="kite.pending")
+        body.append(f"{GUTTER}┊ ", style="kite.muted")
+        body.append(f"  {user_code}\n", style="bold cyan")
+        body.append(f"{GUTTER}┊ ", style="kite.muted")
+        body.append("Never share the code. Waiting until you finish (Ctrl+C to cancel).\n", style="kite.muted")
+    elif extra:
+        body.append(f"{GUTTER}┊ ", style="kite.muted")
+        body.append(f"{extra}\n", style="kite.muted")
+    else:
+        body.append(f"{GUTTER}┊ ", style="kite.muted")
+        body.append("Waiting until you finish in the browser (Ctrl+C to cancel).\n", style="kite.muted")
+    return body
+
+
 def render_credentials_table_rows(
     rows: list[tuple[str, bool, str]],
     *,
@@ -92,3 +137,38 @@ def render_credentials_table_rows(
         out.append(f"{status:<16}", style=style)
         out.append(f"{detail}\n", style="kite.muted")
     return out
+
+
+def render_pick_list(
+    items: list[tuple[str, str]],
+    *,
+    title: str,
+    current: str | None = None,
+    extra: int = 0,
+    noun: str = "item",
+    refreshable: bool = False,
+) -> Text:
+    """Left-bar numbered picker, same visual language as login panels."""
+    body = Text()
+    body.append(f"{GUTTER}┊ ", style="kite.pending")
+    body.append(title, style="kite.pending bold")
+    body.append("\n", style="kite.muted")
+    for i, (item_id, label) in enumerate(items, start=1):
+        is_current = bool(current and item_id == current)
+        mark = " *" if is_current and "*" not in label else ""
+        body.append(f"{GUTTER}┊ ", style="kite.muted")
+        body.append(f"{i:>3}  ", style="kite.pick")
+        body.append(f"{label}{mark}\n", style="kite.pick.current" if is_current else "")
+    body.append(f"{GUTTER}┊\n", style="kite.muted")
+    body.append(f"{GUTTER}┊ ", style="kite.muted")
+    bits: list[str] = []
+    if refreshable:
+        bits.append("r = refresh from API")
+    if extra > 0:
+        bits.append(
+            f"showing {len(items)} of {len(items) + extra} — type an id to pick any · empty/q = cancel"
+        )
+    else:
+        bits.append(f"* = current · number or {noun} id · empty/q = cancel")
+    body.append(" · ".join(bits) + "\n", style="kite.muted")
+    return body

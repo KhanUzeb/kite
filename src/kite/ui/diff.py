@@ -197,7 +197,6 @@ def render_diff(
         body.append_text(render_diff_stat(added, deleted, path=diff_path(diff)))
         body.append("\n")
     for line in shown:
-        style = "kite.diff.meta"
         if line.startswith("+++") or line.startswith("---"):
             style = "kite.diff.meta"
         elif line.startswith("@@"):
@@ -206,6 +205,10 @@ def render_diff(
             style = "kite.diff.add"
         elif line.startswith("-"):
             style = "kite.diff.del"
+        elif line.startswith(" ") or not line:
+            style = "kite.diff.ctx"
+        else:
+            style = "kite.diff.meta"
         body.append(GUTTER + GUTTER)
         body.append(line + "\n", style=style)
     extra = len(lines) - len(shown)

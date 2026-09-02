@@ -44,10 +44,29 @@ def test_handle_slash_restricted_on_off(session: ChatSession) -> None:
     assert session._execution_mode() == "host"
 
 
+def test_handle_slash_restricted_empty_picks(session: ChatSession) -> None:
+    session._pick = lambda items, **kw: "on"  # type: ignore[method-assign]
+    assert session._handle_slash("/restricted") is True
+    assert session.state.sandbox_restricted is True
+
+
+def test_handle_slash_approve_empty_picks(session: ChatSession) -> None:
+    from kite.agent.mode import ApprovalMode
+
+    session._pick = lambda items, **kw: "yolo"  # type: ignore[method-assign]
+    assert session._handle_slash("/approve") is True
+    assert session.state.approval is ApprovalMode.YOLO
+
+
 def test_handle_slash_clear_alias(session: ChatSession) -> None:
     session._session_id = "test-session"
     assert session._handle_slash("/new") is True
     assert session._session_id is None
+
+
+def test_handle_slash_stop_and_steer_idle(session: ChatSession) -> None:
+    assert session._handle_slash("/stop") is True
+    assert session._handle_slash("/steer") is True
 
 
 def test_handle_slash_unknown(session: ChatSession, capsys) -> None:
@@ -55,3 +74,57 @@ def test_handle_slash_unknown(session: ChatSession, capsys) -> None:
     captured = capsys.readouterr()
     text = (captured.out + captured.err).lower()
     assert "unknown" in text
+
+
+def test_slash_models_two_providers_picks(session: ChatSession) -> None:
+    seen: list = []
+
+    def fake_pick(items, **_kw):
+        seen.append(("pick", [item_id for item_id, _ in items]))
+        return "chatgpt"
+
+    def fake_connect(provider=None, **_kw):
+        seen.append(("connect", provider))
+
+    session._pick = fake_pick  # type: ignore[method-assign]
+    session._connect_flow = fake_connect  # type: ignore[method-assign]
+    assert session._handle_slash("/models ollama chatgpt") is True
+    assert seen == [("pick", ["ollama", "chatgpt"]), ("connect", "chatgpt")]
+
+
+def test_slash_models_one_provider_connects(session: ChatSession) -> None:
+    seen: list = []
+    session._connect_flow = lambda provider=None, **_kw: seen.append(provider)  # type: ignore[method-assign]
+    assert session._handle_slash("/models ollama") is True
+    assert seen == ["ollama"]
+
+
+def test_slash_models_empty_connects(session: ChatSession) -> None:
+    seen: list = []
+    session._connect_flow = lambda provider=None, **_kw: seen.append(provider)  # type: ignore[method-assign]
+    assert session._handle_slash("/models") is True
+    assert seen == [None]
+
+
+def test_slash_models_provider_and_id_saves(session: ChatSession, kite_home, monkeypatch) -> None:
+    from kite.config import UserConfig
+
+    applied: list[tuple[str, str]] = []
+    session._apply_connected = lambda p, m: applied.append((p, m))  # type: ignore[method-assign]
+    assert session._handle_slash("/models ollama llama3.2") is True
+    assert applied == [("ollama", "llama3.2")]
+    cfg = UserConfig.load()
+    assert cfg.default_provider == "ollama"
+    assert cfg.default_model == "llama3.2"
+    assert cfg.provider_defaults.get("ollama") == "llama3.2"
+
+
+def test_slash_models_refresh(session: ChatSession) -> None:
+    seen: list = []
+    session._refresh_models = lambda provider_arg="": seen.append(provider_arg)  # type: ignore[method-assign]
+    assert session._handle_slash("/models refresh ollama") is True
+    assert seen == ["ollama"]
+    assert session._handle_slash("/refresh") is True
+    assert seen[-1] == ""
+    assert session._handle_slash("/model refresh groq") is True
+    assert seen[-1] == "groq"

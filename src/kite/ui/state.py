@@ -48,16 +48,20 @@ class SessionUiState:
     todos: list[TodoItem] = field(default_factory=list)
     last_tool: ToolBlock | None = None
     expanded_all: bool = False
-    thinking_expanded: bool = False
+    thinking_expanded: bool = True  # stream full thinking by default; Ctrl+T toggles
     last_thinking: str = ""
     reasoning: str = "auto"
     pending_attach: int = 0
     cache_hit_tokens: int = 0
     cache_hit_ratio: float = 0.0
     active_subagents: int = 0
+    active_jobs: int = 0
     turn: int = 0
     sandbox_restricted: bool = False  # False = host (default); True = restricted sandbox
     flash: str = ""
+    busy: bool = False
+    queued: int = 0
+    budget_limit: float | None = None  # turn cost ceiling; toolbar chip while busy
     _refresh: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
     def touch(self) -> None:
