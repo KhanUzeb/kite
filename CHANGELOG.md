@@ -2,6 +2,30 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-09-04
+
+### Added
+- **Application layer** — `RunSpec`, `EventEnvelope`, `ApplicationRunService`, `HarnessDependencies` (`src/kite/application/`). Existing `Harness` is a compatibility adapter; production CLI/REPL still use it.
+- **Context assembler** — `ContextItem` / `ContextBudget` / `ContextSnapshot` with provenance, source budgets, and untrusted-content delimiters.
+- **Policy and execution seams** — `PolicyEngine`, `ToolExecutor`, `ProcessRunner`, `ChangeJournal` (restore without `git reset --hard` on the journal itself).
+- **SQLite event store** — WAL append/load/redact/resume reconstruction (`SQLiteEventStore`). JSONL sessions remain the production store.
+- **ModelGateway** — typed provider error categories, retries, `BudgetLedger` (subagent cost counted once).
+- **EvidenceVerifier** — verification from tool results, not model claims.
+- **CLI/REPL contracts** — `CliResult` exit codes, `ReplEventReducer` (adapters; live REPL still projects legacy events).
+- **Recorded replay** — `kite.eval.ReplayBundle` runs without live providers.
+- **CI** — Linux and Windows × Python 3.11 and 3.12; ruff on the application layer.
+- **Busy composer** — pinned prompt while a turn runs; Enter queues; `/tasks`; footer tok/s and cache hit.
+- **Skill library links** — `/skills add ./path` (or an absolute folder) **symlinks** into `~/.kite/skills` (Windows directory junction if a symlink is refused); project `.kite/skills/<name>` points at the global copy. Restricted mode may **read** that library (and symlink targets); writes stay sandboxed. Reinstall unlinks; it does not delete the real tree.
+
+### Changed
+- Milestone docs describe adapters as **landed**, not full production cutover.
+- Packaged execution mode stays **host**; `PolicyEngine` defaults to restricted when used as the new seam.
+- Sibling-prefix path checks are separator-aware; host mode does not clamp to the workspace (protected paths still blocked).
+
+### Fixed
+- ChangeJournal reports a conflict when the user deletes a file the agent wrote, instead of rewriting it.
+- `BudgetLedger.total_cost()` no longer double-counts subagent usage.
+
 ## [0.8.2] - 2026-09-02
 
 ### Added

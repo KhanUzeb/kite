@@ -113,19 +113,41 @@ def _iter_skill_dirs(cwd: Path, extra: list[str] | None = None) -> list[Path]:
     return out
 
 
+def _is_dir(path: Path) -> bool:
+    try:
+        if path.is_dir():
+            return True
+        return path.is_symlink() and path.resolve().is_dir()
+    except OSError:
+        return False
+
+
+def _is_file(path: Path) -> bool:
+    try:
+        if path.is_file():
+            return True
+        return path.is_symlink() and path.resolve().is_file()
+    except OSError:
+        return False
+
+
 def _load_from_dir(skills_dir: Path, *, source: str) -> list[Skill]:
-    if not skills_dir.exists() or not skills_dir.is_dir():
+    if not _is_dir(skills_dir):
         return []
     skills: list[Skill] = []
     seen: set[str] = set()
-    for path in sorted(skills_dir.iterdir(), key=lambda p: p.name.lower()):
+    try:
+        entries = sorted(skills_dir.iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        return []
+    for path in entries:
         skill_path: Path | None = None
         name = path.name
-        if path.is_dir():
+        if _is_dir(path):
             skill_path = path / "SKILL.md"
-            if not skill_path.is_file():
+            if not _is_file(skill_path):
                 continue
-        elif path.is_file() and path.name == "SKILL.md":
+        elif _is_file(path) and path.name == "SKILL.md":
             skill_path = path
             name = path.parent.name
         else:
@@ -157,7 +179,7 @@ def load_skills(cwd: str | Path = ".", extra_dirs: list[str] | None = None) -> l
 def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -> list[Skill]:
     by_name: dict[str, Skill] = {}
     for d in _iter_skill_dirs(cwd_path, extra_dirs):
-        if not d.exists():
+        if not _is_dir(d):
             continue
         source = classify_skill_dir(d, cwd_path)
         for skill in _load_from_dir(d, source=source):

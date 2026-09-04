@@ -1,7 +1,7 @@
 # Kite CLI UX
 
 **Agent:** kite
-**Version:** 0.8.2
+**Version:** 0.9.0
 **Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
@@ -46,7 +46,7 @@ Approval modes (Codex-style, always visible in the prompt): `auto` · `approve` 
 
 Regular in-workspace `write`/`edit` and safe bash (`git status`, `pytest`, `rg`) still follow the active approval mode.
 
-**Sandbox:** off by default (**host** mode). `/restricted on` clamps file/bash paths to the session cwd; footer shows `restricted` when active.
+**Sandbox:** off by default (**host** mode). `/restricted on` clamps file/bash paths to the session cwd; footer shows `restricted` when active. Restricted mode may still **read** `~/.kite/skills` (including symlink/junction targets) so skill packs can load extra files; writes there stay blocked.
 
 **Slash menu:** `Tab` cycles completions. `Enter` always sends the line (it does not accept a hidden completion). Use ↑/↓ when the menu is open. Mouse wheel scrolling of the `/` dropdown needs `KITE_MOUSE=1` (that captures the mouse and disables native drag-select).
 
@@ -72,7 +72,7 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 | `Ctrl+D` / `/quit` | Close the REPL |
 | `Tab` | Cycle slash completions (`Enter` always submits) |
 
-While a turn is running the composer stays live (placeholder: `Enter queue · Esc stop · Ctrl+G steer`). After stop, keep typing in the **same session** until `/quit` or `Ctrl+D`.
+While a turn is running the composer stays pinned (placeholder: `add a follow-up while Kite works…`). **Enter** queues a follow-up without tearing down the input box; **Esc** stops; **Ctrl+G** steers. `/tasks` lists the running command and the queue. The footer shows a running line (`[HH:MM:SS] command  running`) plus metrics: **tok/s**, **cache hit %**, context meter, and cost. After stop, keep typing in the **same session** until `/quit` or `Ctrl+D`.
 
 **Loaders** (beautifului-inspired, TTY-only): default pixel-grid loader with shimmer label and elapsed time. Override with `KITE_LOADER=grid|dots|orbit|wave|spin`.
 

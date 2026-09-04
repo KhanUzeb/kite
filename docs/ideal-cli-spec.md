@@ -1,4 +1,4 @@
-# Ideal CLI spec coverage (Kite 0.8.2)
+# Ideal CLI spec coverage (Kite 0.9.0)
 
 How Kite maps onto the 14-category Ideal Coding CLI spec.
 
@@ -43,7 +43,7 @@ pytest
 
 **CI:** `.github/workflows/tests.yml` runs the full suite on every push and pull request to `main` (Python 3.11 + 3.12). Maintainers can re-run from the Actions tab.
 
-Unit tests in `tests/` cover guardrails, `trusted_paths` approval, loop guard, session append, verification heuristics, orchestrator dispatch, context/skills caches, git-stat diffs, skill install, reasoning/setup UX, and UI helpers.
+Unit tests in `tests/` cover guardrails, `trusted_paths` approval, loop guard, session append, verification heuristics, orchestrator dispatch, context/skills caches, git-stat diffs, skill install (including local-path symlink), 0.9 application adapters, reasoning/setup UX, and UI helpers.
 
 ## Commands
 

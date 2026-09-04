@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from kite.config import GuardrailConfig
 from kite.guardrails import GuardrailPolicy
 from kite.guardrails.sandbox import check_dangerous, cwd_in_trusted, workspace_root
@@ -23,6 +25,28 @@ def test_cwd_in_trusted_subtree(workspace: Path) -> None:
     src = workspace / "src"
     assert cwd_in_trusted(src, root, ["src/"])
     assert not cwd_in_trusted(workspace, root, ["src/"])
+
+
+def test_restricted_read_allows_global_skill_tree(workspace: Path, kite_home: Path, tmp_path: Path) -> None:
+    from kite.guardrails.sandbox import is_user_skill_read
+
+    real = tmp_path / "skill-src"
+    real.mkdir()
+    (real / "notes.md").write_text("ok\n", encoding="utf-8")
+    link = kite_home / "skills" / "linked-skill"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    from kite.skills.install import symlink_or_copy
+
+    if symlink_or_copy(link, real) != "link":
+        pytest.skip("symlinks not permitted on this OS")
+    policy = GuardrailPolicy(GuardrailConfig(execution_mode="restricted"), workspace)
+    via_home = policy.check_path(str(link / "notes.md"))
+    assert via_home.allowed
+    via_target = policy.check_path(str(real / "notes.md"))
+    assert via_target.allowed
+    assert is_user_skill_read(real / "notes.md")
+    write = policy.check_path(str(real / "notes.md"), for_write=True)
+    assert not write.allowed
 
 
 def test_path_escape_blocked_in_restricted_mode(workspace: Path, tmp_path: Path) -> None:
