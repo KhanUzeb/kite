@@ -90,7 +90,13 @@ For coding tasks, structure the final answer:
 - optional follow-ups
 ```
 
-When the task is fully done in **build** mode, submit with bash alone (no other commands in the same call):
+When the task is fully done in **build** mode, submit with the `submit` tool (preferred) or bash alone (no other commands in the same call):
+
+```
+submit(message="## Done\n- …\n\n## Changed\n- …\n\n## Verification\n- ✓ pytest -q")
+```
+
+Legacy bash marker (still supported):
 
 ```
 echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT

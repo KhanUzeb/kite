@@ -62,6 +62,7 @@ class SessionUiState:
     turn: int = 0
     sandbox_restricted: bool = False  # False = host (default); True = restricted sandbox
     flash: str = ""
+    verification_status: str = ""
     busy: bool = False
     awaiting_approval: str = ""
     queued: int = 0
