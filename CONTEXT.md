@@ -120,7 +120,9 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Verification** — Evidence the task is done (test output, diff, command result) before treating work as complete.
 
-**VerificationPlan** — Artifact-aware required checks derived from touched paths (HTML structural parse ≠ pytest).
+**VerificationPlan** — Artifact-aware required checks derived from touched paths and workspace layout (monorepo package roots, ecosystems). HTML structural parse ≠ pytest.
+
+**WorkspaceProfile** — Discovered packages (Python/JS/Rust/Go markers), default test commands, and optional `.kite/verification.toml` overrides. Verification scopes checks per package, not a single `src/`→`tests/` assumption.
 
 **Tool effect** — Canonical capability tag (`workspace_read`, `network`, `nested_agent`, …) derived per tool call; `PolicyEngine` authorizes effects.
 

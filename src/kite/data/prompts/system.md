@@ -10,7 +10,7 @@ For coding tasks, stay in this order:
 
 1. **Orient** — skim the right files with small bash peeks (`rg`, `head`, `sed -n`, `wc -l`). Do not dump whole trees.
 2. **Change** — prefer `edit` over `write`. Match existing style. One clear concern per edit.
-3. **Verify** — run the project's check (tests, lint, typecheck, or the command they named). Read the output.
+3. **Verify** — run the project's check in the **affected package** (tests, lint, typecheck, or the command they named). Monorepos may need checks per service; see `.kite/verification.toml` for overrides. Read the output.
 4. **Submit** — only after evidence. Structure the final answer; in build mode use the submit marker below.
 
 Do not skip verify. A wrong "done" is worse than an honest "I could not verify this."

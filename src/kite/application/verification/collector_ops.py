@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 from kite.application.verification.plan import (
     CheckSpec,
     VerificationRecord,
-    build_verification_plan,
     classify_path,
     plan_status,
 )
@@ -22,8 +21,13 @@ _TEST_HINTS = (
     "python -m pytest",
     "python -m unittest",
     "npm test",
+    "pnpm test",
+    "yarn test",
     "go test",
     "cargo test",
+    "bazel test",
+    "nx test",
+    "make test",
     "ruff check",
     "mypy",
     "uv run pytest",
@@ -138,6 +142,12 @@ def _match_bash_check(cmd: str, plan) -> CheckSpec | None:
         if check.command and check.command.lower() in lowered:
             return check
         if check.artifact_kind == "python" and "pytest" in lowered:
+            return check
+        if check.artifact_kind == "js" and ("npm test" in lowered or "pnpm test" in lowered or "yarn test" in lowered):
+            return check
+        if check.artifact_kind == "rust" and "cargo test" in lowered:
+            return check
+        if check.artifact_kind == "go" and "go test" in lowered:
             return check
         if check.artifact_kind == "js" and "node --check" in lowered:
             return check
@@ -311,12 +321,17 @@ def submit_block_reason(
 
 
 def post_edit_nudge(collector: VerificationCollector) -> str | None:
-    plan = build_verification_plan(tuple(sorted(collector.paths_touched)))
+    plan = collector.plan()
     if not collector.has_edits() or not plan.required_checks:
         return None
     if plan_status(plan, collector._records) == "verified":
         return None
     kinds = ", ".join(sorted(plan.artifact_kinds))
+    if plan.package_count > 1:
+        return (
+            f"[verification] Edits span {plan.package_count} workspace packages ({kinds}) — "
+            "run the applicable check in each affected package before submitting."
+        )
     if kinds == "html":
         return "[verification] HTML edited — structural parse will be checked; pytest is not required."
     return (

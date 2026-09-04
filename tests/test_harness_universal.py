@@ -193,6 +193,48 @@ def test_html_empty_content_does_not_verify() -> None:
     assert vc.needs_tests()
 
 
+def test_monorepo_scopes_python_checks_per_package(tmp_path) -> None:
+    from kite.application.verification.plan import build_verification_plan
+    from kite.application.verification.workspace_profile import discover_workspace_profile
+
+    root = tmp_path / "mono"
+    (root / "services" / "api").mkdir(parents=True)
+    (root / "apps" / "web").mkdir(parents=True)
+    (root / "services" / "api" / "pyproject.toml").write_text("[project]\nname='api'\n", encoding="utf-8")
+    (root / "apps" / "web" / "package.json").write_text(
+        '{"name":"web","scripts":{"test":"vitest run"}}', encoding="utf-8"
+    )
+    profile = discover_workspace_profile(root)
+    assert len(profile.packages) >= 2
+    plan = build_verification_plan(
+        ("services/api/handler.py", "apps/web/src/App.tsx"),
+        profile=profile,
+    )
+    assert len(plan.required_checks) >= 2
+    assert plan.package_count >= 2
+    roots = {c.package_root for c in plan.required_checks if c.package_root}
+    assert "services/api" in roots or "apps/web" in roots
+
+
+def test_verification_toml_override(tmp_path) -> None:
+    from kite.application.verification.workspace_profile import discover_workspace_profile
+
+    root = tmp_path / "repo"
+    pkg = root / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "pyproject.toml").write_text("[project]\nname='pkg'\n", encoding="utf-8")
+    kite = root / ".kite"
+    kite.mkdir()
+    (kite / "verification.toml").write_text(
+        '[packages."pkg"]\ntest = "pytest -q pkg/tests -x"\n',
+        encoding="utf-8",
+    )
+    profile = discover_workspace_profile(root)
+    unit = profile.package_for("pkg/module.py")
+    assert unit is not None
+    assert unit.test_command == "pytest -q pkg/tests -x"
+
+
 def test_approval_gate_and_coordinator() -> None:
     assert tool_requires_approval_gate("memory", {"action": "remember", "text": "x"})
     assert tool_requires_approval_gate("skill", {"install": "pkg"})

@@ -1,12 +1,18 @@
-"""Verification plan — artifact-aware check selection."""
+"""Verification plan — artifact-aware, workspace-scoped check selection."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-ArtifactKind = Literal["python", "html", "js", "css", "config", "docs", "other"]
+from kite.application.verification.workspace_profile import (
+    WorkspaceProfile,
+    _python_command_for_paths,
+    group_paths_by_package,
+)
+
+ArtifactKind = Literal["python", "html", "js", "css", "config", "docs", "rust", "go", "other"]
 CheckKind = Literal["parser", "project_test", "lint", "syntax", "structural"]
 Platform = Literal["windows", "posix", "any"]
 VerificationTerminal = Literal[
@@ -21,6 +27,7 @@ class CheckSpec:
     affected_paths: tuple[str, ...]
     platform: Platform = "any"
     artifact_kind: ArtifactKind = "other"
+    package_root: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +47,8 @@ class VerificationPlan:
     artifact_kinds: frozenset[ArtifactKind]
     required_checks: tuple[CheckSpec, ...]
     optional_checks: tuple[CheckSpec, ...] = ()
+    workspace_root: str = ""
+    package_count: int = 0
 
     @property
     def has_required_checks(self) -> bool:
@@ -56,6 +65,10 @@ def classify_path(path: str) -> ArtifactKind:
         return "js"
     if suffix in {".css", ".scss", ".less"}:
         return "css"
+    if suffix in {".rs"}:
+        return "rust"
+    if suffix in {".go"}:
+        return "go"
     if suffix in {".toml", ".yaml", ".yml", ".json", ".ini", ".cfg"}:
         return "config"
     if suffix in {".md", ".rst", ".txt"}:
@@ -67,33 +80,50 @@ def classify_touched_paths(paths: tuple[str, ...] | list[str]) -> frozenset[Arti
     return frozenset(classify_path(p) for p in paths if p)
 
 
-def _python_checks(paths: tuple[str, ...]) -> tuple[CheckSpec, ...]:
+def _python_checks(
+    paths: tuple[str, ...],
+    profile: WorkspaceProfile | None,
+) -> tuple[CheckSpec, ...]:
     py_paths = tuple(p for p in paths if classify_path(p) == "python")
     if not py_paths:
         return ()
-    related_tests = tuple(
-        p.replace("src/", "tests/test_").replace(".py", ".py")
-        for p in py_paths
-        if "/src/" in p.replace("\\", "/")
-    )
-    if related_tests:
-        cmd = f"pytest -q {' '.join(related_tests[:4])}"
+    if profile is None:
         return (
             CheckSpec(
-                kind="project_test",
-                command=cmd,
+                kind="lint",
+                command=f"python -m py_compile {' '.join(py_paths[:8])}" if py_paths else None,
                 affected_paths=py_paths,
                 artifact_kind="python",
             ),
         )
-    return (
-        CheckSpec(
-            kind="lint",
-            command=f"python -m py_compile {' '.join(py_paths[:6])}" if py_paths else None,
-            affected_paths=py_paths,
-            artifact_kind="python",
-        ),
-    )
+    checks: list[CheckSpec] = []
+    grouped = group_paths_by_package(py_paths, profile)
+    workspace = profile.workspace_root
+    for pkg_key, pkg_paths in grouped.items():
+        unit = next((p for p in profile.packages if p.key == pkg_key), None)
+        if unit is None:
+            cmd = f"python -m py_compile {' '.join(pkg_paths[:8])}"
+            checks.append(
+                CheckSpec(
+                    kind="lint",
+                    command=cmd,
+                    affected_paths=pkg_paths,
+                    artifact_kind="python",
+                    package_root=pkg_key if pkg_key != "." else "",
+                )
+            )
+            continue
+        cmd = _python_command_for_paths(Path(workspace), unit, pkg_paths)
+        checks.append(
+            CheckSpec(
+                kind="project_test",
+                command=cmd,
+                affected_paths=pkg_paths,
+                artifact_kind="python",
+                package_root=unit.root,
+            )
+        )
+    return tuple(checks)
 
 
 def _html_checks(paths: tuple[str, ...]) -> tuple[CheckSpec, ...]:
@@ -110,10 +140,28 @@ def _html_checks(paths: tuple[str, ...]) -> tuple[CheckSpec, ...]:
     )
 
 
-def _js_checks(paths: tuple[str, ...]) -> tuple[CheckSpec, ...]:
+def _js_checks(
+    paths: tuple[str, ...],
+    profile: WorkspaceProfile | None,
+) -> tuple[CheckSpec, ...]:
     js_paths = tuple(p for p in paths if classify_path(p) == "js")
     if not js_paths:
         return ()
+    if profile:
+        checks: list[CheckSpec] = []
+        for pkg_key, pkg_paths in group_paths_by_package(js_paths, profile).items():
+            unit = next((p for p in profile.packages if p.key == pkg_key), None)
+            cmd = unit.test_command if unit and unit.test_command else f"node --check {pkg_paths[0]}"
+            checks.append(
+                CheckSpec(
+                    kind="syntax",
+                    command=cmd,
+                    affected_paths=pkg_paths,
+                    artifact_kind="js",
+                    package_root=unit.root if unit else "",
+                )
+            )
+        return tuple(checks)
     return (
         CheckSpec(
             kind="syntax",
@@ -124,30 +172,115 @@ def _js_checks(paths: tuple[str, ...]) -> tuple[CheckSpec, ...]:
     )
 
 
-def build_verification_plan(touched_paths: tuple[str, ...] | list[str]) -> VerificationPlan:
-    """Select applicable checks from touched paths — never default to pytest for HTML."""
+def _rust_checks(
+    paths: tuple[str, ...],
+    profile: WorkspaceProfile | None,
+) -> tuple[CheckSpec, ...]:
+    rust_paths = tuple(p for p in paths if classify_path(p) == "rust")
+    if not rust_paths:
+        return ()
+    if profile:
+        checks: list[CheckSpec] = []
+        for pkg_key, pkg_paths in group_paths_by_package(rust_paths, profile).items():
+            unit = next((p for p in profile.packages if p.key == pkg_key), None)
+            cmd = unit.test_command if unit and unit.test_command else "cargo test"
+            checks.append(
+                CheckSpec(
+                    kind="project_test",
+                    command=cmd,
+                    affected_paths=pkg_paths,
+                    artifact_kind="rust",
+                    package_root=unit.root if unit else "",
+                )
+            )
+        return tuple(checks)
+    return (
+        CheckSpec(
+            kind="project_test",
+            command="cargo test",
+            affected_paths=rust_paths,
+            artifact_kind="rust",
+        ),
+    )
+
+
+def _go_checks(
+    paths: tuple[str, ...],
+    profile: WorkspaceProfile | None,
+) -> tuple[CheckSpec, ...]:
+    go_paths = tuple(p for p in paths if classify_path(p) == "go")
+    if not go_paths:
+        return ()
+    if profile:
+        checks: list[CheckSpec] = []
+        for pkg_key, pkg_paths in group_paths_by_package(go_paths, profile).items():
+            unit = next((p for p in profile.packages if p.key == pkg_key), None)
+            cmd = unit.test_command if unit and unit.test_command else "go test ./..."
+            checks.append(
+                CheckSpec(
+                    kind="project_test",
+                    command=cmd,
+                    affected_paths=pkg_paths,
+                    artifact_kind="go",
+                    package_root=unit.root if unit else "",
+                )
+            )
+        return tuple(checks)
+    return (
+        CheckSpec(
+            kind="project_test",
+            command="go test ./...",
+            affected_paths=go_paths,
+            artifact_kind="go",
+        ),
+    )
+
+
+def build_verification_plan(
+    touched_paths: tuple[str, ...] | list[str],
+    *,
+    profile: WorkspaceProfile | None = None,
+) -> VerificationPlan:
+    """Select checks from touched paths and workspace layout — monorepo-aware."""
     paths = tuple(p for p in touched_paths if p)
     kinds = classify_touched_paths(paths)
     required: list[CheckSpec] = []
     optional: list[CheckSpec] = []
 
     if "python" in kinds:
-        required.extend(_python_checks(paths))
+        required.extend(_python_checks(paths, profile))
     if "html" in kinds:
         required.extend(_html_checks(paths))
     if "js" in kinds:
-        required.extend(_js_checks(paths))
+        required.extend(_js_checks(paths, profile))
+    if "rust" in kinds:
+        required.extend(_rust_checks(paths, profile))
+    if "go" in kinds:
+        required.extend(_go_checks(paths, profile))
     if "config" in kinds:
         cfg_paths = tuple(p for p in paths if classify_path(p) == "config")
         optional.append(
             CheckSpec(kind="parser", command=None, affected_paths=cfg_paths, artifact_kind="config")
         )
+    if profile and profile.workspace_commands:
+        optional.append(
+            CheckSpec(
+                kind="project_test",
+                command=profile.workspace_commands[0],
+                affected_paths=paths,
+                artifact_kind="other",
+                package_root=".",
+            )
+        )
 
+    package_count = len(profile.packages) if profile else 0
     return VerificationPlan(
         touched_paths=paths,
         artifact_kinds=kinds,
         required_checks=tuple(required),
         optional_checks=tuple(optional),
+        workspace_root=profile.workspace_root if profile else "",
+        package_count=package_count,
     )
 
 
@@ -160,6 +293,8 @@ def record_satisfies_check(record: VerificationRecord, check: CheckSpec) -> bool
     record_paths = set(record.affected_paths)
     check_paths = set(check.affected_paths)
     if check_paths and not record_paths.intersection(check_paths):
+        return False
+    if check.package_root and record.check.package_root and check.package_root != record.check.package_root:
         return False
     if check.command and record.command:
         return check.kind == record.check.kind
@@ -199,4 +334,6 @@ def plan_summary(plan: VerificationPlan, records: list[VerificationRecord]) -> d
         "artifact_kinds": sorted(plan.artifact_kinds),
         "required_checks": len(plan.required_checks),
         "records": len(records),
+        "workspace_root": plan.workspace_root,
+        "package_count": plan.package_count,
     }
