@@ -863,6 +863,7 @@ def read_repl_busy_composer(
     on_steer: Callable[[str], None],
     on_slash_while_busy: Callable[[], None],
     on_eof: Callable[[], None],
+    on_tick: Callable[[], None] | None = None,
 ) -> None:
     """Keep the composer pinned while a turn runs — one stdout patch for the whole turn."""
     if session is None:
@@ -882,6 +883,8 @@ def read_repl_busy_composer(
 
         with patch_stdout(raw=True):
             while should_continue():
+                if on_tick is not None:
+                    on_tick()
                 action_slot["kind"] = "submit"
                 result = _prompt_once(session, state, busy=True, action_slot=action_slot)
                 if not should_continue():

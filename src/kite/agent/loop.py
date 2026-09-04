@@ -816,7 +816,10 @@ class DefaultAgent:
         outputs.append(out)
 
     def _run_gated(self, tool: str, args: dict, action: dict) -> dict:
-        if self.approver and tool in MUTATING_TOOLS:
+        from kite.application.tools.effects import tool_requires_approval_gate
+
+        needs_gate = tool in MUTATING_TOOLS or tool_requires_approval_gate(tool, args)
+        if self.approver and needs_gate:
             extra = {"reason": args.get("reason") or "", "diff": ""}
             if tool in {"write", "edit"}:
                 extra["diff"] = self._preview_diff(tool, args)

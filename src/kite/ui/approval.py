@@ -556,9 +556,40 @@ def make_approver(
     interactive: bool = True,
     trusted_paths: list[str] | None = None,
     workspace_cwd: str | None = None,
+    coordinator: Any | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], Decision]:
     """Returns a callback (tool, args, extra) -> Decision."""
     policy = policy or ApprovalPolicy.load()
+
+    def _prompt_or_coordinate(
+        tool: str,
+        arguments: dict[str, Any],
+        extra: dict[str, Any],
+        *,
+        reason: str,
+        mandatory: bool,
+    ) -> Decision:
+        diff = str(extra.get("diff") or "")
+        if coordinator is not None:
+            return coordinator.request(
+                tool,
+                arguments,
+                reason=reason,
+                mandatory=mandatory,
+                diff=diff,
+                extra=extra,
+            )
+        if not interactive:
+            return "deny"
+        return prompt_approval(
+            console,
+            tool,
+            arguments,
+            diff=diff,
+            reason=reason,
+            policy=policy,
+            mandatory=mandatory,
+        )
 
     def approve(tool: str, arguments: dict[str, Any], extra: dict[str, Any] | None = None) -> Decision:
         extra = extra or {}
@@ -578,15 +609,11 @@ def make_approver(
         if approval is ApprovalMode.READONLY and tool in MUTATING_TOOLS:
             return "deny"
         if mandatory_reason:
-            if not interactive:
-                return "deny"
-            return prompt_approval(
-                console,
+            return _prompt_or_coordinate(
                 tool,
                 arguments,
-                diff=str(extra.get("diff") or ""),
+                extra,
                 reason=mandatory_reason,
-                policy=policy,
                 mandatory=True,
             )
         if not needs_approval(
@@ -605,13 +632,12 @@ def make_approver(
             return "allow"
         if not interactive:
             return "deny" if is_git_write(cmd) or approval is ApprovalMode.APPROVE else "allow"
-        return prompt_approval(
-            console,
+        return _prompt_or_coordinate(
             tool,
             arguments,
-            diff=str(extra.get("diff") or ""),
+            extra,
             reason=str(extra.get("reason") or ""),
-            policy=policy,
+            mandatory=False,
         )
 
     return approve
