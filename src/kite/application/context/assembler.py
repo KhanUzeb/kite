@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from kite.application.context.models import (
@@ -10,10 +11,11 @@ from kite.application.context.models import (
     ContextItem,
     ContextSnapshot,
     InclusionReason,
+    OmissionReason,
     OmittedItem,
     compute_prompt_hash,
+    render_snapshot,
 )
-from kite.application.context.render import render_snapshot
 from kite.application.contracts import RunSpec
 from kite.context.discovery import gather_project_context
 
@@ -33,40 +35,20 @@ class ContextAssembler:
         inclusion: dict[str, InclusionReason] = {}
         seen_content: set[str] = set()
 
+        def _omit(item: ContextItem, reason: OmissionReason) -> None:
+            omitted.append(OmittedItem(item.item_id, item.source, reason, item.token_cost))
+
         def _add(item: ContextItem, reason: InclusionReason = "selected") -> None:
             key = f"{item.source}:{item.content[:200]}"
             if key in seen_content:
-                omitted.append(
-                    OmittedItem(
-                        item_id=item.item_id,
-                        source=item.source,
-                        reason="duplicate",
-                        token_cost=item.token_cost,
-                    ),
-                )
+                _omit(item, "duplicate")
                 return
-            source_used = sum(i.token_cost for i in items if i.source == item.source)
-            limit = self.budget.source_limit(item.source)
-            if source_used + item.token_cost > limit:
-                omitted.append(
-                    OmittedItem(
-                        item_id=item.item_id,
-                        source=item.source,
-                        reason="budget_exceeded",
-                        token_cost=item.token_cost,
-                    ),
-                )
+            used = sum(i.token_cost for i in items if i.source == item.source)
+            if used + item.token_cost > self.budget.source_limit(item.source):
+                _omit(item, "budget_exceeded")
                 return
-            total_used = sum(i.token_cost for i in items)
-            if total_used + item.token_cost > self.budget.input_budget():
-                omitted.append(
-                    OmittedItem(
-                        item_id=item.item_id,
-                        source=item.source,
-                        reason="budget_exceeded",
-                        token_cost=item.token_cost,
-                    ),
-                )
+            if sum(i.token_cost for i in items) + item.token_cost > self.budget.input_budget():
+                _omit(item, "budget_exceeded")
                 return
             seen_content.add(key)
             items.append(item)
@@ -147,8 +129,6 @@ class ContextAssembler:
         # Stage 7–9: tools, history, run state
         tool_schemas = sources.get("tool_schemas") or []
         if tool_schemas:
-            import json
-
             schema_text = json.dumps(tool_schemas, indent=0)[: self.budget.tools * 4]
             _add(
                 ContextItem.create(
@@ -178,8 +158,6 @@ class ContextAssembler:
 
         run_state = sources.get("run_state") or {}
         if run_state:
-            import json
-
             _add(
                 ContextItem.create(
                     source="run_state",

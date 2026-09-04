@@ -13,6 +13,19 @@ SCHEMA_VERSION = 1
 REDACTION_VERSION = 1
 
 
+def redact_text(text: str) -> str:
+    from kite.guardrails import redact_secrets
+
+    out, _ = redact_secrets(text)
+    return out.replace("[REDACTED_SECRET]", "[REDACTED]")
+
+
+def redact_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    import json
+
+    return json.loads(redact_text(json.dumps(payload)))
+
+
 @dataclass(frozen=True, slots=True)
 class EventEnvelope:
     event_id: str
@@ -53,12 +66,11 @@ class InMemoryEventSink:
 class EventSequencer:
     """Assign monotonic sequence numbers and event IDs."""
 
-    __slots__ = ("_run_id", "_next", "_parent_stack")
+    __slots__ = ("_run_id", "_next")
 
     def __init__(self, run_id: str) -> None:
         self._run_id = run_id
         self._next = 0
-        self._parent_stack: list[str] = []
 
     @property
     def run_id(self) -> str:
@@ -66,25 +78,15 @@ class EventSequencer:
 
     def emit(self, kind: EventKind, payload: dict[str, Any] | None = None) -> EventEnvelope:
         self._next += 1
-        event_id = str(uuid.uuid4())
-        parent = self._parent_stack[-1] if self._parent_stack else None
-        envelope = EventEnvelope(
-            event_id=event_id,
+        return EventEnvelope(
+            event_id=str(uuid.uuid4()),
             run_id=self._run_id,
-            parent_event_id=parent,
+            parent_event_id=None,
             sequence=self._next,
             timestamp=datetime.now(UTC).isoformat(),
             kind=kind,
             payload=dict(payload or {}),
         )
-        return envelope
-
-    def push_parent(self, event_id: str) -> None:
-        self._parent_stack.append(event_id)
-
-    def pop_parent(self) -> None:
-        if self._parent_stack:
-            self._parent_stack.pop()
 
 
 def envelope_from_legacy(

@@ -35,7 +35,7 @@ Setup & model
 
 Project
   kite context                  preview workspace discovery
-  kite skills [--show name] [--add pkg]
+  kite skills [--show name] [--add pkg|path]
   kite commands | kite plugins
   kite memory [--remember text]
 

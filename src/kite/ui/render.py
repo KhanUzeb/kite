@@ -356,6 +356,8 @@ class RunDisplay:
                 self._spinner.start()
                 self._spinner_on = True
             self._spinner.kick(label, fast=fast)
+            if self.state.busy:
+                self.state.set_running(label=label, kind="model")
         else:
             if self._spinner_on:
                 self._spinner.stop()
@@ -421,6 +423,7 @@ class RunDisplay:
 
     def _on_stream_start(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
+        self.state.reset_stream_stats()
         self.state.provider = str(p.get("provider") or self.state.provider)
         self.state.model = str(p.get("model") or self.state.model)
         self.state.n_calls += 1
@@ -431,6 +434,7 @@ class RunDisplay:
     def _on_stream_reasoning(self, p: dict[str, Any]) -> None:
         text = p.get("text") or ""
         if text:
+            self.state.note_stream_delta(str(text))
             self._append_thinking(str(text))
         else:
             self._spin(True, "thinking")
@@ -440,6 +444,7 @@ class RunDisplay:
         if text:
             if self._thinking_buf:
                 self._finalize_thinking()
+            self.state.note_stream_delta(str(text))
             self._coalesced_stream("answer", str(text))
         else:
             self._spin(True, "thinking")
@@ -491,6 +496,12 @@ class RunDisplay:
             parallel_batch=max(batch, 1),
             parallel_index=max(pindex, 1),
         )
+        detail = card.detail
+        if tool == "bash" and args.get("command"):
+            detail = str(args["command"]).replace("\n", " ").strip()[:72]
+        elif not detail:
+            detail = tool
+        self.state.set_running(label=detail, kind=tool)
         self.console.print(render_tool_card_start(card))
         if reason:
             self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted italic"))
@@ -821,7 +832,7 @@ class RunDisplay:
         if hits:
             self.state.cache_hit_tokens = hits
             try:
-                self.state.cache_hit_ratio = float(session.get("hit_ratio") or 0.0)
+                self.state.cache_hit_ratio = float(session.get("hit_ratio") or p.get("hit_ratio") or 0.0)
             except (TypeError, ValueError):
                 pass
             self._touch_state()

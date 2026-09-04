@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# kite-release-version: 0.8.2
+# kite-release-version: 0.9.0
 # Bump Kite version, sync stamped files, prepend CHANGELOG stub, tag, and push.
 #
 # Usage (after changes are merged to main):
-#   ./scripts/bump_release.sh 0.8.2
+#   ./scripts/bump_release.sh 0.9.0
 #
 # Then edit CHANGELOG.md and docs/RELEASE-X.Y.Z.md, commit if needed, push:
 #   git push origin main --tags

@@ -19,7 +19,15 @@ from kite.plugins.loader import project_plugins_dir, write_plugin_stub
 from kite.cli.slash import CommandIndex, SlashResult, help_text, invalidate_command_index, resolve_slash
 from kite.tools.store import TodoStore
 from kite.ui.git import GitCheckpoints
-from kite.ui.complete import ComposerResult, SlashCompleter, make_prompt_session, make_repl_key_bindings, read_repl_line
+from kite.ui.complete import (
+    ComposerResult,
+    SlashCompleter,
+    classify_busy_line,
+    make_prompt_session,
+    make_repl_key_bindings,
+    read_repl_busy_composer,
+    read_repl_line,
+)
 from kite.ui.render import RunDisplay, render_compact_boundary, render_status
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_PROMPT, make_console
@@ -151,6 +159,9 @@ class ChatSession:
         banner.append("  ·  ", style="kite.muted")
         banner.append("Ctrl+G", style="kite.pending")
         banner.append(" steer", style="kite.muted")
+        banner.append("  ·  ", style="kite.muted")
+        banner.append("Enter", style="kite.pending")
+        banner.append(" queue", style="kite.muted")
         banner.append("  ·  ", style="kite.muted")
         banner.append("F3", style="kite.plan")
         banner.append(" plan", style="kite.muted")
@@ -992,6 +1003,7 @@ class ChatSession:
             "status": self._slash_status,
             "stop": self._slash_stop,
             "steer": self._slash_steer,
+            "tasks": self._slash_tasks,
             "jobs": self._slash_jobs,
             "kill": self._slash_kill,
             "resume": self._slash_resume,
@@ -1302,6 +1314,24 @@ class ChatSession:
         else:
             self._run_task(text)
 
+    def _slash_tasks(self, _arg: str) -> None:
+        from kite.ui.status import active_task_count, format_running_status
+
+        if self._busy:
+            running = format_running_status(self.state) or "working"
+            self.console.print(f"[kite.pending]running[/]  {running}")
+        else:
+            self.console.print("[kite.muted]nothing running[/]  — session stays open")
+        if not self._inbox:
+            self.console.print("[kite.muted]queue empty[/]  · Enter adds a follow-up while Kite works")
+            return
+        self.console.print(f"[kite.muted]queued {len(self._inbox)}[/]  ({active_task_count(self.state)} total)")
+        for i, msg in enumerate(self._inbox, start=1):
+            preview = msg.replace("\n", " ").strip()
+            if len(preview) > 100:
+                preview = preview[:97] + "…"
+            self.console.print(f"  {i}. {preview}")
+
     def _slash_jobs(self, _arg: str) -> None:
         rows = self.jobs.list(active_only=True)
         if not rows:
@@ -1328,8 +1358,6 @@ class ChatSession:
     def _slash_kill(self, arg: str) -> None:
         token = (arg or "").strip().lower()
         if not token:
-            from kite.ui.commands import ARG_CHOICES
-
             rows = self.jobs.list(active_only=True)
             choices = [("all", "kill every background job and live subagent")]
             choices.extend(
@@ -1571,7 +1599,7 @@ class ChatSession:
             try:
                 from kite.skills.install import install_skill
 
-                names = install_skill(spec)
+                names = install_skill(spec, link_cwd=self.cwd)
             except (ValueError, RuntimeError, OSError) as e:
                 self.console.print(f"[kite.error]{e}[/]")
                 return
@@ -1790,6 +1818,8 @@ class ChatSession:
             return
         if not task.strip():
             task = "Look at the attached files."
+        preview = task.replace("\n", " ").strip()
+        self.state.set_running(label=preview[:80] or "working", kind="turn")
         self.attachments = list(bundled)
         self._sync_attach_count()
         try:
@@ -1822,44 +1852,62 @@ class ChatSession:
                 self._wake_composer()
 
         threading.Thread(target=worker, daemon=True, name="kite-turn").start()
-        while not done.is_set():
-            got = self._read_input()
-            if done.is_set():
-                break
-            if got.kind == "eof":
-                self._quit_after_turn = True
-                self._request_stop()
-                break
-            if got.kind == "stop":
-                self._request_stop()
-                break
-            if got.kind == "steer":
-                self._queue_steer(got.text)
-                self._request_stop()
-                break
-            if got.kind == "text":
-                line = got.text
-                low = line.lower()
-                if low in {"/stop", "/s"}:
-                    self._request_stop()
+        session = self._ensure_prompt()
+
+        def _slash_busy_hint() -> None:
+            self.console.print(
+                "[kite.muted]still working[/]  — Enter queues · Esc stop · Ctrl+G steer · /tasks"
+            )
+
+        if session is not None:
+            read_repl_busy_composer(
+                session=session,
+                state=self.state,
+                action_slot=self._composer_action,
+                should_continue=lambda: not done.is_set(),
+                on_queue=self._queue_message,
+                on_stop=self._request_stop,
+                on_steer=self._queue_steer,
+                on_slash_while_busy=_slash_busy_hint,
+                on_eof=lambda: setattr(self, "_quit_after_turn", True),
+            )
+        else:
+            while not done.is_set():
+                got = self._read_input()
+                if done.is_set():
                     break
-                if low in {"/quit", "/q", "/exit"}:
+                if got.kind == "eof":
                     self._quit_after_turn = True
                     self._request_stop()
                     break
-                if low.startswith("/steer "):
-                    self._queue_steer(line.split(" ", 1)[1])
+                if got.kind == "stop":
                     self._request_stop()
                     break
-                if line.startswith("/"):
-                    self.console.print(
-                        "[kite.muted]still working[/]  — Esc/Ctrl+C stop · Ctrl+G steer · Enter queues chat"
-                    )
-                    continue
-                self._queue_message(line)
+                if got.kind == "steer":
+                    self._queue_steer(got.text)
+                    self._request_stop()
+                    break
+                if got.kind == "text":
+                    classified = classify_busy_line(got.text)
+                    if classified.kind == "stop":
+                        self._request_stop()
+                        break
+                    if classified.kind == "eof":
+                        self._quit_after_turn = True
+                        self._request_stop()
+                        break
+                    if classified.kind == "steer":
+                        self._queue_steer(classified.text)
+                        self._request_stop()
+                        break
+                    if classified.kind == "slash":
+                        _slash_busy_hint()
+                        continue
+                    self._queue_message(got.text)
         done.wait()
         self._busy = False
         self.state.busy = False
+        self.state.clear_running()
         self.display.close()
         self._bind_session(harness)
         if box.get("err") is not None:

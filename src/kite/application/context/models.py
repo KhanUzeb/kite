@@ -130,16 +130,116 @@ class ContextSnapshot:
     rendered_prompt: str = ""
     inclusion_map: dict[str, InclusionReason] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "run_id": self.run_id,
-            "prompt_hash": self.prompt_hash,
-            "assembler_version": self.assembler_version,
-            "item_count": len(self.items),
-            "omitted_count": len(self.omitted_items),
-            "budget_total": self.budget.total,
-        }
-
 
 def compute_prompt_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+TRUSTED_LEVELS: frozenset[TrustLevel] = frozenset(
+    {"trusted_runtime_policy", "trusted_user_instruction", "trusted_project_instruction"},
+)
+
+
+def render_item(item: ContextItem) -> str:
+    if item.trust_level in TRUSTED_LEVELS:
+        return item.content
+    open_tag = f"<!-- kite:untrusted source={item.source} trust={item.trust_level} -->"
+    return f"{open_tag}\n{item.content.strip()}\n<!-- /kite:untrusted -->"
+
+
+def render_snapshot(items: tuple[ContextItem, ...]) -> str:
+    return "\n\n".join(r for item in items if (r := render_item(item).strip()))
+
+
+def inspect_snapshot(snapshot: ContextSnapshot) -> dict[str, Any]:
+    from kite.application.events import redact_text
+
+    items = [
+        {
+            "item_id": item.item_id,
+            "source": item.source,
+            "trust_level": item.trust_level,
+            "token_cost": item.token_cost,
+            "inclusion_reason": snapshot.inclusion_map.get(item.item_id, "selected"),
+            "provenance": item.provenance,
+            "content_preview": redact_text(item.content[:240]),
+        }
+        for item in snapshot.items
+    ]
+    return {
+        "run_id": snapshot.run_id,
+        "prompt_hash": snapshot.prompt_hash,
+        "assembler_version": snapshot.assembler_version,
+        "total_tokens": sum(i.token_cost for i in snapshot.items),
+        "budget_input": snapshot.budget.input_budget(),
+        "items": items,
+        "omitted": [
+            {"item_id": o.item_id, "source": o.source, "reason": o.reason, "token_cost": o.token_cost}
+            for o in snapshot.omitted_items
+        ],
+    }
+
+
+@dataclass
+class CompactionState:
+    constraints: list[str] = field(default_factory=list)
+    todos: list[dict[str, Any]] = field(default_factory=list)
+    changed_paths: list[str] = field(default_factory=list)
+    changed_hashes: dict[str, str] = field(default_factory=dict)
+    checks: list[dict[str, Any]] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    cwd: str = ""
+    execution_mode: str = "restricted"
+    provider: str = ""
+    model: str = ""
+    budget_state: dict[str, Any] = field(default_factory=dict)
+    pending_tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    checkpoint_ids: list[str] = field(default_factory=list)
+
+
+def extract_compaction_state(
+    messages: list[dict],
+    *,
+    cwd: str = "",
+    todos: list[dict] | None = None,
+    session_meta: dict | None = None,
+) -> CompactionState:
+    from kite.context.window import extract_compaction_facts
+
+    meta = session_meta or {}
+    state = CompactionState(
+        cwd=cwd,
+        todos=list(todos or []),
+        constraints=[f for f in extract_compaction_facts(messages) if f.startswith("constraint:")],
+        provider=str(meta.get("provider") or ""),
+        model=str(meta.get("model") or ""),
+        execution_mode=str(meta.get("execution_mode") or "restricted"),
+    )
+    pending: list[dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            pending.extend(msg["tool_calls"])
+        if msg.get("role") == "tool":
+            tc_id = msg.get("tool_call_id")
+            pending = [p for p in pending if p.get("id") != tc_id]
+    state.pending_tool_calls = pending
+    return state
+
+
+def pair_tool_messages(messages: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        out.append(msg)
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            ids = {tc.get("id") for tc in msg["tool_calls"]}
+            j = i + 1
+            while j < len(messages) and messages[j].get("role") == "tool":
+                if messages[j].get("tool_call_id") in ids:
+                    out.append(messages[j])
+                j += 1
+            i = j
+            continue
+        i += 1
+    return out

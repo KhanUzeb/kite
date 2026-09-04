@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from kite.cli.slash import CommandIndex, SlashSpec, resolve_slash
 from kite.skills.install import _copy_skill_trees, parse_install_spec
 from kite.skills.loader import Skill, classify_skill_dir, invalidate_skills, load_skills
@@ -28,6 +30,17 @@ def test_parse_install_spec_requires_a_ref() -> None:
     except ValueError:
         return
     raise AssertionError("expected ValueError")
+
+
+def test_parse_local_path_is_link(tmp_path: Path) -> None:
+    skill = tmp_path / "mine"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("# mine\n", encoding="utf-8")
+    kind, ref = parse_install_spec(str(skill))
+    assert kind == "link"
+    assert Path(ref) == skill
+    kind2, _ = parse_install_spec("./relative-skill")
+    assert kind2 == "link"
 
 
 def test_copy_skill_trees_uses_frontmatter_name(tmp_path: Path) -> None:
@@ -68,6 +81,62 @@ def test_user_skill_loads_with_user_source(kite_home: Path, workspace: Path) -> 
     skills = load_skills(workspace)
     mine = next(s for s in skills if s.name == "mine")
     assert mine.source == "user"
+
+
+def _try_symlink(link: Path, target: Path) -> bool:
+    from kite.skills.install import symlink_or_copy
+
+    try:
+        return symlink_or_copy(link, target) == "link"
+    except OSError:
+        return False
+
+
+def test_load_skill_via_symlink_in_global_dir(kite_home: Path, workspace: Path, tmp_path: Path) -> None:
+    real = tmp_path / "real-skill"
+    real.mkdir()
+    (real / "SKILL.md").write_text("---\nname: linked\ndescription: via symlink\n---\n# linked\n", encoding="utf-8")
+    (real / "notes.md").write_text("extra\n", encoding="utf-8")
+    home_link = kite_home / "skills" / "linked"
+    home_link.parent.mkdir(parents=True, exist_ok=True)
+    if not _try_symlink(home_link, real):
+        pytest.skip("symlinks not permitted on this OS")
+    invalidate_skills()
+    skills = load_skills(workspace)
+    linked = next(s for s in skills if s.name == "linked")
+    assert "via symlink" in (linked.description or "")
+    assert (home_link / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_install_local_path_into_global_and_project(kite_home: Path, tmp_path: Path) -> None:
+    from kite.skills.install import install_skill
+
+    real = tmp_path / "src-skill"
+    real.mkdir()
+    (real / "SKILL.md").write_text("---\nname: local-one\n---\n# hi\n", encoding="utf-8")
+    project = tmp_path / "proj"
+    project.mkdir()
+    names = install_skill(str(real), dest=kite_home / "skills", link_cwd=project)
+    assert names == ["local-one"]
+    global_skill = kite_home / "skills" / "local-one"
+    assert global_skill.exists()
+    project_skill = project / ".kite" / "skills" / "local-one"
+    assert project_skill.exists()
+    assert (global_skill / "SKILL.md").read_text(encoding="utf-8").startswith("---")
+
+
+def test_replace_symlink_does_not_delete_real_tree(tmp_path: Path) -> None:
+    from kite.skills.install import _remove_skill_target
+
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "keep.txt").write_text("safe\n", encoding="utf-8")
+    link = tmp_path / "link"
+    if not _try_symlink(link, real):
+        pytest.skip("symlinks not permitted on this OS")
+    _remove_skill_target(link)
+    assert not link.exists() and not link.is_symlink()
+    assert (real / "keep.txt").read_text(encoding="utf-8") == "safe\n"
 
 
 def test_user_skill_slash_display_has_home_mark(tmp_path: Path) -> None:

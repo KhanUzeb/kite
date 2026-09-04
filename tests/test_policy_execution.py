@@ -15,9 +15,42 @@ def test_path_blocks_traversal(workspace: Path) -> None:
     assert "outside" in reason.lower() or "workspace" in reason.lower()
 
 
-def test_path_allows_workspace_file(workspace: Path) -> None:
-    ok, _ = check_path_access("src/app.py", workspace)
-    assert ok
+def test_path_blocks_sibling_prefix(tmp_path: Path) -> None:
+    workspace = tmp_path / "proj"
+    evil = tmp_path / "proj-evil"
+    workspace.mkdir()
+    evil.mkdir()
+    (workspace / "ok.txt").write_text("x\n", encoding="utf-8")
+    (evil / "secret.txt").write_text("no\n", encoding="utf-8")
+    ok, reason = check_path_access(evil / "secret.txt", workspace)
+    assert not ok
+    assert "sibling" in reason or "outside" in reason.lower()
+
+
+def test_host_mode_allows_outside_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "proj"
+    other = tmp_path / "other"
+    workspace.mkdir()
+    other.mkdir()
+    target = other / "file.txt"
+    target.write_text("ok\n", encoding="utf-8")
+    allowed, _ = check_path_access(target, workspace, execution_mode="host")
+    assert allowed
+    blocked, _ = check_path_access(target, workspace, execution_mode="restricted")
+    assert not blocked
+
+
+def test_change_journal_user_delete_is_conflict(workspace: Path) -> None:
+    target = workspace / "src" / "app.py"
+    journal = ChangeJournal(workspace)
+    journal.record_write(target)
+    target.write_text("agent only\n", encoding="utf-8")
+    journal.record_after_write(target)
+    target.unlink()
+    restored, conflicts = journal.restore()
+    assert conflicts
+    assert not restored
+    assert not target.exists()
 
 
 def test_policy_blocks_network_bash_in_restricted(workspace: Path) -> None:

@@ -19,14 +19,14 @@ Context, model, tools, policy, persistence, verification adapters
 
 | Milestone | Focus | Status |
 |-----------|--------|--------|
-| A | CI baseline, contracts, EventEnvelope, compatibility adapters | Done |
-| B | ContextSnapshot, ContextAssembler, structured compaction | Done |
-| C | ToolCall/Result, PolicyEngine, ProcessRunner, ChangeJournal | Done |
-| D | SQLite event store, resume, handoff cascade | Done |
-| E | ModelGateway, typed retries, BudgetLedger | Done |
-| F | Evidence-based verification | Done |
-| G | CLI/REPL service split, extension context | Done |
-| H | Recorded replay, evaluation harness, docs | Done |
+| A | CI baseline, contracts, EventEnvelope, compatibility adapters | Adapter landed |
+| B | ContextSnapshot, ContextAssembler, structured compaction | Adapter landed |
+| C | ToolCall/Result, PolicyEngine, ProcessRunner, ChangeJournal | Adapter landed |
+| D | SQLite event store, resume, handoff cascade | Adapter landed (JSONL still production) |
+| E | ModelGateway, typed retries, BudgetLedger | Adapter landed |
+| F | Evidence-based verification | Adapter landed |
+| G | CLI/REPL service split, extension context | Adapter landed (CLI/REPL still legacy) |
+| H | Recorded replay, evaluation harness, docs | Adapter landed |
 
 ## Canonical seams
 
@@ -48,7 +48,7 @@ Verifier.consume(ToolResult) -> EvidenceRecord
 |-----|-------------|
 | `HarnessConfig` | `RunSpec` via `run_spec_from_harness_config` |
 | `Event` | `EventEnvelope` via `LegacyEventBridge` |
-| JSONL sessions | Import/export; SQLite canonical in Milestone D |
+| JSONL sessions | Import/export; SQLite adapter landed (JSONL still production) |
 | `Harness.run(task)` | `ApplicationRunService.run(RunSpec)` |
 
 See [ADR 0001](adr/0001-application-harness-seam.md).

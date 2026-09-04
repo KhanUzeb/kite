@@ -651,7 +651,7 @@ def cmd_skills(args: argparse.Namespace) -> int:
         from kite.skills.install import install_skill
 
         try:
-            names = install_skill(args.add)
+            names = install_skill(args.add, link_cwd=args.cwd)
         except (ValueError, RuntimeError, OSError) as e:
             console.print(f"[red]{e}[/]")
             return 1

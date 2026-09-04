@@ -31,7 +31,13 @@ GitHub Actions runs `pytest` on **every push and pull request to `main`** (Pytho
 | `test_animations.py` | loader glyphs, elapsed format |
 | `test_render.py` | warning events, git-stat `+N,-M` on edit (ANSI-safe) |
 | `test_preview_diff.py` | approval previews, `+125,-21` counts |
-| `test_skill_install.py` | npm/npx/git spec parse, user-skill `~` mark |
+| `test_skill_install.py` | npm/npx/git/local-path parse; global symlink/junction; project `.kite/skills` link |
+| `test_application_contracts.py` | RunSpec, EventEnvelope, ApplicationRunService |
+| `test_context_assembler.py` | budgets, untrusted delimiters, inspection redaction |
+| `test_policy_execution.py` | path policy, ChangeJournal restore |
+| `test_persistence.py` | SQLite event store, resume, redaction |
+| `test_model_gateway.py` | retries, BudgetLedger |
+| `test_replay.py` | recorded replay without live providers |
 | `test_theme.py` | `/theme` palettes, `/font` glyphs |
 | `test_config.py` | default runtime TOML load |
 | `test_reasoning.py` | `/reasoning` levels, effort detection, completion |

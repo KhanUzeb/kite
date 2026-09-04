@@ -45,5 +45,6 @@ def test_resume_state(tmp_path: Path) -> None:
 
 
 def test_redact_payload() -> None:
-    out = redact_payload({"token": "Bearer abc.def.ghi"})
+    out = redact_payload({"api_key": "sk-secret12345678901234567890"})
     assert "[REDACTED]" in str(out)
+    assert "sk-secret" not in str(out)

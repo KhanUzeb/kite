@@ -22,7 +22,13 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Execution cwd** — The active working directory for file tools and bash. Defaults to the launch cwd; may change via `set_cwd` or bash `cwd`.
 
-**Execution mode** — `host` (default) or `restricted`. Host mode allows paths outside the session cwd (protected paths still blocked). Restricted mode sandboxes file/bash paths to the session. Toggle in the REPL with `/restricted on|off` (alias `/sandbox`).
+**Execution mode** — `host` (packaged default) or `restricted`. Host mode allows paths outside the session cwd (protected paths still blocked). Restricted mode sandboxes file/bash paths to the session. Toggle in the REPL with `/restricted on|off` (alias `/sandbox`). The 0.9 `PolicyEngine` seam defaults to restricted; packaged CLI/REPL remain host until cutover.
+
+**RunSpec** — Immutable description of one harness run (task, workspace, limits, model, approval).
+
+**EventEnvelope** — Sequenced, identified lifecycle event (id, run_id, sequence, kind, payload). Replaces ad-hoc `Event(kind, payload)` as the canonical record.
+
+**ApplicationRunService** — Application-layer entry: `run(RunSpec, HarnessDependencies) -> RunResult`. Existing `Harness` is a compatibility adapter.
 
 **Sandbox** — Guardrail policy on paths and bash — not a fake “unrestricted” label. The model is told the real mode.
 
@@ -86,7 +92,9 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 ## Extensions
 
-**Skill** — A `SKILL.md` pack the model can load when a task matches its description. Invoked via the `skill` tool or prompt slashes like `/commit`.
+**Skill** — A `SKILL.md` pack the model can load when a task matches its description. Invoked via the `skill` tool or prompt slashes like `/commit`. Global library is `~/.kite/skills` (symlinks and Windows junctions followed). Project copies may link from `.kite/skills/<name>`.
+
+**Skill install** — `/skills add` or `kite skills --add`: npm/npx/GitHub copy into the global library, or a local path **linked** there. Reinstall unlinks the pointer; it does not delete the real tree.
 
 **Plugin** — A bundle under `.kite/plugins/` that can add slash commands and skills for a workspace.
 
@@ -122,7 +130,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Cell** — One visual block in the stream (user, thinking, answer, tool row, diff, compaction boundary).
 
-**Footer** — Status line: mode, approval, model, effort, context %, cost, branch.
+**Footer** — Status line: mode, approval, model, effort, running command, tok/s, cache hit, context %, cost, branch.
 
 **Collapse** — Tool output truncated by default; user expands with `/expand` or Ctrl+O.
 
@@ -149,4 +157,5 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 - [kite_commands.md](kite_commands.md) — full CLI and slash map
 - [docs/cli-ux.md](docs/cli-ux.md) — TUI behavior and shortcuts
 - [docs/kite-system-design.md](docs/kite-system-design.md) — architecture atlas
-- [architecture.md](architecture.md) — quick system overview
+- [docs/kite-0.9-architecture-program.md](docs/kite-0.9-architecture-program.md) — 0.9 seams
+- [docs/RELEASE-0.9.0.md](docs/RELEASE-0.9.0.md) — 0.9 release notes

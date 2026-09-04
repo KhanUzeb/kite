@@ -11,6 +11,10 @@ from typing import Any
 from kite import __version__
 
 
+def _digest(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()[:16]
+
+
 @dataclass
 class ReplayBundle:
     run_id: str
@@ -25,22 +29,16 @@ class ReplayBundle:
     policy_version: str = "0.9.0"
     responses: list[dict[str, Any]] = field(default_factory=list)
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
     def save(self, path: Path) -> None:
-        path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+        path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
 
     @staticmethod
     def load(path: Path) -> ReplayBundle:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return ReplayBundle(**data)
+        return ReplayBundle(**json.loads(path.read_text(encoding="utf-8")))
 
 
 @dataclass
 class ReplayModelBackend:
-    """Serve recorded responses without live provider access."""
-
     responses: list[dict[str, Any]]
     _index: int = 0
 
@@ -53,31 +51,29 @@ class ReplayModelBackend:
 
 
 def workspace_fingerprint(workspace: Path) -> str:
-    parts: list[str] = []
+    parts = []
     for p in sorted(workspace.rglob("*")):
         if p.is_file() and ".git" not in p.parts:
             try:
                 parts.append(f"{p.relative_to(workspace)}:{p.stat().st_size}")
             except OSError:
                 continue
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+    return _digest("\n".join(parts))
 
 
 def config_hash(config: dict[str, Any]) -> str:
-    return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:16]
+    return _digest(json.dumps(config, sort_keys=True))
 
 
 def tool_catalog_hash(tools: list[dict[str, Any]]) -> str:
-    return hashlib.sha256(json.dumps(tools, sort_keys=True).encode()).hexdigest()[:16]
+    return _digest(json.dumps(tools, sort_keys=True))
 
 
 def run_replay(bundle: ReplayBundle) -> dict[str, Any]:
     from kite.application.model.gateway import ModelGateway
 
     backend = ReplayModelBackend(bundle.responses)
-    gw = ModelGateway(backend)
-    messages = [{"role": "user", "content": "replay task"}]
-    resp = gw.complete(messages)
+    resp = ModelGateway(backend).complete([{"role": "user", "content": "replay task"}])
     return {
         "ok": True,
         "content": resp.content,
