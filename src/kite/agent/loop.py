@@ -10,6 +10,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
+from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.events import Event
 from kite.agent.exceptions import (
     FormatError,
@@ -20,13 +21,13 @@ from kite.agent.exceptions import (
     Submitted,
     TimeExceeded,
 )
-from kite.models.retry import is_transient_provider_error, retry_delay_s
-from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.loop_guard import LoopGuard
+from kite.agent.mode import MUTATING_TOOLS, PARALLEL_SAFE_TOOLS, AgentMode, ApprovalMode
 from kite.agent.verification import VerificationCollector
-from kite.memory.session import Session
-from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode, PARALLEL_SAFE_TOOLS
+from kite.application.verification.collector_ops import looks_like_test
 from kite.guardrails.sandbox import is_inspection_bash
+from kite.memory.session import Session
+from kite.models.retry import is_transient_provider_error, retry_delay_s
 from kite.prompts import load_prompt_template
 
 try:
@@ -54,7 +55,6 @@ def _exit_msg(status: str, *, content: str | None = None, submission: str = "", 
 
 
 _MAX_IDLE_TURNS = 2
-_MAX_IDLE_RECOVERY = 1
 # Terse on purpose — these user nudges are re-injected into the model context.
 _IDLE_NUDGE = (
     "No tool calls. Use tools or submit with the `submit` action or "
@@ -671,7 +671,7 @@ class DefaultAgent:
             return False
         if tool == "bash":
             cmd = str(args.get("command") or "")
-            if self.verification._looks_like_test(cmd):
+            if looks_like_test(cmd):
                 return True
             if is_inspection_bash(cmd):
                 return False
