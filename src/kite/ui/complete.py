@@ -401,7 +401,12 @@ def _toolbar_html(state: SessionUiState) -> Any:
     if state.flash:
         flash = f"  {glyph('sep')} {_escape_html(state.flash)}"
     hints = ""
-    if state.busy:
+    if state.awaiting_approval:
+        bits = [f"approve {state.awaiting_approval}", "Esc stop", "Enter queue", "Ctrl+G steer"]
+        if state.queued:
+            bits.append(f"queued {state.queued}")
+        hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
+    elif state.busy:
         bits = ["Esc stop", "Enter queue", "Ctrl+G steer"]
         if state.queued:
             bits.append(f"queued {state.queued}")
@@ -816,16 +821,23 @@ def _prompt_once(
     *,
     busy: bool,
     action_slot: dict[str, str],
+    on_poll: Callable[[], None] | None = None,
 ) -> ComposerResult:
     placeholder_fg = "#888888" if not is_dark() else "#555555"
     brand = brand_ansi()
     placeholder = "add a follow-up while Kite works…" if busy else "/ commands · @file attach · Ctrl+D quit"
+
+    def _toolbar() -> Any:
+        if on_poll is not None:
+            on_poll()
+        return _toolbar_html(state)
+
     try:
         text = session.prompt(
             HTML(f"<style fg='{brand}'>{glyph('prompt')}</style> "),
             placeholder=HTML(f"<style fg='{placeholder_fg}'>{placeholder}</style>"),
-            bottom_toolbar=lambda: _toolbar_html(state),
-            refresh_interval=0.4 if busy else 0,
+            bottom_toolbar=_toolbar,
+            refresh_interval=0.25 if busy else 0,
         )
     except EOFError:
         return ComposerResult("eof")
@@ -864,6 +876,7 @@ def read_repl_busy_composer(
     on_slash_while_busy: Callable[[], None],
     on_eof: Callable[[], None],
     on_tick: Callable[[], None] | None = None,
+    on_poll: Callable[[], None] | None = None,
 ) -> None:
     """Keep the composer pinned while a turn runs — one stdout patch for the whole turn."""
     if session is None:
@@ -886,7 +899,13 @@ def read_repl_busy_composer(
                 if on_tick is not None:
                     on_tick()
                 action_slot["kind"] = "submit"
-                result = _prompt_once(session, state, busy=True, action_slot=action_slot)
+                result = _prompt_once(
+                    session,
+                    state,
+                    busy=True,
+                    action_slot=action_slot,
+                    on_poll=on_poll or on_tick,
+                )
                 if not should_continue():
                     break
                 if result.kind == "eof":
@@ -900,6 +919,8 @@ def read_repl_busy_composer(
                     on_stop()
                     break
                 if result.kind == "empty":
+                    if on_tick is not None:
+                        on_tick()
                     continue
                 line = result.text
                 classified = classify_busy_line(line)

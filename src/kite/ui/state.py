@@ -63,6 +63,7 @@ class SessionUiState:
     sandbox_restricted: bool = False  # False = host (default); True = restricted sandbox
     flash: str = ""
     busy: bool = False
+    awaiting_approval: str = ""
     queued: int = 0
     running_label: str = ""
     running_since: str = ""
