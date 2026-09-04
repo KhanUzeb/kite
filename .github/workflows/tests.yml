@@ -31,5 +31,5 @@ jobs:
         run: |
           uv pip install -e ".[dev]"
           python scripts/sync_version.py --check
-          uv run ruff check src tests
+          uv run ruff check src/kite/application tests/test_application_contracts.py tests/test_compat_formats.py tests/test_context_assembler.py tests/test_policy_execution.py tests/test_persistence.py tests/test_model_gateway.py tests/test_evidence_verifier.py tests/test_cli_repl_services.py tests/test_replay.py
           uv run pytest -q

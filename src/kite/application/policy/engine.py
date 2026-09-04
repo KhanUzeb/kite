@@ -10,14 +10,19 @@ from kite.application.policy.path import check_path_access
 from kite.application.tools.contracts import PolicyDecision, ToolCall, ToolIntent
 from kite.application.tools.metadata import side_effects_for
 
-
 POLICY_VERSION = "0.9.0"
 
 
 class PolicyEngine:
     """Pure authorization seam — no UI, no execution."""
 
-    def __init__(self, workspace: str | Path, *, execution_mode: str = "restricted", no_guardrails: bool = False) -> None:
+    def __init__(
+        self,
+        workspace: str | Path,
+        *,
+        execution_mode: str = "restricted",
+        no_guardrails: bool = False,
+    ) -> None:
         self.workspace = str(Path(workspace).expanduser().resolve())
         self.execution_mode = execution_mode or "restricted"
         self.no_guardrails = no_guardrails

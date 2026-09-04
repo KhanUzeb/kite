@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kite.application.cli.result import CliResult, ExitCode, format_cli_output
+from kite.application.cli.result import CliResult, format_cli_output
 from kite.application.contracts import RunSpec
 from kite.application.dependencies import HarnessDependencies
 from kite.application.service import ApplicationRunService

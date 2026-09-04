@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from kite.application.context.models import (
@@ -12,7 +11,6 @@ from kite.application.context.models import (
     ContextSnapshot,
     InclusionReason,
     OmittedItem,
-    OmissionReason,
     compute_prompt_hash,
 )
 from kite.application.context.render import render_snapshot
@@ -39,7 +37,12 @@ class ContextAssembler:
             key = f"{item.source}:{item.content[:200]}"
             if key in seen_content:
                 omitted.append(
-                    OmittedItem(item_id=item.item_id, source=item.source, reason="duplicate", token_cost=item.token_cost),
+                    OmittedItem(
+                        item_id=item.item_id,
+                        source=item.source,
+                        reason="duplicate",
+                        token_cost=item.token_cost,
+                    ),
                 )
                 return
             source_used = sum(i.token_cost for i in items if i.source == item.source)
