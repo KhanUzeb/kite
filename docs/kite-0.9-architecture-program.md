@@ -19,14 +19,14 @@ Context, model, tools, policy, persistence, verification adapters
 
 | Milestone | Focus | Status |
 |-----------|--------|--------|
-| A | CI baseline, contracts, EventEnvelope, compatibility adapters | In progress |
-| B | ContextSnapshot, ContextAssembler, structured compaction | Planned |
-| C | ToolCall/Result, PolicyEngine, ProcessRunner, ChangeJournal | Planned |
-| D | SQLite event store, resume, handoff cascade | Planned |
-| E | ModelGateway, typed retries, BudgetLedger | Planned |
-| F | Evidence-based verification | Planned |
-| G | CLI/REPL service split, extension context | Planned |
-| H | Recorded replay, evaluation harness, docs | Planned |
+| A | CI baseline, contracts, EventEnvelope, compatibility adapters | Done |
+| B | ContextSnapshot, ContextAssembler, structured compaction | Done |
+| C | ToolCall/Result, PolicyEngine, ProcessRunner, ChangeJournal | Done |
+| D | SQLite event store, resume, handoff cascade | Done |
+| E | ModelGateway, typed retries, BudgetLedger | Done |
+| F | Evidence-based verification | Done |
+| G | CLI/REPL service split, extension context | Done |
+| H | Recorded replay, evaluation harness, docs | Done |
 
 ## Canonical seams
 
