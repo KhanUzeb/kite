@@ -1,16 +1,18 @@
 # Kite End-to-End Reliability, Safety, and UI — Design Spec
 
 **Date:** 2026-09-04  
-**Status:** Approved (design dialogue)  
-**Delivery:** Spec-first, then parallel subagents per train (approach 3)  
+**Status:** Approved (design dialogue); delivery sequencing revised 2026-09-04  
+**Delivery:** Spec-first; **serialized trains** with subagents per train (not nine trains in parallel)  
 **External reference:** [Stencil Harness Playbook](https://stencil.so/blog/harness-playbook)  
-**Preserved work:** Uncommitted `dashboard.html` must not be reverted
+**Preserved work:** Uncommitted `dashboard.html` must not be reverted; dashboard work is separate and last
 
 ---
 
 ## 1. Purpose
 
-Ship the next-release priority: core agent safety, truthfulness, verification, and terminal interaction; then complete the 0.9→1.0 application-layer cutover. Confirmed failures from transcript/screenshot include:
+Ship a harness that is **universally capable within explicit capabilities** — coding, terminal, web, memory, installs, subagents, Windows/Linux, and chat — while clearly refusing or requesting approval when capability or policy requires it. Not unrestricted autonomy.
+
+Route production execution through `ApplicationRunService` **early** so later trains land on one path instead of the legacy `Harness` only. Confirmed failures from transcript/screenshot include:
 
 - Session completion crash (`PromptCacheManager.stats` does not exist)
 - HTML-only edits incorrectly forcing pytest
@@ -47,46 +49,46 @@ Architecture tests that must remain true:
 
 Graduated autonomy remains the default: low-risk workspace edits may proceed automatically; installations, durable memory, subagents, external/network actions, and destructive operations always require confirmation. `--no-guardrails` stays a visibly marked high-risk override.
 
+**Capability stance:** handle coding, terminal, web, memory, installs, subagents, Windows/Linux, and chat consistently through one policy/event path. When a capability is missing or policy forbids an action, refuse or request approval — never silently widen scope.
+
 ---
 
-## 3. Delivery model
+## 3. Delivery model (revised sequencing)
 
-### 3.1 Nine trains + dashboard
+Do **not** start all trains in parallel. Land improvements on the application path early so later work is universally consistent. Legacy `Harness` may remain underneath `ApplicationRunService` until replay cutover completes.
 
-| # | Train | Primary owners |
-|---|---|---|
-| 1 | Cache persistence crash + completed-run regression | `models/cache.py`, `agent/runtime.py` |
-| 2 | Artifact-aware `VerificationPlan` / `VerificationRecord` | `agent/verification.py`, `application/verification/` |
-| 3 | Approval terminal ownership + interactive modal | `ui/approval.py`, `ui/repl.py`, `ui/render.py` |
-| 4 | Tool effects + mandatory gates + nested inherit | `tools/metadata.py`, `application/policy/`, `ui/approval.py` |
-| 5 | Task contract + evidence ledger + claim rejection | `agent/loop.py`, prompts, application contracts |
-| 6 | Hide reasoning / structured submit / recover-once | `agent/loop.py`, prompts, render |
-| 7 | Windows/platform command guidance + cancel/retry | prompts, bash policy, jobs |
-| 8 | Model capability metadata + filter/warn | `providers/`, catalog |
-| 9 | `ApplicationRunService` production path + replay UI | `application/`, CLI/REPL adapters |
-| — | P2 Dashboard | existing `dashboard.html` + loading/error states |
+### 3.1 Ordered trains
 
-### 3.2 Parallel waves (option 3)
+| Order | Train | Intent | Primary owners |
+|---|---|---|---|
+| 1 | Cache crash fix | Fix `prompt_cache.stats` → `session` / `summary()`; completed-run persistence regression | `models/cache.py`, `agent/runtime.py` |
+| 2 | Canonical contracts | Arg-aware `ToolIntent` + policy effects; `VerificationPlan`/`VerificationRecord` types; structured `RunResult` fields — types and pure helpers first | `application/tools/contracts.py`, `application/policy/`, `application/verification/`, `application/contracts.py` |
+| 3 | Application entry early | Route CLI + REPL through `ApplicationRunService` even while legacy harness executes underneath; one production entry for events/results | `application/service.py`, `cli/run.py`, `ui/repl.py`, adapters |
+| 4 | Approval ownership + nested inherit | One terminal input owner; interactive modal; gate all effect classes (not only `MUTATING_TOOLS`); nested agents inherit and cannot elevate | `ui/approval.py`, `ui/repl.py`, `ui/render.py`, `agent/loop.py`, policy |
+| 5 | Artifact-aware verification + evidence claims | Wire plans/records into the live gate; HTML≠pytest; evidence ledger; reject unsupported final claims | `agent/verification.py`, loop, application verification |
+| 6 | Loop/platform/model hygiene | Structured submit; recover-once; hide reasoning; Windows guidance; cancel/retry; model capability filter/warn | loop, prompts, jobs, providers |
+| 7 | Replay acceptance + dashboard | Full transcript replay against acceptance; then dashboard loading/error/stale states only | `eval/`, application UI reducer, `dashboard.html` |
 
-| Wave | Parallel trains | Gate |
-|---|---|---|
-| A | 1 · 2 · 8 (light) | green fake-provider tests |
-| B | 3 | interactive approval tests |
-| C | 4 | permission/nested tests |
-| D | 5 | claim-rejection tests |
-| E | 6 · 7 | loop + platform tests |
-| F | 9 | full replay acceptance |
-| G | Dashboard P2 | manual/browser note |
+Train 7’s dashboard slice stays **last and separate** from core Python verification. Preserve the existing uncommitted `dashboard.html` diff.
 
-Hot-file serialization: one writer at a time for `agent/loop.py`, `ui/approval.py`, `ui/repl.py` within a wave.
+### 3.2 Why ApplicationRunService moves earlier
 
-Umbrella spec → per-train implementation plans under `docs/superpowers/plans/` → subagent per train with review gates.
+Confirmed gap: CLI/REPL still call `Harness` directly while `ApplicationRunService` merely wraps it. If policy, verification, and approval land only on the legacy path, the harness remains inconsistent. Train 3 establishes the single entry so trains 4–6 attach to one surface; train 7 finishes replay/reducer honesty.
+
+### 3.3 Execution discipline
+
+- **One train at a time** (or a single subagent per train after the previous train merges/gates green).
+- Limited parallelism only inside a train (e.g. tests + docs) — never nine independent train agents rewriting shared files.
+- Hot files (`agent/loop.py`, `ui/approval.py`, `ui/repl.py`, `application/service.py`) have one writer per train.
+- Umbrella spec → per-train plans in `docs/superpowers/plans/` → implement train 1 first after plan approval.
 
 ---
 
 ## 4. Tool effects and policy
 
 Approve at the **capability boundary**, not by treating opaque bash strings as the sole approval unit. Host policy decides; execution only runs what was authorized. Nested agents inherit — they never receive a second, looser settings surface.
+
+**Train 2 contract mandate:** replace name-only `side_effects_for(tool_name)` with arg-aware derivation on `ToolCall` → `ToolIntent`. Static maps may remain as defaults; arguments (e.g. `memory.action`, `skill.install`, bash command) must refine effects. `PolicyEngine.authorize` is the single authorization truth; UI and loop consult it rather than hardcoding `MUTATING_TOOLS`.
 
 ### 4.1 Effect taxonomy
 
@@ -141,7 +143,7 @@ Verification is part of the interface: a machine-readable definition of success 
 
 ### 5.1 Problem today
 
-`VerificationCollector` treats “any edit → need a pytest-shaped passing command.” HTML-only edits get nudged/blocked toward pytest. Application `EvidenceVerifier` exists but is not the production gate.
+`VerificationCollector` treats “any edit → need a pytest-shaped passing command.” HTML-only edits get nudged/blocked toward pytest. Application `EvidenceVerifier` exists but is not the production gate. **Train 2** lands plan/record types and pure selection helpers; **train 5** wires them as the live submit gate and evidence ledger.
 
 ### 5.2 Types
 
@@ -261,7 +263,7 @@ Rules:
 
 ---
 
-## 7. Loop hygiene, platform, models, cutover, dashboard
+## 7. Loop hygiene, platform, models (train 6); cutover/replay/dashboard (trains 3 & 7)
 
 ### 7.1 Internal dialogue (train 6)
 
@@ -271,7 +273,7 @@ Rules:
 - After one no-tool recovery in build mode: clarify or report blocker — no four-turn idle loop
 - Casual chat (`hi`, …) stays outside build recovery
 
-### 7.2 Platform (train 7)
+### 7.2 Platform (train 6)
 
 - Detect Windows vs POSIX; expose shell capabilities to the model
 - Stop recommending Unix-only peek commands on Windows; prefer PowerShell + `rg` + kite tools
@@ -279,34 +281,33 @@ Rules:
 - Win + Linux replay tests
 - Out of scope: in-process Bash VM
 
-### 7.3 Model capabilities (train 8)
+### 7.3 Model capabilities (train 6)
 
 - Metadata: chat, tool calling, context size, vision, reasoning
 - Default/agent path prefers tool-calling models; unsuitable models filtered or visibly warned
 - Manual selection remains available
 - Tests: broad fake lists + stale catalog entries
 
-### 7.4 ApplicationRunService production path (train 9)
+### 7.4 ApplicationRunService (train 3 early; train 7 completes replay)
+
+**Train 3 (early):** CLI and REPL call only `ApplicationRunService.run(RunSpec, deps)`. Legacy `Harness` may remain the inner executor; events bridge through `LegacyEventBridge` / `EventEnvelope`. Structured `RunResult` (including verification + stop reasons) is what callers consume.
+
+**Train 7 (late):** deepen journal honesty — replayable event storage, reducer-based UI, full transcript acceptance (no duplicate prompts, leaked reasoning, unnecessary pytest, false completion, or out-of-scope actions). JSONL compatibility adapters retained.
 
 ```text
 CLI / REPL
-  → ApplicationRunService.run(RunSpec, deps)
-      → PolicyEngine + VerificationPlan + BudgetLedger + cancel
-      → Tool pipeline (effects)
+  → ApplicationRunService.run(RunSpec, deps)     # train 3: mandatory entry
+      → (legacy Harness OK underneath initially)
+      → PolicyEngine + Verification + Budget + cancel   # trains 2,4,5 wire in
       → EventEnvelope journal
       → RunResult
 UI / dashboard
-  ← reducer over same events
+  ← reducer over same events                     # train 7
 ```
 
-- Route CLI and REPL through `ApplicationRunService`
-- JSONL compatibility adapters retained
-- Replayable events + reducer-based UI
-- Acceptance: supplied transcript replays without duplicate prompts, leaked reasoning, unnecessary pytest, false completion, or out-of-scope actions
+### 7.5 Dashboard (train 7, last slice)
 
-### 7.5 Dashboard P2
-
-- Preserve existing uncommitted `dashboard.html`
+- Preserve existing uncommitted `dashboard.html`; do not mix into trains 1–6
 - Loading, network failure, rate-limit, stale-data states
 - Avoid unannounced external requests where possible
 - Browser smoke or documented manual verification; separate from core Python suite
@@ -372,8 +373,9 @@ CI: Windows and Linux × Python 3.11 and 3.12, fake providers only.
 
 ## 12. Implementation follow-up
 
-After this spec is reviewed:
+After this revised sequencing is approved:
 
-1. Write per-train plans in `docs/superpowers/plans/` (TDD, bite-sized, exact files/tests)
-2. Execute via parallel subagents per wave with review gates
-3. Land trains independently where possible; keep hot-file trains sequential
+1. Write **serialized** per-train plans in `docs/superpowers/plans/` starting with trains 1–3 (TDD, bite-sized, exact files/tests)
+2. Implement train 1 → gate → train 2 → … (one subagent per train; no nine-way parallel)
+3. Dashboard only after replay acceptance work in train 7; never block core trains
+4. Baseline pytest may be unavailable in some environments — still author tests; run when the local Python toolchain is present
