@@ -73,6 +73,46 @@ def test_tool_executor_denied_without_approval(workspace: Path) -> None:
     assert result.status == "denied"
 
 
+def test_tool_executor_skip_approval(workspace: Path) -> None:
+    engine = PolicyEngine(workspace)
+    executor = ToolExecutor(
+        policy=engine,
+        runner=lambda c: {"ok": True, "output": "done"},
+        approver=lambda i, d: False,
+    )
+    call = ToolCall(call_id="w2", name="write", arguments={"path": "src/app.py", "content": "x"})
+    result = executor.execute(call, skip_approval=True)
+    assert result.ok
+
+
+def test_tool_executor_propagates_submitted(workspace: Path) -> None:
+    from kite.agent.exceptions import Submitted
+
+    engine = PolicyEngine(workspace)
+
+    def _runner(_call: ToolCall) -> dict:
+        raise Submitted({"role": "exit", "content": "done", "extra": {"exit_status": "Submitted"}})
+
+    executor = ToolExecutor(policy=engine, runner=_runner)
+    call = ToolCall(call_id="s1", name="read", arguments={"path": "src/app.py"})
+    try:
+        executor.execute(call, skip_approval=True)
+        raise AssertionError("expected Submitted")
+    except Submitted:
+        pass
+
+
+def test_tool_executor_preserves_returncode(workspace: Path) -> None:
+    engine = PolicyEngine(workspace)
+    executor = ToolExecutor(
+        policy=engine,
+        runner=lambda c: {"ok": False, "returncode": 2, "output": "fail", "error": "fail"},
+    )
+    call = ToolCall(call_id="b1", name="bash", arguments={"command": "pytest -q"})
+    result = executor.execute(call, skip_approval=True)
+    assert result.metadata.get("returncode") == 2
+
+
 def test_change_journal_restore_conflict(workspace: Path) -> None:
     target = workspace / "src" / "app.py"
     journal = ChangeJournal(workspace)

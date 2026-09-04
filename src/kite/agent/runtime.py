@@ -61,6 +61,7 @@ class RuntimeOptions:
     attachments: list | None = None
     long_task: bool = False
     execution_mode: str | None = None  # restricted | host — overrides runtime TOML
+    use_tool_executor: bool = True
 
 
 @dataclass
@@ -84,6 +85,8 @@ class AgentRuntime:
     _audit_listener_attached: bool = field(default=False, init=False)
     job_registry: JobRegistry | None = None
     cancel_token: CancelToken | None = None  # inject for nested/subagent runs
+    tool_executor_override: Any = None
+    policy_engine_override: Any = None
 
     def request_interrupt(self) -> None:
         if self.last_agent is not None:
@@ -384,6 +387,24 @@ class AgentRuntime:
             env = self.slots.env(cwd=cwd, registry=registry)
         else:
             env = LocalEnvironment(cwd=cwd, registry=registry)
+
+        tool_executor = self.tool_executor_override
+        if tool_executor is None and self.options.use_tool_executor:
+            from kite.application.execution import build_tool_executor
+            from kite.application.tools.contracts import ToolCall
+
+            exec_mode = "host" if rcfg.guardrails.host_access() else "restricted"
+            no_gr = bool(self.options.no_guardrails or not rcfg.guardrails.enabled)
+            tool_executor = build_tool_executor(
+                workspace_root=workspace.project_root,
+                execution_mode=exec_mode,
+                no_guardrails=no_gr,
+                runner=lambda call: env.execute(
+                    {"tool": call.name, "arguments": dict(call.arguments)}
+                ),
+                policy_engine=self.policy_engine_override,
+            )
+
         if self.slots.model is not None:
             model = self.slots.model(
                 resolved=resolved,
@@ -487,6 +508,7 @@ class AgentRuntime:
             send_images=send_images,
             verification=verification,
             audit=audit,
+            tool_executor=tool_executor,
             tool_progress_interval_seconds=rcfg.tools.progress_interval_seconds,
             verify_before_submit=rcfg.verify_before_submit,
             loop_hard_threshold=rcfg.loop_hard_threshold,

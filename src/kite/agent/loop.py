@@ -163,6 +163,7 @@ class DefaultAgent:
         send_images: bool = True,
         verification: VerificationCollector | None = None,
         audit=None,
+        tool_executor=None,
         tool_progress_interval_seconds: float = 5.0,
         verify_before_submit: bool = True,
         loop_hard_threshold: int = 5,
@@ -203,6 +204,7 @@ class DefaultAgent:
         self._task = ""
         self.verification = verification or VerificationCollector()
         self.audit = audit
+        self.tool_executor = tool_executor
         self.tool_progress_interval_seconds = tool_progress_interval_seconds
         self.verify_before_submit = verify_before_submit
         self.long_task = long_task
@@ -822,6 +824,8 @@ class DefaultAgent:
         outputs.append(out)
 
     def _run_gated(self, tool: str, args: dict, action: dict) -> dict:
+        if self.tool_executor is not None:
+            return self._run_gated_via_executor(tool, args, action)
         from kite.application.tools.effects import tool_requires_approval_gate
 
         needs_gate = tool in MUTATING_TOOLS or tool_requires_approval_gate(tool, args)
@@ -837,6 +841,86 @@ class DefaultAgent:
             if decision == "deny":
                 return _blocked("denied by user")
         return self._execute_with_progress(tool, action)
+
+    def _tool_result_to_dict(self, tr) -> dict:
+        out: dict = {
+            "ok": tr.ok,
+            "output": tr.output,
+            "error": tr.error or "",
+            "blocked": tr.status == "denied",
+        }
+        if tr.changed_paths:
+            out["changed_paths"] = list(tr.changed_paths)
+        for key, value in (tr.metadata or {}).items():
+            if key == "run_context":
+                continue
+            out[key] = value
+        return out
+
+    def _run_gated_via_executor(self, tool: str, args: dict, action: dict) -> dict:
+        import uuid
+
+        from kite.agent.exceptions import InterruptAgentFlow
+        from kite.application.tools.contracts import ToolCall
+
+        call = ToolCall(call_id=str(uuid.uuid4()), name=tool, arguments=dict(args))
+        policy = self.tool_executor.policy
+        intent = policy.derive_intent(call)
+        decision = policy.authorize(intent)
+        if not decision.allowed:
+            return _blocked(decision.reason or "denied by policy")
+
+        if decision.requires_approval and self.approver:
+            extra = {"reason": str(args.get("reason") or decision.reason or ""), "diff": ""}
+            if tool in {"write", "edit"}:
+                extra["diff"] = self._preview_diff(tool, args)
+            self._emit("approval", tool=tool, arguments=args, **extra)
+            approval_decision = self.approver(tool, args, extra)
+            if approval_decision == "stop":
+                self.request_interrupt()
+                return _blocked("stopped by user")
+            if approval_decision == "deny":
+                return _blocked("denied by user")
+
+        holder: dict = {}
+        error: list[BaseException] = []
+        done = threading.Event()
+
+        def worker() -> None:
+            try:
+                holder["tr"] = self.tool_executor.execute(
+                    call,
+                    {"action": action},
+                    skip_approval=True,
+                )
+            except BaseException as exc:
+                error.append(exc)
+            finally:
+                done.set()
+
+        threading.Thread(target=worker, daemon=True).start()
+        start = time.monotonic()
+        interval = max(0.5, float(self.tool_progress_interval_seconds))
+        while not done.wait(timeout=interval):
+            if self._interrupt and self.cancel is not None:
+                self.cancel.request()
+            elapsed = int(time.monotonic() - start)
+            hint = ""
+            if tool == "bash":
+                cmd = str(args.get("command") or "").strip().splitlines()
+                if cmd:
+                    preview = cmd[0][:48]
+                    hint = f" — {preview}{'…' if len(cmd[0]) > 48 else ''}"
+            self._emit("tool_progress", tool=tool, elapsed_s=elapsed, hint=hint)
+        if error:
+            exc = error[0]
+            if isinstance(exc, InterruptAgentFlow):
+                raise exc
+            raise exc
+        tr = holder["tr"]
+        if tr.status == "denied":
+            return _blocked(tr.error or "denied")
+        return self._tool_result_to_dict(tr)
 
     def _execute_with_progress(self, tool: str, action: dict) -> dict:
         result: dict[str, dict] = {}
