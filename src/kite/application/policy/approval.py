@@ -31,6 +31,7 @@ class ApprovalCoordinator:
     wake_main: Callable[[], None] | None = None
     _pending: ApprovalRequest | None = field(default=None, init=False)
     _decision: Decision | None = field(default=None, init=False)
+    _active_request_id: str | None = field(default=None, init=False)
     _ready: threading.Event = field(default_factory=threading.Event, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
@@ -38,6 +39,15 @@ class ApprovalCoordinator:
     def pending(self) -> ApprovalRequest | None:
         with self._lock:
             return self._pending
+
+    def _abandon(self, request_id: str) -> None:
+        with self._lock:
+            if self._active_request_id != request_id:
+                return
+            self._pending = None
+            self._active_request_id = None
+            self._decision = None
+            self._ready.clear()
 
     def request(
         self,
@@ -61,7 +71,10 @@ class ApprovalCoordinator:
             extra=dict(extra or {}),
         )
         with self._lock:
+            if self._pending is not None:
+                return "deny"
             self._pending = req
+            self._active_request_id = req.request_id
             self._decision = None
             self._ready.clear()
         if self.wake_main is not None:
@@ -70,16 +83,25 @@ class ApprovalCoordinator:
             except Exception:
                 pass
         if not self._ready.wait(timeout=self.timeout_seconds):
+            self._abandon(req.request_id)
             return "deny"
         with self._lock:
-            return self._decision or "deny"
+            if self._active_request_id != req.request_id:
+                return "deny"
+            decision = self._decision or "deny"
+            self._pending = None
+            self._active_request_id = None
+            self._decision = None
+            self._ready.clear()
+            return decision
 
-    def resolve(self, decision: Decision) -> bool:
+    def resolve(self, decision: Decision, *, request_id: str | None = None) -> bool:
         with self._lock:
             if self._pending is None:
                 return False
+            if request_id is not None and self._pending.request_id != request_id:
+                return False
             self._decision = decision
-            self._pending = None
             self._ready.set()
         return True
 
@@ -100,9 +122,16 @@ def child_inherits_parent_policy(
     child_guardrails = bool(parent_no_guardrails)
     if overrides.get("no_guardrails") and not parent_no_guardrails:
         child_guardrails = False
+    parent_exec = str(parent_execution_mode or "restricted")
+    child_exec = str(overrides.get("execution_mode") or parent_exec)
+    if parent_exec == "restricted" and child_exec == "host":
+        child_exec = "restricted"
+    child_mode = str(overrides.get("mode") or parent_mode)
+    if parent_mode == "plan" and child_mode != "plan":
+        child_mode = "plan"
     return {
         "approval": child_approval,
-        "mode": str(overrides.get("mode") or parent_mode),
+        "mode": child_mode,
         "no_guardrails": child_guardrails,
-        "execution_mode": str(overrides.get("execution_mode") or parent_execution_mode or "restricted"),
+        "execution_mode": child_exec,
     }

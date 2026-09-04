@@ -240,7 +240,7 @@ class ChatSession:
             policy=self.policy,
             mandatory=req.mandatory,
         )
-        self._approval_coordinator.resolve(decision)
+        self._approval_coordinator.resolve(decision, request_id=req.request_id)
 
     def _harness_cache_key(self) -> tuple:
         return (

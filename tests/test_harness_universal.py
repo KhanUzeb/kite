@@ -114,6 +114,85 @@ def test_nested_policy_inheritance(
     assert inherited["no_guardrails"] is expected_guardrails
 
 
+def test_nested_cannot_elevate_mode_or_execution() -> None:
+    inherited = child_inherits_parent_policy(
+        parent_approval="auto",
+        parent_mode="plan",
+        parent_no_guardrails=False,
+        parent_execution_mode="restricted",
+        child_overrides={"mode": "build", "execution_mode": "host"},
+    )
+    assert inherited["mode"] == "plan"
+    assert inherited["execution_mode"] == "restricted"
+
+
+def test_approval_coordinator_rejects_concurrent_request() -> None:
+    coord = ApprovalCoordinator(interactive=True, timeout_seconds=5.0)
+    results: dict[str, str] = {}
+
+    def first() -> None:
+        results["first"] = coord.request("bash", {"command": "rm a"}, mandatory=True)
+
+    t1 = threading.Thread(target=first)
+    t1.start()
+    for _ in range(50):
+        if coord.pending is not None:
+            break
+        time.sleep(0.01)
+    results["second"] = coord.request("bash", {"command": "rm b"}, mandatory=True)
+    assert coord.resolve("allow", request_id=coord.pending.request_id)
+    t1.join(timeout=2)
+    assert results["second"] == "deny"
+    assert results["first"] == "allow"
+    assert coord.pending is None
+
+
+def test_approval_timeout_clears_pending() -> None:
+    coord = ApprovalCoordinator(interactive=True, timeout_seconds=0.05)
+    assert coord.request("bash", {"command": "curl x"}, mandatory=True) == "deny"
+    assert coord.pending is None
+
+
+def test_resolve_rejects_wrong_request_id() -> None:
+    coord = ApprovalCoordinator(interactive=True, timeout_seconds=5.0)
+
+    def block() -> None:
+        coord.request("bash", {"command": "rm x"}, mandatory=True)
+
+    t = threading.Thread(target=block)
+    t.start()
+    for _ in range(50):
+        if coord.pending is not None:
+            break
+        time.sleep(0.01)
+    assert not coord.resolve("allow", request_id="stale-id")
+    assert coord.resolve("allow", request_id=coord.pending.request_id)
+    t.join(timeout=2)
+    assert coord.pending is None
+
+
+def test_html_pytest_does_not_satisfy_html_plan() -> None:
+    from kite.agent.verification import VerificationCollector
+
+    vc = VerificationCollector()
+    vc.on_tool_end(
+        "edit",
+        {"path": "index.html"},
+        {"ok": True, "path": "index.html", "diff": "<html><body>broken"},
+    )
+    assert vc.needs_tests()
+    vc.on_tool_end("bash", {"command": "pytest -q"}, {"ok": True, "returncode": 0, "output": "1 passed"})
+    assert vc.status() != "verified"
+
+
+def test_html_empty_content_does_not_verify() -> None:
+    from kite.agent.verification import VerificationCollector
+
+    vc = VerificationCollector()
+    vc.on_tool_end("edit", {"path": "index.html"}, {"ok": True, "path": "index.html", "diff": ""})
+    assert vc.needs_tests()
+
+
 def test_approval_gate_and_coordinator() -> None:
     assert tool_requires_approval_gate("memory", {"action": "remember", "text": "x"})
     assert tool_requires_approval_gate("skill", {"install": "pkg"})
