@@ -307,7 +307,14 @@ class AgentRuntime:
 
         def _subagent_runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
             from kite.agent.harness import Harness, HarnessConfig
+            from kite.application.policy import child_inherits_parent_policy
 
+            inherited = child_inherits_parent_policy(
+                parent_approval=self.options.approval or "auto",
+                parent_mode=self.options.mode or "build",
+                parent_no_guardrails=bool(self.options.no_guardrails),
+                parent_execution_mode=self.options.execution_mode,
+            )
             h = Harness(
                 HarnessConfig(
                     cwd=cwd,
@@ -315,7 +322,10 @@ class AgentRuntime:
                     model_name=resolved.model,
                     step_limit=min(rcfg.orchestrator_step_limit, rcfg.step_limit),
                     cost_limit=min(rcfg.orchestrator_cost_limit, rcfg.cost_limit),
-                    approval="auto",
+                    approval=str(inherited["approval"]),
+                    mode=str(inherited["mode"]),
+                    no_guardrails=bool(inherited["no_guardrails"]),
+                    execution_mode=str(inherited["execution_mode"]),
                     interactive=False,
                     no_context=True,
                     label="subagent",

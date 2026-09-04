@@ -98,6 +98,16 @@ MANDATORY_EFFECTS: frozenset[SideEffect] = frozenset({
 })
 
 
+def tool_requires_approval_gate(tool: str, arguments: dict[str, Any]) -> bool:
+    """True when a tool call must pass the approval gate (beyond policy deny)."""
+    effects = set(derive_effects(ToolCall("gate", tool, arguments)))
+    if effects & MANDATORY_EFFECTS:
+        return True
+    if "workspace_write" in effects or "long_running" in effects:
+        return tool in {"write", "edit", "bash", "todo_write", "apply_patch"}
+    return False
+
+
 def mandatory_reason(intent_effects: tuple[SideEffect, ...], *, tool: str, args: dict[str, Any]) -> str | None:
     """Return a short reason when mandatory approval is required."""
     if "nested_agent" in intent_effects:

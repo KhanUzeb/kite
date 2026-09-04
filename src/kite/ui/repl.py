@@ -90,6 +90,10 @@ class ChatSession:
         self._composer_action: dict[str, str] = {"kind": "submit"}
         self._busy = False
         self._quit_after_turn = False
+        from kite.application.policy import ApprovalCoordinator
+
+        self._approval_coordinator = ApprovalCoordinator(interactive=sys.stdin.isatty())
+        self._approval_coordinator.wake_main = self._wake_composer
         from kite.tools.jobs import JobRegistry
 
         self.jobs = JobRegistry(on_event=self.display)
@@ -217,7 +221,26 @@ class ChatSession:
             interactive=sys.stdin.isatty(),
             trusted_paths=rcfg.guardrails.trusted_paths,
             workspace_cwd=self.cwd,
+            coordinator=self._approval_coordinator,
         )
+
+    def _resolve_pending_approval(self) -> None:
+        """Main-thread approval modal — worker blocks on coordinator.request()."""
+        req = self._approval_coordinator.pending
+        if req is None:
+            return
+        from kite.ui.approval import prompt_approval
+
+        decision = prompt_approval(
+            self.console,
+            req.tool,
+            req.arguments,
+            diff=req.diff,
+            reason=req.reason,
+            policy=self.policy,
+            mandatory=req.mandatory,
+        )
+        self._approval_coordinator.resolve(decision)
 
     def _harness_cache_key(self) -> tuple:
         return (
@@ -1873,6 +1896,7 @@ class ChatSession:
                 on_steer=self._queue_steer,
                 on_slash_while_busy=_slash_busy_hint,
                 on_eof=lambda: setattr(self, "_quit_after_turn", True),
+                on_tick=self._resolve_pending_approval,
             )
         else:
             while not done.is_set():
