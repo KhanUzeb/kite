@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kite.application.verification.plan import CheckSpec, VerificationRecord
+from kite.application.verification.plan import VerificationRecord
 
 
 def verification_plan_payload(plan: Any) -> dict[str, Any]:

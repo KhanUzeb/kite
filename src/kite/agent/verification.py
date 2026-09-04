@@ -5,7 +5,6 @@ from __future__ import annotations
 import html.parser
 import re
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from kite.application.verification.plan import (
@@ -15,7 +14,6 @@ from kite.application.verification.plan import (
     build_verification_plan,
     classify_path,
     plan_status,
-    record_satisfies_check,
 )
 
 VerificationStatus = Literal[
