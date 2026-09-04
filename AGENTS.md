@@ -19,6 +19,7 @@ Stack: LiteLLM, Rich, prompt_toolkit, pydantic, tomllib. Entry: `kite.cli.run:ma
 
 ```
 src/kite/
+  application/    RunSpec, ApplicationRunService, EventEnvelope (0.9 contracts)
   agent/          Loop, harness, runtime, compaction, cancel, tool_result, orchestrator
   bench/          Repeatable harness benchmarks (`kite bench`)
   cli/            argparse entry (run.py), slash index, setup, stats, bench, import/apply
@@ -40,7 +41,7 @@ docs/             Design + UX specs (source of truth for behavior)
 scripts/          install.sh, install.ps1, build_design_pdf.py
 ```
 
-**Layer rule:** CLI/UI subscribe to events; `AgentRuntime` assembles; `DefaultAgent` loops; tools/guardrails execute. Do not import UI from `agent/` or call LiteLLM from `ui/repl.py` directly.
+**Layer rule:** CLI/UI subscribe to events; `ApplicationRunService` (0.9) or `AgentRuntime` assembles; `DefaultAgent` loops; tools/guardrails execute. Do not import UI from `agent/` or call LiteLLM from `ui/repl.py` directly.
 
 ---
 

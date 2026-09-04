@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kite.config import UserConfig
 from kite.agent.events import Event
@@ -21,6 +21,9 @@ from kite.memory.session import Session
 from kite.agent.runtime import AgentRuntime, RuntimeOptions
 from kite.tools.jobs import JobRegistry
 from kite.tools.store import TodoStore
+
+if TYPE_CHECKING:
+    from kite.application.contracts import RunSpec
 
 
 @dataclass
@@ -165,3 +168,9 @@ class Harness:
         if self._runtime is not None:
             return self._runtime.teardown_jobs()
         return 0
+
+    def to_run_spec(self, task: str) -> "RunSpec":
+        """Build a canonical RunSpec from the current harness config."""
+        from kite.application.adapters.harness import run_spec_from_harness_config
+
+        return run_spec_from_harness_config(self.config, task)
