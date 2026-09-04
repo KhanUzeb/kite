@@ -210,6 +210,7 @@ class DefaultAgent:
         self.provider_max_retries = max(1, int(provider_max_retries))
         self.cancel = cancel
         self._cost_warned = False
+        self._last_verification_status: str | None = None
 
         self.messages: list[dict] = []
         self.cost = 0.0
@@ -679,9 +680,6 @@ class DefaultAgent:
 
     def _invoke_tool(self, tool: str, args: dict, action: dict) -> dict:
         cmd = str(args.get("command") or "").strip()
-        if tool == "submit":
-            submission = str(args.get("message") or args.get("content") or args.get("submission") or "")
-            raise Submitted(_exit_msg("Submitted", content=submission, submission=submission))
         submit_ok = (
             tool == "bash"
             and "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in cmd
@@ -791,6 +789,10 @@ class DefaultAgent:
             existing = str(out.get("output") or out.get("error") or "")
             out = {**out, "output": f"{loop.warning}\n\n{existing}".strip(), "loop_warning": True}
         self.verification.on_tool_end(tool, args, out)
+        vstatus = self.verification.status()
+        if vstatus != self._last_verification_status:
+            self._last_verification_status = vstatus
+            self._emit("verification_status", status=vstatus, summary=self.verification.summary())
         if out.get("blocked"):
             pass
         else:

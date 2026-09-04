@@ -196,6 +196,7 @@ _RENDER_EVENT_KINDS = (
     "provider_fault",
     "approval",
     "submit_blocked",
+    "verification_status",
     "agent_end",
     "error",
     "cost",
@@ -763,6 +764,14 @@ class RunDisplay:
         self.console.print(line)
         self.state.flash = "submit blocked — run verification"
         self._touch_state()
+
+    def _on_verification_status(self, p: dict[str, Any]) -> None:
+        status = str(p.get("status") or "").strip()
+        if status:
+            self.state.verification_status = status
+            if status in {"failed", "changed_unverified", "blocked"}:
+                self.state.flash = f"verification: {status}"
+            self._touch_state()
 
     def _render_agent_end_status(self, p: dict[str, Any]) -> None:
         status = p.get("exit_status") or "done"

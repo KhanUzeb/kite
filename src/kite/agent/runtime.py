@@ -438,7 +438,10 @@ class AgentRuntime:
             summarizer = make_summarizer(ucfg)
 
         audit = AuditLog()
-        verification = VerificationCollector(workspace_root=str(workspace.project_root))
+        verification = VerificationCollector(
+            workspace_root=str(workspace.project_root),
+            run_id=session.id if session else "",
+        )
 
         step_limit = self.options.step_limit if self.options.step_limit is not None else rcfg.step_limit
         cost_limit = self.options.cost_limit if self.options.cost_limit is not None else rcfg.cost_limit

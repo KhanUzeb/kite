@@ -8,6 +8,11 @@ from pathlib import Path
 
 from kite.util.cache import TtlCache
 
+try:
+    from kite.context.repomap import build_repo_map
+except ImportError:  # pragma: no cover
+    build_repo_map = None  # type: ignore[assignment,misc]
+
 PROJECT_MARKERS = (".git", "pyproject.toml", "package.json", "Cargo.toml", "go.mod")
 SKIP_DIRS = {
     ".git",
@@ -39,11 +44,14 @@ class ProjectContext:
     files: tuple[ContextFile, ...]
     git_status: str
     tree_snippet: str
+    repo_map: str = ""
 
     def render_for_prompt(self, *, max_chars: int = 24_000) -> str:
         parts: list[str] = [
             f"## Workspace\n- cwd: {self.cwd}\n- project_root: {self.root}",
         ]
+        if self.repo_map:
+            parts.append(f"## Repo map (symbols)\n```\n{self.repo_map}\n```")
         if self.tree_snippet:
             parts.append(f"## Directory sketch\n```\n{self.tree_snippet}\n```")
         if self.git_status:
@@ -155,7 +163,7 @@ def tree_snippet(root: Path, *, max_entries: int = 80) -> str:
     return "\n".join(lines)
 
 
-_CTX_CACHE: TtlCache[tuple[str, bool, bool, int], ProjectContext] = TtlCache(30.0)
+_CTX_CACHE: TtlCache[tuple[str, bool, bool, bool, int], ProjectContext] = TtlCache(30.0)
 
 
 def gather_project_context(
@@ -163,19 +171,24 @@ def gather_project_context(
     *,
     include_git: bool = True,
     include_tree: bool = True,
+    include_repo_map: bool = True,
     tree_max_entries: int = 80,
 ) -> ProjectContext:
     cwd_path = Path(cwd).expanduser().resolve()
-    key = (str(cwd_path), include_git, include_tree, tree_max_entries)
+    key = (str(cwd_path), include_git, include_tree, include_repo_map, tree_max_entries)
 
     def build() -> ProjectContext:
         root = find_project_root(cwd_path)
+        repo_map = ""
+        if include_repo_map and build_repo_map is not None:
+            repo_map = build_repo_map(root)
         return ProjectContext(
             root=root,
             cwd=cwd_path,
             files=discover_agents_files(cwd_path),
             git_status=git_status_snippet(cwd_path) if include_git else "",
             tree_snippet=tree_snippet(root, max_entries=tree_max_entries) if include_tree else "",
+            repo_map=repo_map,
         )
 
     return _CTX_CACHE.get_or_set(key, build)

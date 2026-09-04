@@ -56,3 +56,20 @@ def test_submit_blocked_renders_warning() -> None:
     out = strip_ansi(buf.getvalue())
     assert "submit blocked" in out.lower()
     assert "tests not run" in out
+
+
+def test_verification_status_updates_state() -> None:
+    from io import StringIO
+
+    from rich.console import Console
+
+    from kite.agent.events import Event
+    from kite.ui.render import RunDisplay
+    from kite.ui.style import KITE_THEME
+
+    state = SessionUiState()
+    console = Console(file=StringIO(), width=80, force_terminal=True, theme=KITE_THEME)
+    display = RunDisplay(console, state=state, quiet=False)
+    display(Event("verification_status", payload={"status": "changed_unverified"}))
+    assert state.verification_status == "changed_unverified"
+    assert "verification" in state.flash

@@ -25,7 +25,9 @@ from kite.application.verification.plan import (
     build_verification_plan,
     plan_status,
 )
+from kite.application.verification.evidence import EvidenceVerifier, is_check_command
 from kite.application.verification.workspace_profile import WorkspaceProfile, discover_workspace_profile
+from kite.application.tools.contracts import ToolResult
 
 VerificationStatus = Literal[
     "verified", "partial", "unverified", "failed", "idle", "changed_unverified", "blocked"
@@ -62,8 +64,15 @@ class VerificationCollector:
     paths_touched: set[str] = field(default_factory=set)
     paths_read: set[str] = field(default_factory=set)
     workspace_root: str = ""
+    run_id: str = ""
     _workspace_profile: WorkspaceProfile | None = field(default=None, repr=False)
     _records: list[VerificationRecord] = field(default_factory=list, repr=False)
+    _evidence: EvidenceVerifier | None = field(default=None, repr=False)
+
+    def _evidence_verifier(self) -> EvidenceVerifier:
+        if self._evidence is None:
+            self._evidence = EvidenceVerifier(self.run_id or "run")
+        return self._evidence
 
     def _profile(self) -> WorkspaceProfile | None:
         if self._workspace_profile is not None:
@@ -83,6 +92,21 @@ class VerificationCollector:
             apply_read(self, args, result, self._add)
         elif tool == "bash":
             apply_bash(self, args, result, self._add)
+            cmd = str(args.get("command") or "")
+            if cmd and is_check_command(cmd):
+                rc = int(result.get("returncode") or (0 if result.get("ok") else 1))
+                self._evidence_verifier().consume(
+                    ToolResult(
+                        call_id=str(result.get("call_id") or cmd[:32]),
+                        status="ok" if result.get("ok") else "error",
+                        ok=bool(result.get("ok")),
+                        output=str(result.get("output") or ""),
+                        error=str(result.get("error") or ""),
+                        metadata={"command": cmd, "exit_code": rc},
+                    ),
+                    command=cmd,
+                    cwd=self.workspace_root,
+                )
 
     def _add(self, kind: str, summary: str, **kw: Any) -> None:
         self.artifacts.append(Artifact(kind=kind, summary=summary, **kw))
@@ -136,6 +160,7 @@ class VerificationCollector:
     def summary(self) -> dict[str, Any]:
         plan = self.plan()
         st = self.status()
+        evidence = self._evidence_verifier().verification_status()
         return {
             "status": st,
             "artifact_count": len(self.artifacts),
@@ -147,6 +172,7 @@ class VerificationCollector:
             "artifact_kinds": sorted(plan.artifact_kinds),
             "required_checks": len(plan.required_checks),
             "evidence_records": len(self._records),
+            "evidence": evidence,
             "workspace_root": plan.workspace_root,
             "package_count": plan.package_count,
         }
