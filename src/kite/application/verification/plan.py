@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
@@ -86,7 +86,6 @@ def _python_checks(paths: tuple[str, ...]) -> tuple[CheckSpec, ...]:
                 artifact_kind="python",
             ),
         )
-    targets = " ".join(py_paths[:6])
     return (
         CheckSpec(
             kind="lint",
