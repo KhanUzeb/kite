@@ -32,6 +32,13 @@ def test_repl_reducer_projects_events() -> None:
     assert snap["cost"] == 0.05
 
 
+def test_repl_reducer_verification_status() -> None:
+    reducer = ReplEventReducer()
+    seq = EventSequencer("run-verify")
+    reducer.apply(seq.emit("verification_plan", {"required_checks": 1}))
+    assert reducer.snapshot()["status"] == "verifying"
+
+
 def test_execute_harness_task_routes_through_application_service(monkeypatch) -> None:
     from kite.agent.harness import Harness, HarnessConfig
     from kite.application.cli.runner import execute_harness_task
