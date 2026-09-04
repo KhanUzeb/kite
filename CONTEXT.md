@@ -120,6 +120,12 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Verification** — Evidence the task is done (test output, diff, command result) before treating work as complete.
 
+**VerificationPlan** — Artifact-aware required checks derived from touched paths (HTML structural parse ≠ pytest).
+
+**Tool effect** — Canonical capability tag (`workspace_read`, `network`, `nested_agent`, …) derived per tool call; `PolicyEngine` authorizes effects.
+
+**Evidence ledger** — Journaled `VerificationRecord`s linking final claims to tool results; model prose cannot satisfy verification alone.
+
 **Submit** — End of a build turn when the task is finished (bash submit phrase or plain text reply in chat).
 
 **Interrupt** — User cancellation (Ctrl+C) propagates to the model stream and long-running bash; does not kill the REPL.
