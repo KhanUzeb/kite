@@ -1,7 +1,7 @@
 # Kite Universal Harness — Implementation Plan
 
 **Date:** 2026-09-04  
-**Status:** Ready for implementation  
+**Status:** Largely implemented on `main` (see acceptance checklist). Remaining: full e2e replay harness, canonical event store in production UI.  
 **Source:** `docs/superpowers/specs/2026-09-04-kite-e2e-reliability-design.md`
 
 ## Outcome
@@ -415,19 +415,21 @@ Update only when behavior changes are landed:
 
 ## Final acceptance checklist
 
-- [ ] Completion no longer accesses nonexistent cache statistics.
-- [ ] All production CLI/REPL runs enter through `ApplicationRunService`.
-- [ ] Tool effects are argument-aware and authorized by one `PolicyEngine`.
-- [ ] Mandatory effects cannot be bypassed by remembered approval or yolo mode.
-- [ ] Nested agents cannot elevate policy, scope, or guardrails.
-- [ ] Only one terminal input owner exists at any time.
-- [ ] HTML edits do not require pytest.
-- [ ] Final claims cannot outrun recorded evidence.
-- [ ] Cancellation, retry, and platform guidance work on Windows and POSIX.
-- [ ] Model capability mismatches are handled visibly.
-- [ ] The supplied transcript replays without the observed failures.
-- [ ] Dashboard states are additive and do not block core harness correctness.
-- [ ] Full test suite is green in the supported CI matrix.
+- [x] Completion no longer accesses nonexistent cache statistics.
+- [x] All production CLI/REPL runs enter through `ApplicationRunService`.
+- [x] Tool effects are argument-aware; `PolicyEngine` authorizes in production loop via `ToolExecutor`.
+- [x] Mandatory effects cannot be bypassed by remembered approval or yolo mode.
+- [x] Nested agents cannot elevate policy, scope, or guardrails.
+- [x] Only one terminal input owner exists at any time (busy composer approval polling).
+- [x] HTML edits do not require pytest (artifact-aware plans).
+- [x] Final claims cannot outrun recorded evidence (submit gate + `submit_blocked`).
+- [x] Structured `submit` tool registered; legacy bash marker retained.
+- [x] ReplayBundle supports events + acceptance criteria.
+- [ ] Cancellation, retry, and platform guidance fully verified on Windows and POSIX.
+- [ ] Model capability mismatches are handled visibly everywhere.
+- [ ] The supplied transcript replays without the observed failures (full e2e replay harness).
+- [x] Dashboard states are additive and do not block core harness correctness.
+- [x] Full test suite is green in the supported CI matrix.
 
 ## Explicit non-goals
 

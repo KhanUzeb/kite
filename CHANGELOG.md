@@ -2,6 +2,19 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Structured `submit` tool** — preferred completion path with `message` (Done / Changed / Verification); legacy bash marker still supported.
+- **Repo map** — `context/repomap.py` injects Aider-style symbol sketch; git-changed files ranked first.
+- **ToolExecutor production cutover** — agent loop routes tools through `PolicyEngine` + `ToolExecutor` by default (`RuntimeOptions.use_tool_executor`).
+- **Live verification UX** — `verification_status` events update footer during runs; `submit_blocked` when claims outrun evidence.
+- **Replay acceptance** — `ReplayBundle.events` + `acceptance` criteria for transcript-level eval without live providers.
+- **EvidenceVerifier wiring** — bash check commands feed evidence ledger; summary included in verification payload.
+
+### Changed
+- Documentation refreshed across `README.md`, `CONTEXT.md`, `architecture.md`, `kite_commands.md`, `docs/cli-ux.md`, and 0.9 program docs.
+
 ## [0.9.0] - 2026-09-04
 
 ### Added
