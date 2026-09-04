@@ -25,6 +25,7 @@ from kite.application.verification.plan import (
     build_verification_plan,
     plan_status,
 )
+from kite.application.verification.workspace_profile import WorkspaceProfile, discover_workspace_profile
 
 VerificationStatus = Literal[
     "verified", "partial", "unverified", "failed", "idle", "changed_unverified", "blocked"
@@ -60,10 +61,20 @@ class VerificationCollector:
     gaps: list[str] = field(default_factory=list)
     paths_touched: set[str] = field(default_factory=set)
     paths_read: set[str] = field(default_factory=set)
+    workspace_root: str = ""
+    _workspace_profile: WorkspaceProfile | None = field(default=None, repr=False)
     _records: list[VerificationRecord] = field(default_factory=list, repr=False)
 
+    def _profile(self) -> WorkspaceProfile | None:
+        if self._workspace_profile is not None:
+            return self._workspace_profile
+        if not self.workspace_root:
+            return None
+        self._workspace_profile = discover_workspace_profile(self.workspace_root)
+        return self._workspace_profile
+
     def plan(self):
-        return build_verification_plan(tuple(sorted(self.paths_touched)))
+        return build_verification_plan(tuple(sorted(self.paths_touched)), profile=self._profile())
 
     def on_tool_end(self, tool: str, args: dict[str, Any], result: dict[str, Any]) -> None:
         if tool in {"write", "edit"}:
@@ -136,6 +147,8 @@ class VerificationCollector:
             "artifact_kinds": sorted(plan.artifact_kinds),
             "required_checks": len(plan.required_checks),
             "evidence_records": len(self._records),
+            "workspace_root": plan.workspace_root,
+            "package_count": plan.package_count,
         }
 
     def render_lines(self) -> list[str]:
