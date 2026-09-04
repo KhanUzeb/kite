@@ -32,9 +32,12 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 
 - **Tight agent loop** — a mini-swe-agent style sync loop (query → tools → observe → repeat) with budgeted turns and resumable sessions.
 - **Multi-provider** — LiteLLM-backed model resolution across OpenAI, Anthropic, Groq, OpenCode Zen/Go, NVIDIA NIM, Ollama, and OpenAI-compatible endpoints.
-- **Real coding tools** — read, write, edit, bash, grep, glob, ls, `set_cwd`, web fetch/search/crawl, todo tracking, and a `subagent` orchestrator.
+- **Real coding tools** — read, write, edit, bash, grep, glob, ls, `set_cwd`, **`submit`** (structured completion), web fetch/search/crawl, todo tracking, and a `subagent` orchestrator.
+- **Evidence-first verification** — artifact-aware checks per workspace package; `submit` blocked without passing verification; live `verification_status` in the footer.
+- **0.9 execution pipeline** — production loop routes tools through `PolicyEngine` + `ToolExecutor` (guardrails still enforce bash denylist inside tools).
+- **Repo map** — Aider-style symbol sketch in project context; git-changed files ranked first.
 - **Execution context** — separate project root vs session cwd; `restricted` or `host` execution mode; parallel safe read-only tools.
-- **Context lifecycle** — preserved-fact compaction, auto-checkpoints at ~72% context, `/checkpoint` restore, `/handoff` export for other agents.
+- **Context lifecycle** — preserved-fact compaction, auto-checkpoints at ~72% context, `/checkpoint` restore, `/handoff` export; **repo map** symbols for faster orientation in large trees.
 - **Harness benchmarks** — `kite bench` for repeatable startup/context/tool timing (no live LLM).
 - **Skills & plugins** — `SKILL.md` packs (npm, npx, GitHub, or a **local path symlink** into `~/.kite/skills`), prompt commands, plugins, and `.kite/extensions/` for custom tools.
 - **Guardrails** — path sandboxing, bash danger checks, secret redaction, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
@@ -140,7 +143,7 @@ pytest                    # guardrails, agent, sessions, git-stat diffs, skills,
 pytest -v                 # verbose
 ```
 
-Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, orchestrator dispatch, reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
+Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, orchestrator dispatch, 0.9 application adapters (`PolicyEngine`, `ToolExecutor`, replay acceptance), reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
 
 **CI:** GitHub Actions runs `pytest` on every push and pull request to `main` (Python 3.11 + 3.12). Details in [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
 
@@ -212,12 +215,12 @@ Overview: **[architecture.md](architecture.md)** — layers, lifecycle, context/
 
 ```
 CLI → ApplicationRunService (0.9 adapter) → AgentRuntime → DefaultAgent loop
-         │               │
-    ├ config/       ├ compaction
-    ├ prompts/      ├ tools (+ guardrails)
-    ├ skills/       └ sessions / trajectory
+         │                                      │
+    ├ config/                            ├ PolicyEngine → ToolExecutor → tools
+    ├ prompts/                           ├ compaction + verification collector
+    ├ skills/                            └ sessions / trajectory / replay
     ├ providers/
-    └ context/
+    └ context/ (+ repomap)
 ```
 
 ## Design docs
@@ -241,21 +244,18 @@ python scripts/build_design_pdf.py
 
 ```
 src/kite/
-  application/             # 0.9 RunSpec, EventEnvelope, PolicyEngine, replay adapters
+  application/             # 0.9 RunSpec, PolicyEngine, ToolExecutor, replay, verification
   agent/                   # loop, runtime, harness, mode, events, exceptions
   cli/                     # argparse entry, slash index
   ui/                      # Rich TUI (loaders, chips, context meter)
   config/                  # ~/.kite prefs + runtime TOML
   tools/coding.py
   providers/
-  context/
+  context/                 # discovery, repomap (git-ranked symbols), workspace
   memory/
   skills/ commands/ plugins/
+  eval/                    # ReplayBundle + acceptance criteria (no live LLM)
 scripts/
   install.sh install.ps1   # clone + venv + editable install (any workstation)
-tests/                     # pytest suite
-  data/configs/default.toml
-  data/prompts/{system,instance,mode_*,role_*}.md
-  data/commands/{explain,fix,pr,handoff}.md
-  data/skills/{commit,debug,test,review}/SKILL.md
+tests/                     # pytest suite (~440+ tests, no live LLM)
 ```

@@ -22,7 +22,11 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Execution cwd** — The active working directory for file tools and bash. Defaults to the launch cwd; may change via `set_cwd` or bash `cwd`.
 
-**Execution mode** — `host` (packaged default) or `restricted`. Host mode allows paths outside the session cwd (protected paths still blocked). Restricted mode sandboxes file/bash paths to the session. Toggle in the REPL with `/restricted on|off` (alias `/sandbox`). The 0.9 `PolicyEngine` seam defaults to restricted; packaged CLI/REPL remain host until cutover.
+**Execution mode** — `host` (packaged default) or `restricted`. Host mode allows paths outside the session cwd (protected paths still blocked). Restricted mode sandboxes file/bash paths to the session. Toggle in the REPL with `/restricted on|off` (alias `/sandbox`). Production tool calls authorize through **`PolicyEngine`** (path containment, network in restricted mode); **`GuardrailPolicy`** still applies bash denylist and output clamp inside tools.
+
+**ToolExecutor** — 0.9 pipeline: `derive_intent` → `PolicyEngine.authorize` → optional approval → `runner` → `ToolResult`. Wired into the production agent loop; legacy direct `env.execute` path remains when disabled.
+
+**Repo map** — Compact symbol sketch (functions/classes per source file) injected into project context. Git-changed files are ranked first (`*` marker).
 
 **RunSpec** — Immutable description of one harness run (task, workspace, limits, model, approval).
 
@@ -126,9 +130,11 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Tool effect** — Canonical capability tag (`workspace_read`, `network`, `nested_agent`, …) derived per tool call; `PolicyEngine` authorizes effects.
 
-**Evidence ledger** — Journaled `VerificationRecord`s linking final claims to tool results; model prose cannot satisfy verification alone.
+**Evidence ledger** — Journaled `VerificationRecord`s and `EvidenceVerifier` digests linking final claims to tool results; model prose cannot satisfy verification alone.
 
-**Submit** — End of a build turn when the task is finished (bash submit phrase or plain text reply in chat).
+**ReplayBundle** — Recorded run transcript for eval/replay without live providers. May include `events` and `acceptance` criteria (`content_contains`, `event_kinds`, `min_events`).
+
+**Submit** — End of a build turn when the task is finished. Preferred: structured **`submit`** tool with `message` (Done / Changed / Verification sections). Legacy: bash `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. Short casual chat may end in text without tools.
 
 **Interrupt** — User cancellation (Ctrl+C) propagates to the model stream and long-running bash; does not kill the REPL.
 
