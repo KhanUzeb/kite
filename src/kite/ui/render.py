@@ -21,17 +21,6 @@ from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState
 from kite.ui.status import approval_style, mode_style, status_context_parts
 from kite.ui.stream_buffer import StreamCoalescer
-from kite.ui.tool_cards import (
-    ToolCard,
-    detail_from_args,
-    line_count_from_output,
-    render_bash_command_block,
-    render_parallel_batch_header,
-    render_stream_tool_preview,
-    render_tool_card_done,
-    render_tool_card_start,
-    render_tool_summary,
-)
 from kite.ui.style import (
     CHANNEL_PREFIX,
     COLLAPSE_LINES,
@@ -47,6 +36,18 @@ from kite.ui.style import (
     SYMBOL_WARN,
     make_console,
 )
+from kite.ui.tool_cards import (
+    ToolCard,
+    detail_from_args,
+    line_count_from_output,
+    render_bash_command_block,
+    render_parallel_batch_header,
+    render_stream_tool_preview,
+    render_tool_card_done,
+    render_tool_card_start,
+    render_tool_summary,
+)
+
 
 def _format_duration(ms: int | None) -> str:
     if ms is None:
@@ -194,6 +195,7 @@ _RENDER_EVENT_KINDS = (
     "provider_retry",
     "provider_fault",
     "approval",
+    "submit_blocked",
     "agent_end",
     "error",
     "cost",
@@ -748,6 +750,19 @@ class RunDisplay:
     def _on_approval(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
+
+    def _on_submit_blocked(self, p: dict[str, Any]) -> None:
+        self._end_stream_line()
+        self._spin(False)
+        reason = str(p.get("reason") or "submit blocked").strip()
+        line = Text()
+        line.append(f"{GUTTER}{SYMBOL_WARN} ", style="kite.pending")
+        line.append("submit blocked", style="kite.pending bold")
+        line.append(f"  ·  {reason[:160]}", style="kite.muted")
+        line.append("\n")
+        self.console.print(line)
+        self.state.flash = "submit blocked — run verification"
+        self._touch_state()
 
     def _render_agent_end_status(self, p: dict[str, Any]) -> None:
         status = p.get("exit_status") or "done"
