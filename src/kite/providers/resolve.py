@@ -27,6 +27,7 @@ class ResolvedModel:
     context_window: int
     spec: ProviderSpec
     api_style: str = "chat"  # chat | messages | responses
+    agent_warning: str | None = None
 
     def litellm_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"model": self.litellm_model}
@@ -132,6 +133,10 @@ def resolve_model(
         or _default_api_style(provider_name, spec.kind)
     )
 
+    from kite.providers.capabilities import agent_model_warning
+
+    warning = agent_model_warning(model_name or "")
+
     return ResolvedModel(
         provider=provider_name,
         model=model_name,
@@ -141,6 +146,7 @@ def resolve_model(
         context_window=window,
         spec=spec,
         api_style=api_style,
+        agent_warning=warning,
     )
 
 

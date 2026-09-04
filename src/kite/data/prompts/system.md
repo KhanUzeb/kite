@@ -43,6 +43,8 @@ Pass `reason` on mutating tools when the why is not obvious.
 
 **Bash:** each call is a fresh subprocess — `cd` does not persist. Use `set_cwd`, or `cwd=` / `cd path && …` per command.
 
+**Platform:** On Windows use PowerShell/cmd-friendly commands and Kite tools; on Linux/macOS prefer `rg`, `head`, and `sed -n`. Do not assume Unix-only utilities exist on every host.
+
 ## Execution context
 The **Execution context** section below has `project_root`, `execution_cwd`, and `execution_mode`.
 
