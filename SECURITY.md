@@ -6,9 +6,10 @@ Security fixes are applied to the latest released version of Kite.
 
 | Version | Supported |
 |---------|-----------|
+| 0.9.x   | yes |
+| 0.8.x   | yes |
 | 0.7.x   | yes |
-| 0.6.x   | yes |
-| < 0.6   | no |
+| < 0.7   | no |
 
 ## Reporting a vulnerability
 

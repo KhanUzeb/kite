@@ -5,9 +5,9 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
-[![Version](https://img.shields.io/badge/version-0.8.2-cyan.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.0-cyan.svg)](CHANGELOG.md)
 
-**Version:** 0.8.2
+**Version:** 0.9.0
 
 **Keywords:** coding agent, AI code assistant, terminal coding assistant, agent CLI, SWE-agent style loop, repository automation, code review automation
 
@@ -36,7 +36,7 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 - **Execution context** — separate project root vs session cwd; `restricted` or `host` execution mode; parallel safe read-only tools.
 - **Context lifecycle** — preserved-fact compaction, auto-checkpoints at ~72% context, `/checkpoint` restore, `/handoff` export for other agents.
 - **Harness benchmarks** — `kite bench` for repeatable startup/context/tool timing (no live LLM).
-- **Skills & plugins** — `SKILL.md` packs (installable from npm, npx, or GitHub), prompt commands, plugins, and `.kite/extensions/` for custom tools.
+- **Skills & plugins** — `SKILL.md` packs (npm, npx, GitHub, or a **local path symlink** into `~/.kite/skills`), prompt commands, plugins, and `.kite/extensions/` for custom tools.
 - **Guardrails** — path sandboxing, bash danger checks, secret redaction, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
 - **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, git-stat diffs, theme/font switching, and a context-usage meter.
 - **Portable** — install once, then run `kite` from any project directory via `--cwd`.
@@ -182,6 +182,7 @@ kite sessions --delete <session-id>
 kite sessions --delete-all -y
 kite skills --show commit
 kite skills --add @scope/pkg
+kite skills --add ./my-skill          # symlink into ~/.kite/skills
 kite commands
 kite plugins
 kite memory
@@ -210,7 +211,7 @@ Home: `~/.kite/` (`sessions/`, `trajectories/`, `configs/`, `commands/`, `skills
 Overview: **[architecture.md](architecture.md)** — layers, lifecycle, context/compaction, extension points.
 
 ```
-CLI → AgentRuntime → DefaultAgent loop
+CLI → ApplicationRunService (0.9 adapter) → AgentRuntime → DefaultAgent loop
          │               │
     ├ config/       ├ compaction
     ├ prompts/      ├ tools (+ guardrails)
@@ -228,7 +229,8 @@ Canonical markdown:
 - `AGENTS.md`: how to hack on this repo (map, conventions, tests)
 - `docs/kite-system-design.md`: architecture, atlas, tradeoffs
 - `docs/cli-ux.md`: plan/build TUI, style guide, render loop
-- `kite_commands.md`: CLI, REPL slashes, skills, plugins, tools
+- [`docs/kite-0.9-architecture-program.md`](docs/kite-0.9-architecture-program.md): 0.9 seams and adapter status
+- [`docs/RELEASE-0.9.0.md`](docs/RELEASE-0.9.0.md): 0.9 release notes
 
 Generated PDFs (gitignored): `docs/kite-system-design.pdf`, `docs/cli-ux.pdf`, `docs/ideal-cli-spec.pdf`, `docs/kite_commands.pdf`
 
@@ -239,6 +241,7 @@ python scripts/build_design_pdf.py
 
 ```
 src/kite/
+  application/             # 0.9 RunSpec, EventEnvelope, PolicyEngine, replay adapters
   agent/                   # loop, runtime, harness, mode, events, exceptions
   cli/                     # argparse entry, slash index
   ui/                      # Rich TUI (loaders, chips, context meter)

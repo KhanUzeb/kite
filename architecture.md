@@ -1,8 +1,8 @@
 # Kite architecture
 
-**Version:** 0.8.2 · Python 3.11+ · Entry: `kite.cli.run:main`
+**Version:** 0.9.0 · Python 3.11+ · Entry: `kite.cli.run:main`
 
-Kite is a **slim hybrid coding-agent harness**: a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) style control loop wrapped in tau-inspired **runtime assembly** (providers, tools, guardrails, compaction, sessions). The brain never renders UI; the CLI never calls LiteLLM directly.
+Kite is a **slim hybrid coding-agent harness**: a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) style control loop wrapped in tau-inspired **runtime assembly** (providers, tools, guardrails, compaction, sessions). 0.9 adds an **application layer** (`RunSpec`, `ApplicationRunService`, `EventEnvelope`) while `Harness` remains the production adapter. The brain never renders UI; the CLI never calls LiteLLM directly.
 
 Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (full atlas) · [docs/cli-ux.md](docs/cli-ux.md) (TUI) · [CONTEXT.md](CONTEXT.md) (glossary) · [AGENTS.md](AGENTS.md) (contributing)
 
@@ -29,7 +29,12 @@ Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (ful
 │  CLI + UI          cli/run.py · ui/repl.py · ui/render.py     │
 │  argparse, slash commands, Rich TUI, approval prompts        │
 └────────────────────────────┬─────────────────────────────────┘
-                             │  Event(kind, payload)
+                             │  Event(kind, payload) / EventEnvelope
+                             ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Application (0.9)   application/service.py · contracts      │
+│  RunSpec · ApplicationRunService · adapters (not full cutover)│
+└────────────────────────────┬─────────────────────────────────┘
                              ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  Runtime assembly    agent/runtime.py · agent/harness.py     │
@@ -50,7 +55,7 @@ Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (ful
 └──────────────────────────┘   └─────────────────────────────┘
 ```
 
-**Layer rule:** `agent/` must not import Rich or prompt_toolkit. `ui/` subscribes to events; `AgentRuntime` wires everything.
+**Layer rule:** `agent/` must not import Rich or prompt_toolkit. `ui/` subscribes to events; `ApplicationRunService` (0.9) or `AgentRuntime` wires everything.
 
 ---
 
@@ -89,7 +94,9 @@ Exit paths: task submitted via bash magic line, step/cost/time limits, user inte
 | `memory/handoff.py` | Handoff markdown + JSON export |
 | `memory/compaction_ops.py` | Shared compaction + auto-checkpoint |
 | `bench/` | `kite bench` timing suite |
-| `skills/` | Load `SKILL.md` packs; install from npm/git |
+| `application/` | 0.9 contracts: RunSpec, EventEnvelope, PolicyEngine, SQLite store, replay |
+| `eval/` | Recorded `ReplayBundle` (no live providers) |
+| `skills/` | Load `SKILL.md`; install npm/git or **symlink** a local folder into `~/.kite/skills` |
 | `ui/repl.py` | prompt_toolkit REPL, slash expansion, keybindings |
 
 ---
@@ -171,7 +178,7 @@ Streaming uses stderr for loaders; stdout stays clean for copy/paste.
 | Add a slash command | `ui/commands.py` + `ui/repl.py` + `ui/complete.py` |
 | Add a tool | `tools/coding.py` or plugin; register in runtime config `[tools].enabled` |
 | Add a provider | `data/catalog.toml` + credentials env var |
-| Add a skill | `SKILL.md` in `~/.kite/skills` or `.kite/skills`; `/skills add` |
+| Add a skill | `SKILL.md` in `~/.kite/skills` or `.kite/skills`; `/skills add pkg` or `/skills add ./path` (symlink) |
 | Swap sandbox | Replace `env/local.py` (same `execute(action)` contract) |
 | Override summarizer | `AgentRuntime` slot or `compaction_use_llm` in user config |
 
@@ -190,7 +197,7 @@ Focus areas: guardrails, approval, loop detection, sessions, render helpers, cre
 
 | Doc | Use when |
 |-----|----------|
-| [architecture.md](architecture.md) | Quick system overview (this file) |
+| [docs/kite-0.9-architecture-program.md](docs/kite-0.9-architecture-program.md) | 0.9 application seams |
 | [docs/kite-system-design.md](docs/kite-system-design.md) | Full module atlas, tradeoffs, provider table |
 | [docs/cli-ux.md](docs/cli-ux.md) | REPL cells, footer, shortcuts, approval UX |
 | [docs/ideal-cli-spec.md](docs/ideal-cli-spec.md) | Feature coverage checklist |

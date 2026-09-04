@@ -1,6 +1,6 @@
 # Kite — System design, code atlas & engineering notes
 
-**Version:** 0.8.2
+**Version:** 0.9.0
 **Stack:** Python 3.12 · LiteLLM · Rich · uv
 **Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)
 **Companion UX spec:** [cli-ux.md](cli-ux.md) (PDF: `docs/cli-ux.pdf`)
@@ -11,7 +11,7 @@
 
 ## 0. One-sentence pitch
 
-Kite is a **slim coding-agent harness**: a mini-swe-agent style sync loop (query → tools → observe → repeat) wrapped in tau-inspired **runtime assembly** (providers, prompts, skills, guardrails, compaction, JSONL memory).
+Kite is a **slim coding-agent harness**: a mini-swe-agent style sync loop (query → tools → observe → repeat) wrapped in tau-inspired **runtime assembly** (providers, prompts, skills, guardrails, compaction, JSONL memory). 0.9 adds `kite.application` contracts (`RunSpec`, `EventEnvelope`, `ApplicationRunService`) as tested adapters; production CLI/REPL still go through `Harness`.
 
 ---
 
@@ -262,8 +262,8 @@ Optional `reason` on mutating tools is shown in the UI. Every call goes through 
 
 ### 4.12 `skills/` — loader
 **Spec:** directory with `SKILL.md` (+ optional YAML frontmatter).
-**Discovery order (later wins):** bundled → `~/.kite/skills` → plugins → `.kite/skills` → `.agents/skills` → config extra dirs.
-**Invocation:** tool `skill` (load, or `install` from npm/npx/GitHub into `~/.kite/skills`), prompt `/skill:name …` / `/skill name …`, `/skills add pkg`, or `/name` when no markdown command took that name. User-home skills show `~` in the `/` menu.
+**Discovery order (later wins):** bundled → `~/.kite/skills` (follows symlinks) → plugins → `.kite/skills` → `.agents/skills` → config extra dirs.
+**Invocation:** tool `skill` (load, or `install` from npm/npx/GitHub/local path into `~/.kite/skills`), prompt `/skill:name …` / `/skill name …`, `/skills add pkg`, or `/name` when no markdown command took that name. User-home skills show `~` in the `/` menu. Restricted mode may **read** files under `~/.kite/skills` (and trees those entries symlink to); writes stay sandboxed.
 
 ### 4.12b `commands/` + `plugins/` + `cli/slash.py`
 Markdown slash prompts (`--- name / description ---` + `$ARGUMENTS`) live in `data/commands`, `~/.kite/commands`, `.kite/commands`, and `plugins/*/commands`.

@@ -29,6 +29,8 @@ def test_context_meter_empty_when_unknown() -> None:
 
 
 def test_format_status_tail_includes_cache_and_agents() -> None:
+    from kite.ui.status import format_metrics_tail
+
     state = SessionUiState(
         provider="groq",
         model="llama",
@@ -40,9 +42,10 @@ def test_format_status_tail_includes_cache_and_agents() -> None:
         active_subagents=2,
     )
     tail = format_status_tail(state)
-    assert "cache 25%" in tail
+    metrics = format_metrics_tail(state)
+    assert "cache 25%" in metrics
     assert "agents 2" in tail
-    assert "$0.120" in tail
+    assert "$0.120" in metrics
 
 
 def test_format_status_tail_plan_shows_checklist_progress() -> None:

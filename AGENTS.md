@@ -6,7 +6,7 @@ Instructions for coding agents (Cursor, Claude Code, Kite itself, etc.) hacking 
 
 ## What this repo is
 
-**Kite** v0.8.2 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
+**Kite** v0.9.0 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
 
 - **Engine:** mini-swe-agent style loop (`agent/loop.py`) — query → tools → observe → repeat
 - **Cockpit:** tau-inspired assembly — catalog providers, skills, guardrails, Rich TUI, JSONL sessions
@@ -19,6 +19,7 @@ Stack: LiteLLM, Rich, prompt_toolkit, pydantic, tomllib. Entry: `kite.cli.run:ma
 
 ```
 src/kite/
+  application/    RunSpec, ApplicationRunService, EventEnvelope (0.9 contracts)
   agent/          Loop, harness, runtime, compaction, cancel, tool_result, orchestrator
   bench/          Repeatable harness benchmarks (`kite bench`)
   cli/            argparse entry (run.py), slash index, setup, stats, bench, import/apply
@@ -30,7 +31,8 @@ src/kite/
   guardrails/     Path sandbox, execution mode, bash policy, secret redaction
   ui/             REPL, render, approval, complete, theme, status
   memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic
-  skills/         SKILL.md loader + npm/git install
+  eval/           Recorded replay (ReplayBundle) without live providers
+  skills/         SKILL.md loader; npm/git install; local path symlink into ~/.kite/skills
   commands/       Markdown slash prompt loader
   plugins/        .kite/plugins discovery
   extensions/     .kite/extensions loader (register_tool → Harness.extra_tools)
@@ -40,7 +42,7 @@ docs/             Design + UX specs (source of truth for behavior)
 scripts/          install.sh, install.ps1, build_design_pdf.py
 ```
 
-**Layer rule:** CLI/UI subscribe to events; `AgentRuntime` assembles; `DefaultAgent` loops; tools/guardrails execute. Do not import UI from `agent/` or call LiteLLM from `ui/repl.py` directly.
+**Layer rule:** CLI/UI subscribe to events; `ApplicationRunService` (0.9) or `AgentRuntime` assembles; `DefaultAgent` loops; tools/guardrails execute. Do not import UI from `agent/` or call LiteLLM from `ui/repl.py` directly.
 
 ---
 
@@ -116,7 +118,7 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 
 - Importing Rich or prompt_toolkit inside `agent/loop.py`
 - Storing API keys in repo or printing them in logs
-- Breaking sandbox: allowing absolute paths outside workspace in tools
+- Breaking sandbox: allowing **writes** outside the workspace (global skill **reads** under `~/.kite/skills` are a documented exception)
 - Adding Textual/full-screen TUI without an explicit design decision
 - Changing default prompts to wrap casual chat (`hi`) as “solve this task” — chat stays literal
 - Skipping `pytest` when touching guardrails, sessions, approval, or render
@@ -128,7 +130,9 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 
 | Doc | Use when |
 |-----|----------|
-| [docs/kite-system-design.md](docs/kite-system-design.md) | Module atlas, tradeoffs, provider table |
+| [docs/kite-0.9-architecture-program.md](docs/kite-0.9-architecture-program.md) | 0.9 seams, adapter status, CI matrix |
+| [docs/adr/0001-application-harness-seam.md](docs/adr/0001-application-harness-seam.md) | Why `ApplicationRunService` exists |
+| [docs/RELEASE-0.9.0.md](docs/RELEASE-0.9.0.md) | 0.9 release notes |
 | [docs/cli-ux.md](docs/cli-ux.md) | REPL cells, footer, shortcuts, approval UX |
 | [docs/ideal-cli-spec.md](docs/ideal-cli-spec.md) | Feature coverage checklist |
 | [kite_commands.md](kite_commands.md) | CLI/REPL command reference |
@@ -153,8 +157,8 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md). Conventional short commits (`feat(ui)
 Version source of truth: **`pyproject.toml`**. Stamped files stay in sync via `scripts/sync_version.py`.
 
 ```bash
-./scripts/bump_release.sh 0.7.3   # bump, sync README/AGENTS/docs, CHANGELOG stub, tag
-# edit CHANGELOG.md + docs/RELEASE-0.7.3.md
+./scripts/bump_release.sh 0.9.0   # bump, sync README/AGENTS/docs, CHANGELOG stub, tag
+# edit CHANGELOG.md + docs/RELEASE-0.9.0.md
 git push origin main --tags       # tag push runs .github/workflows/release.yml
 ```
 

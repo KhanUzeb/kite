@@ -3,12 +3,45 @@
 from __future__ import annotations
 
 from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name
+from kite.models.reasoning import reasoning_badge
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_SEP
 from kite.ui.theme import glyph
-from kite.models.reasoning import reasoning_badge
 
 _CONTEXT_BAR_WIDTH = 8
+
+
+def active_task_count(state: SessionUiState) -> int:
+    """Current turn plus queued follow-ups."""
+    return (1 if state.busy else 0) + max(0, state.queued)
+
+
+def format_running_status(state: SessionUiState) -> str:
+    if not state.busy or not state.running_label:
+        return ""
+    ts = state.running_since or "—"
+    label = state.running_label
+    if len(label) > 72:
+        label = label[:69] + "…"
+    return f"[{ts}] {label}  running"
+
+
+def format_metrics_tail(state: SessionUiState) -> str:
+    """Throughput, cache, context, and cost — always-on footer metrics."""
+    parts: list[str] = []
+    if state.busy or state.tps > 0:
+        parts.append(f"{state.tps:.0f} tok/s" if state.tps > 0 else "— tok/s")
+    if state.cache_hit_tokens > 0 or state.cache_hit_ratio > 0:
+        parts.append(f"cache {state.cache_hit_ratio:.0%}")
+    elif state.busy and state.window:
+        parts.append("cache —")
+    meter = context_meter(state.context_pct)
+    if meter:
+        parts.append(meter)
+    elif state.tokens and state.window:
+        parts.append(f"ctx {state.tokens}/{state.window}")
+    parts.append(f"${state.cost:.3f}")
+    return " · ".join(parts)
 
 
 def context_meter(pct: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
@@ -38,19 +71,14 @@ def status_context_parts(state: SessionUiState) -> list[str]:
         parts.append(f"jobs {state.active_jobs}")
     elif state.active_subagents:
         parts.append(f"agents {state.active_subagents}")
-    meter = context_meter(state.context_pct)
-    if meter:
-        parts.append(meter)
-    elif state.tokens and state.window:
-        parts.append(f"ctx {state.tokens}/{state.window}")
-    if state.cache_hit_tokens > 0:
-        parts.append(f"cache {state.cache_hit_ratio:.0%}")
-    parts.append(f"${state.cost:.3f}")
     if state.git_branch:
         parts.append(state.git_branch)
     if state.busy:
         parts.append("working")
-    if state.queued:
+        tasks = active_task_count(state)
+        if tasks:
+            parts.append(f"{tasks} task{'s' if tasks != 1 else ''}")
+    elif state.queued:
         parts.append(f"queued {state.queued}")
     if state.interrupted:
         parts.append("interrupted")

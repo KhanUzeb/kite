@@ -9,14 +9,16 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
-    env:
-      KITE_HOME: /tmp/kite-home
-      KITE_SKIP_SETUP: "1"
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    env:
+      # matrix (not runner) is available in jobs.<id>.env; runner only works in steps
+      KITE_HOME: ${{ matrix.os == 'windows-latest' && 'C:\\Temp\\kite-home' || '/tmp/kite-home' }}
+      KITE_SKIP_SETUP: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +28,9 @@ jobs:
           enable-cache: true
 
       - name: Install and test
+        shell: bash
         run: |
           uv pip install -e ".[dev]"
           python scripts/sync_version.py --check
+          uv run ruff check src/kite/application tests/test_application_contracts.py tests/test_compat_formats.py tests/test_context_assembler.py tests/test_policy_execution.py tests/test_persistence.py tests/test_model_gateway.py tests/test_evidence_verifier.py tests/test_cli_repl_services.py tests/test_replay.py
           uv run pytest -q

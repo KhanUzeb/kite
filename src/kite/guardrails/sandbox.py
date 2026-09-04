@@ -88,6 +88,37 @@ def is_inside(path: Path, root: Path) -> bool:
         return False
 
 
+def is_user_skill_read(path: Path) -> bool:
+    """True when *path* resolves inside ~/.kite/skills or a skill tree linked from there."""
+    from kite.config import kite_home
+
+    skills_root = kite_home() / "skills"
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    roots: list[Path] = []
+    try:
+        roots.append(skills_root.resolve())
+        if skills_root.is_dir():
+            for child in skills_root.iterdir():
+                try:
+                    target = child.resolve()
+                    if target.is_dir():
+                        roots.append(target)
+                except OSError:
+                    continue
+    except OSError:
+        return False
+    for root in roots:
+        try:
+            if resolved == root or resolved.is_relative_to(root):
+                return True
+        except (ValueError, OSError):
+            continue
+    return False
+
+
 def protected_roots() -> list[Path]:
     """System locations the agent must never read or write."""
     roots: list[Path] = []
