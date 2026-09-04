@@ -72,12 +72,24 @@ class ApplicationRunService:
             usage["cost"] = cost
 
         changed = tuple(str(p) for p in legacy.get("changed_paths") or ())
+        verification_status = str(
+            legacy.get("verification_status")
+            or verification.get("status")
+            or ""
+        )
+        evidence_summary = dict(verification) if verification else {}
+        approval_reason = str(legacy.get("approval_reason") or legacy.get("blocked_reason") or "")
+        blocked_reason = str(legacy.get("submit_blocked") or legacy.get("blocked_reason") or "")
 
         return RunResult(
             status=state.value,
             stop_reason=stop_reason,
             final_message=submission,
             verification=verification,
+            verification_status=verification_status,
+            evidence_summary=evidence_summary,
+            approval_reason=approval_reason,
+            blocked_reason=blocked_reason,
             usage=usage,
             cost=cost,
             changed_paths=changed,

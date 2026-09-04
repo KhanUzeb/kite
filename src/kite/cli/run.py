@@ -136,7 +136,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     _wire_display(harness, console, args)
     try:
-        result = harness.run(task)
+        from kite.application.cli import CliResult
+        from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
+
+        run_result = execute_harness_task(harness, task)
+        result = legacy_result_from_run(run_result)
+        cli_result = CliResult.from_run_result(run_result, run_id=run_result.trace_id)
     except Exception as e:
         if getattr(args, "json", False):
             print(json.dumps({"ok": False, "error": str(e)}))
@@ -149,14 +154,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     sid = harness.last_session.id if harness.last_session else ""
     if getattr(args, "json", False):
         data = {
-            "ok": result.get("exit_status") == "Submitted",
+            "ok": cli_result.ok,
             "exit_status": result.get("exit_status"),
             "submission": result.get("submission"),
             "session_id": sid,
             "verification": result.get("verification"),
+            "status": cli_result.status,
         }
         print(json.dumps(data, indent=2))
-        return 0 if data["ok"] else 1
+        return int(cli_result.exit_code)
 
     console.print(
         f"[bold]exit[/]={result.get('exit_status')}  "
@@ -172,7 +178,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         console.print(f"[red]{result.get('error')}[/]")
         if result.get("traceback"):
             console.print("[dim]See session log or re-run with -v for full traceback[/]")
-    return 0 if result.get("exit_status") == "Submitted" else 1
+    return int(cli_result.exit_code)
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
@@ -276,7 +282,10 @@ def cmd_resume(args: argparse.Namespace) -> int:
     )
     _wire_display(harness, console, args)
     try:
-        result = harness.run(follow)
+        from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
+
+        run_result = execute_harness_task(harness, follow)
+        result = legacy_result_from_run(run_result)
     except Exception as e:
         console.print(f"[red]{e}[/]")
         return 1

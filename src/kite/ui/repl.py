@@ -1840,7 +1840,10 @@ class ChatSession:
 
         def worker() -> None:
             try:
-                box["result"] = harness.run(task)
+                from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
+
+                run_result = execute_harness_task(harness, task)
+                box["result"] = legacy_result_from_run(run_result)
             except KeyboardInterrupt:
                 box["interrupted"] = True
             except Exception as e:

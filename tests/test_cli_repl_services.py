@@ -30,3 +30,28 @@ def test_repl_reducer_projects_events() -> None:
     assert snap["status"] == "running"
     assert snap["turn"] == 1
     assert snap["cost"] == 0.05
+
+
+def test_execute_harness_task_routes_through_application_service(monkeypatch) -> None:
+    from kite.agent.harness import Harness, HarnessConfig
+    from kite.application.cli.runner import execute_harness_task
+
+    calls: list[str] = []
+
+    class _SpyService:
+        def run(self, spec, deps=None, *, harness=None, cancel=None):
+            calls.append("application")
+            from kite.application.contracts import RunResult
+
+            return RunResult(
+                status="completed",
+                stop_reason="submitted",
+                final_message="ok",
+                legacy={"exit_status": "Submitted", "submission": "ok"},
+            )
+
+    monkeypatch.setattr("kite.application.cli.runner.ApplicationRunService", _SpyService)
+    harness = Harness(HarnessConfig(cwd=".", provider="fake"))
+    result = execute_harness_task(harness, "hello")
+    assert calls == ["application"]
+    assert result.status == "completed"
