@@ -121,7 +121,9 @@ class AgentRuntime:
                 estimated = usage.total_tokens
             prompt_cache = getattr(getattr(agent, "model", None), "prompt_cache", None)
             if prompt_cache is not None:
-                cache_hits = int(prompt_cache.stats.cache_hit_tokens)
+                session_stats = getattr(prompt_cache, "session", None)
+                if session_stats is not None:
+                    cache_hits = int(getattr(session_stats, "cache_hit_tokens", 0) or 0)
         meta = session.meta
         stats = SessionStats(
             session_id=session.id,
