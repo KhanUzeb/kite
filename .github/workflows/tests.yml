@@ -16,7 +16,8 @@ jobs:
         python-version: ["3.11", "3.12"]
     runs-on: ${{ matrix.os }}
     env:
-      KITE_HOME: ${{ runner.os == 'Windows' && 'C:\\Temp\\kite-home' || '/tmp/kite-home' }}
+      # matrix (not runner) is available in jobs.<id>.env; runner only works in steps
+      KITE_HOME: ${{ matrix.os == 'windows-latest' && 'C:\\Temp\\kite-home' || '/tmp/kite-home' }}
       KITE_SKIP_SETUP: "1"
     steps:
       - uses: actions/checkout@v4
