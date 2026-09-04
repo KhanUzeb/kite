@@ -53,15 +53,16 @@ def _exit_msg(status: str, *, content: str | None = None, submission: str = "", 
     }
 
 
-_MAX_IDLE_TURNS = 4
+_MAX_IDLE_TURNS = 2
+_MAX_IDLE_RECOVERY = 1
 # Terse on purpose — these user nudges are re-injected into the model context.
 _IDLE_NUDGE = (
-    "No tool calls. Use tools or submit:\n"
+    "No tool calls. Use tools or submit with the `submit` action or "
     "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
 )
 _IDLE_STALL = (
-    "Stopped after {turns} idle turns (token protection). "
-    "Use tools, then: echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+    "Stopped after {turns} idle turns — need a concrete next step or clarification. "
+    "Use tools, submit with evidence, or ask what to do next."
 )
 _TOOL_FAIL_STREAK_NUDGE_AFTER = 3
 _TOOL_FAIL_NUDGE = (
@@ -678,6 +679,9 @@ class DefaultAgent:
 
     def _invoke_tool(self, tool: str, args: dict, action: dict) -> dict:
         cmd = str(args.get("command") or "").strip()
+        if tool == "submit":
+            submission = str(args.get("message") or args.get("content") or args.get("submission") or "")
+            raise Submitted(_exit_msg("Submitted", content=submission, submission=submission))
         submit_ok = (
             tool == "bash"
             and "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in cmd

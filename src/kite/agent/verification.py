@@ -108,6 +108,10 @@ class VerificationCollector:
     def plan(self) -> VerificationPlan:
         return build_verification_plan(tuple(sorted(self.paths_touched)))
 
+    def _looks_like_test(self, cmd: str) -> bool:
+        lowered = cmd.lower()
+        return any(h in lowered for h in self._TEST_HINTS)
+
     def _latest_test(self) -> Artifact | None:
         tests = [a for a in self.artifacts if a.kind == "test"]
         return tests[-1] if tests else None
