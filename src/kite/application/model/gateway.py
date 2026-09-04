@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import random
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Protocol
+from typing import Any, Protocol
 
-from kite.application.model.errors import ProviderErrorCategory, classify_provider_error, is_retryable
+from kite.application.model.errors import classify_provider_error, is_retryable
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +62,14 @@ class ModelGateway:
     def capabilities(self, model: str = "") -> ModelCapabilities:
         return ModelCapabilities(streaming=True, vision=False, reasoning=False)
 
-    def complete(self, messages: list[dict], *, context: Any = None, budget: Any = None, **kwargs: Any) -> ModelResponse:
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        context: Any = None,
+        budget: Any = None,
+        **kwargs: Any,
+    ) -> ModelResponse:
         last_exc: BaseException | None = None
         for attempt in range(1, self.retry.max_attempts + 1):
             try:

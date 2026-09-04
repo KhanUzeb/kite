@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ProviderErrorCategory(str, Enum):
+class ProviderErrorCategory(StrEnum):
     RETRYABLE_TRANSIENT = "retryable_transient"
     RATE_LIMITED = "rate_limited"
     AUTHENTICATION_FAILURE = "authentication_failure"

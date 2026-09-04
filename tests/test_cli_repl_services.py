@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from kite.application.cli import CliResult, ExitCode
 from kite.application.contracts import RunResult

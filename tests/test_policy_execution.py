@@ -42,7 +42,6 @@ def test_tool_executor_denied_without_approval(workspace: Path) -> None:
 
 def test_change_journal_restore_conflict(workspace: Path) -> None:
     target = workspace / "src" / "app.py"
-    original = target.read_bytes()
     journal = ChangeJournal(workspace)
     journal.record_write(target)
     target.write_text("agent edit\n", encoding="utf-8")

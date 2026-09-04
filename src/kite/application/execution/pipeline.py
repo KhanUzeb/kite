@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from kite.application.policy.engine import PolicyEngine
 from kite.application.tools.contracts import PolicyDecision, ToolCall, ToolIntent, ToolResult
