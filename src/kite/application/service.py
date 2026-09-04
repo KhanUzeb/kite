@@ -51,6 +51,10 @@ class ApplicationRunService:
         h = harness or Harness(config=config)
         if harness is not None:
             h.config = config
+        if deps.tool_executor is not None:
+            h.tool_executor = deps.tool_executor
+        if deps.policy_engine is not None:
+            h.policy_engine = deps.policy_engine
 
         unsubscribe = h.subscribe(bridge.wrap_listener())
         state.transition("awaiting_model")
