@@ -111,10 +111,13 @@ def terminal_status(collector: VerificationCollector) -> VerificationStatus:
 
 def record_html_check(collector: VerificationCollector, path: str, content: str) -> None:
     plan = collector.plan()
+    material = (content or "").strip()
+    if not material:
+        return
     for check in plan.required_checks:
         if check.artifact_kind != "html" or path not in check.affected_paths:
             continue
-        ok = html_parse_ok(content) if content else True
+        ok = html_parse_ok(material)
         collector._records.append(
             VerificationRecord(
                 check=check,
@@ -123,9 +126,10 @@ def record_html_check(collector: VerificationCollector, path: str, content: str)
                 exit_status=0 if ok else 1,
                 ok=ok,
                 output_summary="structural parse ok" if ok else "html parse failed",
-                satisfies=(path,),
+                satisfies=(path,) if ok else (),
             )
         )
+        return
 
 
 def _match_bash_check(cmd: str, plan) -> CheckSpec | None:
@@ -135,8 +139,8 @@ def _match_bash_check(cmd: str, plan) -> CheckSpec | None:
             return check
         if check.artifact_kind == "python" and "pytest" in lowered:
             return check
-    if plan.required_checks:
-        return plan.required_checks[0]
+        if check.artifact_kind == "js" and "node --check" in lowered:
+            return check
     return None
 
 
