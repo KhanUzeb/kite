@@ -61,8 +61,31 @@ def test_post_edit_nudge() -> None:
     assert "verification" in nudge.lower()
 
 
-def test_unfounded_done_claim() -> None:
+def test_html_only_edit_does_not_need_pytest() -> None:
     vc = VerificationCollector()
-    reason = vc.unfounded_claim_reason("Task complete — looks fine.")
-    assert reason is not None
-    assert vc.submit_block_reason("hello, all done!") is None
+    vc.on_tool_end(
+        "edit",
+        {"path": "dashboard.html", "content": "<html><body>ok</body></html>"},
+        {"ok": True, "path": "dashboard.html", "diff": "d", "content": "<html><body>ok</body></html>"},
+    )
+    assert vc.needs_tests() is False
+    assert vc.status() in {"verified", "changed_unverified"}
+    nudge = vc.post_edit_nudge()
+    assert nudge is None or "pytest" not in (nudge or "").lower()
+
+
+def test_html_only_submit_not_blocked_without_pytest() -> None:
+    vc = VerificationCollector()
+    vc.on_tool_end(
+        "write",
+        {"path": "index.html", "content": "<html><head></head><body></body></html>"},
+        {
+            "ok": True,
+            "path": "index.html",
+            "diff": "d",
+            "content": "<html><head></head><body></body></html>",
+        },
+    )
+    submission = "## Done\n- updated layout\n## Changed\n- `index.html`\n## Verification\n- ✓ html structural"
+    assert vc.submit_block_reason(submission) is None
+
