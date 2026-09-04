@@ -3,126 +3,504 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kite · Admin</title>
+  <title>Kite · Admin Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0c1017;
-      --card: #151c28;
-      --line: #263246;
-      --text: #eef2f8;
-      --muted: #8fa0b8;
-      --accent: #42d9c8;
-      --blue: #6d9aff;
+      --bg: #0a0f1a;
+      --bg-secondary: #0f172a;
+      --card: #141c2b;
+      --card-hover: #1a2336;
+      --line: #1e293b;
+      --line-strong: #2a3441;
+      --text: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-tertiary: #64748b;
+      --accent: #22d3ee;
+      --accent-glow: rgba(34, 211, 238, 0.15);
+      --blue: #60a5fa;
+      --green: #34d399;
+      --purple: #a78bfa;
+      --orange: #fb923c;
+      --red: #f87171;
+      --gradient: linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: radial-gradient(900px 500px at 0% 0%, #18243a, var(--bg) 60%);
+      font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
       color: var(--text);
       min-height: 100vh;
+      line-height: 1.5;
     }
-    .wrap { max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
-    h1 { margin: 0 0 0.25rem; font-size: 1.6rem; }
-    .sub { color: var(--muted); margin: 0 0 1.75rem; font-size: 0.95rem; }
-    .sub a { color: var(--blue); text-decoration: none; }
+    /* Background effects */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: 
+        radial-gradient(800px 400px at 10% -10%, rgba(34, 211, 238, 0.08), transparent 60%),
+        radial-gradient(600px 300px at 90% 10%, rgba(167, 139, 250, 0.06), transparent 60%),
+        radial-gradient(500px 500px at 50% 100%, rgba(96, 165, 250, 0.05), transparent 60%);
+      pointer-events: none;
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+    
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2.5rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .logo {
+      width: 48px;
+      height: 48px;
+      background: var(--gradient);
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 1.5rem;
+      color: white;
+      box-shadow: 0 0 30px var(--accent-glow);
+    }
+    h1 { 
+      margin: 0; 
+      font-size: 1.875rem; 
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+    .sub { 
+      color: var(--text-secondary); 
+      margin: 0.25rem 0 0; 
+      font-size: 0.9rem;
+    }
+    .sub a { 
+      color: var(--blue); 
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .sub a:hover { text-decoration: underline; }
+    
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.625rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-decoration: none;
+    }
+    .btn:hover {
+      background: var(--card-hover);
+      border-color: var(--line-strong);
+      transform: translateY(-1px);
+    }
+    .btn-primary {
+      background: var(--gradient);
+      border: none;
+      color: white;
+      box-shadow: 0 4px 14px rgba(34, 211, 238, 0.25);
+    }
+    .btn-primary:hover {
+      box-shadow: 0 6px 20px rgba(34, 211, 238, 0.35);
+      transform: translateY(-1px);
+    }
+    
+    /* Stats Grid */
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 1rem;
-      margin-bottom: 1.5rem;
+      margin-bottom: 2rem;
     }
     .card {
+      background: linear-gradient(180deg, var(--card) 0%, var(--bg-secondary) 100%);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 1.5rem;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: var(--line-strong);
+      box-shadow: 
+        0 10px 40px rgba(0, 0, 0, 0.3),
+        0 0 0 1px rgba(34, 211, 238, 0.1);
+    }
+    .card:hover::before { opacity: 1; }
+    
+    .card-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 1rem;
+      font-size: 1.25rem;
+    }
+    .card-stars { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
+    .card-forks { background: rgba(52, 211, 153, 0.15); color: var(--green); }
+    .card-watchers { background: rgba(96, 165, 250, 0.15); color: var(--blue); }
+    .card-issues { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+    .card-release { background: rgba(167, 139, 250, 0.15); color: var(--purple); }
+    .card-pypi { background: rgba(34, 211, 238, 0.15); color: var(--accent); }
+    
+    .label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-tertiary);
+      margin-bottom: 0.5rem;
+    }
+    .value { 
+      font-size: 2.5rem; 
+      font-weight: 700; 
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      font-family: 'JetBrains Mono', monospace;
+      margin-bottom: 0.25rem;
+    }
+    .value small { 
+      font-size: 0.875rem; 
+      color: var(--text-secondary); 
+      font-weight: 500;
+      font-family: 'Inter', sans-serif;
+    }
+    .card-change {
+      font-size: 0.75rem;
+      color: var(--text-tertiary);
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+    
+    /* Quick Links */
+    .section {
+      margin-bottom: 2.5rem;
+    }
+    .section-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+    .section-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-tertiary);
+    }
+    .links { 
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.75rem;
+    }
+    .links a {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.875rem 1rem;
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 12px;
-      padding: 1rem 1.1rem;
-    }
-    .label {
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      color: var(--muted);
-      margin-bottom: 0.35rem;
-    }
-    .value { font-size: 2rem; font-weight: 700; line-height: 1.1; }
-    .value small { font-size: 0.85rem; color: var(--muted); font-weight: 500; }
-    .links { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1rem; }
-    .links a {
-      color: var(--accent);
+      color: var(--text-secondary);
       text-decoration: none;
-      font-size: 0.88rem;
-      border: 1px solid var(--line);
-      padding: 0.35rem 0.7rem;
-      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: all 0.2s;
     }
-    .links a:hover { border-color: var(--accent); }
-    .status { color: var(--muted); font-size: 0.85rem; margin-top: 1rem; }
-    .err { color: #ff8f8f; }
+    .links a:hover {
+      background: var(--card-hover);
+      border-color: var(--line-strong);
+      color: var(--text);
+      transform: translateX(2px);
+    }
+    .link-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--bg-secondary);
+      display: grid;
+      place-items: center;
+      font-size: 0.875rem;
+    }
+    
+    /* Status */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      font-size: 0.875rem;
+    }
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .status-text { color: var(--text-secondary); }
+    .status-text.err { color: var(--red); }
+    
+    /* Loading state */
+    .skeleton {
+      background: linear-gradient(90deg, var(--line) 25%, var(--line-strong) 50%, var(--line) 75%);
+      background-size: 200% 100%;
+      animation: loading 1.5s infinite;
+      border-radius: 4px;
+    }
+    @keyframes loading {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+      .wrap { padding: 1.5rem 1rem 3rem; }
+      h1 { font-size: 1.5rem; }
+      .grid { grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+      .value { font-size: 2rem; }
+      .header { flex-direction: column; align-items: flex-start; }
+    }
+    @media (max-width: 480px) {
+      .grid { grid-template-columns: 1fr; }
+      .links { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Kite admin</h1>
-    <p class="sub">
-      Private snapshot for <a href="https://github.com/KhanUzeb/kite" id="repo-link">KhanUzeb/kite</a>
-      · <span id="updated">loading…</span>
-    </p>
+    <header class="header">
+      <div class="brand">
+        <div class="logo">K</div>
+        <div>
+          <h1>Kite Admin Dashboard</h1>
+          <p class="sub">
+            Private snapshot for <a href="https://github.com/KhanUzeb/kite" id="repo-link">KhanUzeb/kite</a>
+            · <span id="updated">Loading metrics…</span>
+          </p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn" id="refresh-btn" title="Refresh data">
+          <span>↻</span> Refresh
+        </button>
+        <a href="https://github.com/KhanUzeb/kite" class="btn btn-primary" target="_blank">
+          View Repo
+        </a>
+      </div>
+    </header>
 
     <div class="grid">
-      <div class="card"><div class="label">Stars</div><div class="value" id="stars">—</div></div>
-      <div class="card"><div class="label">Forks</div><div class="value" id="forks">—</div></div>
-      <div class="card"><div class="label">Watchers</div><div class="value" id="watchers">—</div></div>
-      <div class="card"><div class="label">Open issues</div><div class="value" id="issues">—</div></div>
-      <div class="card"><div class="label">Latest release</div><div class="value" id="release">—</div></div>
-      <div class="card"><div class="label">PyPI downloads</div><div class="value" id="pypi">— <small>/ 30d</small></div></div>
+      <div class="card">
+        <div class="card-icon card-stars">★</div>
+        <div class="label">Stars</div>
+        <div class="value" id="stars">—</div>
+        <div class="card-change">GitHub repository</div>
+      </div>
+      <div class="card">
+        <div class="card-icon card-forks">⑂</div>
+        <div class="label">Forks</div>
+        <div class="value" id="forks">—</div>
+        <div class="card-change">Community copies</div>
+      </div>
+      <div class="card">
+        <div class="card-icon card-watchers">👁</div>
+        <div class="label">Watchers</div>
+        <div class="value" id="watchers">—</div>
+        <div class="card-change">Active followers</div>
+      </div>
+      <div class="card">
+        <div class="card-icon card-issues">!</div>
+        <div class="label">Open Issues</div>
+        <div class="value" id="issues">—</div>
+        <div class="card-change">Needs attention</div>
+      </div>
+      <div class="card">
+        <div class="card-icon card-release">⬇</div>
+        <div class="label">Latest Release</div>
+        <div class="value" id="release">—</div>
+        <div class="card-change">Download count</div>
+      </div>
+      <div class="card">
+        <div class="card-icon card-pypi">📦</div>
+        <div class="label">PyPI Downloads</div>
+        <div class="value" id="pypi">—</div>
+        <div class="card-change">Last 30 days</div>
+      </div>
     </div>
 
-    <div class="links">
-      <a href="https://github.com/KhanUzeb/kite">GitHub repo</a>
-      <a href="https://github.com/KhanUzeb/kite/releases">Releases</a>
-      <a href="https://github.com/KhanUzeb/kite/network/members">Forks</a>
-      <a href="https://pypistats.org/packages/kite">PyPI stats (kite)</a>
-      <a href="https://pypistats.org/packages/kite-agent">PyPI stats (kite-agent)</a>
+    <div class="section">
+      <div class="section-header">
+        <h2 class="section-title">Quick Links</h2>
+      </div>
+      <div class="links">
+        <a href="https://github.com/KhanUzeb/kite" target="_blank">
+          <div class="link-icon">◈</div>
+          <span>GitHub Repository</span>
+        </a>
+        <a href="https://github.com/KhanUzeb/kite/releases" target="_blank">
+          <div class="link-icon">⬇</div>
+          <span>Releases</span>
+        </a>
+        <a href="https://github.com/KhanUzeb/kite/network/members" target="_blank">
+          <div class="link-icon">⑂</div>
+          <span>Fork Network</span>
+        </a>
+        <a href="https://pypistats.org/packages/kite" target="_blank">
+          <div class="link-icon">📊</div>
+          <span>PyPI Stats (kite)</span>
+        </a>
+        <a href="https://pypistats.org/packages/kite-agent" target="_blank">
+          <div class="link-icon">📊</div>
+          <span>PyPI Stats (kite-agent)</span>
+        </a>
+        <a href="https://github.com/KhanUzeb/kite/issues" target="_blank">
+          <div class="link-icon">!</div>
+          <span>Issues</span>
+        </a>
+      </div>
     </div>
 
-    <p class="status" id="status"></p>
+    <div class="status-bar">
+      <div class="status-indicator">
+        <div class="status-dot"></div>
+        <span class="status-text" id="status">Initializing dashboard…</span>
+      </div>
+      <span class="status-text" id="last-check">—</span>
+    </div>
   </div>
 
   <script>
     const REPO = "KhanUzeb/kite";
     const PYPI_PACKAGES = ["kite", "kite-agent"];
+    const REFRESH_INTERVAL = 5 * 60 * 1000;
 
     const $ = (id) => document.getElementById(id);
-
+    const statusDot = document.querySelector('.status-dot');
+    
     function fmt(n) {
-      return typeof n === "number" ? n.toLocaleString() : "—";
+      if (typeof n !== 'number') return '—';
+      return n.toLocaleString();
+    }
+
+    function setLoading(elementId, isLoading) {
+      const el = $(elementId);
+      if (!el) return;
+      if (isLoading) {
+        el.innerHTML = '<div class="skeleton" style="height: 2.5rem; width: 80%;"></div>';
+      }
+    }
+
+    function showError(message) {
+      const statusEl = $('status');
+      const lastCheck = $('last-check');
+      statusEl.textContent = message;
+      statusEl.classList.add('err');
+      statusDot.style.background = 'var(--red)';
+      lastCheck.textContent = 'Failed';
+    }
+
+    function showSuccess() {
+      const statusEl = $('status');
+      const lastCheck = $('last-check');
+      statusEl.textContent = 'All metrics loaded successfully';
+      statusEl.classList.remove('err');
+      statusDot.style.background = 'var(--green)';
+      lastCheck.textContent = new Date().toLocaleTimeString();
     }
 
     async function loadGitHub() {
-      const res = await fetch(`https://api.github.com/repos/${REPO}`);
-      if (!res.ok) throw new Error(`GitHub ${res.status}`);
+      setLoading('stars', true);
+      setLoading('forks', true);
+      setLoading('watchers', true);
+      setLoading('issues', true);
+      
+      const res = await fetch(`https://api.github.com/repos/${REPO}`, {
+        headers: { 'Accept': 'application/vnd.github.v3+json' }
+      });
+      if (!res.ok) throw new Error(`GitHub API error (${res.status})`);
       const data = await res.json();
-      $("stars").textContent = fmt(data.stargazers_count);
-      $("forks").textContent = fmt(data.forks_count);
-      $("watchers").textContent = fmt(data.subscribers_count);
-      $("issues").textContent = fmt(data.open_issues_count);
+      
+      // Animate numbers
+      animateValue('stars', 0, data.stargazers_count, 800);
+      animateValue('forks', 0, data.forks_count, 800);
+      animateValue('watchers', 0, data.subscribers_count, 800);
+      animateValue('issues', 0, data.open_issues_count, 800);
+      
       return data;
     }
 
     async function loadRelease() {
-      const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
-      if (!res.ok) {
-        $("release").innerHTML = "— <small>none yet</small>";
-        return;
+      setLoading('release', true);
+      try {
+        const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
+        if (!res.ok) {
+          $('release').innerHTML = '—<br><small style="font-size:0.7rem">No releases</small>';
+          return;
+        }
+        const data = await res.json();
+        const tag = data.tag_name || '—';
+        const dl = (data.assets || []).reduce((s, a) => s + (a.download_count || 0), 0);
+        $('release').innerHTML = `${tag}<br><small style="font-size:0.7rem; color: var(--text-tertiary)">${fmt(dl)} downloads</small>`;
+      } catch (e) {
+        $('release').innerHTML = '—<br><small style="font-size:0.7rem">Error</small>';
       }
-      const data = await res.json();
-      const tag = data.tag_name || "—";
-      const dl = (data.assets || []).reduce((s, a) => s + (a.download_count || 0), 0);
-      $("release").innerHTML = `${tag} <small>${fmt(dl)} dl</small>`;
     }
 
     async function loadPyPI() {
+      setLoading('pypi', true);
       for (const pkg of PYPI_PACKAGES) {
         try {
           const res = await fetch(`https://pypistats.org/api/packages/${pkg}/overall`);
@@ -130,30 +508,91 @@
           const body = await res.json();
           const row = (body.data || []).find((r) => r.category === "without_mirrors");
           if (row && row.downloads != null) {
-            $("pypi").innerHTML = `${fmt(row.downloads)} <small>/ 30d · ${pkg}</small>`;
+            $('pypi').innerHTML = `${fmt(row.downloads)}<br><small style="font-size:0.7rem; color: var(--text-tertiary)">30 days · ${pkg}</small>`;
             return;
           }
         } catch (_) { /* try next package */ }
       }
-      $("pypi").innerHTML = "— <small>git install / clone</small>";
+      $('pypi').innerHTML = '—<br><small style="font-size:0.7rem">Git install</small>';
+    }
+
+    function animateValue(id, start, end, duration) {
+      const el = $(id);
+      if (!el) return;
+      const startTime = performance.now();
+      const range = end - start;
+      
+      function update(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const easeOut = 1 - Math.pow(1 - progress, 3);
+        const current = Math.round(start + range * easeOut);
+        el.textContent = fmt(current);
+        
+        if (progress < 1) {
+          requestAnimationFrame(update);
+        }
+      }
+      requestAnimationFrame(update);
     }
 
     async function refresh() {
-      $("status").textContent = "Refreshing…";
-      $("status").className = "status";
+      const refreshBtn = $('refresh-btn');
+      const originalText = refreshBtn.innerHTML;
+      
+      refreshBtn.innerHTML = '<span style="animation: spin 1s linear infinite;">↻</span> Loading…';
+      refreshBtn.disabled = true;
+      
+      $('status').textContent = 'Fetching latest metrics…';
+      $('status').classList.remove('err');
+      statusDot.style.background = 'var(--orange)';
+      
       try {
-        await Promise.all([loadGitHub(), loadRelease(), loadPyPI()]);
-        $("updated").textContent = "updated " + new Date().toLocaleString();
-        $("status").textContent =
-          "Clone traffic is only visible in GitHub repo Insights → Traffic (not exposed on the public API without a token).";
+        await Promise.all([
+          loadGitHub().catch(e => console.warn('GitHub load failed:', e)),
+          loadRelease().catch(e => console.warn('Release load failed:', e)),
+          loadPyPI().catch(e => console.warn('PyPI load failed:', e))
+        ]);
+        
+        $('updated').textContent = 'Updated ' + new Date().toLocaleString();
+        showSuccess();
       } catch (err) {
-        $("status").textContent = "Could not load some metrics: " + err.message;
-        $("status").className = "status err";
+        console.error('Refresh failed:', err);
+        showError('Failed to load some metrics. Retrying in 30s…');
+      } finally {
+        refreshBtn.innerHTML = originalText;
+        refreshBtn.disabled = false;
       }
     }
 
+    // Add spin animation
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(style);
+
+    // Event listeners
+    document.getElementById('refresh-btn').addEventListener('click', refresh);
+
+    // Initial load
     refresh();
-    setInterval(refresh, 5 * 60 * 1000);
+    
+    // Auto-refresh
+    setInterval(refresh, REFRESH_INTERVAL);
+    
+    // Keyboard shortcut (R to refresh)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'r' || e.key === 'R') {
+        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          refresh();
+        }
+      }
+    });
   </script>
 </body>
 </html>
