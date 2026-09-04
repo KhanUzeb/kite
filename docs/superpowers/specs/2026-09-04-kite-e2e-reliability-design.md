@@ -131,7 +131,7 @@ Replace binary read-only/mutating as the authorization truth. Extend `SideEffect
 ### 4.5 Wiring
 
 - Single authorizer: expand `PolicyEngine.authorize` + arg-aware `side_effects_for(call)`
-- Legacy `ui/approval.py` becomes a thin adapter until train 9
+- Legacy `ui/approval.py` becomes a thin adapter over `PolicyEngine` (train 4); after train 3 it is reached only via the application entry path
 - `tools/metadata.py` gains effect hints for scheduling; gate truth lives in policy contracts
 - Out of scope for this program: in-process Bash VM
 
