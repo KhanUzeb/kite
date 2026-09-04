@@ -9,12 +9,12 @@ from typing import Any
 
 from kite.cli.slash import CommandIndex, SlashSpec
 from kite.config import ensure_home, kite_home
-from kite.ui.attach import IMAGE_EXTS
 from kite.models.reasoning import ReasoningSupport
+from kite.ui.attach import IMAGE_EXTS
 from kite.ui.commands import ALIASES, ARG_CHOICES
-from kite.ui.status import format_status_tail
-from kite.ui.theme import brand_ansi, glyph, is_dark
 from kite.ui.state import SessionUiState
+from kite.ui.status import format_metrics_tail, format_running_status, format_status_tail
+from kite.ui.theme import brand_ansi, glyph, is_dark
 
 try:
     from prompt_toolkit import PromptSession
@@ -38,8 +38,25 @@ except Exception:  # pragma: no cover
 class ComposerResult:
     """One composer submission. `eof` leaves the REPL; empty text is a no-op."""
 
-    kind: str  # text | stop | steer | eof | empty
+    kind: str  # text | stop | steer | eof | empty | slash
     text: str = ""
+
+
+def classify_busy_line(line: str) -> ComposerResult:
+    """Map composer text entered while a turn is running."""
+    text = (line or "").strip()
+    if not text:
+        return ComposerResult("empty")
+    low = text.lower()
+    if low in {"/stop", "/s"}:
+        return ComposerResult("stop")
+    if low in {"/quit", "/q", "/exit"}:
+        return ComposerResult("eof")
+    if low.startswith("/steer "):
+        return ComposerResult("steer", text.split(" ", 1)[1])
+    if text.startswith("/"):
+        return ComposerResult("slash", text)
+    return ComposerResult("text", text)
 
 
 def _pt_style(*, dark: bool) -> Any:
@@ -379,21 +396,35 @@ def _toolbar_html(state: SessionUiState) -> Any:
     tail = format_status_tail(state)
     brand = brand_ansi()
     muted = "#555555" if is_dark() else "#666666"
+    accent = "#c9a227" if is_dark() else "#9a7b0a"
     flash = ""
     if state.flash:
         flash = f"  {glyph('sep')} {_escape_html(state.flash)}"
     hints = ""
     if state.busy:
-        bits = ["Esc stop", "Ctrl+G steer"]
+        bits = ["Esc stop", "Enter queue", "Ctrl+G steer"]
         if state.queued:
             bits.append(f"queued {state.queued}")
         if state.budget_limit is not None and state.budget_limit > 0:
             bits.append(f"budget ≤${state.budget_limit:.2f}")
+        bits.append("/tasks")
         hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
-    return HTML(
+    main = (
         f"<style fg='{brand}'><b>kite</b></style>"
         f"<style fg='{muted}'> {glyph('sep')} {_escape_html(tail)}{flash}{hints}</style>"
     )
+    lines: list[str] = []
+    running = format_running_status(state)
+    if running:
+        lines.append(
+            f"<style fg='{accent}'>●</style>"
+            f"<style fg='{muted}'> {_escape_html(running)}</style>"
+        )
+    metrics = format_metrics_tail(state)
+    if metrics:
+        lines.append(f"<style fg='{muted}'>{_escape_html(metrics)}</style>")
+    lines.append(main)
+    return HTML("\n".join(lines))
 
 
 def _escape_html(text: str) -> str:
@@ -744,6 +775,7 @@ def read_repl_line(
     fallback: Callable[[], str | None],
     busy: bool = False,
     action_slot: dict[str, str] | None = None,
+    patch_stdout_ctx: bool = True,
 ) -> ComposerResult:
     """prompt_toolkit input with `/` dropdown; Rich Prompt if unavailable."""
     if session is None:
@@ -767,20 +799,34 @@ def read_repl_line(
             pass
 
     state._refresh = _invalidate
+    try:
+        if patch_stdout_ctx:
+            from prompt_toolkit.patch_stdout import patch_stdout
+
+            with patch_stdout(raw=True):
+                return _prompt_once(session, state, busy=busy, action_slot=slot)
+        return _prompt_once(session, state, busy=busy, action_slot=slot)
+    finally:
+        state._refresh = None
+
+
+def _prompt_once(
+    session: Any,
+    state: SessionUiState,
+    *,
+    busy: bool,
+    action_slot: dict[str, str],
+) -> ComposerResult:
     placeholder_fg = "#888888" if not is_dark() else "#555555"
     brand = brand_ansi()
-    # Busy chrome (Esc/Ctrl+G/queued/budget) lives on the footer toolbar only.
-    placeholder = "type to queue…" if busy else "/ commands · @file attach · Ctrl+D quit"
+    placeholder = "add a follow-up while Kite works…" if busy else "/ commands · @file attach · Ctrl+D quit"
     try:
-        from prompt_toolkit.patch_stdout import patch_stdout
-
-        with patch_stdout(raw=True):
-            text = session.prompt(
-                HTML(f"<style fg='{brand}'>{glyph('prompt')}</style> "),
-                placeholder=HTML(f"<style fg='{placeholder_fg}'>{placeholder}</style>"),
-                bottom_toolbar=lambda: _toolbar_html(state),
-                refresh_interval=0.4 if busy else 0,
-            )
+        text = session.prompt(
+            HTML(f"<style fg='{brand}'>{glyph('prompt')}</style> "),
+            placeholder=HTML(f"<style fg='{placeholder_fg}'>{placeholder}</style>"),
+            bottom_toolbar=lambda: _toolbar_html(state),
+            refresh_interval=0.4 if busy else 0,
+        )
     except EOFError:
         return ComposerResult("eof")
     except KeyboardInterrupt:
@@ -794,10 +840,8 @@ def read_repl_line(
                 return ComposerResult("steer", typed)
             return ComposerResult("stop")
         return ComposerResult("empty")
-    finally:
-        state._refresh = None
 
-    kind = slot.get("kind") or "submit"
+    kind = action_slot.get("kind") or "submit"
     text = (text or "").strip()
     if kind == "stop":
         return ComposerResult("stop")
@@ -806,3 +850,70 @@ def read_repl_line(
     if not text:
         return ComposerResult("empty")
     return ComposerResult("text", text)
+
+
+def read_repl_busy_composer(
+    *,
+    session: Any,
+    state: SessionUiState,
+    action_slot: dict[str, str],
+    should_continue: Callable[[], bool],
+    on_queue: Callable[[str], None],
+    on_stop: Callable[[], None],
+    on_steer: Callable[[str], None],
+    on_slash_while_busy: Callable[[], None],
+    on_eof: Callable[[], None],
+) -> None:
+    """Keep the composer pinned while a turn runs — one stdout patch for the whole turn."""
+    if session is None:
+        return
+
+    def _invalidate() -> None:
+        try:
+            app = getattr(session, "app", None)
+            if app is not None:
+                app.invalidate()
+        except Exception:
+            pass
+
+    state._refresh = _invalidate
+    try:
+        from prompt_toolkit.patch_stdout import patch_stdout
+
+        with patch_stdout(raw=True):
+            while should_continue():
+                action_slot["kind"] = "submit"
+                result = _prompt_once(session, state, busy=True, action_slot=action_slot)
+                if not should_continue():
+                    break
+                if result.kind == "eof":
+                    on_eof()
+                    break
+                if result.kind == "stop":
+                    on_stop()
+                    break
+                if result.kind == "steer":
+                    on_steer(result.text)
+                    on_stop()
+                    break
+                if result.kind == "empty":
+                    continue
+                line = result.text
+                classified = classify_busy_line(line)
+                if classified.kind == "stop":
+                    on_stop()
+                    break
+                if classified.kind == "eof":
+                    on_eof()
+                    on_stop()
+                    break
+                if classified.kind == "steer":
+                    on_steer(classified.text)
+                    on_stop()
+                    break
+                if classified.kind == "slash":
+                    on_slash_while_busy()
+                    continue
+                on_queue(line)
+    finally:
+        state._refresh = None

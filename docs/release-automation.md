@@ -5,7 +5,7 @@ After feature work is merged to `main`:
 ## 1. Bump and sync
 
 ```bash
-./scripts/bump_release.sh 0.8.0
+./scripts/bump_release.sh 0.9.0
 ```
 
 This runs `scripts/sync_version.py`, which updates:
@@ -42,7 +42,7 @@ Pushing `vX.Y.Z` triggers [`.github/workflows/release.yml`](../.github/workflows
 Manual publish (fallback):
 
 ```bash
-gh release create v0.7.3 --title "Kite v0.7.3" --notes-file docs/RELEASE-0.7.3.md
+gh release create v0.9.0 --title "Kite v0.9.0" --notes-file docs/RELEASE-0.9.0.md
 ```
 
 ## CI guard

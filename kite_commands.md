@@ -65,7 +65,7 @@ kite models --select           # same picker
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
 kite context [--json]
 kite skills                    # TTY: pick a skill to show
-kite skills [--show name] [--add pkg]
+kite skills [--show name] [--add pkg|path]
 kite commands
 kite plugins
 kite memory [--remember text] [--forget query] [--project]
@@ -108,6 +108,7 @@ These never go to the model.
 | `/cost` | USD + context |
 | `/stop` | Stop the current turn; session stays open |
 | `/steer text` | Stop and run `text` as the next turn |
+| `/tasks` | Show the running turn and queued follow-ups |
 | `/jobs` | List background bash jobs and live subagents (pick to kill) |
 | `/kill [id\|all]` | Kill one background job/subagent, or all. Empty: pick |
 | `/session` | Current session id |
@@ -118,7 +119,7 @@ These never go to the model.
 | `/collapse` | Collapse tool output (default) |
 | `/trace` | Last traceback |
 | `/skills [name]` | List skills, or print one. Empty: pick to show. User-home skills show `~` |
-| `/skills add pkg` | Install from npm, npx, or GitHub `owner/repo` into `~/.kite/skills` |
+| `/skills add pkg\|path` | Install npm/npx/GitHub into `~/.kite/skills`, or **link** a local skill folder |
 | `/commands` | List markdown slash prompts |
 | `/commands new name` | Write `.kite/commands/name.md` |
 | `/plugins` | List plugins |
@@ -197,6 +198,10 @@ If a project command is also named `commit`, `/commit` runs the markdown file; `
 /skills add npx some-skill
 /skills add owner/repo
 kite skills --add owner/repo
+
+# Link a local skill folder into ~/.kite/skills (symlink; copy if the OS refuses)
+/skills add ./my-skill
+/skills add ~/code/hatch-pet
 
 # Project prompt  ->  /ship
 .kite/commands/ship.md

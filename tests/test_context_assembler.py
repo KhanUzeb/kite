@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kite.application.context import ContextAssembler, ContextBudget, inspect_snapshot
-from kite.application.context.compaction import extract_compaction_state, pair_tool_messages
-from kite.application.context.models import ContextItem
-from kite.application.context.render import render_item
+from kite.application.context import (
+    ContextAssembler,
+    ContextBudget,
+    ContextItem,
+    extract_compaction_state,
+    inspect_snapshot,
+    pair_tool_messages,
+    render_item,
+)
 from kite.application.contracts import RunSpec
 
 

@@ -456,7 +456,7 @@ def make_coding_tools(
                 from kite.skills.install import install_skill
                 from kite.skills.loader import load_skills
 
-                installed = install_skill(str(install))
+                installed = install_skill(str(install), link_cwd=project_root)
                 for skill in load_skills(project_root):
                     skill_by_name[skill.name] = skill
             except (ValueError, RuntimeError, OSError) as e:

@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from kite.application.budget import BudgetLedger
-from kite.application.model import ModelGateway, ProviderErrorCategory, classify_provider_error, is_retryable
-from kite.application.model.gateway import RetryPolicy
+from kite.application.model import (
+    BudgetLedger,
+    ModelGateway,
+    ProviderErrorCategory,
+    RetryPolicy,
+    classify_provider_error,
+    is_retryable,
+)
 
 
 class _OkBackend:
@@ -67,4 +72,5 @@ def test_budget_ledger_reserve_and_record() -> None:
     assert ledger.within_limits()
     ledger.record({"cost": 0.8, "subagent": True})
     assert ledger.subagent_cost == 0.8
+    assert ledger.total_cost() == 1.1
     assert not ledger.within_limits()

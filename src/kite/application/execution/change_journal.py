@@ -89,21 +89,27 @@ class ChangeJournal:
             current = self._snapshot(target) if target.exists() else FileSnapshot(
                 path=rec.path, existed=False, content=None, mode=None, hash="",
             )
-            if rec.postimage_hash and current.hash and current.hash != rec.postimage_hash:
-                conflicts.append(
-                    RestoreConflict(
-                        path=rec.path,
-                        reason="user modified after agent write",
-                        current_hash=current.hash,
-                        expected_hash=rec.postimage_hash,
-                    ),
-                )
-                continue
+            if rec.postimage_hash:
+                if not current.existed or current.hash != rec.postimage_hash:
+                    conflicts.append(
+                        RestoreConflict(
+                            path=rec.path,
+                            reason="user modified after agent write",
+                            current_hash=current.hash,
+                            expected_hash=rec.postimage_hash,
+                        ),
+                    )
+                    continue
             pre = rec.preimage
             if pre.existed:
                 if pre.content is not None:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(pre.content)
+                    if pre.mode is not None:
+                        try:
+                            target.chmod(pre.mode)
+                        except OSError:
+                            pass
                     restored.append(rec.path)
             elif target.exists():
                 target.unlink()

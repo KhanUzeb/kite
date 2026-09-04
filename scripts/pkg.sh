@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 0.8.2
+# kite-release-version: 0.9.0
 # Kite package maintenance (not part of `kite` CLI): update, reinstall, uninstall.
 set -euo pipefail
 

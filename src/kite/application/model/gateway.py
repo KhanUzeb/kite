@@ -1,4 +1,4 @@
-"""Model gateway contracts and LiteLLM adapter."""
+"""Model gateway, typed retries, and budget ledger."""
 
 from __future__ import annotations
 
@@ -6,16 +6,88 @@ import random
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Protocol
 
-from kite.application.model.errors import classify_provider_error, is_retryable
+
+class ProviderErrorCategory(StrEnum):
+    RETRYABLE_TRANSIENT = "retryable_transient"
+    RATE_LIMITED = "rate_limited"
+    AUTHENTICATION_FAILURE = "authentication_failure"
+    AUTHORIZATION_FAILURE = "authorization_failure"
+    INVALID_REQUEST = "invalid_request"
+    MODEL_UNAVAILABLE = "model_unavailable"
+    CONTEXT_OVERFLOW = "context_overflow"
+    PROVIDER_CONFIGURATION_ERROR = "provider_configuration_error"
+    PERMANENT = "permanent"
 
 
-@dataclass(frozen=True, slots=True)
-class ModelCapabilities:
-    streaming: bool = True
-    vision: bool = False
-    reasoning: bool = False
+def classify_provider_error(exc: BaseException) -> ProviderErrorCategory:
+    name = exc.__class__.__name__
+    msg = str(exc).lower()
+    if name in ("AuthenticationError", "AuthenticationException"):
+        return ProviderErrorCategory.AUTHENTICATION_FAILURE
+    if name in ("PermissionDeniedError", "AuthorizationException"):
+        return ProviderErrorCategory.AUTHORIZATION_FAILURE
+    if "rate limit" in msg or "429" in msg:
+        return ProviderErrorCategory.RATE_LIMITED
+    if "context" in msg and ("length" in msg or "overflow" in msg or "too long" in msg):
+        return ProviderErrorCategory.CONTEXT_OVERFLOW
+    if name in ("BadRequestError", "InvalidRequestError"):
+        return ProviderErrorCategory.INVALID_REQUEST
+    from kite.models.retry import is_transient_provider_error
+
+    if is_transient_provider_error(exc):
+        return ProviderErrorCategory.RETRYABLE_TRANSIENT
+    return ProviderErrorCategory.PERMANENT
+
+
+def is_retryable(category: ProviderErrorCategory) -> bool:
+    return category in (
+        ProviderErrorCategory.RETRYABLE_TRANSIENT,
+        ProviderErrorCategory.RATE_LIMITED,
+        ProviderErrorCategory.MODEL_UNAVAILABLE,
+    )
+
+
+@dataclass
+class BudgetLedger:
+    cost_limit: float | None = None
+    step_limit: int | None = None
+    reserved_cost: float = 0.0
+    recorded_cost: float = 0.0
+    recorded_steps: int = 0
+    subagent_cost: float = 0.0
+    usage_entries: list[dict[str, Any]] = field(default_factory=list)
+
+    def reserve(self, amount: float, reason: str) -> bool:
+        if self.cost_limit is None:
+            self.reserved_cost += amount
+            return True
+        if self.recorded_cost + self.reserved_cost + amount > self.cost_limit:
+            return False
+        self.reserved_cost += amount
+        self.usage_entries.append({"type": "reserve", "amount": amount, "reason": reason})
+        return True
+
+    def record(self, usage: dict[str, Any]) -> None:
+        cost = float(usage.get("cost") or 0)
+        self.reserved_cost = max(0.0, self.reserved_cost - cost)
+        self.recorded_cost += cost
+        if usage.get("subagent"):
+            self.subagent_cost += cost
+        self.recorded_steps += 1
+        self.usage_entries.append({"type": "record", **usage})
+
+    def total_cost(self) -> float:
+        return self.recorded_cost
+
+    def within_limits(self) -> bool:
+        if self.cost_limit is not None and self.total_cost() > self.cost_limit:
+            return False
+        if self.step_limit is not None and self.recorded_steps > self.step_limit:
+            return False
+        return True
 
 
 @dataclass
@@ -59,9 +131,6 @@ class ModelGateway:
         self.retry = retry or RetryPolicy()
         self.on_usage = on_usage
 
-    def capabilities(self, model: str = "") -> ModelCapabilities:
-        return ModelCapabilities(streaming=True, vision=False, reasoning=False)
-
     def complete(
         self,
         messages: list[dict],
@@ -88,14 +157,12 @@ class ModelGateway:
                 )
             except BaseException as exc:
                 last_exc = exc
-                category = classify_provider_error(exc)
-                if not is_retryable(category) or attempt >= self.retry.max_attempts:
+                if not is_retryable(classify_provider_error(exc)) or attempt >= self.retry.max_attempts:
                     raise
                 time.sleep(self.retry.delay_for(attempt))
         raise last_exc or RuntimeError("model query failed")
 
     def stream(self, messages: list[dict], **kwargs: Any) -> Iterator[str]:
-        """Fallback stream — single blocking completion chunked."""
         resp = self.complete(messages, **kwargs)
         text = resp.content
         if not text:

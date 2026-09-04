@@ -15,6 +15,7 @@ from kite.guardrails.sandbox import (
     clamp_cwd,
     is_inside,
     is_protected,
+    is_user_skill_read,
     resolve_in_workspace,
     workspace_root,
 )
@@ -90,10 +91,11 @@ class GuardrailPolicy:
 
         if self.config.sandbox_to_cwd and not self.config.host_access():
             if not is_inside(resolved, self.workspace):
-                return GuardrailVerdict(
-                    False,
-                    f"path escapes workspace sandbox ({self.workspace}): {resolved}",
-                )
+                if for_write or not is_user_skill_read(resolved):
+                    return GuardrailVerdict(
+                        False,
+                        f"path escapes workspace sandbox ({self.workspace}): {resolved}",
+                    )
 
         if is_protected(resolved):
             kind = "write" if for_write else "touch"

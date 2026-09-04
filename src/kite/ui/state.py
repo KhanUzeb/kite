@@ -54,6 +54,9 @@ class SessionUiState:
     pending_attach: int = 0
     cache_hit_tokens: int = 0
     cache_hit_ratio: float = 0.0
+    stream_chars: int = 0
+    stream_started_at: float | None = None
+    tps: float = 0.0
     active_subagents: int = 0
     active_jobs: int = 0
     turn: int = 0
@@ -61,6 +64,9 @@ class SessionUiState:
     flash: str = ""
     busy: bool = False
     queued: int = 0
+    running_label: str = ""
+    running_since: str = ""
+    running_kind: str = ""
     budget_limit: float | None = None  # turn cost ceiling; toolbar chip while busy
     _refresh: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
@@ -68,6 +74,41 @@ class SessionUiState:
         """Notify live composer toolbar (prompt_toolkit) to redraw."""
         if self._refresh:
             self._refresh()
+
+    def set_running(self, *, label: str, kind: str = "tool") -> None:
+        from datetime import datetime
+
+        self.running_label = label.strip()
+        self.running_kind = kind
+        self.running_since = datetime.now().strftime("%H:%M:%S")
+        self.touch()
+
+    def clear_running(self) -> None:
+        self.running_label = ""
+        self.running_since = ""
+        self.running_kind = ""
+        self.touch()
+
+    def reset_stream_stats(self) -> None:
+        self.stream_chars = 0
+        self.stream_started_at = None
+        self.tps = 0.0
+        self.touch()
+
+    def note_stream_delta(self, text: str) -> None:
+        import time
+
+        if not text:
+            return
+        now = time.monotonic()
+        if self.stream_started_at is None:
+            self.stream_started_at = now
+        self.stream_chars += len(text)
+        elapsed = now - (self.stream_started_at or now)
+        if elapsed > 0:
+            est_tokens = max(1, self.stream_chars // 4)
+            self.tps = est_tokens / elapsed
+        self.touch()
 
     def set_context_usage(self, *, total_tokens: int, window: int) -> None:
         """Update ctx meter from a compaction measure or estimate."""
