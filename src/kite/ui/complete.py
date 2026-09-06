@@ -147,6 +147,11 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         if not _PT:
             return
         raw = document.text_before_cursor
+        attach = _at_attach_prefix(raw)
+        if attach is not None:
+            prefix, start = attach
+            yield from _path_completions(prefix, start)
+            return
         if not raw.startswith("/"):
             return
         if raw.startswith("//"):
@@ -343,6 +348,20 @@ def _session_rows() -> list[tuple[str, str]]:
     return [(meta.id, (meta.label or meta.task)[:50]) for meta in list_sessions(limit=30)]
 
 
+def _at_attach_prefix(raw: str) -> tuple[str, int] | None:
+    """Path prefix after a word-boundary @ (not email addresses)."""
+    for i in range(len(raw) - 1, -1, -1):
+        if raw[i] != "@":
+            continue
+        if i > 0 and not raw[i - 1].isspace():
+            continue
+        prefix = raw[i + 1 :]
+        if " " in prefix:
+            return None
+        return prefix, -(len(prefix) if prefix else 0)
+    return None
+
+
 def _path_completions(prefix: str, start: int):
     if not prefix:
         folder, needle = Path("."), ""
@@ -402,9 +421,10 @@ def _toolbar_html(state: SessionUiState) -> Any:
         flash = f"  {glyph('sep')} {_escape_html(state.flash)}"
     hints = ""
     if state.awaiting_approval:
-        bits = [f"approve {state.awaiting_approval}", "Esc stop", "Enter queue", "Ctrl+G steer"]
-        if state.queued:
-            bits.append(f"queued {state.queued}")
+        if state.awaiting_approval_mandatory:
+            bits = ["[a] once", "[n] deny", "[q] stop", "mandatory"]
+        else:
+            bits = ["[a] once", "[s] session", "[p] always", "[n] deny", "[q] stop"]
         hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
     elif state.busy:
         bits = ["Esc stop", "Enter queue", "Ctrl+G steer"]
@@ -563,6 +583,17 @@ def make_repl_key_bindings(
         buf = event.current_buffer
         buf.complete_state = None
         buf.validate_and_handle()
+
+    @bindings.add("tab", eager=True)
+    def _tab_cycle(event) -> None:  # noqa: ANN001
+        """Tab cycles slash/@ completions; Enter always sends the line."""
+        buf = event.current_buffer
+        if buf.complete_state is not None:
+            buf.complete_next()
+            return
+        text = buf.text
+        if text.startswith("/") or _at_attach_prefix(buf.document.text_before_cursor) is not None:
+            buf.start_completion(select_first=False)
 
     def _paste_system_clipboard(event) -> None:  # noqa: ANN001
         """Ctrl+V / Shift+Insert — paste OS clipboard into the composer."""
@@ -825,7 +856,15 @@ def _prompt_once(
 ) -> ComposerResult:
     placeholder_fg = "#888888" if not is_dark() else "#555555"
     brand = brand_ansi()
-    placeholder = "add a follow-up while Kite works…" if busy else "/ commands · @file attach · Ctrl+D quit"
+    if state.awaiting_approval:
+        if state.awaiting_approval_mandatory:
+            placeholder = "[a] once · [n] deny · [q] stop — approval required"
+        else:
+            placeholder = "[a] once · [s] session · [n] deny · [q] stop"
+    elif busy:
+        placeholder = "add a follow-up while Kite works…"
+    else:
+        placeholder = "/ commands · @file attach · Ctrl+D quit"
 
     def _toolbar() -> Any:
         if on_poll is not None:

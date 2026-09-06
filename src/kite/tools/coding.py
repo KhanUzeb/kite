@@ -20,7 +20,7 @@ from kite.memory.store import MemoryScope, MemoryStore
 from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
 from kite.tools.store import TodoStore
-from kite.tools.web import webcrawl, websearch
+from kite.tools.web import webcrawl, webfetch as fetch_url, websearch
 
 try:
     from kite.context.workspace import ExecutionSession
@@ -589,23 +589,12 @@ def make_coding_tools(
         )
 
     def webfetch(args: dict[str, Any]) -> dict[str, Any]:
-        url = str(args["url"])
-        if not url.startswith(("https://", "http://")):
-            return {"ok": False, "error": "only http(s) URLs allowed", "output": "only http(s) URLs allowed"}
-        req = Request(url, headers={"User-Agent": "kite-agent/0.4"})
-        try:
-            with urlopen(req, timeout=int(args.get("timeout") or 15)) as resp:  # noqa: S310
-                raw = resp.read(80_000)
-                charset = "utf-8"
-                ctype = resp.headers.get_content_charset()
-                if ctype:
-                    charset = ctype
-                text = raw.decode(charset, errors="replace")
-        except (URLError, OSError, TimeoutError, ValueError) as e:
-            return {"ok": False, "error": str(e), "output": str(e)}
-        if len(text) > 40_000:
-            text = text[:20_000] + "\n...<truncated>...\n" + text[-8_000:]
-        return {"ok": True, "output": text, "url": url}
+        return fetch_url(
+            str(args.get("url") or ""),
+            timeout=int(args.get("timeout") or 15),
+            max_chars=int(args.get("max_chars") or 24_000),
+            extract=bool(args.get("extract", True)),
+        )
 
     def set_working_directory(args: dict[str, Any]) -> dict[str, Any]:
         if execution is None:
@@ -897,12 +886,20 @@ def make_coding_tools(
             "webfetch",
             Tool(
                 name="webfetch",
-                description="Fetch a single URL (http/https) and return truncated text. For docs and issues mid-task.",
+                description=(
+                    "Fetch one http(s) URL and return extracted readable text (title + body). "
+                    "Use after websearch to read a chosen result. Set extract=false for raw bytes as text."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "url": {"type": "string"},
-                        "timeout": {"type": "integer"},
+                        "timeout": {"type": "integer", "description": "Seconds (default 15)"},
+                        "max_chars": {"type": "integer", "description": "Max body chars (default 24000)"},
+                        "extract": {
+                            "type": "boolean",
+                            "description": "Strip HTML to readable text (default true)",
+                        },
                     },
                     "required": ["url"],
                 },

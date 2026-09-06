@@ -198,7 +198,7 @@ class ChatSession:
             )
 
     def _flash_note(self, text: str) -> None:
-        self.state.flash = text
+        self.state.set_flash(text)
         self.state.touch()
 
     @property
@@ -240,9 +240,11 @@ class ChatSession:
         if req is None:
             if self.state.awaiting_approval:
                 self.state.awaiting_approval = ""
+                self.state.awaiting_approval_mandatory = False
                 self.state.touch()
             return
         self.state.awaiting_approval = req.tool
+        self.state.awaiting_approval_mandatory = bool(getattr(req, "mandatory", False))
         self.state.touch()
         if self._prompt_app_running():
             self._wake_composer()
@@ -276,6 +278,7 @@ class ChatSession:
         finally:
             self._approval_resolving = False
             self.state.awaiting_approval = ""
+            self.state.awaiting_approval_mandatory = False
             self.state.touch()
 
     def _harness_cache_key(self) -> tuple:

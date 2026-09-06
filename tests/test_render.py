@@ -58,6 +58,33 @@ def test_cost_estimate_prints_when_idle() -> None:
     assert "Budget" in buf.getvalue()
 
 
+def test_cost_warning_skips_print_when_busy() -> None:
+    buf, display = _display()
+    display.state.busy = True
+    display(
+        Event(
+            "cost_warning",
+            payload={"message": "80% of budget used", "ratio": 0.8},
+        )
+    )
+    assert "80%" in display.state.flash
+    assert buf.getvalue() == ""
+
+
+def test_failed_tool_end_shows_collapsed_error() -> None:
+    buf, display = _display()
+    err = "Command failed\nline two\nline three\nline four"
+    display(
+        Event(
+            "tool_end",
+            payload={"tool": "bash", "ok": False, "error": err},
+        )
+    )
+    out = buf.getvalue()
+    assert "line two" in out
+    assert "line three" in out
+
+
 def test_agent_end_clears_budget_limit() -> None:
     buf, display = _display()
     display.state.budget_limit = 5.0

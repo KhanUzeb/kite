@@ -62,9 +62,11 @@ class SessionUiState:
     turn: int = 0
     sandbox_restricted: bool = False  # False = host (default); True = restricted sandbox
     flash: str = ""
+    flash_at: float | None = None
     verification_status: str = ""
     busy: bool = False
     awaiting_approval: str = ""
+    awaiting_approval_mandatory: bool = False
     queued: int = 0
     running_label: str = ""
     running_since: str = ""
@@ -74,8 +76,28 @@ class SessionUiState:
 
     def touch(self) -> None:
         """Notify live composer toolbar (prompt_toolkit) to redraw."""
+        self.maybe_clear_flash()
         if self._refresh:
             self._refresh()
+
+    def set_flash(self, text: str) -> None:
+        import time
+
+        if text:
+            self.flash = text
+            self.flash_at = time.monotonic()
+        else:
+            self.flash = ""
+            self.flash_at = None
+
+    def maybe_clear_flash(self, ttl: float = 8.0) -> None:
+        if not self.flash or self.flash_at is None:
+            return
+        import time
+
+        if time.monotonic() - self.flash_at > ttl:
+            self.flash = ""
+            self.flash_at = None
 
     def set_running(self, *, label: str, kind: str = "tool") -> None:
         from datetime import datetime

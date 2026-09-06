@@ -143,6 +143,35 @@ def test_busy_toolbar_has_steer_and_budget() -> None:
     assert "budget ≤$5.00" in html
 
 
+def test_approval_toolbar_shows_decision_keys_not_queue() -> None:
+    from kite.ui.complete import _toolbar_html
+
+    state = SessionUiState(busy=True, awaiting_approval="bash", awaiting_approval_mandatory=True)
+    html = str(_toolbar_html(state))
+    assert "[a] once" in html
+    assert "[n] deny" in html
+    assert "[q] stop" in html
+    assert "mandatory" in html
+    assert "Enter queue" not in html
+    assert "Ctrl+G steer" not in html
+
+
+def test_approval_toolbar_optional_session_keys() -> None:
+    from kite.ui.complete import _toolbar_html
+
+    html = str(_toolbar_html(SessionUiState(awaiting_approval="write", awaiting_approval_mandatory=False)))
+    assert "[s] session" in html
+    assert "[p] always" in html
+
+
+def test_at_attach_prefix_skips_email() -> None:
+    from kite.ui.complete import _at_attach_prefix
+
+    assert _at_attach_prefix("mail user@example.com") is None
+    assert _at_attach_prefix("@src/") == ("src/", -4)
+    assert _at_attach_prefix("see @docs/") == ("docs/", -5)
+
+
 def test_idle_toolbar_omits_steer_hints() -> None:
     from kite.ui.complete import _toolbar_html
 
