@@ -48,6 +48,7 @@ class LoopCompactor:
         cwd: str = "",
         todos: list[dict] | None = None,
         session_meta: dict | None = None,
+        extra_facts: list[str] | None = None,
     ):
         self.config = config
         self.system = system
@@ -58,6 +59,7 @@ class LoopCompactor:
         self.cwd = cwd
         self.todos = todos
         self.session_meta = session_meta
+        self.extra_facts = list(extra_facts or [])
         self.last_usage: ContextUsage | None = None
         self._checkpoint_keys: set[str] = set()
 
@@ -134,6 +136,7 @@ class LoopCompactor:
             enabled=self.config.enabled,
             session_id=None,
             checkpoint_before=False,
+            extra_facts=self.extra_facts,
         )
         after = result.after
         did = result.compacted

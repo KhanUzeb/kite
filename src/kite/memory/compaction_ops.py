@@ -73,6 +73,7 @@ def run_compaction(
     checkpoint_ratio: float = 0.72,
     compact_ratio: float = 0.75,
     compaction_llm_ratio: float = 0.92,
+    extra_facts: list[str] | None = None,
 ) -> CompactionRunResult:
     usage = estimate_usage(system=system, messages=messages, tool_schemas=tool_schemas, window=window)
     before = len(messages)
@@ -111,6 +112,7 @@ def run_compaction(
         keep_recent_tokens=keep_recent_tokens,
         summarizer=effective_summarizer,
         force=force,
+        extra_facts=extra_facts,
     )
     after = len(compacted)
     did = compacted != messages
