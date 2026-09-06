@@ -28,6 +28,14 @@ def test_context_meter_empty_when_unknown() -> None:
     assert context_meter(None) == ""
 
 
+def test_verification_badge_hidden_when_idle() -> None:
+    from kite.ui.status import format_status_tail
+
+    tail = format_status_tail(SessionUiState(verification_status="idle", provider="p", model="m"))
+    assert "verify" not in tail
+    assert "unverified" not in tail
+
+
 def test_format_status_tail_includes_cache_and_agents() -> None:
     from kite.ui.status import format_metrics_tail
 

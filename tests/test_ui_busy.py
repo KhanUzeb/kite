@@ -75,6 +75,24 @@ def test_verification_status_updates_state() -> None:
     assert "verification" in state.flash
 
 
+def test_verification_badge_in_status_tail() -> None:
+    from kite.ui.status import format_status_tail
+
+    state = SessionUiState(verification_status="changed_unverified", provider="groq", model="x")
+    tail = format_status_tail(state)
+    assert "unverified edits" in tail
+
+
+def test_poll_pending_approval_sets_mandatory_flag() -> None:
+    from kite.ui.repl import ChatSession
+
+    repl = ChatSession(cwd=".", provider="fake", model="fake")
+    repl._approval_coordinator = ApprovalCoordinator(interactive=True)
+    repl._approval_coordinator._pending = MagicMock(tool="bash", request_id="r1", mandatory=True)  # noqa: SLF001
+    repl._poll_pending_approval()
+    assert repl.state.awaiting_approval_mandatory is True
+
+
 def test_spin_while_busy_updates_toolbar_not_stderr_spinner() -> None:
     """Pinned composer owns the bottom line — stderr WaitSpinner must not run."""
     from io import StringIO

@@ -66,6 +66,22 @@ def format_model_label(state: SessionUiState) -> str:
     return state.model or "—"
 
 
+_VERIFY_LABELS = {
+    "changed_unverified": "unverified edits",
+    "failed": "verify failed",
+    "partial": "partial verify",
+    "unverified": "unverified",
+    "blocked": "submit blocked",
+}
+
+
+def _verification_badge(status: str) -> str | None:
+    key = (status or "").strip().lower()
+    if not key or key in {"idle", "verified"}:
+        return None
+    return _VERIFY_LABELS.get(key, f"verify {key.replace('_', ' ')}")
+
+
 def status_context_parts(state: SessionUiState) -> list[str]:
     """Model, context, cost — everything after mode and approval."""
     parts: list[str] = [format_model_label(state)]
@@ -79,6 +95,9 @@ def status_context_parts(state: SessionUiState) -> list[str]:
         parts.append(f"agents {state.active_subagents}")
     if state.git_branch:
         parts.append(state.git_branch)
+    badge = _verification_badge(state.verification_status)
+    if badge:
+        parts.append(badge)
     if state.awaiting_approval:
         parts.insert(0, f"approve {state.awaiting_approval}")
     if state.busy:

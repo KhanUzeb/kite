@@ -570,7 +570,12 @@ class RunDisplay:
         elif not ok:
             err = str(p.get("error") or p.get("output") or "")
             if err:
-                self.console.print(render_error(err.splitlines()[0], show_trace_hint=False))
+                expanded = self.verbose or self.state.expanded_all
+                collapsed = _collapse_text(err, expanded=expanded)
+                if collapsed.plain:
+                    self.console.print(collapsed)
+                else:
+                    self.console.print(render_error(err.splitlines()[0], show_trace_hint=False))
         else:
             redacted = p.get("secrets_redacted")
             expanded = self.verbose or self.state.expanded_all
@@ -624,10 +629,21 @@ class RunDisplay:
 
     def _on_cost_warning(self, p: dict[str, Any]) -> None:
         msg = str(p.get("message") or "cost warning")
+        ratio = p.get("ratio") or p.get("pct")
+        flash = msg
+        if ratio is not None:
+            try:
+                pct = max(0.0, min(1.0, float(ratio)))
+                flash = f"{msg} ({pct:.0%})"
+            except (TypeError, ValueError):
+                pass
+        if self.state.busy:
+            self.state.set_flash(flash)
+            self._touch_state()
+            return
         line = Text()
         line.append(f"{SYMBOL_WARN} ", style="kite.pending")
         line.append(msg, style="kite.pending")
-        ratio = p.get("ratio") or p.get("pct")
         if ratio is not None:
             try:
                 pct = max(0.0, min(1.0, float(ratio)))
@@ -768,7 +784,7 @@ class RunDisplay:
         line.append(f"  ·  {reason[:160]}", style="kite.muted")
         line.append("\n")
         self.console.print(line)
-        self.state.flash = "submit blocked — run verification"
+        self.state.set_flash("submit blocked — run verification")
         self._touch_state()
 
     def _on_verification_status(self, p: dict[str, Any]) -> None:
@@ -776,7 +792,7 @@ class RunDisplay:
         if status:
             self.state.verification_status = status
             if status in {"failed", "changed_unverified", "blocked"}:
-                self.state.flash = f"verification: {status}"
+                self.state.set_flash(f"verification: {status}")
             self._touch_state()
 
     def _render_agent_end_status(self, p: dict[str, Any]) -> None:
