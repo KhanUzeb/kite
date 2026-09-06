@@ -95,6 +95,6 @@ loader = "grid"
 
 ## Config (`~/.kite/configs/default.toml`)
 
-- `[github] enabled = true`
+- `[github] enabled = false` by default — set `true` and install `gh` on PATH to expose GitHub tools
 - `[guardrails] trusted_paths = ["src/"]`
 - `[agent] role = "auto"`
