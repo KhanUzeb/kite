@@ -1,7 +1,7 @@
 # Kite CLI UX
 
 **Agent:** kite
-**Version:** 0.9.1
+**Version:** 0.9.2
 **Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
@@ -48,7 +48,9 @@ Regular in-workspace `write`/`edit` and safe bash (`git status`, `pytest`, `rg`)
 
 **Sandbox:** off by default (**host** mode). `/restricted on` clamps file/bash paths to the session cwd; footer shows `restricted` when active. Restricted mode may still **read** `~/.kite/skills` (including symlink/junction targets) so skill packs can load extra files; writes there stay blocked.
 
-**Slash menu:** `Tab` cycles completions. `Enter` always sends the line (it does not accept a hidden completion). Use ↑/↓ when the menu is open. Mouse wheel scrolling of the `/` dropdown needs `KITE_MOUSE=1` (that captures the mouse and disables native drag-select).
+**Slash menu:** `Tab` cycles completions for `/` commands and `@path` attach tokens. `Enter` always sends the line (it does not accept a hidden completion). Use ↑/↓ when the menu is open. Mouse wheel scrolling of the `/` dropdown needs `KITE_MOUSE=1` (that captures the mouse and disables native drag-select).
+
+**Attach in composer:** type `@src/foo.py` (word-boundary `@`; `user@example.com` is not completed). Same paths as `/attach`.
 
 **Copy / paste:** Mouse capture is **off** by default so the terminal keeps drag-select, copy, and right-click paste. In the composer: `Ctrl+V` / `Shift+Insert` paste from the OS clipboard; `Ctrl+Insert` copies the composer selection. Set `KITE_MOUSE=1` only if you want wheel-scroll on the slash menu (then use Shift+drag in most terminals to select text).
 
@@ -70,7 +72,7 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 | `F2` | Flash status on footer (`Ctrl+S` is not bound; terminals use it for XOFF) |
 | `F5` | Refresh live models from the API, then pick |
 | `Ctrl+D` / `/quit` | Close the REPL |
-| `Tab` | Cycle slash completions (`Enter` always submits) |
+| `Tab` | Cycle slash / `@` completions (`Enter` always submits) |
 
 While a turn is running the composer stays pinned (placeholder: `add a follow-up while Kite works…`). **Enter** queues a follow-up without tearing down the input box; **Esc** stops; **Ctrl+G** steers. `/tasks` lists the running command and the queue. The footer shows a running line (`[HH:MM:SS] command  running`) plus metrics: **tok/s**, **cache hit %**, context meter, and cost. After stop, keep typing in the **same session** until `/quit` or `Ctrl+D`.
 
@@ -86,7 +88,9 @@ While a turn is running the composer stays pinned (placeholder: `add a follow-up
 
 **Durable memory:** MEMORY.md and episodic sqlite are **opt-in** per session (`/remember`, `/memory`, or the `memory` tool). Default runs do not inject them unless `[memory] inject = "always"` in runtime config.
 
-**Completion discipline:** build mode finishes with the **`submit`** tool (`message` with Done / Changed / Verification) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` in bash (or a short casual chat like "hi" with no edits). Prose-only "I'm done" after file changes is blocked (`submit_blocked` event). Footer shows live **`verification_status`** during the run. After 2 idle no-tool turns the run stalls — **except** when verification is `changed_unverified`, in which case Kite nudges with a suggested check command instead of stalling. Waiting on an approval prompt is not an idle turn. Successful submit shows **work complete**; partial verification shows a warning banner.
+**Completion discipline:** build mode finishes with the **`submit`** tool (`message` with Done / Changed / Verification) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` in bash (or a short casual chat like "hi" with no edits). Prose-only "I'm done" after file changes is blocked (`submit_blocked` event). Footer shows live **`verification_status`** (e.g. `unverified edits`) during the run; urgent states also flash briefly (~8s). After 2 idle no-tool turns the run stalls — **except** when verification is `changed_unverified`, in which case Kite nudges with a suggested check command instead of stalling. Waiting on an approval prompt is not an idle turn. While approval is pending, the toolbar shows **`[a] once · [n] deny · [q] stop`** (session/always keys when not mandatory) — not queue/steer hints. Successful submit shows **work complete**; partial verification shows a warning banner.
+
+**Cost warnings:** at ~80% of the turn budget, a warning appears on the footer flash while the composer is pinned (no mid-turn scrollprint).
 
 **Windows bash:** Kite runs commands through the shell (`powershell` on Windows, `bash` elsewhere). Prefer `Remove-Item` / `rmdir` for cache dirs under the workspace (`.pytest_cache`, `.ruff_cache`); these are allowed in auto/yolo without mandatory approval. Avoid Unix-only pipes like `| head` when `rg`/`read`/`glob` work.
 

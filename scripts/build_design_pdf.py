@@ -1,4 +1,4 @@
-# kite-release-version: 0.9.1
+# kite-release-version: 0.9.2
 """Render docs/*.md to docs/*.pdf (fpdf2)."""
 
 from __future__ import annotations

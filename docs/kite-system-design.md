@@ -1,6 +1,6 @@
 # Kite — System design, code atlas & engineering notes
 
-**Version:** 0.9.1
+**Version:** 0.9.2
 **Stack:** Python 3.12 · LiteLLM · Rich · uv
 **Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)
 **Companion UX spec:** [cli-ux.md](cli-ux.md) (PDF: `docs/cli-ux.pdf`)
@@ -247,8 +247,8 @@ build_tool_executor(policy, runner=env.execute) → DefaultAgent
 - `ls` — directory listing
 - `todo_write` / `todo_read` — live plan checklist (auditable tool, not client-only UI state)
 - `task` — bounded glob+grep investigation, returns a summary
-- `webfetch` — http(s) fetch, size-capped
-- `websearch` — free DuckDuckGo search (no API key)
+- `webfetch` — http(s) fetch; returns extracted text + title (not raw HTML); blocks localhost/private URLs; JSON pretty-print
+- `websearch` — free DuckDuckGo search (no API key); redirect unwrap; dedupe; parser fallback
 - `webcrawl` — follow links on a site, extract text (stdlib, no API key)
 - `skill` — inject full SKILL.md
 - `memory` — list / remember / forget durable notes (`~/.kite/memory` or `.kite/memory`)

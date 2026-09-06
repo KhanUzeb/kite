@@ -4,13 +4,25 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-06
+
 ### Added
 - **Opt-in durable memory** — MEMORY.md and episodic notes inject only when the user asks (`/remember`, `/memory`, or `[memory] inject = "always"`).
 - **Working-state continuity** — compact/budget-continue briefs inject separately from durable memory; no auto-pin to MEMORY.md.
 - **Daily-driver loop** — unverified edits get verify nudges instead of idle stall; blocked submit includes suggested verification command; fuzzy `edit` fallback; compaction preserves edited paths.
+- **Web tools overhaul** — `webfetch` returns extracted readable text (title, metadata, JSON pretty-print); DuckDuckGo redirect unwrapping; search dedupe + HTML parser fallback; private-network URL blocking; `tests/test_web.py`.
+- **Composer `@` completion** — `@path` attach tokens complete like `/attach` (word-boundary `@`, skips email addresses).
+- **Persistent verification badge** — footer shows live `verification_status` (e.g. `unverified edits`) during runs.
 
 ### Changed
 - System prompt clarifies memory is not instructions unless loaded.
+- **`webfetch`** consolidated into `web.py` (shared fetch/extract with `webcrawl`); no longer returns raw HTML soup by default.
+- **`websearch`** tries GET lite fallback when HTML POST fails; unwraps tracking URLs from DuckDuckGo/Google.
+- Approval toolbar shows **`[a]/[n]/[q]`** keys during prompts instead of queue/steer hints; composer placeholder switches to approval keys.
+- **80% cost warnings** flash on the toolbar while the busy composer is pinned (no scrollback jump).
+- Failed tool rows show **collapsed multi-line errors** (same collapse as bash output).
+- Flash notes on the footer **expire after 8s** so stale messages do not linger.
+- **`Tab`** explicitly cycles slash and `@` completions; **Enter** always sends the line.
 
 ### Fixed
 - Approval wait no longer counts as idle no-tool turns.

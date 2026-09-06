@@ -1,4 +1,4 @@
-# Ideal CLI spec coverage (Kite 0.9.1)
+# Ideal CLI spec coverage (Kite 0.9.2)
 
 How Kite maps onto the 14-category Ideal Coding CLI spec.
 
@@ -16,8 +16,8 @@ How Kite maps onto the 14-category Ideal Coding CLI spec.
 | 10 | GitHub integration | Copilot | `gh_issue`, `gh_pr`, `gh_prs`, `gh_runs`, `gh_run` tools (via `gh` CLI) |
 | 11 | Governance/audit | Cline/OpenHands | `~/.kite/audit.jsonl`; `kite audit`; approval trail |
 | 12 | Multi-agent roles | Roo Code | `--role architect|implementer|debugger` + role prompt fragments |
-| 13 | Predictable cost | — | Pre-flight `cost_estimate` event; 80% `cost_warning`; footer meter; **`cache_hit`** ratio (pi-style prefix cache) |
-| 14 | Honest limits | — | Loop warnings, verification gaps, unverified submit banner |
+| 13 | Predictable cost | — | Pre-flight `cost_estimate` event; 80% `cost_warning` on toolbar flash while busy; footer meter; **`cache_hit`** ratio (pi-style prefix cache) |
+| 14 | Honest limits | — | Loop warnings, verification gaps, unverified submit banner; persistent **`verification_status`** in footer |
 
 ## Install
 

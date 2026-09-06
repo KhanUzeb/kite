@@ -33,7 +33,7 @@ Do not skip verify. A wrong "done" is worse than an honest "I could not verify t
 | Multi-step plan | `todo_write` / `todo_read` | |
 | Bounded search | `task` | No LLM |
 | Nested workers | `subagent` | |
-| Web facts | `websearch` → `webfetch` | After training cutoff / unsure |
+| Web facts | `websearch` → `webfetch` | After training cutoff / unsure; `webfetch` returns extracted text, not HTML |
 | Library / SDK docs | `context7_resolve` → `context7_docs` | Do not invent APIs |
 | Skills / memory | `skill`, `memory` | |
 
