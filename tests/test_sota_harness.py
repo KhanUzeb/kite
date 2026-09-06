@@ -83,8 +83,10 @@ def test_submit_in_build_tools() -> None:
     assert "submit" not in tools_for_mode(AgentMode.PLAN, enabled)
 
 
-def test_verification_collector_evidence_in_summary() -> None:
-    vc = VerificationCollector(workspace_root="/tmp", run_id="run-ev")
+def test_verification_collector_evidence_in_summary(tmp_path: Path) -> None:
+    # Use an isolated temp dir — scanning system /tmp can hit PermissionError
+    # on CI runners (e.g. snap-private-tmp under ubuntu-latest).
+    vc = VerificationCollector(workspace_root=str(tmp_path), run_id="run-ev")
     vc.on_tool_end(
         "bash",
         {"command": "pytest -q"},
