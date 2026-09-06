@@ -205,6 +205,7 @@ def compact_messages(
     keep_recent_tokens: int = DEFAULT_KEEP_RECENT,
     summarizer: Callable | None = None,
     force: bool = False,
+    extra_facts: list[str] | None = None,
 ) -> list[dict]:
     """Replace older turns with a summary user message; keep recent tail."""
     if len(messages) < 4:
@@ -234,6 +235,10 @@ def compact_messages(
         return messages
 
     facts = extract_compaction_facts(dropped)
+    for fact in extra_facts or []:
+        line = fact.strip()
+        if line and line not in facts:
+            facts.append(line)
     facts_block = format_facts_block(facts)
     body_text = summarizer(dropped) if summarizer else deterministic_summary(dropped)
     summary = COMPACTION_PREFIX + facts_block + body_text

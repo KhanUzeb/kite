@@ -80,6 +80,27 @@ def _unified_diff(path: str, before: str, after: str) -> str:
     return ("\n".join(lines) + "\n") if lines else ""
 
 
+def _line_trimmed_unique_match(text: str, old: str) -> str | None:
+    """One bounded fuzzy try: match old_string ignoring trailing whitespace per line."""
+    if not old.strip():
+        return None
+    old_lines = old.splitlines()
+    text_lines = text.splitlines()
+    if not old_lines or len(old_lines) > len(text_lines):
+        return None
+    matches: list[str] = []
+    for i in range(len(text_lines) - len(old_lines) + 1):
+        chunk_lines = text_lines[i : i + len(old_lines)]
+        if all(a.rstrip() == b.rstrip() for a, b in zip(chunk_lines, old_lines)):
+            matched = "\n".join(chunk_lines)
+            if old.endswith("\n") and matched and not matched.endswith("\n"):
+                matched += "\n"
+            matches.append(matched)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def make_coding_tools(
     cwd: str | None = None,
     timeout: int = 30,
@@ -212,13 +233,19 @@ def make_coding_tools(
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
             return _io_fail(path, e)
-        count = text.count(old)
+        matched = old
+        count = text.count(matched)
+        if count == 0:
+            fuzzy = _line_trimmed_unique_match(text, old)
+            if fuzzy:
+                matched = fuzzy
+                count = 1
         if count == 0:
             return {"ok": False, "error": "old string not found", "path": str(path), "output": "old string not found"}
         if count > 1 and not args.get("replace_all"):
             msg = f"old string found {count} times; pass replace_all=true or make it unique"
             return {"ok": False, "error": msg, "path": str(path), "output": msg}
-        after = text.replace(old, new) if args.get("replace_all") else text.replace(old, new, 1)
+        after = text.replace(matched, new) if args.get("replace_all") else text.replace(matched, new, 1)
         try:
             path.write_text(after, encoding="utf-8")
         except OSError as e:
