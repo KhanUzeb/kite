@@ -80,6 +80,10 @@ While a turn is running the composer stays pinned (placeholder: `add a follow-up
 
 **Provider retry:** transient network/rate-limit errors auto-retry with backoff (config: `provider_max_retries`). Session is preserved; send another message or `kite resume <id>` to continue.
 
+**Budget pause:** hitting `step_limit` / `cost_limit` (or wall-clock) ends the turn as a soft pause (`LimitsExceeded` / `TimeExceeded`), not a crash. Interactive chat defaults to ~80 steps / $10 when still on package defaults (40 / $5); explicit lower user caps are honored. If unfinished work remains (open todos), Kite may **auto-continue up to 2 times** with a continuity brief (`budget continue N/2 — resuming…`), then soft-pause. Session is kept; queued inbox messages win over silent auto-continue. Use `/compact` if context is full.
+
+**Continuity memory (Codex/Pi-style):** after compact or before a budget continue, Kite stores a short episodic brief (mission / done / next / todos) and injects the latest brief into the next turn’s context so long chats don’t go blank after shrink or resume.
+
 **Completion discipline:** build mode finishes with the **`submit`** tool (`message` with Done / Changed / Verification) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` in bash (or a short casual chat like "hi" with no edits). Prose-only "I'm done" after file changes is blocked (`submit_blocked` event). Footer shows live **`verification_status`** during the run. After 2 idle no-tool turns, the run stalls instead of burning more API calls. Successful submit shows **work complete**; partial verification shows a warning banner.
 
 **Fatal errors:** unexpected exceptions stop the run with `exit_status=Error`, print the message + traceback tail, and save `/trace` in the REPL. No silent re-raise.
@@ -92,7 +96,7 @@ While a turn is running the composer stays pinned (placeholder: `add a follow-up
 
 **Parallel helpers:** `task` fans out cheap search-style prompts (no nested LLM). `subagent` runs bounded nested agent turns and registers each worker in the same job registry. Stream rows: `▸ subagent` / `✓ subagent` (and job start/end events for background bash).
 
-**Busy chrome:** while a turn runs, stop / steer / queue live on the composer and footer only. Esc, Ctrl+C, or `/stop` cancels the turn; Ctrl+G or `/steer …` injects a correction as the next turn; Enter queues chat follow-ups. SIGINT handling for the agent loop stays on the main thread.
+**Busy chrome:** while a turn runs, the composer stays pinned at the bottom (placeholder: `add a follow-up while Kite works…`). Thinking/working activity updates the **toolbar running line** (animated glyph + label) — not a separate stderr spinner that would overwrite the input. Esc / Ctrl+C / `/stop` cancels; Ctrl+G / `/steer …` injects a correction; Enter queues chat follow-ups. SIGINT handling for the agent loop stays on the main thread.
 
 ---
 
