@@ -50,3 +50,19 @@ def test_html_edit_structural_not_pytest() -> None:
 
 def test_malformed_html_fails_parse() -> None:
     assert not html_parse_ok("<html><body>no closing tags")
+
+
+def test_next_required_check_command(workspace) -> None:
+    from kite.application.verification.collector_ops import next_required_check_command
+
+    vc = VerificationCollector(workspace_root=str(workspace))
+    (workspace / "src").mkdir(exist_ok=True)
+    (workspace / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (workspace / "tests").mkdir(exist_ok=True)
+    (workspace / "tests" / "test_app.py").write_text("def test_x(): assert True\n", encoding="utf-8")
+    (workspace / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    vc.on_tool_end("edit", {"path": "src/app.py"}, {"ok": True, "path": "src/app.py", "diff": "d"})
+    cmd = next_required_check_command(vc)
+    assert cmd
+    assert "pytest" in cmd.lower() or "py_compile" in cmd.lower()
+

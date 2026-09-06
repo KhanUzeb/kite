@@ -64,6 +64,10 @@ _IDLE_STALL = (
     "Stopped after {turns} idle turns — need a concrete next step or clarification. "
     "Use tools, submit with evidence, or ask what to do next."
 )
+_VERIFY_IDLE_NUDGE = (
+    "Workspace has unverified edits. Run the applicable verification command, "
+    "read the output, then submit with evidence."
+)
 _TOOL_FAIL_STREAK_NUDGE_AFTER = 3
 _TOOL_FAIL_NUDGE = (
     "Last {n} tool calls failed. Read the errors. Do not claim the task is done. "
@@ -252,6 +256,7 @@ class DefaultAgent:
         self.n_consecutive_format_errors = 0
         self._consecutive_no_tool_turns = 0
         self._tool_fail_streak = 0
+        self._awaiting_approval = False
         self._start_time = time.time()
         self.last_usage_estimate = None
         self._compactor: LoopCompactor | None = None
@@ -372,8 +377,15 @@ class DefaultAgent:
                 cwd=str(getattr(self.env, "cwd", "") or ""),
                 todos=self.todos.read() if self.todos is not None else None,
                 session_meta=self.session.meta.to_dict() if self.session else None,
+                extra_facts=self._compaction_extra_facts(),
             )
         return self._compactor
+
+    def _compaction_extra_facts(self) -> list[str]:
+        paths = sorted(self.verification.paths_touched)
+        if not paths:
+            return []
+        return [f"edited paths: {', '.join(paths[:24])}"]
 
     def add_messages(self, *messages: dict) -> list[dict]:
         self.messages.extend(messages)
@@ -387,7 +399,9 @@ class DefaultAgent:
         messages = self.messages
         if self.hooks is not None:
             messages = self.hooks.call("before_compact", messages)
-        result = self._ensure_compactor().maybe_compact(messages)
+        compactor = self._ensure_compactor()
+        compactor.extra_facts = self._compaction_extra_facts()
+        result = compactor.maybe_compact(messages)
         self.last_usage_estimate = result.usage
         if result.compacted:
             self.messages = result.messages
@@ -666,6 +680,23 @@ class DefaultAgent:
                 if reason:
                     return self.add_messages({"role": "user", "content": reason})
             raise Submitted(_exit_msg("Submitted", content=content, submission=content))
+        if self._awaiting_approval:
+            return self.add_messages({"role": "user", "content": _IDLE_NUDGE})
+        if (
+            self.mode is AgentMode.BUILD
+            and self.verification.status() == "changed_unverified"
+        ):
+            if content:
+                reason = self.verification.unfounded_claim_reason(content)
+                if reason:
+                    return self.add_messages({"role": "user", "content": reason})
+            nudge = self.verification.post_edit_nudge() or _VERIFY_IDLE_NUDGE
+            from kite.application.verification.collector_ops import next_required_check_command
+
+            cmd = next_required_check_command(self.verification)
+            if cmd:
+                nudge = f"{nudge}\n\nSuggested command: `{cmd}`"
+            return self.add_messages({"role": "user", "content": nudge})
         self._consecutive_no_tool_turns += 1
         if self.mode is AgentMode.BUILD and self._consecutive_no_tool_turns >= _MAX_IDLE_TURNS:
             msg = _IDLE_STALL.format(turns=self._consecutive_no_tool_turns)
@@ -801,6 +832,12 @@ class DefaultAgent:
                 require_verification=self.verify_before_submit,
             )
             if reason:
+                from kite.application.verification.collector_ops import next_required_check_command
+
+                cmd = next_required_check_command(self.verification)
+                detail = reason
+                if cmd:
+                    detail = f"{reason}\n\nSuggested command: `{cmd}`"
                 self._emit(
                     "submit_blocked",
                     reason=reason,
@@ -809,7 +846,7 @@ class DefaultAgent:
                 return _blocked(
                     reason,
                     output=(
-                        f"{reason}\n\n"
+                        f"{detail}\n\n"
                         f"Verification status: {self.verification.status()}\n"
                         + "\n".join(self.verification.render_lines())
                     ),
@@ -925,7 +962,11 @@ class DefaultAgent:
             if tool in {"write", "edit"}:
                 extra["diff"] = self._preview_diff(tool, args)
             self._emit("approval", tool=tool, arguments=args, **extra)
-            decision = self.approver(tool, args, extra)
+            self._awaiting_approval = True
+            try:
+                decision = self.approver(tool, args, extra)
+            finally:
+                self._awaiting_approval = False
             if decision == "stop":
                 self.request_interrupt()
                 return _blocked("stopped by user")
@@ -966,7 +1007,11 @@ class DefaultAgent:
             if tool in {"write", "edit"}:
                 extra["diff"] = self._preview_diff(tool, args)
             self._emit("approval", tool=tool, arguments=args, **extra)
-            approval_decision = self.approver(tool, args, extra)
+            self._awaiting_approval = True
+            try:
+                approval_decision = self.approver(tool, args, extra)
+            finally:
+                self._awaiting_approval = False
             if approval_decision == "stop":
                 self.request_interrupt()
                 return _blocked("stopped by user")

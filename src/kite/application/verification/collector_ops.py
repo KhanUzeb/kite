@@ -11,6 +11,7 @@ from kite.application.verification.plan import (
     VerificationRecord,
     classify_path,
     plan_status,
+    record_satisfies_check,
 )
 
 if TYPE_CHECKING:
@@ -288,6 +289,21 @@ def _missing_verification_section(body: str) -> str | None:
     return None
 
 
+def next_required_check_command(collector: VerificationCollector) -> str | None:
+    """First unsatisfied required check command for submit/idle nudges."""
+    plan = collector.plan()
+    if not plan.required_checks:
+        return None
+    for check in plan.required_checks:
+        if not check.command:
+            continue
+        matching = [r for r in collector._records if record_satisfies_check(r, check)]
+        if any(r.ok for r in matching):
+            continue
+        return check.command
+    return None
+
+
 def submit_block_reason(
     collector: VerificationCollector,
     submission: str = "",
@@ -301,15 +317,19 @@ def submit_block_reason(
     st = plan_status(plan, collector._records)
     if st == "failed" or collector.gaps:
         gap = collector.gaps[0] if collector.gaps else "a verification check failed"
-        return f"Submit blocked: {gap}. Fix the failure and re-run verification before submitting."
+        base = f"Submit blocked: {gap}. Fix the failure and re-run verification before submitting."
+        cmd = next_required_check_command(collector)
+        return f"{base}\n\nSuggested command: `{cmd}`" if cmd else base
 
     body = (submission or "").strip()
     if collector.has_edits() and plan.required_checks and st != "verified":
         kinds = ", ".join(sorted(plan.artifact_kinds))
-        return (
+        base = (
             f"Submit blocked: workspace was edited ({kinds}) but required verification is incomplete. "
             "Run the applicable check for the changed files, then submit again."
         )
+        cmd = next_required_check_command(collector)
+        return f"{base}\n\nSuggested command: `{cmd}`" if cmd else base
 
     claim = unfounded_claim_reason(collector, body)
     if claim:

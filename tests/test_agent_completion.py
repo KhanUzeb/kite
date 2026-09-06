@@ -127,6 +127,28 @@ def test_interactive_build_does_not_early_submit_on_prose() -> None:
     assert any(m.get("role") == "user" for m in agent.messages)
 
 
+def test_changed_unverified_idle_does_not_stall() -> None:
+    model = _TextOnlyModel("I'll verify next.")
+    agent = DefaultAgent(
+        model,
+        _StubEnv(),
+        interactive=True,
+        mode=AgentMode.BUILD,
+        provider_max_retries=1,
+    )
+    agent.verification.on_tool_end(
+        "edit",
+        {"path": "a.py"},
+        {"ok": True, "path": "a.py", "diff": "d"},
+    )
+    assert agent.verification.status() == "changed_unverified"
+    for _ in range(_MAX_IDLE_TURNS + 1):
+        agent.execute_actions({"role": "assistant", "content": "thinking", "extra": {"actions": []}})
+    assert agent.messages[-1].get("role") != "exit" or agent.messages[-1].get("extra", {}).get("exit_status") != "Stalled"
+    blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
+    assert "unverified edits" in blob.lower() or "verification" in blob.lower()
+
+
 def test_idle_turns_stall_without_more_queries() -> None:
     model = _TextOnlyModel("still planning…")
     agent = DefaultAgent(
