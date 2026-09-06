@@ -4,16 +4,28 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-06
+
 ### Added
+- **Interactive budget floors** — chat uses ~80 steps / $10 when on package defaults; honor explicit lower user caps.
+- **Budget auto-continue** — up to 2 resumes on `LimitsExceeded` with unfinished work + continuity brief; inbox queue wins.
+- **Continuity memory** — Codex/Pi-style briefs (mission / done / next / todos) after compact and before budget continue; episodic store + prompt inject.
 - **Structured `submit` tool** — preferred completion path with `message` (Done / Changed / Verification); legacy bash marker still supported.
 - **Repo map** — `context/repomap.py` injects Aider-style symbol sketch; git-changed files ranked first.
-- **ToolExecutor production cutover** — agent loop routes tools through `PolicyEngine` + `ToolExecutor` by default (`RuntimeOptions.use_tool_executor`).
+- **ToolExecutor production cutover** — agent loop routes tools through `PolicyEngine` + `ToolExecutor` by default.
 - **Live verification UX** — `verification_status` events update footer during runs; `submit_blocked` when claims outrun evidence.
 - **Replay acceptance** — `ReplayBundle.events` + `acceptance` criteria for transcript-level eval without live providers.
 - **EvidenceVerifier wiring** — bash check commands feed evidence ledger; summary included in verification payload.
 
 ### Changed
-- Documentation refreshed across `README.md`, `CONTEXT.md`, `architecture.md`, `kite_commands.md`, `docs/cli-ux.md`, and 0.9 program docs.
+- Default `compaction_ratio` **0.80 → 0.75** (auto-checkpoint remains ~72%).
+- `LimitsExceeded` / `TimeExceeded` render as soft pauses with continue hints (not hard error spam).
+- Documentation refreshed for adaptive budget, continuity, and busy composer chrome (`docs/cli-ux.md`).
+
+### Fixed
+- `/compact` (and other zero-arg slash handlers) no longer raise `TypeError` when dispatch passes an empty arg.
+- WaitSpinner no longer wipes the pinned busy composer; activity updates the toolbar instead.
+- Status toolbar no longer crashes on pending approval (`bits` → `parts`).
 
 ## [0.9.0] - 2026-09-04
 
