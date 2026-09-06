@@ -89,7 +89,11 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 | `/login groq` | `providers/credentials.py` → `ui/repl.py` |
 | Model resolution | `providers/resolve.py` |
 | Tool execution | `env/local.py` + `tools/coding.py` + `tools/jobs.py` + `guardrails/` |
+| 0.9 tool pipeline | `application/execution/pipeline.py` (`ToolExecutor`) + `application/policy/engine.py` |
 | Context compaction | `agent/compaction.py` + `memory/compaction_ops.py` |
+| Repo map / discovery | `context/repomap.py` + `context/discovery.py` |
+| Verification / submit gate | `agent/verification.py` + `application/verification/` |
+| Replay / eval | `eval/replay.py` (`ReplayBundle` + acceptance) |
 | Checkpoints / handoff | `memory/context_checkpoint.py` + `memory/handoff.py` + `ui/repl.py` |
 | Benchmarks | `bench/` + `cli/bench.py` |
 | Streaming UI | `ui/render.py` `RunDisplay` ← `agent/events.py` |

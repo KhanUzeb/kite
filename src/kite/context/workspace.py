@@ -64,6 +64,9 @@ class WorkspaceContext:
             lines.append("- workspace_roots:")
             for root in self.roots:
                 lines.append(f"  - {root}")
+        lines.append(
+            "- verification: checks are scoped per package in monorepos; override via .kite/verification.toml"
+        )
         return "\n".join(lines)
 
 

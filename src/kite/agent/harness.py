@@ -62,6 +62,8 @@ class Harness:
     slots: HarnessSlots = field(default_factory=HarnessSlots)
     hooks: HookBus = field(default_factory=HookBus)
     extra_tools: list[Any] = field(default_factory=list)
+    tool_executor: object | None = None
+    policy_engine: object | None = None
     _runtime: AgentRuntime | None = field(default=None, init=False)
     last_session: Session | None = field(default=None, init=False)
     approver: object | None = None
@@ -148,6 +150,10 @@ class Harness:
             runtime.checkpoints = self.checkpoints
         if self.todos is not None:
             runtime.todos = self.todos
+        if self.tool_executor is not None:
+            runtime.tool_executor_override = self.tool_executor
+        if self.policy_engine is not None:
+            runtime.policy_engine_override = self.policy_engine
         try:
             result = runtime.run(task)
         finally:

@@ -12,7 +12,7 @@ You are in **plan mode**: inspect and structure work — **do not** mutate the w
 ## Forbidden
 
 - `write`, `edit`, or any mutating bash
-- Claiming the task is **done** or echoing `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` — you are planning, not finishing
+- Claiming the task is **done**, calling the **`submit`** tool, or echoing `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` — you are planning, not finishing
 - Guessing a destructive path when requirements are ambiguous — **ask** instead
 
 ## Working loop

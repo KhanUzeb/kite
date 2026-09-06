@@ -61,6 +61,7 @@ class RuntimeOptions:
     attachments: list | None = None
     long_task: bool = False
     execution_mode: str | None = None  # restricted | host — overrides runtime TOML
+    use_tool_executor: bool = True
 
 
 @dataclass
@@ -84,6 +85,8 @@ class AgentRuntime:
     _audit_listener_attached: bool = field(default=False, init=False)
     job_registry: JobRegistry | None = None
     cancel_token: CancelToken | None = None  # inject for nested/subagent runs
+    tool_executor_override: Any = None
+    policy_engine_override: Any = None
 
     def request_interrupt(self) -> None:
         if self.last_agent is not None:
@@ -121,7 +124,9 @@ class AgentRuntime:
                 estimated = usage.total_tokens
             prompt_cache = getattr(getattr(agent, "model", None), "prompt_cache", None)
             if prompt_cache is not None:
-                cache_hits = int(prompt_cache.stats.cache_hit_tokens)
+                session_stats = getattr(prompt_cache, "session", None)
+                if session_stats is not None:
+                    cache_hits = int(getattr(session_stats, "cache_hit_tokens", 0) or 0)
         meta = session.meta
         stats = SessionStats(
             session_id=session.id,
@@ -305,7 +310,14 @@ class AgentRuntime:
 
         def _subagent_runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
             from kite.agent.harness import Harness, HarnessConfig
+            from kite.application.policy import child_inherits_parent_policy
 
+            inherited = child_inherits_parent_policy(
+                parent_approval=self.options.approval or "auto",
+                parent_mode=self.options.mode or "build",
+                parent_no_guardrails=bool(self.options.no_guardrails),
+                parent_execution_mode=self.options.execution_mode,
+            )
             h = Harness(
                 HarnessConfig(
                     cwd=cwd,
@@ -313,7 +325,10 @@ class AgentRuntime:
                     model_name=resolved.model,
                     step_limit=min(rcfg.orchestrator_step_limit, rcfg.step_limit),
                     cost_limit=min(rcfg.orchestrator_cost_limit, rcfg.cost_limit),
-                    approval="auto",
+                    approval=str(inherited["approval"]),
+                    mode=str(inherited["mode"]),
+                    no_guardrails=bool(inherited["no_guardrails"]),
+                    execution_mode=str(inherited["execution_mode"]),
                     interactive=False,
                     no_context=True,
                     label="subagent",
@@ -372,6 +387,24 @@ class AgentRuntime:
             env = self.slots.env(cwd=cwd, registry=registry)
         else:
             env = LocalEnvironment(cwd=cwd, registry=registry)
+
+        tool_executor = self.tool_executor_override
+        if tool_executor is None and self.options.use_tool_executor:
+            from kite.application.execution import build_tool_executor
+            from kite.application.tools.contracts import ToolCall
+
+            exec_mode = "host" if rcfg.guardrails.host_access() else "restricted"
+            no_gr = bool(self.options.no_guardrails or not rcfg.guardrails.enabled)
+            tool_executor = build_tool_executor(
+                workspace_root=workspace.project_root,
+                execution_mode=exec_mode,
+                no_guardrails=no_gr,
+                runner=lambda call: env.execute(
+                    {"tool": call.name, "arguments": dict(call.arguments)}
+                ),
+                policy_engine=self.policy_engine_override,
+            )
+
         if self.slots.model is not None:
             model = self.slots.model(
                 resolved=resolved,
@@ -426,7 +459,10 @@ class AgentRuntime:
             summarizer = make_summarizer(ucfg)
 
         audit = AuditLog()
-        verification = VerificationCollector()
+        verification = VerificationCollector(
+            workspace_root=str(workspace.project_root),
+            run_id=session.id if session else "",
+        )
 
         step_limit = self.options.step_limit if self.options.step_limit is not None else rcfg.step_limit
         cost_limit = self.options.cost_limit if self.options.cost_limit is not None else rcfg.cost_limit
@@ -472,6 +508,7 @@ class AgentRuntime:
             send_images=send_images,
             verification=verification,
             audit=audit,
+            tool_executor=tool_executor,
             tool_progress_interval_seconds=rcfg.tools.progress_interval_seconds,
             verify_before_submit=rcfg.verify_before_submit,
             loop_hard_threshold=rcfg.loop_hard_threshold,

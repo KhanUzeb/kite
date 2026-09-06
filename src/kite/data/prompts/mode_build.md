@@ -12,7 +12,7 @@ If a live checklist already exists (from **plan** mode or earlier), **execute it
 2. Finish one checklist item fully before marking it `completed` and starting the next.
 3. Follow the system **Working loop**: orient → change → verify → submit.
 4. Prefer `edit` over `write`. Inspect with bash (`rg`, `head`, `sed -n`, `wc -l`).
-5. Call `set_cwd` when work spans packages. Submit only after verification passes.
+5. Call `set_cwd` when work spans packages. Finish with the **`submit`** tool (structured `message`) after verification passes — not prose-only "done".
 
 If they only said hi or asked a short question, reply in text. Don't start a checklist.
 

@@ -80,7 +80,7 @@ While a turn is running the composer stays pinned (placeholder: `add a follow-up
 
 **Provider retry:** transient network/rate-limit errors auto-retry with backoff (config: `provider_max_retries`). Session is preserved; send another message or `kite resume <id>` to continue.
 
-**Completion discipline:** build mode only ends with `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` (or a short casual chat like "hi"). Prose-only "I'm done" replies keep the agent working. After 4 no-tool turns, the run stalls (idle token protection) instead of burning more API calls. Successful submit shows **work complete** in the UI.
+**Completion discipline:** build mode finishes with the **`submit`** tool (`message` with Done / Changed / Verification) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` in bash (or a short casual chat like "hi" with no edits). Prose-only "I'm done" after file changes is blocked (`submit_blocked` event). Footer shows live **`verification_status`** during the run. After 2 idle no-tool turns, the run stalls instead of burning more API calls. Successful submit shows **work complete**; partial verification shows a warning banner.
 
 **Fatal errors:** unexpected exceptions stop the run with `exit_status=Error`, print the message + traceback tail, and save `/trace` in the REPL. No silent re-raise.
 

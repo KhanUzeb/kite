@@ -113,8 +113,8 @@ run(task)
        │    └─ model.query(messages) → assistant (+ tool_calls)
        ├─ execute_actions()
        │    ├─ plan mode blocks write/edit/bash (except submit)
-       │    ├─ approver(once|session|always|deny|stop) on mutating tools
-       │    ├─ env.execute → tool result (+ unified diff on write/edit)
+       │    ├─ PolicyEngine.authorize → approver → ToolExecutor → env.execute
+       │    ├─ VerificationCollector.on_tool_end; verification_status events
        │    ├─ git checkpoint grouped by in-progress todo/task
        │    └─ format_observation_messages (role=tool)
        ├─ FormatError → repair user msg (or exit after N)
@@ -139,7 +139,7 @@ ResolvedModel { litellm_model, api_base, api_key, context_window }
 assemble_system_prompt(
     system.md
   + mode_plan.md | mode_build.md
-  + project context (KITE.md, AGENTS.md, git, tree)
+  + project context (KITE.md, AGENTS.md, git, tree, repo map)
   + <available_skills>…
 )
      │
@@ -147,7 +147,7 @@ assemble_system_prompt(
 make_coding_tools(..., guardrails, skills) → ToolRegistry
      │
      ▼
-DefaultAgent.run
+build_tool_executor(policy, runner=env.execute) → DefaultAgent
 ```
 
 ### 3.4 Data at rest
@@ -240,7 +240,8 @@ DefaultAgent.run
 - `set_cwd` — change session execution cwd (file tools + bash default)
 - `write` — create/overwrite; returns a unified diff; UI shows git-stat `+N,-M`
 - `edit` — exact string replace (unique or replace_all); returns a unified diff; UI shows git-stat `+N,-M`
-- `bash` — fresh subprocess; submit magic string; highest-privilege, gated
+- `bash` — fresh subprocess; legacy submit magic string; highest-privilege, gated
+- `submit` — structured completion (`message` with Done/Changed/Verification); preferred in build mode
 - `grep` — ripgrep (`rg`) when installed, Python walk otherwise
 - `glob` — path patterns
 - `ls` — directory listing
@@ -316,7 +317,7 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 9. Agent adds system + user instance messages
 10. Loop: compact measure → streamed LLM tool calls → approval (if gated) → tool exec → git-stat `+N,-M` diffs/todos rendered → tool messages
 11. Successful write/edit → staged under the current todo; **one `kite:` commit per todo/task** (not per file). `/undo` reverts the last of those.
-12. Model eventually `bash` with `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` (or a text-only reply in chat/plan)
+12. Model calls **`submit`** with structured `message`, or legacy `bash` with `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` (or a text-only reply in casual chat/plan)
 13. Environment raises `Submitted` → exit message → trajectory saved
 14. CLI prints result panel + status footer (model, mode, approval, ctx %, cost, branch)
 
@@ -334,7 +335,7 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 | Linear sessions only | Tiny code | No branch/undo tree like tau; `/undo` is git-only |
 | Guardrails in-process | Fast, always on | Not a security boundary vs malicious local user |
 | Catalog TOML slim | Editable without PRs | Drift from real model lists; manual upkeep |
-| Magic submit string | Clear batch/eval semantics | Chat/plan also allow text-only turn end |
+| Structured `submit` tool | Clear completion contract + verification sections | Legacy bash marker retained for compatibility |
 | Events optional | Core stays pure | Easy to forget to emit new kinds |
 | Rich linear TUI (not Textual) | Fast start, works in any tty, streams tokens | Collapse/expand is `/expand` or `-v`, not click |
 | Git checkpoint per todo/task | Real undo without a commit-per-file history | Still pollutes history if the user did not want agent commits |
@@ -388,7 +389,9 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 ## 9. Code details by concern
 
 ### 9.1 Submit protocol
-Bash output whose first non-empty line is `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` and returncode 0 → `Submitted` with remainder as submission body.
+Bash output whose first non-empty line is `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` and returncode 0 → `Submitted` with remainder as submission body. The **`submit`** tool raises the same `Submitted` exit via `{submitted: true, submission: message}`.
+
+Production path: `PolicyEngine.authorize` → loop approval UX → `ToolExecutor.execute` → `LocalEnvironment`.
 
 ### 9.2 Format errors
 Empty assistant with no tool_calls, or invalid tool JSON → `FormatError` user message; after N consecutive → exit `RepeatedFormatError`.

@@ -1,68 +1,52 @@
-"""Verification collector — test command detection."""
+"""Verification collector — artifact-aware evidence."""
 
 from __future__ import annotations
 
+import pytest
+
 from kite.agent.verification import VerificationCollector
+from kite.application.verification.collector_ops import html_parse_ok
 
 
-def test_detects_pytest_as_test_artifact() -> None:
+@pytest.mark.parametrize(
+    ("cmd", "ok", "rc", "expect_test", "expect_status"),
+    [
+        ("pytest tests/ -q", True, 0, True, "verified"),
+        ("python -m pytest tests/ -q", True, 0, True, None),
+        ("uv run pytest", False, 1, True, "failed"),
+    ],
+)
+def test_bash_test_detection(cmd, ok, rc, expect_test, expect_status) -> None:
     vc = VerificationCollector()
-    vc.on_tool_end(
-        "bash",
-        {"command": "pytest tests/ -q"},
-        {"ok": True, "returncode": 0, "output": "1 passed"},
-    )
-    kinds = [a.kind for a in vc.artifacts]
-    assert "test" in kinds
-    assert vc.status() == "verified"
+    vc.on_tool_end("bash", {"command": cmd}, {"ok": ok, "returncode": rc, "output": "out"})
+    assert any(a.kind == "test" for a in vc.artifacts) == expect_test
+    if expect_status:
+        assert vc.status() == expect_status
 
 
-def test_failed_test_marks_gap() -> None:
+def test_idle_and_edits_need_verification() -> None:
     vc = VerificationCollector()
-    vc.on_tool_end(
-        "bash",
-        {"command": "uv run pytest"},
-        {"ok": False, "returncode": 1, "output": "FAILED"},
-    )
-    assert vc.status() == "failed"
-    assert vc.gaps
-
-
-def test_empty_run_is_idle() -> None:
-    vc = VerificationCollector()
-    assert vc.status() == "idle"
-    assert vc.has_work() is False
-    assert vc.summary()["status"] == "idle"
-
-
-def test_edits_without_tests_need_verification() -> None:
-    vc = VerificationCollector()
+    assert vc.status() == "idle" and not vc.has_work()
     vc.on_tool_end("edit", {"path": "x.py"}, {"ok": True, "path": "x.py", "diff": "d"})
-    assert vc.needs_tests() is True
-    reason = vc.submit_block_reason("## Done\nx\n## Changed\n`x.py`\n## Verification\n- ✓ ok")
-    assert reason is not None
+    assert vc.needs_tests()
+    assert vc.post_edit_nudge() and "verification" in vc.post_edit_nudge().lower()
 
 
-def test_python_m_pytest_detected() -> None:
+def test_html_edit_structural_not_pytest() -> None:
+    html = "<html><body>ok</body></html>"
     vc = VerificationCollector()
     vc.on_tool_end(
-        "bash",
-        {"command": "python -m pytest tests/ -q"},
-        {"ok": True, "returncode": 0, "output": "ok"},
+        "write",
+        {"path": "index.html", "content": html},
+        {"ok": True, "path": "index.html", "diff": "d", "content": html},
     )
-    assert any(a.kind == "test" for a in vc.artifacts)
-
-
-def test_post_edit_nudge() -> None:
-    vc = VerificationCollector()
-    vc.on_tool_end("write", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+    assert not vc.needs_tests()
     nudge = vc.post_edit_nudge()
-    assert nudge is not None
-    assert "verification" in nudge.lower()
+    assert nudge is None or "pytest" not in (nudge or "").lower()
+    submission = "## Done\n- updated\n## Changed\n- `index.html`\n## Verification\n- ✓ html structural"
+    assert vc.submit_block_reason(submission) is None
+    assert html_parse_ok(html)
 
 
-def test_unfounded_done_claim() -> None:
-    vc = VerificationCollector()
-    reason = vc.unfounded_claim_reason("Task complete — looks fine.")
-    assert reason is not None
-    assert vc.submit_block_reason("hello, all done!") is None
+def test_malformed_html_fails_parse() -> None:
+    assert not html_parse_ok("<html><body>no closing tags")

@@ -27,8 +27,7 @@ Introduce an **application layer** (`kite.application`) with stable contracts:
 | `EventEnvelope` | Sequenced, identified canonical events |
 | `RunState` | Explicit state machine for run lifecycle |
 
-The existing `Harness` / `HarnessConfig` remain **compatibility adapters** until
-all production flows route through the new seams.
+The existing `Harness` / `HarnessConfig` remain **compatibility adapters**. Production CLI/REPL enter through `ApplicationRunService`; the agent loop routes tools via **`ToolExecutor`** + **`PolicyEngine`** (2026 harness program).
 
 ```
 CLI / REPL / Cloud

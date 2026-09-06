@@ -4,21 +4,22 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from rich.markup import escape
 from rich.prompt import Prompt
 from rich.text import Text
 
+from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name, default_approval, parse_approval_mode
+from kite.cli.slash import CommandIndex, SlashResult, help_text, invalidate_command_index, resolve_slash
 from kite.commands.loader import project_commands_dir, write_command_stub
 from kite.config import UserConfig, kite_home
-from kite.agent.mode import AgentMode, ApprovalMode, default_approval, approval_display_name, parse_approval_mode
 from kite.plugins.loader import project_plugins_dir, write_plugin_stub
-from kite.cli.slash import CommandIndex, SlashResult, help_text, invalidate_command_index, resolve_slash
 from kite.tools.store import TodoStore
-from kite.ui.git import GitCheckpoints
 from kite.ui.complete import (
     ComposerResult,
     SlashCompleter,
@@ -28,11 +29,11 @@ from kite.ui.complete import (
     read_repl_busy_composer,
     read_repl_line,
 )
+from kite.ui.git import GitCheckpoints
 from kite.ui.render import RunDisplay, render_compact_boundary, render_status
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_PROMPT, make_console
 from kite.ui.tables import kite_table
-
 
 KITE_MD_STUB = """# KITE.md
 
@@ -90,6 +91,11 @@ class ChatSession:
         self._composer_action: dict[str, str] = {"kind": "submit"}
         self._busy = False
         self._quit_after_turn = False
+        from kite.application.policy import ApprovalCoordinator
+
+        self._approval_coordinator = ApprovalCoordinator(interactive=sys.stdin.isatty())
+        self._approval_coordinator.wake_main = self._wake_composer
+        self._approval_resolving = False
         from kite.tools.jobs import JobRegistry
 
         self.jobs = JobRegistry(on_event=self.display)
@@ -217,7 +223,59 @@ class ChatSession:
             interactive=sys.stdin.isatty(),
             trusted_paths=rcfg.guardrails.trusted_paths,
             workspace_cwd=self.cwd,
+            coordinator=self._approval_coordinator,
         )
+
+    def _prompt_app_running(self) -> bool:
+        session = self._prompt
+        if session is None:
+            return False
+        app = getattr(session, "app", None)
+        return app is not None and bool(getattr(app, "is_running", False))
+
+    def _poll_pending_approval(self) -> None:
+        """Toolbar poll — surface pending approval and break out of composer if needed."""
+        req = self._approval_coordinator.pending
+        if req is None:
+            if self.state.awaiting_approval:
+                self.state.awaiting_approval = ""
+                self.state.touch()
+            return
+        self.state.awaiting_approval = req.tool
+        self.state.touch()
+        if self._prompt_app_running():
+            self._wake_composer()
+
+    def _resolve_pending_approval(self) -> None:
+        """Main-thread approval modal — worker blocks on coordinator.request()."""
+        self._poll_pending_approval()
+        if self._approval_coordinator.pending is None:
+            return
+        if self._prompt_app_running():
+            return
+        if self._approval_resolving:
+            return
+        req = self._approval_coordinator.pending
+        if req is None:
+            return
+        self._approval_resolving = True
+        try:
+            from kite.ui.approval import prompt_approval
+
+            decision = prompt_approval(
+                self.console,
+                req.tool,
+                req.arguments,
+                diff=req.diff,
+                reason=req.reason,
+                policy=self.policy,
+                mandatory=req.mandatory,
+            )
+            self._approval_coordinator.resolve(decision, request_id=req.request_id)
+        finally:
+            self._approval_resolving = False
+            self.state.awaiting_approval = ""
+            self.state.touch()
 
     def _harness_cache_key(self) -> tuple:
         return (
@@ -1776,31 +1834,42 @@ class ChatSession:
         self._flash_note("stopping…")
 
     def _wake_composer(self) -> None:
-        prompt = self._prompt
-        if prompt is None:
-            return
-        app = getattr(prompt, "app", None)
-        if app is None or not getattr(app, "is_running", False):
-            return
+        """Interrupt prompt_toolkit so the main thread can show approval UI."""
+        candidates: list[Any] = []
+        session = self._prompt
+        if session is not None:
+            app = getattr(session, "app", None)
+            if app is not None:
+                candidates.append(app)
+        try:
+            from prompt_toolkit.application import get_app
 
-        def _exit() -> None:
+            candidates.append(get_app())
+        except Exception:
+            pass
+
+        def _exit_app(app: Any) -> None:
             try:
                 if getattr(app, "is_running", False):
                     app.exit(result="")
             except Exception:
                 pass
 
-        loop = getattr(app, "loop", None) or getattr(app, "_loop", None)
-        if loop is not None:
+        for app in candidates:
+            if not getattr(app, "is_running", False):
+                continue
+            loop = getattr(app, "loop", None) or getattr(app, "_loop", None)
+            if loop is not None:
+                try:
+                    loop.call_soon_threadsafe(lambda a=app: _exit_app(a))
+                    return
+                except Exception:
+                    pass
             try:
-                loop.call_soon_threadsafe(_exit)
+                app.call_from_executor(lambda a=app: _exit_app(a))
                 return
             except Exception:
-                return
-        try:
-            app.call_from_executor(_exit)
-        except Exception:
-            return
+                continue
 
     def _bind_session(self, harness) -> None:
         if harness.last_session:
@@ -1840,7 +1909,10 @@ class ChatSession:
 
         def worker() -> None:
             try:
-                box["result"] = harness.run(task)
+                from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
+
+                run_result = execute_harness_task(harness, task)
+                box["result"] = legacy_result_from_run(run_result)
             except KeyboardInterrupt:
                 box["interrupted"] = True
             except Exception as e:
@@ -1870,9 +1942,15 @@ class ChatSession:
                 on_steer=self._queue_steer,
                 on_slash_while_busy=_slash_busy_hint,
                 on_eof=lambda: setattr(self, "_quit_after_turn", True),
+                on_tick=self._resolve_pending_approval,
+                on_poll=self._poll_pending_approval,
             )
         else:
             while not done.is_set():
+                self._resolve_pending_approval()
+                if self._approval_coordinator.pending:
+                    time.sleep(0.15)
+                    continue
                 got = self._read_input()
                 if done.is_set():
                     break

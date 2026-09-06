@@ -28,13 +28,21 @@ class ReplayBundle:
     harness_version: str = __version__
     policy_version: str = "0.9.0"
     responses: list[dict[str, Any]] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    acceptance: dict[str, Any] = field(default_factory=dict)
 
     def save(self, path: Path) -> None:
         path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
 
     @staticmethod
     def load(path: Path) -> ReplayBundle:
-        return ReplayBundle(**json.loads(path.read_text(encoding="utf-8")))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.setdefault("events", [])
+        data.setdefault("acceptance", {})
+        return ReplayBundle(**data)
+
+    def record_event(self, kind: str, payload: dict[str, Any]) -> None:
+        self.events.append({"kind": kind, "payload": payload})
 
 
 @dataclass
@@ -69,15 +77,64 @@ def tool_catalog_hash(tools: list[dict[str, Any]]) -> str:
     return _digest(json.dumps(tools, sort_keys=True))
 
 
+def _check_acceptance(bundle: ReplayBundle, result: dict[str, Any]) -> dict[str, Any]:
+    checks = bundle.acceptance or {}
+    if not checks:
+        return {"ok": True, "checks": []}
+    failures: list[str] = []
+    passed: list[str] = []
+
+    expected_content = checks.get("content_contains")
+    if expected_content:
+        content = str(result.get("content") or "")
+        if expected_content in content:
+            passed.append("content_contains")
+        else:
+            failures.append(f"content missing: {expected_content!r}")
+
+    forbidden = checks.get("content_excludes")
+    if forbidden:
+        content = str(result.get("content") or "")
+        if forbidden in content:
+            failures.append(f"content includes forbidden: {forbidden!r}")
+        else:
+            passed.append("content_excludes")
+
+    min_events = checks.get("min_events")
+    if min_events is not None:
+        count = len(bundle.events)
+        if count >= int(min_events):
+            passed.append("min_events")
+        else:
+            failures.append(f"expected >= {min_events} events, got {count}")
+
+    required_kinds = checks.get("event_kinds")
+    if required_kinds:
+        kinds = {e.get("kind") for e in bundle.events}
+        missing = [k for k in required_kinds if k not in kinds]
+        if missing:
+            failures.append(f"missing event kinds: {missing}")
+        else:
+            passed.append("event_kinds")
+
+    return {"ok": not failures, "passed": passed, "failures": failures}
+
+
 def run_replay(bundle: ReplayBundle) -> dict[str, Any]:
     from kite.application.model.gateway import ModelGateway
 
     backend = ReplayModelBackend(bundle.responses)
     resp = ModelGateway(backend).complete([{"role": "user", "content": "replay task"}])
-    return {
+    result = {
         "ok": True,
         "content": resp.content,
         "responses_used": backend._index,
         "harness_version": bundle.harness_version,
         "policy_version": bundle.policy_version,
+        "events_recorded": len(bundle.events),
     }
+    acceptance = _check_acceptance(bundle, result)
+    result["acceptance"] = acceptance
+    if not acceptance.get("ok", True):
+        result["ok"] = False
+    return result

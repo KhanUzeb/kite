@@ -237,11 +237,19 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 
 ## 4. Agent tools (model-called, not typed by you)
 
-Plan mode: `read` `grep` `glob` `ls` `task` `webfetch` `websearch` `webcrawl` `skill` `memory` `todo_read` `todo_write`.
+**Plan mode:** `read` `grep` `glob` `ls` `task` `webfetch` `websearch` `webcrawl` `skill` `memory` `todo_read` `todo_write` (inspection `bash` only at runtime).
 
-Build mode adds: `write` `edit` `bash`.
+**Build mode adds:** `write` `edit` `bash` **`submit`**.
 
-`memory` is notes (`list` / `remember` / `forget`), not the chat log. `KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable notes.
+| Tool | Purpose |
+|------|---------|
+| `submit` | Structured completion — `message` with Done / Changed / Verification sections (preferred over bash echo marker) |
+| `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` |
+| `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |
+
+`KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable notes.
+
+**Verification:** after edits, run the applicable check for the touched package. Monorepos may need per-service checks. Override defaults in `.kite/verification.toml` (see `src/kite/data/verification.example.toml`).
 
 ---
 
@@ -261,6 +269,7 @@ Build mode adds: `write` `edit` `bash`.
 <repo>/.kite/
   SYSTEM.md                 # optional: replace bundled system prompt (pi/Prime style)
   APPEND_SYSTEM.md          # optional: append after the base prompt
+  verification.toml         # optional: per-repo verification overrides (monorepo)
   commands/*.md
   skills/
   plugins/

@@ -4,8 +4,8 @@ How Kite maps onto the 14-category Ideal Coding CLI spec.
 
 | # | Category | Bar | Kite implementation |
 |---|----------|-----|---------------------|
-| 1 | Verifiability | Antigravity | `VerificationCollector` -> `artifact` events; diffs, test commands, verification status on submit |
-| 2 | Graduated autonomy | Codex CLI | `auto` / `trust` / `approve` / `readonly`; sandbox on by default; **`trusted_paths`** relaxes trust-mode bash inside subtrees |
+| 1 | Verifiability | Antigravity | `VerificationCollector` + `EvidenceVerifier`; artifact-aware `VerificationPlan`; **`submit`** tool; live `verification_status`; `submit_blocked` events |
+| 2 | Graduated autonomy | Codex CLI | `PolicyEngine` + `ToolExecutor` in production loop; `auto` / `trust` / `approve` / `readonly`; sandbox via `/restricted` |
 | 3 | Transparent context | Warp | Exact `$ command` rows; `secrets_redacted` count in tool output |
 | 4 | Parallel + legible | Claude/Antigravity | `task` tool `prompts[]` parallel fan-out; **`subagent`** LLM orchestrator with manager events |
 | 5 | Model-agnostic | OpenCode | LiteLLM + Ollama catalog; `kite import <format>` for Cursor/Claude/Aider/Codex sessions |
@@ -43,7 +43,7 @@ pytest
 
 **CI:** `.github/workflows/tests.yml` runs the full suite on every push and pull request to `main` (Python 3.11 + 3.12). Maintainers can re-run from the Actions tab.
 
-Unit tests in `tests/` cover guardrails, `trusted_paths` approval, loop guard, session append, verification heuristics, orchestrator dispatch, context/skills caches, git-stat diffs, skill install (including local-path symlink), 0.9 application adapters, reasoning/setup UX, and UI helpers.
+Unit tests in `tests/` cover guardrails, approval, loop guard, session append, verification heuristics, orchestrator dispatch, **ToolExecutor cutover** (`test_sota_harness.py`), **policy execution** (`test_policy_execution.py`), context/skills caches, git-stat diffs, skill install, 0.9 application adapters, reasoning/setup UX, and UI helpers.
 
 ## Commands
 

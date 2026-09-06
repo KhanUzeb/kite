@@ -55,7 +55,7 @@ Always run `pytest` locally before opening a PR.
 1. Run `pytest` and make sure it's green.
 2. Keep the architecture boundaries: CLI/UI subscribe to events; `ApplicationRunService` (0.9) or `AgentRuntime` assembles; the agent loops. Don't reach across layers.
 3. Prefer data-driven changes (TOML/Markdown) over new Python constants.
-4. Update the relevant doc if behavior changes — especially `kite_commands.md`, `docs/cli-ux.md`, `CONTEXT.md` (new terms), or `src/kite/data/prompts/system.md` (agent instructions).
+4. Update the relevant doc if behavior changes — especially `kite_commands.md`, `docs/cli-ux.md`, `CONTEXT.md` (new terms), `architecture.md` (layer changes), or `src/kite/data/prompts/system.md` (agent instructions).
 
 ## Commit style
 

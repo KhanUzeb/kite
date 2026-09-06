@@ -1,0 +1,11 @@
+# Example workspace verification overrides (copy to .kite/verification.toml)
+#
+# Workspace-wide commands run for any substantive edit (optional).
+commands = ["make ci"]
+
+# Package-scoped overrides keyed by path prefix relative to project root.
+[packages."services/api"]
+test = "pytest -q services/api/tests"
+
+[packages."apps/web"]
+test = "pnpm test"

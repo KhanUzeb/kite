@@ -2,7 +2,7 @@
 
 **Version:** 0.9.0 · Python 3.11+ · Entry: `kite.cli.run:main`
 
-Kite is a **slim hybrid coding-agent harness**: a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) style control loop wrapped in tau-inspired **runtime assembly** (providers, tools, guardrails, compaction, sessions). 0.9 adds an **application layer** (`RunSpec`, `ApplicationRunService`, `EventEnvelope`) while `Harness` remains the production adapter. The brain never renders UI; the CLI never calls LiteLLM directly.
+Kite is a **slim hybrid coding-agent harness**: a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) style control loop wrapped in tau-inspired **runtime assembly** (providers, tools, guardrails, compaction, sessions). 0.9 adds an **application layer** (`RunSpec`, `ApplicationRunService`, `PolicyEngine`, `ToolExecutor`) while `Harness` remains the compatibility adapter. The brain never renders UI; the CLI never calls LiteLLM directly.
 
 Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (full atlas) · [docs/cli-ux.md](docs/cli-ux.md) (TUI) · [CONTEXT.md](CONTEXT.md) (glossary) · [AGENTS.md](AGENTS.md) (contributing)
 
@@ -33,18 +33,20 @@ Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (ful
                              ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  Application (0.9)   application/service.py · contracts      │
-│  RunSpec · ApplicationRunService · adapters (not full cutover)│
+│  RunSpec · ApplicationRunService · PolicyEngine · replay   │
 └────────────────────────────┬─────────────────────────────────┘
                              ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  Runtime assembly    agent/runtime.py · agent/harness.py     │
 │  config merge · model resolve · tools · guardrails · session │
+│  build_tool_executor() → DefaultAgent.tool_executor          │
 └────────────────────────────┬─────────────────────────────────┘
                              │
                              ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  Agent loop          agent/loop.py (DefaultAgent)            │
-│  compact → query → approve → execute → observe → repeat      │
+│  compact → query → PolicyEngine → approve → ToolExecutor     │
+│            → observe → verification_status → repeat          │
 └──────────────┬─────────────────────────────┬─────────────────┘
                │                             │
                ▼                             ▼
@@ -67,11 +69,11 @@ Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (ful
 4. **Loop** — Each turn in `DefaultAgent`:
    - `_maybe_compact()` — shrink transcript if near context limit
    - `model.query(messages)` — streaming assistant + tool calls
-   - `execute_actions()` — approval gate → `env.execute()` → observations appended
+   - `execute_actions()` — `PolicyEngine.authorize` → approval gate → **`ToolExecutor`** → `env.execute()` → observations appended; **`verification_status`** events on state change
 5. **Persist** — Messages append to `~/.kite/sessions/<id>.jsonl`; optional trajectory JSON; audit log entries.
 6. **Render** — `RunDisplay` in `ui/render.py` maps events to chips, diffs, spinner, footer meter.
 
-Exit paths: task submitted via bash magic line, step/cost/time limits, user interrupt (Ctrl+C), or unrecoverable format errors.
+Exit paths: **`submit`** tool or bash submit marker, step/cost/time limits, user interrupt (Ctrl+C), submit blocked (verification), or unrecoverable format errors.
 
 ---
 
@@ -79,8 +81,12 @@ Exit paths: task submitted via bash magic line, step/cost/time limits, user inte
 
 | Path | Responsibility |
 |------|----------------|
-| `agent/loop.py` | Main turn loop, approval, plan/build mode, tool execution |
-| `agent/runtime.py` | One-shot assembly: model, env, session, summarizer, hooks |
+| `agent/loop.py` | Main turn loop, approval, plan/build mode, **ToolExecutor** path |
+| `agent/runtime.py` | One-shot assembly: model, env, session, summarizer, **build_tool_executor** |
+| `agent/verification.py` | `VerificationCollector` — artifacts, plans, **EvidenceVerifier** |
+| `application/execution/pipeline.py` | **ToolExecutor** — authorize → run → normalize |
+| `application/policy/engine.py` | **PolicyEngine** — path/network authorization |
+| `context/repomap.py` | Git-ranked symbol sketch for project context |
 | `agent/compaction.py` | Pre-query compaction gate (`LoopCompactor`) |
 | `agent/events.py` | Thin event types (`tool_start`, `stream_delta`, `compact`, …) |
 | `models/litellm_model.py` | LiteLLM adapter, streaming, reasoning effort, prompt cache |
@@ -105,7 +111,7 @@ Exit paths: task submitted via bash magic line, step/cost/time limits, user inte
 
 Two separate systems:
 
-**Project context (once per run)** — Injected into the system prompt: repo tree, git status, `AGENTS.md` / `KITE.md`, plus **execution context** (`project_root`, `execution_cwd`, `execution_mode`). Cached briefly; not re-summarized each turn.
+**Project context (once per run)** — Injected into the system prompt: repo tree, **repo map** (symbols; git-changed first), git status, `AGENTS.md` / `KITE.md`, plus **execution context** (`project_root`, `execution_cwd`, `execution_mode`). Cached briefly; not re-summarized each turn.
 
 **Transcript compaction (each turn)** — When estimated tokens ≥ `context_window - reserve` (default reserve 16k):
 
@@ -140,13 +146,14 @@ Runtime merge order: bundled defaults → user TOML → CLI flags.
 
 ## Tools & guardrails
 
-Tools implement a common `Tool.run(args) → {ok, output, …}` contract. `LocalEnvironment.execute()` dispatches by name through `ToolRegistry`.
+Tools implement a common `Tool.run(args) → {ok, output, …}` contract. Production path: **`ToolExecutor.execute(ToolCall)`** → `LocalEnvironment.execute()` → `ToolRegistry`.
 
 **Mutating tools** (`write`, `edit`, `bash`, …) pass through:
 
+- **PolicyEngine** — path containment, restricted-mode network block (loop entry)
 - **Plan mode** — blocked unless `/build` (todo_write still allowed)
 - **Approval** — `auto` / `approve` / `trust` / `readonly`; preview diffs for write/edit
-- **Guardrails** — paths clamped to workspace; bash deny patterns; secret write blocking
+- **Guardrails** — bash deny patterns, env-dump block, secret write blocking, output redaction (inside tools)
 
 **Subagent** — `subagent` tool spawns a bounded nested harness run; `task` is a lighter glob+grep fan-out.
 
@@ -164,6 +171,8 @@ The agent emits events; the UI never polls internal state.
 | `compact` | Compaction notice (`↻ before → after`) |
 | `checkpoint` | Context snapshot saved (`◇ checkpoint`) |
 | `approval` | Inline approve/deny prompt |
+| `submit_blocked` | Verification gate rejected completion; reason in stream |
+| `verification_status` | Footer updates (`verified`, `changed_unverified`, `failed`, …) |
 | `todo` | Live plan checklist |
 
 Streaming uses stderr for loaders; stdout stays clean for copy/paste.

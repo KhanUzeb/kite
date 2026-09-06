@@ -19,14 +19,14 @@ Context, model, tools, policy, persistence, verification adapters
 
 | Milestone | Focus | Status |
 |-----------|--------|--------|
-| A | CI baseline, contracts, EventEnvelope, compatibility adapters | Adapter landed |
-| B | ContextSnapshot, ContextAssembler, structured compaction | Adapter landed |
-| C | ToolCall/Result, PolicyEngine, ProcessRunner, ChangeJournal | Adapter landed |
-| D | SQLite event store, resume, handoff cascade | Adapter landed (JSONL still production) |
+| A | CI baseline, contracts, EventEnvelope, compatibility adapters | Landed |
+| B | ContextSnapshot, ContextAssembler, structured compaction | Landed (adapter) |
+| C | ToolCall/Result, PolicyEngine, ProcessRunner, ChangeJournal | **ToolExecutor wired in production loop** |
+| D | SQLite event store, resume, handoff cascade | Adapter (JSONL still production) |
 | E | ModelGateway, typed retries, BudgetLedger | Adapter landed |
-| F | Evidence-based verification | Adapter landed |
-| G | CLI/REPL service split, extension context | Adapter landed (CLI/REPL still legacy) |
-| H | Recorded replay, evaluation harness, docs | Adapter landed |
+| F | Evidence-based verification | **Collector + EvidenceVerifier in loop** |
+| G | CLI/REPL service split, extension context | ApplicationRunService entry; REPL still legacy events |
+| H | Recorded replay, evaluation harness, docs | **ReplayBundle + acceptance criteria** |
 
 ## Canonical seams
 
