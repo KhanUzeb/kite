@@ -12,11 +12,14 @@ loop_hard_threshold = 5
 provider_max_retries = 4
 max_consecutive_format_errors = 3
 auto_compact = true
-compaction_ratio = 0.80
+compaction_ratio = 0.75
 compaction_llm_ratio = 0.92
 observation_max_chars = 8000
 compaction_reserve_tokens = 16384
 compaction_keep_recent_tokens = 20000
+interactive_step_limit = 80
+interactive_cost_limit = 10.0
+max_budget_continues = 2
 
 [prompts]
 system = "system"

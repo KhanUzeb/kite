@@ -86,11 +86,14 @@ class AgentRuntimeConfig:
     wall_time_limit_seconds: int = 0
     max_consecutive_format_errors: int = 3
     auto_compact: bool = True
-    compaction_ratio: float = 0.80
+    compaction_ratio: float = 0.75
     compaction_llm_ratio: float = 0.92
     observation_max_chars: int = 8_000
     compaction_reserve_tokens: int = 16_384
     compaction_keep_recent_tokens: int = 20_000
+    interactive_step_limit: int = 80
+    interactive_cost_limit: float = 10.0
+    max_budget_continues: int = 2
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)
@@ -136,11 +139,14 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         provider_max_retries=int(agent.get("provider_max_retries", 4)),
         max_consecutive_format_errors=int(agent.get("max_consecutive_format_errors", 3)),
         auto_compact=bool(agent.get("auto_compact", True)),
-        compaction_ratio=float(agent.get("compaction_ratio", 0.80)),
+        compaction_ratio=float(agent.get("compaction_ratio", 0.75)),
         compaction_llm_ratio=float(agent.get("compaction_llm_ratio", 0.92)),
         observation_max_chars=int(agent.get("observation_max_chars", 8_000)),
         compaction_reserve_tokens=int(agent.get("compaction_reserve_tokens", 16_384)),
         compaction_keep_recent_tokens=int(agent.get("compaction_keep_recent_tokens", 20_000)),
+        interactive_step_limit=int(agent.get("interactive_step_limit", 80)),
+        interactive_cost_limit=float(agent.get("interactive_cost_limit", 10.0)),
+        max_budget_continues=int(agent.get("max_budget_continues", 2)),
         prompts=PromptsConfig(
             system=str(prompts.get("system", "system")),
             instance=str(prompts.get("instance", "instance")),

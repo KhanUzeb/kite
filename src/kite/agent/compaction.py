@@ -20,7 +20,7 @@ class CompactionConfig:
     window: int = 128_000
     reserve_tokens: int = 16_384
     keep_recent_tokens: int = 20_000
-    compact_ratio: float = 0.80
+    compact_ratio: float = 0.75
     compaction_llm_ratio: float = 0.92
 
 
