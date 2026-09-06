@@ -149,7 +149,7 @@ class DefaultAgent:
         auto_compact: bool = True,
         compaction_reserve_tokens: int = 16_384,
         compaction_keep_recent_tokens: int = 20_000,
-        compaction_ratio: float = 0.80,
+        compaction_ratio: float = 0.75,
         compaction_llm_ratio: float = 0.92,
         mode: AgentMode = AgentMode.BUILD,
         approval: ApprovalMode = ApprovalMode.AUTO,
@@ -363,6 +363,27 @@ class DefaultAgent:
                 self.session.replace_messages(self.messages)
             if self.hooks is not None:
                 self.hooks.fire("after_compact", before=result.before, after=result.after)
+            try:
+                from kite.memory.continuity import record_continuity_after_compact
+                from kite.memory.store import MemoryStore
+
+                cwd = "."
+                if self.session is not None and getattr(self.session.meta, "cwd", None):
+                    cwd = str(self.session.meta.cwd)
+                elif hasattr(self.env, "cwd"):
+                    cwd = str(getattr(self.env, "cwd") or ".")
+                store = MemoryStore.open(cwd)
+                todos = self.todos.read() if self.todos is not None else None
+                record_continuity_after_compact(
+                    store=store,
+                    messages=self.messages,
+                    todos=todos,
+                    session_id=self.session.id if self.session is not None else "",
+                    cwd=cwd,
+                    task=self._task,
+                )
+            except Exception:
+                pass
 
     def run(self, task: str = "", **kwargs) -> dict:
         self._start_time = time.time()
@@ -500,10 +521,42 @@ class DefaultAgent:
         return self.execute_actions(self.query())
 
     def query(self) -> dict:
-        if 0 < self.step_limit <= self.n_calls or 0 < self.cost_limit <= self.cost:
-            raise LimitsExceeded(_exit_msg("LimitsExceeded"))
+        if 0 < self.step_limit <= self.n_calls:
+            detail = f"step budget {self.n_calls}/{self.step_limit}"
+            raise LimitsExceeded(
+                _exit_msg(
+                    "LimitsExceeded",
+                    content=detail,
+                    submission=detail,
+                    limit_kind="steps",
+                    steps=self.n_calls,
+                    step_limit=self.step_limit,
+                )
+            )
+        if 0 < self.cost_limit <= self.cost:
+            detail = f"cost budget ${self.cost:.2f}/${self.cost_limit:.2f}"
+            raise LimitsExceeded(
+                _exit_msg(
+                    "LimitsExceeded",
+                    content=detail,
+                    submission=detail,
+                    limit_kind="cost",
+                    cost=self.cost,
+                    cost_limit=self.cost_limit,
+                )
+            )
         if 0 < self.wall_time_limit_seconds <= int(time.time() - self._start_time):
-            raise TimeExceeded(_exit_msg("TimeExceeded"))
+            detail = f"time budget {int(time.time() - self._start_time)}s/{self.wall_time_limit_seconds}s"
+            raise TimeExceeded(
+                _exit_msg(
+                    "TimeExceeded",
+                    content=detail,
+                    submission=detail,
+                    limit_kind="time",
+                    elapsed_s=int(time.time() - self._start_time),
+                    wall_time_limit_seconds=self.wall_time_limit_seconds,
+                )
+            )
         self.n_calls += 1
         last_error: BaseException | None = None
         attempts = 0

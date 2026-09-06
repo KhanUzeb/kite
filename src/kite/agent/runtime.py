@@ -204,7 +204,19 @@ class AgentRuntime:
             except (FileNotFoundError, OSError):
                 pass
 
-        memory_text = MemoryStore.open(cwd).render_for_prompt() if self.slots.memory is None else self.slots.memory.render_for_prompt()
+        memory_store = MemoryStore.open(cwd) if self.slots.memory is None else self.slots.memory
+        memory_text = memory_store.render_for_prompt()
+        try:
+            from kite.memory.continuity import latest_continuity_markdown
+
+            cont = latest_continuity_markdown(
+                memory_store,
+                session_id=str(self.options.session_id or ""),
+            )
+            if cont:
+                memory_text = f"{memory_text}\n\n{cont}".strip() if memory_text else cont
+        except Exception:
+            pass
 
         if self.slots.assemble_system is not None:
             system = self.slots.assemble_system(
@@ -464,13 +476,20 @@ class AgentRuntime:
             run_id=session.id if session else "",
         )
 
-        step_limit = self.options.step_limit if self.options.step_limit is not None else rcfg.step_limit
-        cost_limit = self.options.cost_limit if self.options.cost_limit is not None else rcfg.cost_limit
-        if self.options.long_task:
-            if self.options.step_limit is None:
-                step_limit = max(step_limit, 120)
-            if self.options.cost_limit is None:
-                cost_limit = max(cost_limit, 25.0)
+        from kite.config.interactive_budget import effective_agent_limits
+
+        step_limit, cost_limit = effective_agent_limits(
+            interactive=bool(self.options.interactive),
+            options_step=self.options.step_limit,
+            options_cost=self.options.cost_limit,
+            runtime_step=rcfg.step_limit,
+            runtime_cost=rcfg.cost_limit,
+            user_step=ucfg.step_limit,
+            user_cost=ucfg.cost_limit,
+            interactive_step=getattr(rcfg, "interactive_step_limit", 80),
+            interactive_cost=getattr(rcfg, "interactive_cost_limit", 10.0),
+            long_task=bool(self.options.long_task),
+        )
 
         agent = DefaultAgent(
             model,
