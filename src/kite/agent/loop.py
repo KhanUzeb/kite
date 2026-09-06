@@ -105,14 +105,46 @@ def _is_casual_chat(content: str) -> bool:
     return False
 
 
-def _allow_text_submit(content: str, *, mode: AgentMode, interactive: bool) -> bool:
+def _is_injected_nudge(content: str) -> bool:
+    text = (content or "").strip()
+    if not text:
+        return False
+    if text == _IDLE_NUDGE or text.startswith("Stopped after"):
+        return True
+    if text.startswith("Last ") and "tool calls failed" in text:
+        return True
+    return False
+
+
+def _last_human_user_content(messages: list[dict]) -> str:
+    """Most recent user turn that is not an agent-injected idle/fail nudge."""
+    for msg in reversed(messages):
+        if msg.get("role") != "user":
+            continue
+        content = str(msg.get("content") or "").strip()
+        if not content or _is_injected_nudge(content):
+            continue
+        return content
+    return ""
+
+
+def _allow_text_submit(
+    content: str,
+    *,
+    mode: AgentMode,
+    interactive: bool,
+    last_user: str | None = None,
+) -> bool:
     if not content.strip():
         return False
     if mode is AgentMode.PLAN:
         return True
     if not interactive:
         return False
-    return _is_casual_chat(content)
+    if _is_casual_chat(content):
+        return True
+    # Greeting/thanks from the user → allow a normal prose reply without idle nudge.
+    return bool(last_user and _is_casual_chat(last_user))
 
 
 def _user_interrupt() -> Interrupted:
@@ -619,7 +651,13 @@ class DefaultAgent:
 
     def _handle_no_actions(self, message: dict) -> list[dict]:
         content = (message.get("content") or "").strip()
-        if _allow_text_submit(content, mode=self.mode, interactive=self.interactive):
+        last_user = _last_human_user_content(self.messages)
+        if _allow_text_submit(
+            content,
+            mode=self.mode,
+            interactive=self.interactive,
+            last_user=last_user,
+        ):
             if self.mode is AgentMode.BUILD and self.verification.has_edits():
                 reason = self.verification.submit_block_reason(
                     content,

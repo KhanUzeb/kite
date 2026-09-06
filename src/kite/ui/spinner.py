@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import atexit
 import sys
 import threading
 import time
+import weakref
 from typing import TextIO
 
 from kite.ui.animations import (
@@ -13,6 +15,29 @@ from kite.ui.animations import (
     loader_glyph,
     shimmer_ansi,
 )
+
+# Keep weak refs so atexit / pytest teardown can stop daemon writers before
+# interpreter finalization (Python 3.11 can abort on stderr lock otherwise).
+_ACTIVE: weakref.WeakSet[WaitSpinner] = weakref.WeakSet()
+_ACTIVE_LOCK = threading.Lock()
+
+
+def stop_all_spinners() -> None:
+    """Stop every live WaitSpinner (safe from tests and atexit)."""
+    with _ACTIVE_LOCK:
+        spinners = list(_ACTIVE)
+    for spinner in spinners:
+        try:
+            spinner.stop()
+        except Exception:
+            pass
+
+
+def _atexit_stop() -> None:
+    stop_all_spinners()
+
+
+atexit.register(_atexit_stop)
 
 
 class WaitSpinner:
@@ -69,29 +94,42 @@ class WaitSpinner:
                 self._shown = False
 
     def start(self) -> None:
+        self.stop()
         self._stop.clear()
         self._started = time.monotonic()
         self._tick = 0
         self.kick()
+        with _ACTIVE_LOCK:
+            _ACTIVE.add(self)
+        # Avoid daemon stderr writers under pytest / pipes — they race interpreter
+        # shutdown on Linux 3.11 (`_enter_buffered_busy` fatal abort).
+        if os_environ_pytest() or not _stream_is_tty(self.stream):
+            self._thread = None
+            return
         self._thread = threading.Thread(target=self._run, name="kite-spinner", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=0.15)
-            self._thread = None
+        thread = self._thread
+        self._thread = None
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.5)
         with self._lock:
             if self._shown:
                 self._clear()
                 self._shown = False
         self._started = None
+        with _ACTIVE_LOCK:
+            _ACTIVE.discard(self)
 
     def _clear(self) -> None:
         try:
+            if _interpreter_finalizing():
+                return
             self.stream.write("\r\033[K")
             self.stream.flush()
-        except OSError:
+        except Exception:
             pass
 
     def _format_line(self) -> str:
@@ -107,6 +145,8 @@ class WaitSpinner:
 
     def _run(self) -> None:
         while not self._stop.wait(0.06):
+            if _interpreter_finalizing():
+                return
             with self._lock:
                 idle = time.monotonic() - self._last
                 if idle < self._delay_active:
@@ -117,5 +157,28 @@ class WaitSpinner:
                     self.stream.write("\r" + line + "\033[K")
                     self.stream.flush()
                     self._shown = True
-                except OSError:
+                except Exception:
                     return
+
+
+def os_environ_pytest() -> bool:
+    import os
+
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
+def _stream_is_tty(stream: TextIO) -> bool:
+    try:
+        return bool(stream.isatty())
+    except Exception:
+        return False
+
+
+def _interpreter_finalizing() -> bool:
+    is_finalizing = getattr(sys, "is_finalizing", None)
+    if callable(is_finalizing):
+        try:
+            return bool(is_finalizing())
+        except Exception:
+            return False
+    return False

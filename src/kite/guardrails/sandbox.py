@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 
 # Commands that are never legitimate in a coding-agent workspace.
+# Recursive deletes of *relative* project paths are gated by approval, not hard-blocked —
+# otherwise a user "approve once" still fails (Windows rmdir / Remove-Item).
 DANGEROUS_BASH = (
     re.compile(r"(?i)\brm\s+(-[a-z]*f[a-z]*r|-[a-z]*r[a-z]*f)\s+[/\\]"),
     re.compile(r"(?i)\brm\s+-rf\s+[A-Za-z]:\\"),
@@ -22,9 +24,20 @@ DANGEROUS_BASH = (
     re.compile(r"(?i)\b(shutdown|reboot|poweroff|halt)\b"),
     re.compile(r"(?i)\b(stop-computer|restart-computer|restart-service)\b"),
     re.compile(r"(?i)\b(bcdedit|diskpart|cipher\s+/w)\b"),
-    re.compile(r"(?i)\b(remove-item|ri)\b.*\b(-recurse|-r)\b.*\b(-force|-fo)\b"),
     re.compile(r"(?i)\bdel\s+/[fqs]+\s+[A-Za-z]:\\"),
-    re.compile(r"(?i)\brmdir\s+/s\b"),
+    # Absolute / drive-root recursive deletes only (relative project deletes → approval)
+    re.compile(r"(?i)\brmdir\s+/s(?:\s+/q)?\s+[\"']?[A-Za-z]:\\"),
+    re.compile(
+        r"(?i)\brmdir\s+/s(?:\s+/q)?\s+[\"']?/(?:etc|usr|bin|sbin|var|tmp|home|root|System|Library|private)\b"
+    ),
+    # Note: no \b before -Flag — PowerShell flags are preceded by whitespace (\W), so \b-force never matches.
+    re.compile(
+        r"(?i)\b(remove-item|ri)\b(?=.*(?:-recurse|-r)\b)(?=.*(?:-force|-fo)\b).*[A-Za-z]:\\"
+    ),
+    re.compile(
+        r"(?i)\b(remove-item|ri)\b(?=.*(?:-recurse|-r)\b)(?=.*(?:-force|-fo)\b).*"
+        r"[\"']?/(?:etc|usr|bin|sbin|var|tmp|home|root|System|Library|private)\b"
+    ),
     re.compile(r"(?i)\breg\s+(delete|add)\b.*\bHK(LM|CU|U)\\"),
     re.compile(r"(?i)\bnet\s+(user|localgroup|share)\b"),
     re.compile(r"(?i)\b(schtasks|takeown|icacls)\b"),
@@ -32,6 +45,32 @@ DANGEROUS_BASH = (
     re.compile(r"(?i)\b(curl|wget|iwr|invoke-webrequest)\b.*\|\s*(sh|bash|powershell|iex)\b"),
     re.compile(r"(?i)\binvoke-expression\b|\biex\s*\("),
     re.compile(r"(?i)\bgit\s+push\b"),
+)
+
+# Known tool/cache dirs — auto/yolo may remove these without mandatory approval.
+CACHE_DELETE_NAMES = frozenset(
+    {
+        ".pytest_cache",
+        ".ruff_cache",
+        "__pycache__",
+        ".mypy_cache",
+        ".tox",
+        ".nox",
+        ".hypothesis",
+        ".eslintcache",
+        "htmlcov",
+        ".cache",
+        ".pytest-tmp",
+        ".pytest-tmp-codex",
+        ".coverage",
+    }
+)
+
+_REC_DELETE_HINT = re.compile(
+    r"(?i)\b(rmdir\s+/s|remove-item|\bri\b|rm\s+-\S*r\S*|del\s+/[fqs]+)\b"
+)
+_PS_FLAG = re.compile(
+    r"(?i)^(-recurse|-r|-force|-fo|-literalpath|-path|-include|-exclude|-confirm:\$false|/s|/q|-rf|-fr)$"
 )
 
 _ABS_PATH = re.compile(
@@ -233,6 +272,79 @@ def check_dangerous(command: str) -> str:
         if rx.search(command):
             return f"bash command blocked by sandbox: {rx.pattern}"
     return ""
+
+
+def _delete_path_tokens(command: str) -> list[str]:
+    """Best-effort path tokens from a recursive delete command."""
+    if not _REC_DELETE_HINT.search(command or ""):
+        return []
+    # Unwrap powershell -Command "..."
+    cmd = command.strip()
+    m = re.search(r"(?i)powershell(?:\.exe)?\s+(-command|-c)\s+[\"'](.+)[\"']\s*$", cmd)
+    if m:
+        cmd = m.group(2)
+    tokens: list[str] = []
+    for raw in re.split(r"[\s,;]+", cmd):
+        tok = raw.strip().strip("\"'")
+        if not tok or _PS_FLAG.match(tok):
+            continue
+        if re.match(r"(?i)^(rmdir|rm|del|remove-item|ri|powershell.*)$", tok):
+            continue
+        if tok.startswith("-") or tok.startswith("/"):
+            # Keep absolute Unix paths; drop pure flags like /s /q
+            if re.match(r"^/[a-zA-Z]+$", tok):
+                continue
+            if tok.startswith("-"):
+                continue
+        tokens.append(tok)
+    return tokens
+
+
+def _is_systemish_delete_target(token: str) -> bool:
+    t = token.strip().strip("\"'")
+    if not t:
+        return False
+    if t in {".", "..", "*", "/", "\\"}:
+        return True
+    if re.match(r"^[A-Za-z]:\\?$", t):
+        return True
+    low = t.replace("/", "\\").lower()
+    system_prefixes = (
+        r"c:\windows",
+        r"c:\program files",
+        r"c:\programdata",
+        r"c:\users\all users",
+        "/etc",
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/System",
+        "/Library",
+        "/private",
+    )
+    return any(low == p or low.startswith(p + "\\") or low.startswith(p + "/") for p in system_prefixes)
+
+
+def is_benign_cache_delete(command: str) -> bool:
+    """True when the command only removes known relative tool-cache directories."""
+    cmd = (command or "").strip()
+    if not cmd or not _REC_DELETE_HINT.search(cmd):
+        return False
+    tokens = _delete_path_tokens(cmd)
+    if not tokens:
+        return False
+    for tok in tokens:
+        if _is_systemish_delete_target(tok):
+            return False
+        if ".." in Path(tok).parts:
+            return False
+        name = Path(tok).name.lower()
+        # Allow "./.pytest_cache" or ".pytest_cache"
+        if name not in {n.lower() for n in CACHE_DELETE_NAMES} and tok.strip("./\\") not in CACHE_DELETE_NAMES:
+            # Also allow path ending with cache name
+            if not any(tok.replace("\\", "/").rstrip("/").endswith(n) for n in CACHE_DELETE_NAMES):
+                return False
+    return True
 
 
 _CHAIN_SPLIT = re.compile(r"\s*&&\s*|\s*;\s*|\s*\|\s*")

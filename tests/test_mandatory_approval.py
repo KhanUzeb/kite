@@ -55,6 +55,46 @@ def test_mandatory_rm(workspace: Path) -> None:
     assert reason == "destructive file removal always needs approval"
 
 
+def test_benign_cache_delete_not_mandatory_in_auto(workspace: Path) -> None:
+    ws = str(workspace)
+    for cmd in (
+        "rmdir /s /q .pytest_cache",
+        'powershell -Command "Remove-Item -Recurse -Force .ruff_cache"',
+        "rm -rf .pytest_cache",
+    ):
+        assert not is_mandatory_approval(
+            "bash",
+            command=cmd,
+            workspace_cwd=ws,
+            bash_cwd=ws,
+        ), cmd
+        assert not needs_approval(
+            "bash",
+            AgentMode.BUILD,
+            ApprovalMode.AUTO,
+            command=cmd,
+            workspace_cwd=ws,
+            bash_cwd=ws,
+        ), cmd
+        assert not needs_approval(
+            "bash",
+            AgentMode.BUILD,
+            ApprovalMode.YOLO,
+            command=cmd,
+            workspace_cwd=ws,
+            bash_cwd=ws,
+        ), cmd
+    # Supervised still asks (approval mode), but not via hard sandbox deny
+    assert needs_approval(
+        "bash",
+        AgentMode.BUILD,
+        ApprovalMode.APPROVE,
+        command="rmdir /s /q .pytest_cache",
+        workspace_cwd=ws,
+        bash_cwd=ws,
+    )
+
+
 def test_mandatory_bash_outside_workspace(workspace: Path) -> None:
     reason = mandatory_approval_reason(
         "bash",

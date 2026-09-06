@@ -59,6 +59,47 @@ def test_build_interactive_blocks_task_prose_submit() -> None:
         interactive=True,
     )
     assert _allow_text_submit("hi", mode=AgentMode.BUILD, interactive=True)
+    assert _allow_text_submit(
+        "Hey! I'm Kite — ready to help.",
+        mode=AgentMode.BUILD,
+        interactive=True,
+        last_user="hi",
+    )
+    assert not _allow_text_submit(
+        "Hey! I'm Kite — ready to help.",
+        mode=AgentMode.BUILD,
+        interactive=True,
+        last_user="delete the pytest cache",
+    )
+
+
+def test_greeting_reply_submits_without_idle_nudge() -> None:
+    model = _TextOnlyModel("Hey! 👋 I'm Kite — ready to help with code, tests, or docs.")
+    agent = DefaultAgent(
+        model,
+        _StubEnv(),
+        interactive=True,
+        mode=AgentMode.BUILD,
+        provider_max_retries=1,
+    )
+    agent.messages = [{"role": "user", "content": "hi"}]
+    agent.add_messages(
+        {
+            "role": "assistant",
+            "content": model.content,
+            "extra": {"actions": []},
+        }
+    )
+    with pytest.raises(Submitted):
+        agent.execute_actions(
+            {
+                "role": "assistant",
+                "content": model.content,
+                "extra": {"actions": []},
+            }
+        )
+    blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
+    assert "No tool calls" not in blob
 
 
 def test_build_non_interactive_never_text_submits() -> None:

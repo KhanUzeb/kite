@@ -47,7 +47,6 @@ deny_bash_patterns = [
   "powershell -enc",
   "curl .*\\|\\s*sh",
   "wget .*\\|\\s*sh",
-  "Remove-Item.*-Recurse",
   "Stop-Computer",
   "Restart-Computer",
   "diskpart",

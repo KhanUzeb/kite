@@ -43,7 +43,7 @@ Pass `reason` on mutating tools when the why is not obvious.
 
 **Bash:** each call is a fresh subprocess — `cd` does not persist. Use `set_cwd`, or `cwd=` / `cd path && …` per command.
 
-**Platform:** On Windows use PowerShell/cmd-friendly commands and Kite tools; on Linux/macOS prefer `rg`, `head`, and `sed -n`. Do not assume Unix-only utilities exist on every host.
+**Platform:** On Windows use PowerShell/cmd-friendly commands and Kite tools (`glob`, `ls`, `grep`, `read`) — do not pipe through Unix-only `head`/`find`. On Linux/macOS prefer `rg`, `head`, and `sed -n`. Prefer `Remove-Item` / `rmdir` only for known caches under the workspace (e.g. `.pytest_cache`, `.ruff_cache`).
 
 ## Execution context
 The **Execution context** section below has `project_root`, `execution_cwd`, and `execution_mode`.
