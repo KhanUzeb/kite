@@ -4,6 +4,18 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+### Added
+- **Opt-in durable memory** — MEMORY.md and episodic notes inject only when the user asks (`/remember`, `/memory`, or `[memory] inject = "always"`).
+- **Working-state continuity** — compact/budget-continue briefs inject separately from durable memory; no auto-pin to MEMORY.md.
+- **Daily-driver loop** — unverified edits get verify nudges instead of idle stall; blocked submit includes suggested verification command; fuzzy `edit` fallback; compaction preserves edited paths.
+
+### Changed
+- System prompt clarifies memory is not instructions unless loaded.
+
+### Fixed
+- Approval wait no longer counts as idle no-tool turns.
+- Relative cache deletes on Windows stay out of mandatory approval in auto/yolo.
+
 ## [0.9.1] - 2026-09-06
 
 ### Added

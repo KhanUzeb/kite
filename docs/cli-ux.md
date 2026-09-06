@@ -82,9 +82,13 @@ While a turn is running the composer stays pinned (placeholder: `add a follow-up
 
 **Budget pause:** hitting `step_limit` / `cost_limit` (or wall-clock) ends the turn as a soft pause (`LimitsExceeded` / `TimeExceeded`), not a crash. Interactive chat defaults to ~80 steps / $10 when still on package defaults (40 / $5); explicit lower user caps are honored. If unfinished work remains (open todos), Kite may **auto-continue up to 2 times** with a continuity brief (`budget continue N/2 — resuming…`), then soft-pause. Session is kept; queued inbox messages win over silent auto-continue. Use `/compact` if context is full.
 
-**Continuity memory (Codex/Pi-style):** after compact or before a budget continue, Kite stores a short episodic brief (mission / done / next / todos) and injects the latest brief into the next turn’s context so long chats don’t go blank after shrink or resume.
+**Working-state continuity (Codex/Pi-style):** after compact or before a budget continue, Kite stores a short brief (mission / done / next / todos) and injects it as **working continuity** — not durable memory. Use `/remember` or `/memory` when you want MEMORY.md / episodic notes in the prompt.
 
-**Completion discipline:** build mode finishes with the **`submit`** tool (`message` with Done / Changed / Verification) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` in bash (or a short casual chat like "hi" with no edits). Prose-only "I'm done" after file changes is blocked (`submit_blocked` event). Footer shows live **`verification_status`** during the run. After 2 idle no-tool turns, the run stalls instead of burning more API calls. Successful submit shows **work complete**; partial verification shows a warning banner.
+**Durable memory:** MEMORY.md and episodic sqlite are **opt-in** per session (`/remember`, `/memory`, or the `memory` tool). Default runs do not inject them unless `[memory] inject = "always"` in runtime config.
+
+**Completion discipline:** build mode finishes with the **`submit`** tool (`message` with Done / Changed / Verification) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` in bash (or a short casual chat like "hi" with no edits). Prose-only "I'm done" after file changes is blocked (`submit_blocked` event). Footer shows live **`verification_status`** during the run. After 2 idle no-tool turns the run stalls — **except** when verification is `changed_unverified`, in which case Kite nudges with a suggested check command instead of stalling. Waiting on an approval prompt is not an idle turn. Successful submit shows **work complete**; partial verification shows a warning banner.
+
+**Windows bash:** Kite runs commands through the shell (`powershell` on Windows, `bash` elsewhere). Prefer `Remove-Item` / `rmdir` for cache dirs under the workspace (`.pytest_cache`, `.ruff_cache`); these are allowed in auto/yolo without mandatory approval. Avoid Unix-only pipes like `| head` when `rg`/`read`/`glob` work.
 
 **Fatal errors:** unexpected exceptions stop the run with `exit_status=Error`, print the message + traceback tail, and save `/trace` in the REPL. No silent re-raise.
 

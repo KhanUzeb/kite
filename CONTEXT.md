@@ -70,11 +70,13 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Trajectory** — Serializable record of a run (messages, tool events) for debug, replay, or `kite apply`.
 
-**Semantic memory** — Durable markdown notes (`MEMORY.md` style) the user asks to remember across sessions.
+**Semantic memory** — Durable markdown notes (`MEMORY.md` style) the user asks to remember across sessions. **Opt-in for prompts:** injected only when the user loaded memory this session (`/remember`, `/memory`) or config says `[memory] inject = "always"`.
 
-**Episodic memory** — Short sqlite log of notable events per user/project.
+**Episodic memory** — Short sqlite log of notable events per user/project. Same opt-in rule as semantic memory when rendered into the prompt.
 
-**Compaction** — Summarizing older turns to free context window space while keeping recent messages and **preserved facts** (constraints, errors, paths).
+**Working-state continuity** — Structured mission/done/next brief written after compact or budget continue. Injected as resume context, **not** durable memory; never auto-pinned to MEMORY.md unless the user asked to remember.
+
+**Compaction** — Summarizing older turns to free context window space while keeping recent messages and **preserved facts** (constraints, errors, paths, edited paths from verification).
 
 **Context checkpoint** — Named snapshot of the full model transcript (and todos) at a point in time. Distinct from git undo. Stored under `~/.kite/checkpoints/<session>/`.
 
