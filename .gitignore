@@ -9,6 +9,10 @@ build/
 trajectory.json
 .trajectories/
 .DS_Store
+.pytest_cache/
+.pytest-tmp/
+.pytest-tmp-*/
+.ruff_cache/
 
 # Generated design docs (source markdown is kept)
 *.pdf
