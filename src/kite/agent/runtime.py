@@ -62,6 +62,7 @@ class RuntimeOptions:
     long_task: bool = False
     execution_mode: str | None = None  # restricted | host — overrides runtime TOML
     use_tool_executor: bool = True
+    memory_in_prompt: bool = False
 
 
 @dataclass
@@ -205,16 +206,19 @@ class AgentRuntime:
                 pass
 
         memory_store = MemoryStore.open(cwd) if self.slots.memory is None else self.slots.memory
-        memory_text = memory_store.render_for_prompt()
+        inject_memory = rcfg.memory.inject == "always" or self.options.memory_in_prompt
+        memory_text = memory_store.render_for_prompt() if inject_memory else ""
+
+        continuity_text = ""
         try:
-            from kite.memory.continuity import latest_continuity_markdown
+            from kite.memory.continuity import format_continuity_section, latest_continuity_markdown
 
             cont = latest_continuity_markdown(
                 memory_store,
                 session_id=str(self.options.session_id or ""),
             )
             if cont:
-                memory_text = f"{memory_text}\n\n{cont}".strip() if memory_text else cont
+                continuity_text = format_continuity_section(cont)
         except Exception:
             pass
 
@@ -226,6 +230,7 @@ class AgentRuntime:
                 extra_sections=extra_sections,
                 override_system=self.options.system_prompt_override,
                 memory=memory_text,
+                continuity=continuity_text,
                 cwd=cwd,
             )
         else:
@@ -236,6 +241,7 @@ class AgentRuntime:
                 extra_sections=extra_sections,
                 override_system=self.options.system_prompt_override,
                 memory=memory_text,
+                continuity=continuity_text,
                 cwd=cwd,
             )
         return rcfg, resolved, system

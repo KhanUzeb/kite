@@ -67,6 +67,9 @@ include_tree_snippet = true
 tree_max_entries = 80
 max_context_chars = 24000
 
+[memory]
+inject = "opt_in"  # opt_in | always — durable MEMORY.md/episodic only when user asks
+
 [github]
 enabled = false
 

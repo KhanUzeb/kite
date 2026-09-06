@@ -76,6 +76,7 @@ class ChatSession:
         self.git = GitCheckpoints.open(cwd)
         self.todos = TodoStore()
         self._memory = None
+        self._memory_in_prompt = False
         self.attachments: list = []
         self._session_id: str | None = None
         self._harness = None
@@ -287,6 +288,7 @@ class ChatSession:
             self._session_id,
             self.config_name,
             self.state.reasoning or "auto",
+            self._memory_in_prompt,
         )
 
     def _execution_mode(self) -> str:
@@ -302,6 +304,7 @@ class ChatSession:
             h.config.follow_up = follow_up
             h.config.session_id = self._session_id
             h.config.attachments = list(self.attachments)
+            h.config.memory_in_prompt = self._memory_in_prompt
             h.job_registry = self.jobs
             return h
 
@@ -320,6 +323,7 @@ class ChatSession:
                 reasoning=self.state.reasoning or "auto",
                 attachments=list(self.attachments),
                 execution_mode=self._execution_mode(),
+                memory_in_prompt=self._memory_in_prompt,
             )
         )
         h.job_registry = self.jobs
@@ -1761,6 +1765,8 @@ class ChatSession:
         self.console.print(table)
 
     def _show_memory(self, _arg: str = "") -> None:
+        self._memory_in_prompt = True
+        self._harness_key = None
         self._show_semantic()
         self.console.print()
         self._show_episodic()
@@ -1805,6 +1811,8 @@ class ChatSession:
             self.console.print(f"[kite.error]{e}[/]")
             return
         self.console.print(f"[kite.success]remembered[/] {note.scope}/{note.id}  {note.text}")
+        self._memory_in_prompt = True
+        self._harness_key = None
 
     def _sync_queue_count(self) -> None:
         self.state.queued = len(self._inbox)
