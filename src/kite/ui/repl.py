@@ -491,7 +491,7 @@ class ChatSession:
         self._apply_appearance()
         self.console.print(f"[kite.muted]font[/]  {name}  {glyph_preview()}")
 
-    def _compact_now(self) -> None:
+    def _compact_now(self, _arg: str = "") -> None:
         if not self._session_id:
             self.console.print("[kite.muted]no session yet[/]")
             return
@@ -677,7 +677,7 @@ class ChatSession:
         except (OSError, ValueError) as e:
             self.console.print(f"[kite.error]{e}[/]")
 
-    def _attach_clipboard(self) -> None:
+    def _attach_clipboard(self, _arg: str = "") -> None:
         from kite.ui.attach import load_clipboard
 
         self.console.print("[kite.muted]clipboard…[/]")
@@ -705,7 +705,7 @@ class ChatSession:
         self._sync_attach_count()
         self.console.print("[kite.muted]dropped[/]")
 
-    def _show_attachments(self) -> None:
+    def _show_attachments(self, _arg: str = "") -> None:
         if not self.attachments:
             self.console.print("[kite.muted]none pending  ·  /attach path  ·  /clip[/]")
             return
@@ -895,7 +895,7 @@ class ChatSession:
             return ""
         return line
 
-    def _show_keys(self) -> None:
+    def _show_keys(self, _arg: str = "") -> None:
         from kite.config import UserConfig
         from kite.providers.catalog import load_catalog
         from kite.providers.credentials import (
@@ -1760,12 +1760,12 @@ class ChatSession:
             )
         self.console.print(table)
 
-    def _show_memory(self) -> None:
+    def _show_memory(self, _arg: str = "") -> None:
         self._show_semantic()
         self.console.print()
         self._show_episodic()
 
-    def _show_semantic(self) -> None:
+    def _show_semantic(self, _arg: str = "") -> None:
         notes = self.memory.notes()
         self.console.print(f"[kite.muted]{self.memory.user_markdown_path()}[/]")
         self.console.print(f"[kite.muted]{self.memory.project_markdown_path()}[/]")
@@ -1775,7 +1775,7 @@ class ChatSession:
         for note in notes:
             self.console.print(f"  {note.scope}/{note.id}  {note.text}")
 
-    def _show_episodic(self) -> None:
+    def _show_episodic(self, _arg: str = "") -> None:
         rows = self.memory.episodes(limit=20)
         self.console.print(f"[kite.muted]{self.memory.episodic.user_path()}[/]")
         self.console.print(f"[kite.muted]{self.memory.episodic.project_path()}[/]")
@@ -1896,6 +1896,16 @@ class ChatSession:
         except Exception as e:
             self.console.print(f"[kite.error]{escape(str(e))}[/]  [kite.muted]/login · /select · kite setup[/]")
             return
+
+        from kite.config.runtime import load_runtime_config
+        from kite.memory.continuity import build_continuity_brief, save_continuity
+        from kite.ui.budget_continue import decide_budget_continue
+
+        try:
+            max_continues = max(0, int(load_runtime_config(self.config_name).max_budget_continues))
+        except Exception:
+            max_continues = 2
+
         resume = bool(self._session_id)
         harness = self._make_harness(resume=resume, follow_up=task if resume else None)
         harness.approver = self._approver()
@@ -1904,26 +1914,11 @@ class ChatSession:
         self._busy = True
         self.state.busy = True
         self.state.interrupted = False
-        done = threading.Event()
+        self.display._spin(False)
+
+        continues_used = 0
+        run_task = task
         box: dict = {}
-
-        def worker() -> None:
-            try:
-                from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
-
-                run_result = execute_harness_task(harness, task)
-                box["result"] = legacy_result_from_run(run_result)
-            except KeyboardInterrupt:
-                box["interrupted"] = True
-            except Exception as e:
-                box["err"] = e
-            finally:
-                done.set()
-                self._busy = False
-                self.state.busy = False
-                self._wake_composer()
-
-        threading.Thread(target=worker, daemon=True, name="kite-turn").start()
         session = self._ensure_prompt()
 
         def _slash_busy_hint() -> None:
@@ -1931,58 +1926,143 @@ class ChatSession:
                 "[kite.muted]still working[/]  — Enter queues · Esc stop · Ctrl+G steer · /tasks"
             )
 
-        if session is not None:
-            read_repl_busy_composer(
-                session=session,
-                state=self.state,
-                action_slot=self._composer_action,
-                should_continue=lambda: not done.is_set(),
-                on_queue=self._queue_message,
-                on_stop=self._request_stop,
-                on_steer=self._queue_steer,
-                on_slash_while_busy=_slash_busy_hint,
-                on_eof=lambda: setattr(self, "_quit_after_turn", True),
-                on_tick=self._resolve_pending_approval,
-                on_poll=self._poll_pending_approval,
-            )
-        else:
-            while not done.is_set():
-                self._resolve_pending_approval()
-                if self._approval_coordinator.pending:
-                    time.sleep(0.15)
-                    continue
-                got = self._read_input()
-                if done.is_set():
-                    break
-                if got.kind == "eof":
-                    self._quit_after_turn = True
-                    self._request_stop()
-                    break
-                if got.kind == "stop":
-                    self._request_stop()
-                    break
-                if got.kind == "steer":
-                    self._queue_steer(got.text)
-                    self._request_stop()
-                    break
-                if got.kind == "text":
-                    classified = classify_busy_line(got.text)
-                    if classified.kind == "stop":
-                        self._request_stop()
+        def _spawn_and_wait(prompt_task: str) -> None:
+            nonlocal box
+            done = threading.Event()
+            box = {}
+
+            def worker() -> None:
+                try:
+                    from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
+
+                    run_result = execute_harness_task(harness, prompt_task)
+                    box["result"] = legacy_result_from_run(run_result)
+                except KeyboardInterrupt:
+                    box["interrupted"] = True
+                except Exception as e:
+                    box["err"] = e
+                finally:
+                    done.set()
+                    self._wake_composer()
+
+            threading.Thread(target=worker, daemon=True, name="kite-turn").start()
+            if session is not None:
+                read_repl_busy_composer(
+                    session=session,
+                    state=self.state,
+                    action_slot=self._composer_action,
+                    should_continue=lambda: not done.is_set(),
+                    on_queue=self._queue_message,
+                    on_stop=self._request_stop,
+                    on_steer=self._queue_steer,
+                    on_slash_while_busy=_slash_busy_hint,
+                    on_eof=lambda: setattr(self, "_quit_after_turn", True),
+                    on_tick=self._resolve_pending_approval,
+                    on_poll=self._poll_pending_approval,
+                )
+            else:
+                while not done.is_set():
+                    self._resolve_pending_approval()
+                    if self._approval_coordinator.pending:
+                        time.sleep(0.15)
+                        continue
+                    got = self._read_input()
+                    if done.is_set():
                         break
-                    if classified.kind == "eof":
+                    if got.kind == "eof":
                         self._quit_after_turn = True
                         self._request_stop()
                         break
-                    if classified.kind == "steer":
-                        self._queue_steer(classified.text)
+                    if got.kind == "stop":
                         self._request_stop()
                         break
-                    if classified.kind == "slash":
-                        _slash_busy_hint()
-                        continue
-                    self._queue_message(got.text)
-        done.wait()
+                    if got.kind == "steer":
+                        self._queue_steer(got.text)
+                        self._request_stop()
+                        break
+                    if got.kind == "text":
+                        classified = classify_busy_line(got.text)
+                        if classified.kind == "stop":
+                            self._request_stop()
+                            break
+                        if classified.kind == "eof":
+                            self._quit_after_turn = True
+                            self._request_stop()
+                            break
+                        if classified.kind == "steer":
+                            self._queue_steer(classified.text)
+                            self._request_stop()
+                            break
+                        if classified.kind == "slash":
+                            _slash_busy_hint()
+                            continue
+                        self._queue_message(got.text)
+            done.wait()
+
+        while True:
+            _spawn_and_wait(run_task)
+            self._bind_session(harness)
+            if box.get("err") is not None or box.get("interrupted"):
+                break
+            extra = box.get("result") or {}
+            exit_status = str(extra.get("exit_status") or "")
+            stats = extra.get("model_stats") if isinstance(extra.get("model_stats"), dict) else {}
+            tool_calls = int(stats.get("api_calls") or extra.get("api_calls") or 0)
+            action = decide_budget_continue(
+                exit_status=exit_status,
+                continues_used=continues_used,
+                max_continues=max_continues,
+                todos=self.todos.read(),
+                tool_call_count=tool_calls,
+                inbox_queued=bool(self._inbox),
+            )
+            if action != "continue":
+                break
+            continues_used += 1
+            messages: list[dict] = []
+            if self._session_id:
+                try:
+                    from kite.memory.session import load_session
+
+                    messages = load_session(self._session_id).messages
+                except (OSError, ValueError):
+                    messages = []
+            brief = build_continuity_brief(
+                messages=messages,
+                todos=self.todos.read(),
+                task=preview,
+            )
+            try:
+                from kite.memory.store import MemoryStore
+
+                save_continuity(
+                    store=MemoryStore.open(self.cwd),
+                    brief=brief,
+                    session_id=self._session_id or "",
+                    cwd=self.cwd,
+                )
+            except Exception:
+                pass
+            run_task = (
+                brief.to_markdown()
+                + "\n\nContinue the unfinished work from the continuity brief. "
+                "Do not restart from scratch; pick up at Next / Open todos."
+            )
+            self.console.print(
+                f"[kite.muted]budget continue {continues_used}/{max_continues} — resuming…[/]"
+            )
+            self.state.set_running(
+                label=f"budget continue {continues_used}/{max_continues}",
+                kind="turn",
+            )
+            self.state.busy = True
+            self._busy = True
+            self.display._spin(False)
+            harness = self._make_harness(resume=True, follow_up=run_task)
+            harness.approver = self._approver()
+            harness.checkpoints = self.git
+            harness.todos = self.todos
+
         self._busy = False
         self.state.busy = False
         self.state.clear_running()
@@ -2002,7 +2082,10 @@ class ChatSession:
         if extra.get("exit_status") == "ProviderFault":
             self.state.last_error = str(extra.get("error") or "provider fault")
             return
-        if extra.get("exit_status") in {"Error", "Stalled", "LimitsExceeded", "TimeExceeded"}:
+        if extra.get("exit_status") in {"LimitsExceeded", "TimeExceeded"}:
+            self.state.last_error = str(extra.get("submission") or extra.get("content") or extra.get("exit_status"))
+            return
+        if extra.get("exit_status") in {"Error", "Stalled"}:
             self.state.last_error = str(extra.get("error") or extra.get("submission") or extra.get("exit_status"))
             self.state.last_trace = str(extra.get("traceback") or "")
             return
