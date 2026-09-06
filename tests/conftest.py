@@ -33,3 +33,12 @@ def workspace(tmp_path: Path) -> Path:
     (src / "app.py").write_text("x = 1\n", encoding="utf-8")
     (root / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
     return root
+
+
+@pytest.fixture(autouse=True)
+def _stop_kite_spinners():
+    """Ensure WaitSpinner daemon threads never outlive a test (CI 3.11 abort)."""
+    yield
+    from kite.ui.spinner import stop_all_spinners
+
+    stop_all_spinners()

@@ -119,6 +119,7 @@ def test_parallel_tool_start_shows_batch_header() -> None:
     out = buf.getvalue()
     assert "parallel 3" in out
     assert "read" in out
+    display.close()
 
 
 def test_read_tool_end_shows_line_count_summary() -> None:
@@ -146,6 +147,7 @@ def test_stream_coalescing_batches_answer_deltas() -> None:
     display(Event("stream_end", payload={}))
     out = buf.getvalue()
     assert "Hello world" in out
+    display.close()
 
 
 def test_compact_event_updates_context_meter() -> None:

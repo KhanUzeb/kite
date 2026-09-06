@@ -14,7 +14,13 @@ from rich.text import Text
 
 from kite.config import kite_home
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
-from kite.guardrails.sandbox import check_dangerous, is_inspection_bash, resolve_in_workspace, workspace_root
+from kite.guardrails.sandbox import (
+    check_dangerous,
+    is_benign_cache_delete,
+    is_inspection_bash,
+    resolve_in_workspace,
+    workspace_root,
+)
 from kite.ui.diff import count_diff_lines, diff_path, render_diff_stat
 from kite.ui.style import GUTTER, SYMBOL_WARN
 
@@ -174,6 +180,10 @@ def mandatory_approval_reason(
         return blocked.replace("bash command blocked by sandbox: ", "blocked command — ")
     if is_git_write(cmd):
         return "git history changes always need approval"
+    # Known relative caches (.pytest_cache, .ruff_cache, …) — auto/yolo may proceed;
+    # supervised still prompts via ApprovalMode.APPROVE, not this mandatory gate.
+    if is_benign_cache_delete(cmd):
+        return None
     if _MANDATORY_BASH.search(cmd):
         if _PACKAGE_INSTALL.search(cmd):
             return "package installs always need approval"

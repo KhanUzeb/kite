@@ -32,6 +32,7 @@ def test_thinking_expanded_by_default() -> None:
     display(Event("stream_end", payload={}))
     out = strip_ansi(buf.getvalue())
     assert "visible by default" in out
+    display.close()
 
 
 def test_thinking_collapses_to_summary_when_disabled() -> None:
@@ -44,6 +45,7 @@ def test_thinking_collapses_to_summary_when_disabled() -> None:
     assert "2 lines" in out
     assert "ctrl+t" in out.lower()
     assert display.state.last_thinking.strip()
+    display.close()
 
 
 def test_thinking_expanded_streams_content() -> None:
@@ -53,6 +55,7 @@ def test_thinking_expanded_streams_content() -> None:
     display(Event("stream_end", payload={}))
     out = strip_ansi(buf.getvalue())
     assert "visible trace" in out
+    display.close()
 
 
 def test_approval_panel_uses_left_bar_layout() -> None:

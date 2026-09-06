@@ -8,7 +8,12 @@ import pytest
 
 from kite.config import GuardrailConfig
 from kite.guardrails import GuardrailPolicy
-from kite.guardrails.sandbox import check_dangerous, cwd_in_trusted, workspace_root
+from kite.guardrails.sandbox import (
+    check_dangerous,
+    cwd_in_trusted,
+    is_benign_cache_delete,
+    workspace_root,
+)
 
 
 def test_blocks_dangerous_bash() -> None:
@@ -18,6 +23,34 @@ def test_blocks_dangerous_bash() -> None:
     assert check_dangerous("git push --force")
     assert not check_dangerous("git status")
     assert not check_dangerous("git commit -m 'ok'")
+
+
+def test_relative_cache_deletes_not_hard_blocked() -> None:
+    for cmd in (
+        "rmdir /s /q .pytest_cache",
+        r"rmdir /s /q .\.pytest_cache",
+        'powershell -Command "Remove-Item -Recurse -Force .pytest_cache"',
+        "Remove-Item -Recurse -Force .ruff_cache",
+        "rm -rf .pytest_cache .ruff_cache",
+    ):
+        assert not check_dangerous(cmd), cmd
+        assert is_benign_cache_delete(cmd), cmd
+
+
+def test_absolute_recursive_deletes_still_hard_blocked() -> None:
+    assert check_dangerous(r"rmdir /s /q C:\Windows\Temp")
+    assert check_dangerous(r'Remove-Item -Recurse -Force C:\Users')
+    assert check_dangerous("rmdir /s /q /etc")
+    assert not is_benign_cache_delete(r"rmdir /s /q C:\Windows\Temp")
+    assert not is_benign_cache_delete("rm -rf src")
+
+
+def test_guardrail_policy_allows_relative_cache_delete(workspace: Path) -> None:
+    policy = GuardrailPolicy(GuardrailConfig(), workspace)
+    v = policy.check_bash(r'powershell -Command "Remove-Item -Recurse -Force .pytest_cache"')
+    assert v.allowed, v.reason
+    v2 = policy.check_bash("rmdir /s /q .ruff_cache")
+    assert v2.allowed, v2.reason
 
 
 def test_cwd_in_trusted_subtree(workspace: Path) -> None:
