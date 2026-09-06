@@ -246,6 +246,11 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 | `submit` | Structured completion — `message` with Done / Changed / Verification sections (preferred over bash echo marker) |
 | `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` |
 | `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |
+| `websearch` | DuckDuckGo search (no API key); unwraps redirect links; deduped results |
+| `webfetch` | Fetch one URL → extracted readable text + title (HTML stripped; JSON pretty-print) |
+| `webcrawl` | Same-origin multi-page crawl with depth/page limits |
+
+Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `websearch` → pick URL → `webfetch`.
 
 `KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable notes.
 
