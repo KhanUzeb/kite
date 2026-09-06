@@ -5,9 +5,9 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
-[![Version](https://img.shields.io/badge/version-0.9.2-cyan.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.3-cyan.svg)](CHANGELOG.md)
 
-**Version:** 0.9.2
+**Version:** 0.9.3
 
 **Keywords:** coding agent, AI code assistant, terminal coding assistant, agent CLI, SWE-agent style loop, repository automation, code review automation
 

@@ -4,6 +4,16 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-09-06
+
+### Fixed
+- **False "work complete" on task requests** — assistant replies like `Hey! 👋` no longer auto-submit; only the **user's** casual turn (hi/thanks/short Q&A) may end in text-only submit.
+- Footer **running line** clears on `agent_end` so idle chrome does not show `working · 1 task` after completion.
+
+### Changed
+- System prompt + `CONTEXT.md` + `docs/cli-ux.md` document the completion decision table (user intent vs model reply).
+- `_is_casual_user_turn` recognizes `hi kite` and task keywords (`test`, `lower`, `can you`, …).
+
 ## [0.9.2] - 2026-09-06
 
 ### Added

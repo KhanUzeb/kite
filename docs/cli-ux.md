@@ -1,7 +1,7 @@
 # Kite CLI UX
 
 **Agent:** kite
-**Version:** 0.9.2
+**Version:** 0.9.3
 **Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
@@ -88,7 +88,16 @@ While a turn is running the composer stays pinned (placeholder: `add a follow-up
 
 **Durable memory:** MEMORY.md and episodic sqlite are **opt-in** per session (`/remember`, `/memory`, or the `memory` tool). Default runs do not inject them unless `[memory] inject = "always"` in runtime config.
 
-**Completion discipline:** build mode finishes with the **`submit`** tool (`message` with Done / Changed / Verification) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` in bash (or a short casual chat like "hi" with no edits). Prose-only "I'm done" after file changes is blocked (`submit_blocked` event). Footer shows live **`verification_status`** (e.g. `unverified edits`) during the run; urgent states also flash briefly (~8s). After 2 idle no-tool turns the run stalls — **except** when verification is `changed_unverified`, in which case Kite nudges with a suggested check command instead of stalling. Waiting on an approval prompt is not an idle turn. While approval is pending, the toolbar shows **`[a] once · [n] deny · [q] stop`** (session/always keys when not mandatory) — not queue/steer hints. Successful submit shows **work complete**; partial verification shows a warning banner.
+**Completion discipline:** build mode finishes with the **`submit`** tool (`message` with Done / Changed / Verification) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` in bash. **Casual chat only:** when the **user's** last message was hi/thanks/short Q&A, a text-only assistant reply ends the turn (`✓ work complete`). Task requests never complete on a greeting-only reply — the harness idle-nudges instead.
+
+| User last said | Model replies (no tools) | Result |
+|----------------|--------------------------|--------|
+| `hi`, `thanks`, short Q&A | friendly text | turn ends |
+| code task (`fix tests`, …) | `Hey! 👋` only | idle nudge — keep working |
+| code task + edits | prose "done" without checks | `submit_blocked` / verify nudge |
+| code task | 2 idle turns | **Stalled** |
+
+Prose-only "I'm done" after file changes is blocked (`submit_blocked` event). Footer shows live **`verification_status`** (e.g. `unverified edits`) during the run; urgent states also flash briefly (~8s). After 2 idle no-tool turns the run stalls — **except** when verification is `changed_unverified`, in which case Kite nudges with a suggested check command instead of stalling. Waiting on an approval prompt is not an idle turn. While approval is pending, the toolbar shows **`[a] once · [n] deny · [q] stop`** (session/always keys when not mandatory) — not queue/steer hints. Successful submit shows **work complete**; partial verification shows a warning banner.
 
 **Cost warnings:** at ~80% of the turn budget, a warning appears on the footer flash while the composer is pinned (no mid-turn scrollprint).
 
