@@ -70,10 +70,24 @@ def _read_toml(path: Path) -> dict:
         return {}
 
 
+def _is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def _is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
 def _ecosystems_at(directory: Path) -> frozenset[str]:
     found: set[str] = set()
     for eco, markers in PACKAGE_MARKERS.items():
-        if any((directory / marker).is_file() for marker in markers):
+        if any(_is_file(directory / marker) for marker in markers):
             found.add(eco)
     return frozenset(found)
 
@@ -238,7 +252,10 @@ def _scan_packages(workspace: Path, user_packages: dict[str, dict[str, str]]) ->
                     lint_command=lint_cmd,
                 )
             )
-            seen_roots.add(directory.resolve())
+            try:
+                seen_roots.add(directory.resolve())
+            except OSError:
+                pass
         if depth >= _MAX_SCAN_DEPTH:
             continue
         try:
@@ -246,9 +263,13 @@ def _scan_packages(workspace: Path, user_packages: dict[str, dict[str, str]]) ->
         except OSError:
             continue
         for entry in entries:
-            if not entry.is_dir() or entry.name in SKIP_DIRS or entry.name.startswith("."):
+            if not _is_dir(entry) or entry.name in SKIP_DIRS or entry.name.startswith("."):
                 continue
-            if entry.resolve() in seen_roots:
+            try:
+                resolved = entry.resolve()
+            except OSError:
+                continue
+            if resolved in seen_roots:
                 continue
             queue.append((entry, depth + 1))
     found.sort(key=lambda p: len(p.root))
