@@ -19,11 +19,17 @@ def active_task_count(state: SessionUiState) -> int:
 def format_running_status(state: SessionUiState) -> str:
     if not state.busy or not state.running_label:
         return ""
+    import time
+
+    from kite.ui.animations import loader_glyph
+
     ts = state.running_since or "—"
     label = state.running_label
     if len(label) > 72:
         label = label[:69] + "…"
-    return f"[{ts}] {label}  running"
+    tick = int(time.monotonic() * 10)
+    spin = loader_glyph("spin", tick)
+    return f"{spin} [{ts}] {label}  running"
 
 
 def format_metrics_tail(state: SessionUiState) -> str:
@@ -74,7 +80,7 @@ def status_context_parts(state: SessionUiState) -> list[str]:
     if state.git_branch:
         parts.append(state.git_branch)
     if state.awaiting_approval:
-        bits.insert(0, f"approve {state.awaiting_approval}")
+        parts.insert(0, f"approve {state.awaiting_approval}")
     if state.busy:
         parts.append("working")
         tasks = active_task_count(state)

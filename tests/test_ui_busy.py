@@ -73,3 +73,51 @@ def test_verification_status_updates_state() -> None:
     display(Event("verification_status", payload={"status": "changed_unverified"}))
     assert state.verification_status == "changed_unverified"
     assert "verification" in state.flash
+
+
+def test_spin_while_busy_updates_toolbar_not_stderr_spinner() -> None:
+    """Pinned composer owns the bottom line — stderr WaitSpinner must not run."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from kite.ui.render import RunDisplay
+    from kite.ui.style import KITE_THEME
+
+    state = SessionUiState(busy=True)
+    console = Console(file=StringIO(), width=80, force_terminal=True, theme=KITE_THEME)
+    display = RunDisplay(console, state=state, quiet=False)
+    display._spin(True, "thinking")
+    assert display._spinner_on is False
+    assert state.running_label == "thinking"
+    display._spin(True, "working  read")
+    assert display._spinner_on is False
+    assert state.running_label == "working  read"
+
+
+def test_spin_while_busy_stops_existing_spinner() -> None:
+    from io import StringIO
+    from unittest.mock import MagicMock
+
+    from rich.console import Console
+
+    from kite.ui.render import RunDisplay
+    from kite.ui.style import KITE_THEME
+
+    state = SessionUiState(busy=True)
+    console = Console(file=StringIO(), width=80, force_terminal=True, theme=KITE_THEME)
+    display = RunDisplay(console, state=state, quiet=False)
+    display._spinner = MagicMock()
+    display._spinner_on = True
+    display._spin(True, "thinking")
+    display._spinner.stop.assert_called()
+    assert display._spinner_on is False
+
+
+def test_status_tail_with_awaiting_approval_does_not_crash() -> None:
+    from kite.ui.status import format_status_tail
+
+    state = SessionUiState(busy=True, awaiting_approval="bash", provider="groq", model="x")
+    tail = format_status_tail(state)
+    assert "approve bash" in tail
+    assert "working" in tail

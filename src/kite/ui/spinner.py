@@ -16,7 +16,13 @@ from kite.ui.animations import (
 
 
 class WaitSpinner:
-    """Animated loader on stderr after brief idle. Never stay silent."""
+    """Animated loader on stderr after brief idle. Never stay silent.
+
+    Writes to the live ``sys.stderr`` each frame so ``patch_stdout`` (which
+    redirects stderr while the composer is pinned) can place text above the
+    prompt. Prefer disabling this spinner while ``state.busy`` — the toolbar
+    owns activity chrome then.
+    """
 
     def __init__(
         self,
@@ -27,7 +33,7 @@ class WaitSpinner:
         style: str | None = None,
         shimmer: bool = True,
     ):
-        self.stream = stream or sys.stderr
+        self._stream = stream
         self.delay = delay
         self._delay_active = delay
         self.label = label
@@ -40,6 +46,14 @@ class WaitSpinner:
         self._stop = threading.Event()
         self._shown = False
         self._thread: threading.Thread | None = None
+
+    @property
+    def stream(self) -> TextIO:
+        return self._stream if self._stream is not None else sys.stderr
+
+    @stream.setter
+    def stream(self, value: TextIO | None) -> None:
+        self._stream = value
 
     def kick(self, label: str | None = None, *, fast: bool = False) -> None:
         with self._lock:
