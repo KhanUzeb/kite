@@ -71,7 +71,7 @@ def run_compaction(
     meta: dict[str, Any] | None = None,
     checkpoint_before: bool = True,
     checkpoint_ratio: float = 0.72,
-    compact_ratio: float = 0.80,
+    compact_ratio: float = 0.75,
     compaction_llm_ratio: float = 0.92,
 ) -> CompactionRunResult:
     usage = estimate_usage(system=system, messages=messages, tool_schemas=tool_schemas, window=window)

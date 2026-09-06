@@ -143,7 +143,7 @@ def estimate_usage(
     )
 
 
-DEFAULT_COMPACT_RATIO = 0.80
+DEFAULT_COMPACT_RATIO = 0.75
 
 
 def should_compact(
