@@ -55,6 +55,10 @@ def _exit_msg(status: str, *, content: str | None = None, submission: str = "", 
 
 
 _MAX_IDLE_TURNS = 2
+# Completion contract (interactive build):
+# - Text-only submit: only when the USER's last turn was casual (_is_casual_user_turn).
+# - Assistant greetings ("Hey!") never submit on their own — idle nudge instead.
+# - After _MAX_IDLE_TURNS with no tools on a task → Stalled (unless changed_unverified → verify nudge).
 # Terse on purpose — these user nudges are re-injected into the model context.
 _IDLE_NUDGE = (
     "No tool calls. Use tools or submit with the `submit` action or "
@@ -94,19 +98,53 @@ _CASUAL_CHAT = frozenset(
 )
 
 
-def _is_casual_chat(content: str) -> bool:
-    """Short greetings / thanks — may end in chat without the formal submit marker."""
+_TASK_HINTS = (
+    "fix",
+    "implement",
+    "add",
+    "create",
+    "refactor",
+    "debug",
+    "build",
+    "write",
+    "update",
+    "test",
+    "tests",
+    "lower",
+    "reduce",
+    "remove",
+    "delete",
+    "fewer",
+    "less",
+    "run",
+    "change",
+    "help me",
+    "can you",
+    "could you",
+)
+
+
+def _is_casual_user_turn(content: str) -> bool:
+    """User said hi/thanks or a short non-task question — prose may end the turn."""
     text = content.strip().lower()
     if not text or len(text) > 200:
         return False
     normalized = text.rstrip("!?. ")
     if normalized in _CASUAL_CHAT:
         return True
+    first = normalized.split()[0] if normalized.split() else ""
+    if first in _CASUAL_CHAT and len(normalized.split()) <= 4:
+        return True
+    if any(h in text for h in _TASK_HINTS):
+        return False
     if len(text) < 80 and text.endswith("?"):
-        task_verbs = ("fix", "implement", "add", "create", "refactor", "debug", "build", "write", "update")
-        if not any(v in text for v in task_verbs):
-            return True
+        return True
     return False
+
+
+def _is_casual_chat(content: str) -> bool:
+    """Alias — casual detection applies to user turns only (see _allow_text_submit)."""
+    return _is_casual_user_turn(content)
 
 
 def _is_injected_nudge(content: str) -> bool:
@@ -145,10 +183,8 @@ def _allow_text_submit(
         return True
     if not interactive:
         return False
-    if _is_casual_chat(content):
-        return True
-    # Greeting/thanks from the user → allow a normal prose reply without idle nudge.
-    return bool(last_user and _is_casual_chat(last_user))
+    # Only the *user* turn decides casual chat — never treat assistant "Hey!" as submit.
+    return bool(last_user and _is_casual_user_turn(last_user))
 
 
 def _user_interrupt() -> Interrupted:

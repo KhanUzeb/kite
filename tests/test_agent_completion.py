@@ -48,8 +48,11 @@ class _StubEnv:
 
 def test_casual_chat_detection() -> None:
     assert _is_casual_chat("hi")
+    assert _is_casual_chat("hi kite")
     assert _is_casual_chat("Thanks!")
     assert not _is_casual_chat("I finished the refactor and everything works now.")
+    assert not _is_casual_chat("lower number of tests")
+    assert not _is_casual_chat("can you lower the number of tests but without breaking functionality")
 
 
 def test_build_interactive_blocks_task_prose_submit() -> None:
@@ -58,7 +61,18 @@ def test_build_interactive_blocks_task_prose_submit() -> None:
         mode=AgentMode.BUILD,
         interactive=True,
     )
-    assert _allow_text_submit("hi", mode=AgentMode.BUILD, interactive=True)
+    assert _allow_text_submit(
+        "Hey! 👋",
+        mode=AgentMode.BUILD,
+        interactive=True,
+        last_user="hi",
+    )
+    assert not _allow_text_submit(
+        "Hey! 👋",
+        mode=AgentMode.BUILD,
+        interactive=True,
+        last_user="lower number of tests",
+    )
     assert _allow_text_submit(
         "Hey! I'm Kite — ready to help.",
         mode=AgentMode.BUILD,
@@ -71,6 +85,28 @@ def test_build_interactive_blocks_task_prose_submit() -> None:
         interactive=True,
         last_user="delete the pytest cache",
     )
+
+
+def test_greeting_only_reply_does_not_submit_on_task_request() -> None:
+    model = _TextOnlyModel("Hey! 👋")
+    agent = DefaultAgent(
+        model,
+        _StubEnv(),
+        interactive=True,
+        mode=AgentMode.BUILD,
+        provider_max_retries=1,
+    )
+    agent.messages = [{"role": "user", "content": "lower number of tests"}]
+    agent.execute_actions(
+        {
+            "role": "assistant",
+            "content": model.content,
+            "extra": {"actions": []},
+        }
+    )
+    assert agent._consecutive_no_tool_turns == 1
+    blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
+    assert "No tool calls" in blob
 
 
 def test_greeting_reply_submits_without_idle_nudge() -> None:
@@ -115,9 +151,7 @@ def test_interactive_build_does_not_early_submit_on_prose() -> None:
         mode=AgentMode.BUILD,
         provider_max_retries=1,
     )
-    with pytest.raises(Submitted):
-        agent.execute_actions({"role": "assistant", "content": "hi", "extra": {"actions": []}})
-    # task-like prose should block the claim, not submit
+    agent.messages = [{"role": "user", "content": "run the test suite"}]
     agent.execute_actions(
         {"role": "assistant", "content": "All tests pass. Task complete.", "extra": {"actions": []}}
     )

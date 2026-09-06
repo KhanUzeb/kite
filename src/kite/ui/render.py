@@ -866,6 +866,7 @@ class RunDisplay:
         self._end_stream_line()
         self._spin(False)
         self.state.budget_limit = None
+        self.state.clear_running()
         self._touch_state()
         self._render_agent_end_status(p)
         self.print_status()
