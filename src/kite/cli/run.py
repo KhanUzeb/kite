@@ -174,6 +174,12 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"[kite.pending]provider fault[/] — session saved. "
             f"[kite.muted]retry: kite resume {sid} \"continue\"[/]"
         )
+    elif result.get("exit_status") in {"LimitsExceeded", "TimeExceeded"}:
+        detail = result.get("submission") or result.get("content") or result.get("exit_status")
+        console.print(
+            f"[kite.pending]budget pause[/] — {detail}. "
+            f"[kite.muted]continue: kite resume {sid} \"continue\"[/]"
+        )
     elif result.get("exit_status") == "Error":
         console.print(f"[red]{result.get('error')}[/]")
         if result.get("traceback"):

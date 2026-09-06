@@ -354,13 +354,19 @@ class RunDisplay:
     def _spin(self, on: bool, label: str = "thinking") -> None:
         if on and not self.quiet:
             self._anim_tick += 1
+            if self.state.busy:
+                # Composer owns the bottom of the screen — keep activity in the
+                # toolbar only. stderr WaitSpinner \r frames overwrite the prompt.
+                if self._spinner_on:
+                    self._spinner.stop()
+                    self._spinner_on = False
+                self.state.set_running(label=label, kind="model")
+                return
             fast = label.startswith(("working", "subagent", "preparing"))
             if not self._spinner_on:
                 self._spinner.start()
                 self._spinner_on = True
             self._spinner.kick(label, fast=fast)
-            if self.state.busy:
-                self.state.set_running(label=label, kind="model")
         else:
             if self._spinner_on:
                 self._spinner.stop()
@@ -819,9 +825,24 @@ class RunDisplay:
             self.state.last_trace = trace
             self.console.print(render_error(err, traceback_text=trace))
             return
-        if status in {"LimitsExceeded", "TimeExceeded", "RepeatedFormatError"}:
+        if status == "RepeatedFormatError":
             detail = str(p.get("submission") or p.get("content") or status)
             self.console.print(render_error(f"{status}: {detail}", show_trace_hint=False))
+            return
+        if status in {"LimitsExceeded", "TimeExceeded"}:
+            detail = str(p.get("submission") or p.get("content") or "").strip()
+            if detail.lower() in {"", status.lower()}:
+                detail = "step or cost budget reached" if status == "LimitsExceeded" else "wall-clock limit reached"
+            label = "paused — budget reached" if status == "LimitsExceeded" else "paused — time limit"
+            line = Text()
+            line.append(f"{GUTTER}{SYMBOL_WARN} ", style="kite.pending")
+            line.append(label, style="kite.pending bold")
+            line.append(f"  ·  {detail[:120]}", style="kite.muted")
+            line.append("\n")
+            line.append(f"{GUTTER}{SYMBOL_OK} ", style="kite.success")
+            line.append("session saved — send another message to continue", style="kite.success")
+            line.append("\n")
+            self.console.print(line)
             return
         self.console.print(render_error(str(status), show_trace_hint=False))
 

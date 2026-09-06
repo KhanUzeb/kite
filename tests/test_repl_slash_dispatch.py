@@ -128,3 +128,28 @@ def test_slash_models_refresh(session: ChatSession) -> None:
     assert seen[-1] == ""
     assert session._handle_slash("/model refresh groq") is True
     assert seen[-1] == "groq"
+
+
+def test_slash_compact_accepts_dispatch_arg(session: ChatSession) -> None:
+    """Slash dispatch always passes arg; /compact must not TypeError."""
+    called: list[str] = []
+
+    def fake_compact(arg: str = "") -> None:
+        called.append(arg)
+
+    session._compact_now = fake_compact  # type: ignore[method-assign]
+    assert session._handle_slash("/compact") is True
+    assert called == [""]
+
+
+def test_zero_arg_slash_handlers_accept_empty_arg(session: ChatSession) -> None:
+    """Handlers registered in _slash_handlers must accept the dispatch arg."""
+    handlers = session._slash_handlers()
+    for name in ("compact", "keys", "clip", "attachments", "semantic", "episodic"):
+        fn = handlers[name]
+        # Bound method or wrapper — must accept one str without TypeError.
+        import inspect
+
+        sig = inspect.signature(fn)
+        params = [p for p in sig.parameters.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+        assert len(params) >= 1, f"/{name} handler {fn} must accept arg"

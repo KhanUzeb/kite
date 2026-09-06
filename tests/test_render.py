@@ -193,3 +193,31 @@ def test_failed_verification_still_warns() -> None:
     out = buf.getvalue()
     assert "artifacts  failed" in out
     assert "couldn't fully verify" in out
+
+
+def test_limits_exceeded_is_soft_pause_with_continue_hint() -> None:
+    buf, display = _display()
+    display(
+        Event(
+            "agent_end",
+            payload={
+                "exit_status": "LimitsExceeded",
+                "content": "step budget 40/40",
+                "submission": "steps",
+                "limit_kind": "steps",
+                "steps": 40,
+                "step_limit": 40,
+            },
+        )
+    )
+    out = buf.getvalue().lower()
+    assert "limits exceeded: limits exceeded" not in out
+    assert "budget" in out or "paused" in out
+    assert "continue" in out
+
+
+def test_time_exceeded_is_soft_pause_with_continue_hint() -> None:
+    buf, display = _display()
+    display(Event("agent_end", payload={"exit_status": "TimeExceeded", "content": "wall clock limit"}))
+    out = buf.getvalue().lower()
+    assert "continue" in out
