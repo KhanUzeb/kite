@@ -73,6 +73,8 @@ def status_context_parts(state: SessionUiState) -> list[str]:
         parts.append(f"agents {state.active_subagents}")
     if state.git_branch:
         parts.append(state.git_branch)
+    if state.awaiting_approval:
+        bits.insert(0, f"approve {state.awaiting_approval}")
     if state.busy:
         parts.append("working")
         tasks = active_task_count(state)

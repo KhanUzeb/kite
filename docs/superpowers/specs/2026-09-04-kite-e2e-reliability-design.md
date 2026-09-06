@@ -143,7 +143,7 @@ Verification is part of the interface: a machine-readable definition of success 
 
 ### 5.1 Problem today
 
-`VerificationCollector` treats “any edit → need a pytest-shaped passing command.” HTML-only edits get nudged/blocked toward pytest. Application `EvidenceVerifier` exists but is not the production gate. **Train 2** lands plan/record types and pure selection helpers; **train 5** wires them as the live submit gate and evidence ledger.
+**Train 5 contract (landed):** `VerificationCollector` uses artifact-aware `VerificationPlan` + `EvidenceVerifier`; **`submit`** tool and submit gate block claims without evidence. **Train 6 (partial):** `ToolExecutor` in production loop; structured submit; repo map; replay acceptance.
 
 ### 5.2 Types
 

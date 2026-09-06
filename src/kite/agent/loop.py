@@ -10,6 +10,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
+from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.events import Event
 from kite.agent.exceptions import (
     FormatError,
@@ -20,13 +21,13 @@ from kite.agent.exceptions import (
     Submitted,
     TimeExceeded,
 )
-from kite.models.retry import is_transient_provider_error, retry_delay_s
-from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.loop_guard import LoopGuard
+from kite.agent.mode import MUTATING_TOOLS, PARALLEL_SAFE_TOOLS, AgentMode, ApprovalMode
 from kite.agent.verification import VerificationCollector
-from kite.memory.session import Session
-from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode, PARALLEL_SAFE_TOOLS
+from kite.application.verification.collector_ops import looks_like_test
 from kite.guardrails.sandbox import is_inspection_bash
+from kite.memory.session import Session
+from kite.models.retry import is_transient_provider_error, retry_delay_s
 from kite.prompts import load_prompt_template
 
 try:
@@ -53,15 +54,15 @@ def _exit_msg(status: str, *, content: str | None = None, submission: str = "", 
     }
 
 
-_MAX_IDLE_TURNS = 4
+_MAX_IDLE_TURNS = 2
 # Terse on purpose — these user nudges are re-injected into the model context.
 _IDLE_NUDGE = (
-    "No tool calls. Use tools or submit:\n"
+    "No tool calls. Use tools or submit with the `submit` action or "
     "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
 )
 _IDLE_STALL = (
-    "Stopped after {turns} idle turns (token protection). "
-    "Use tools, then: echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+    "Stopped after {turns} idle turns — need a concrete next step or clarification. "
+    "Use tools, submit with evidence, or ask what to do next."
 )
 _TOOL_FAIL_STREAK_NUDGE_AFTER = 3
 _TOOL_FAIL_NUDGE = (
@@ -162,6 +163,7 @@ class DefaultAgent:
         send_images: bool = True,
         verification: VerificationCollector | None = None,
         audit=None,
+        tool_executor=None,
         tool_progress_interval_seconds: float = 5.0,
         verify_before_submit: bool = True,
         loop_hard_threshold: int = 5,
@@ -202,6 +204,7 @@ class DefaultAgent:
         self._task = ""
         self.verification = verification or VerificationCollector()
         self.audit = audit
+        self.tool_executor = tool_executor
         self.tool_progress_interval_seconds = tool_progress_interval_seconds
         self.verify_before_submit = verify_before_submit
         self.long_task = long_task
@@ -209,6 +212,7 @@ class DefaultAgent:
         self.provider_max_retries = max(1, int(provider_max_retries))
         self.cancel = cancel
         self._cost_warned = False
+        self._last_verification_status: str | None = None
 
         self.messages: list[dict] = []
         self.cost = 0.0
@@ -670,7 +674,7 @@ class DefaultAgent:
             return False
         if tool == "bash":
             cmd = str(args.get("command") or "")
-            if self.verification._looks_like_test(cmd):
+            if looks_like_test(cmd):
                 return True
             if is_inspection_bash(cmd):
                 return False
@@ -787,6 +791,10 @@ class DefaultAgent:
             existing = str(out.get("output") or out.get("error") or "")
             out = {**out, "output": f"{loop.warning}\n\n{existing}".strip(), "loop_warning": True}
         self.verification.on_tool_end(tool, args, out)
+        vstatus = self.verification.status()
+        if vstatus != self._last_verification_status:
+            self._last_verification_status = vstatus
+            self._emit("verification_status", status=vstatus, summary=self.verification.summary())
         if out.get("blocked"):
             pass
         else:
@@ -816,7 +824,12 @@ class DefaultAgent:
         outputs.append(out)
 
     def _run_gated(self, tool: str, args: dict, action: dict) -> dict:
-        if self.approver and tool in MUTATING_TOOLS:
+        if self.tool_executor is not None:
+            return self._run_gated_via_executor(tool, args, action)
+        from kite.application.tools.effects import tool_requires_approval_gate
+
+        needs_gate = tool in MUTATING_TOOLS or tool_requires_approval_gate(tool, args)
+        if self.approver and needs_gate:
             extra = {"reason": args.get("reason") or "", "diff": ""}
             if tool in {"write", "edit"}:
                 extra["diff"] = self._preview_diff(tool, args)
@@ -828,6 +841,86 @@ class DefaultAgent:
             if decision == "deny":
                 return _blocked("denied by user")
         return self._execute_with_progress(tool, action)
+
+    def _tool_result_to_dict(self, tr) -> dict:
+        out: dict = {
+            "ok": tr.ok,
+            "output": tr.output,
+            "error": tr.error or "",
+            "blocked": tr.status == "denied",
+        }
+        if tr.changed_paths:
+            out["changed_paths"] = list(tr.changed_paths)
+        for key, value in (tr.metadata or {}).items():
+            if key == "run_context":
+                continue
+            out[key] = value
+        return out
+
+    def _run_gated_via_executor(self, tool: str, args: dict, action: dict) -> dict:
+        import uuid
+
+        from kite.agent.exceptions import InterruptAgentFlow
+        from kite.application.tools.contracts import ToolCall
+
+        call = ToolCall(call_id=str(uuid.uuid4()), name=tool, arguments=dict(args))
+        policy = self.tool_executor.policy
+        intent = policy.derive_intent(call)
+        decision = policy.authorize(intent)
+        if not decision.allowed:
+            return _blocked(decision.reason or "denied by policy")
+
+        if decision.requires_approval and self.approver:
+            extra = {"reason": str(args.get("reason") or decision.reason or ""), "diff": ""}
+            if tool in {"write", "edit"}:
+                extra["diff"] = self._preview_diff(tool, args)
+            self._emit("approval", tool=tool, arguments=args, **extra)
+            approval_decision = self.approver(tool, args, extra)
+            if approval_decision == "stop":
+                self.request_interrupt()
+                return _blocked("stopped by user")
+            if approval_decision == "deny":
+                return _blocked("denied by user")
+
+        holder: dict = {}
+        error: list[BaseException] = []
+        done = threading.Event()
+
+        def worker() -> None:
+            try:
+                holder["tr"] = self.tool_executor.execute(
+                    call,
+                    {"action": action},
+                    skip_approval=True,
+                )
+            except BaseException as exc:
+                error.append(exc)
+            finally:
+                done.set()
+
+        threading.Thread(target=worker, daemon=True).start()
+        start = time.monotonic()
+        interval = max(0.5, float(self.tool_progress_interval_seconds))
+        while not done.wait(timeout=interval):
+            if self._interrupt and self.cancel is not None:
+                self.cancel.request()
+            elapsed = int(time.monotonic() - start)
+            hint = ""
+            if tool == "bash":
+                cmd = str(args.get("command") or "").strip().splitlines()
+                if cmd:
+                    preview = cmd[0][:48]
+                    hint = f" — {preview}{'…' if len(cmd[0]) > 48 else ''}"
+            self._emit("tool_progress", tool=tool, elapsed_s=elapsed, hint=hint)
+        if error:
+            exc = error[0]
+            if isinstance(exc, InterruptAgentFlow):
+                raise exc
+            raise exc
+        tr = holder["tr"]
+        if tr.status == "denied":
+            return _blocked(tr.error or "denied")
+        return self._tool_result_to_dict(tr)
 
     def _execute_with_progress(self, tool: str, action: dict) -> dict:
         result: dict[str, dict] = {}

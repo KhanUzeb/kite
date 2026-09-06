@@ -6,7 +6,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from kite.application.tools.contracts import PolicyDecision, ToolCall, ToolIntent, side_effects_for
+from kite.application.tools.contracts import PolicyDecision, ToolCall, ToolIntent
+from kite.application.tools.effects import MANDATORY_EFFECTS, derive_effects, mandatory_reason
 from kite.guardrails.sandbox import is_inside, protected_roots, resolve_in_workspace
 
 POLICY_VERSION = "0.9.0"
@@ -61,7 +62,7 @@ class PolicyEngine:
         self.policy_version = POLICY_VERSION
 
     def derive_intent(self, call: ToolCall) -> ToolIntent:
-        effects = side_effects_for(call.name)
+        effects = derive_effects(call)
         targets: list[str] = []
         args = dict(call.arguments)
         for key in ("path", "file_path", "target", "command"):
@@ -82,30 +83,32 @@ class PolicyEngine:
         )
 
     def authorize(self, intent: ToolIntent) -> PolicyDecision:
+        mandatory = mandatory_reason(
+            intent.side_effects,
+            tool=intent.tool,
+            args=intent.normalized_arguments,
+        )
         if self.no_guardrails:
             return PolicyDecision(
                 allowed=True,
                 reason="guardrails disabled",
                 requires_approval=True,
+                mandatory=bool(mandatory),
                 policy_version=self.policy_version,
                 scope="global",
             )
 
-        if self.execution_mode == "restricted" and "process_control" in intent.side_effects:
+        if self.execution_mode == "restricted" and "network" in intent.side_effects:
             if intent.tool == "bash":
-                cmd = str(intent.normalized_arguments.get("command", ""))
-                if cmd.strip().startswith("cd ") and "&&" not in cmd:
-                    pass  # cwd-only cd is ok for inspection
-                elif any(tok in cmd for tok in ("curl", "wget", "nc ", "ssh ")):
-                    return PolicyDecision(
-                        allowed=False,
-                        reason="network command blocked in restricted mode",
-                        policy_version=self.policy_version,
-                    )
+                return PolicyDecision(
+                    allowed=False,
+                    reason="network command blocked in restricted mode",
+                    policy_version=self.policy_version,
+                )
 
         for target in intent.canonical_targets:
             if intent.tool in ("read", "write", "edit", "grep", "glob", "ls") or "path" in intent.normalized_arguments:
-                write = intent.tool in ("write", "edit")
+                write = intent.tool in ("write", "edit", "apply_patch")
                 ok, reason = check_path_access(
                     target,
                     self.workspace,
@@ -115,12 +118,14 @@ class PolicyEngine:
                 if not ok:
                     return PolicyDecision(allowed=False, reason=reason, policy_version=self.policy_version)
 
-        requires_approval = any(
-            e in intent.side_effects for e in ("workspace_write", "external_write", "process_control", "network")
+        requires_approval = any(e in intent.side_effects for e in MANDATORY_EFFECTS) or any(
+            e in intent.side_effects for e in ("workspace_write", "long_running")
         )
         return PolicyDecision(
             allowed=True,
             requires_approval=requires_approval,
+            mandatory=bool(mandatory),
+            reason=mandatory or "",
             policy_version=self.policy_version,
             scope=intent.tool,
         )

@@ -121,6 +121,7 @@ def make_coding_tools(
             "webcrawl",
             "subagent",
             "memory",
+            "submit",
         ]
     )
     skill_by_name = {s.name: s for s in (skills or [])}
@@ -589,6 +590,19 @@ def make_coding_tools(
         assert target is not None
         return {"ok": True, "cwd": str(target), "output": f"cwd → {target}"}
 
+    def submit_task(args: dict[str, Any]) -> dict[str, Any]:
+        """Structured completion — preferred over echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT."""
+        message = str(
+            args.get("message") or args.get("content") or args.get("submission") or ""
+        ).strip()
+        if not message:
+            return {
+                "ok": False,
+                "error": "message required — structured summary with Done/Changed/Verification sections",
+                "output": "message required",
+            }
+        return {"ok": True, "submitted": True, "submission": message, "output": message}
+
     def memory_op(args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "list").lower()
         scope_raw = str(args.get("scope") or "user").lower()
@@ -921,6 +935,28 @@ def make_coding_tools(
                     },
                 },
                 execute_fn=lambda a: gated("subagent", a, subagent_run),
+            ),
+        ),
+        (
+            "submit",
+            Tool(
+                name="submit",
+                description=(
+                    "Finish a build-mode task with a structured summary. "
+                    "Use only after verification — include ## Done, ## Changed, and ## Verification sections. "
+                    "Preferred over `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "Structured final answer (Done / Changed / Verification / Notes)",
+                        },
+                    },
+                    "required": ["message"],
+                },
+                execute_fn=lambda a: gated("submit", a, submit_task),
             ),
         ),
         (

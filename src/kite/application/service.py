@@ -51,6 +51,10 @@ class ApplicationRunService:
         h = harness or Harness(config=config)
         if harness is not None:
             h.config = config
+        if deps.tool_executor is not None:
+            h.tool_executor = deps.tool_executor
+        if deps.policy_engine is not None:
+            h.policy_engine = deps.policy_engine
 
         unsubscribe = h.subscribe(bridge.wrap_listener())
         state.transition("awaiting_model")
@@ -63,25 +67,41 @@ class ApplicationRunService:
         exit_status = str(legacy.get("exit_status") or "")
         run_status, stop_reason = _map_exit_status(exit_status)
         state.transition(run_status)
+        return _build_run_result(state.value, stop_reason, run_id, legacy)
 
-        submission = str(legacy.get("submission") or "")
-        cost = float(legacy.get("cost") or legacy.get("usage", {}).get("cost", 0) or 0)
-        verification = dict(legacy.get("verification") or {})
-        usage = dict(legacy.get("usage") or {})
-        if cost and "cost" not in usage:
-            usage["cost"] = cost
 
-        changed = tuple(str(p) for p in legacy.get("changed_paths") or ())
+def _build_run_result(
+    status: str,
+    stop_reason: StopReason | None,
+    run_id: str,
+    legacy: dict[str, Any],
+) -> RunResult:
+    submission = str(legacy.get("submission") or "")
+    cost = float(legacy.get("cost") or legacy.get("usage", {}).get("cost", 0) or 0)
+    verification = dict(legacy.get("verification") or {})
+    usage = dict(legacy.get("usage") or {})
+    if cost and "cost" not in usage:
+        usage["cost"] = cost
 
-        return RunResult(
-            status=state.value,
-            stop_reason=stop_reason,
-            final_message=submission,
-            verification=verification,
-            usage=usage,
-            cost=cost,
-            changed_paths=changed,
-            context_snapshot_id=legacy.get("context_snapshot_id"),
-            trace_id=run_id,
-            legacy=legacy,
-        )
+    changed = tuple(str(p) for p in legacy.get("changed_paths") or ())
+    verification_status = str(legacy.get("verification_status") or verification.get("status") or "")
+    evidence_summary = dict(verification) if verification else {}
+    approval_reason = str(legacy.get("approval_reason") or legacy.get("blocked_reason") or "")
+    blocked_reason = str(legacy.get("submit_blocked") or legacy.get("blocked_reason") or "")
+
+    return RunResult(
+        status=status,
+        stop_reason=stop_reason,
+        final_message=submission,
+        verification=verification,
+        verification_status=verification_status,
+        evidence_summary=evidence_summary,
+        approval_reason=approval_reason,
+        blocked_reason=blocked_reason,
+        usage=usage,
+        cost=cost,
+        changed_paths=changed,
+        context_snapshot_id=legacy.get("context_snapshot_id"),
+        trace_id=run_id,
+        legacy=legacy,
+    )

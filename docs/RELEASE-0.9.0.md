@@ -10,9 +10,11 @@ compatibility adapters. Production chat still runs `Harness` → `AgentRuntime`
 ## Highlights
 
 - Canonical contracts for context, policy, persistence, model retries, evidence,
-  CLI results, and recorded replay (milestones A–H). Only behavior covered by
-  tests is treated as shipped; docs mark these as **adapters landed**, not a
-  full cutover.
+  CLI results, and recorded replay (milestones A–H).
+- **Production harness improvements** (post-release on `main`): `ToolExecutor`
+  wired into the agent loop; structured `submit` tool; git-ranked repo map;
+  `EvidenceVerifier` in the verification collector; `ReplayBundle` acceptance
+  criteria; live `verification_status` in the REPL footer.
 - Pinned busy composer: type a follow-up while a turn runs; `/tasks`; footer
   **tok/s** and **cache hit**.
 - Global skill library: install npm/git packs into `~/.kite/skills`, or
@@ -25,12 +27,12 @@ compatibility adapters. Production chat still runs `Harness` → `AgentRuntime`
 |-----------|------------|-------------------|
 | A | `RunSpec`, `EventEnvelope`, `ApplicationRunService`, CI matrix | Adapter + CI |
 | B | `ContextAssembler`, budgets, provenance | Adapter |
-| C | `PolicyEngine`, `ToolExecutor`, `ChangeJournal`, `ProcessRunner` | Adapter |
+| C | `PolicyEngine`, `ToolExecutor`, `ChangeJournal`, `ProcessRunner` | **Loop cutover** (guardrails bash layer retained) |
 | D | `SQLiteEventStore`, redaction, resume reconstruction | Adapter (JSONL still live) |
 | E | `ModelGateway`, typed retries, `BudgetLedger` | Adapter |
-| F | `EvidenceVerifier` from tool results only | Adapter |
-| G | `CliResult` exit codes, `ReplEventReducer` | Adapter (CLI/REPL still legacy) |
-| H | `ReplayBundle` recorded replay | Adapter |
+| F | `EvidenceVerifier` + artifact-aware collector | **Production submit gate** |
+| G | `CliResult` exit codes, `ReplEventReducer` | `ApplicationRunService` entry; legacy REPL events |
+| H | `ReplayBundle` + acceptance criteria | **Eval without live providers** |
 
 ## Skills
 

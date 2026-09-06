@@ -43,6 +43,19 @@ class ReplEventReducer:
             self.presentation.tool_active = ""
         elif kind == "cost":
             self.presentation.cost = float(payload.get("cost", self.presentation.cost))
+        elif kind == "verification_plan":
+            self.presentation.status = "verifying"
+        elif kind == "verification_record":
+            if not payload.get("ok", True):
+                self.presentation.errors.append(str(payload.get("output_summary", "verification failed")))
+        elif kind == "submit_blocked":
+            self.presentation.status = "blocked"
+            self.presentation.errors.append(str(payload.get("reason", "submit blocked")))
+        elif kind == "approval_request":
+            self.presentation.status = "awaiting_approval"
+        elif kind == "approval_decision":
+            if self.presentation.status == "awaiting_approval":
+                self.presentation.status = "running"
         elif kind == "error":
             self.presentation.errors.append(str(payload.get("message", payload)))
         return self.presentation

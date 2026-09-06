@@ -82,6 +82,10 @@ class RunResult:
     stop_reason: StopReason | None = None
     final_message: str = ""
     verification: dict[str, Any] = field(default_factory=dict)
+    verification_status: str = ""
+    evidence_summary: dict[str, Any] = field(default_factory=dict)
+    approval_reason: str = ""
+    blocked_reason: str = ""
     usage: dict[str, Any] = field(default_factory=dict)
     cost: float = 0.0
     changed_paths: tuple[str, ...] = ()

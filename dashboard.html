@@ -539,6 +539,7 @@
     async function refresh() {
       const refreshBtn = $('refresh-btn');
       const originalText = refreshBtn.innerHTML;
+      let partialFailure = false;
       
       refreshBtn.innerHTML = '<span style="animation: spin 1s linear infinite;">↻</span> Loading…';
       refreshBtn.disabled = true;
@@ -548,17 +549,33 @@
       statusDot.style.background = 'var(--orange)';
       
       try {
-        await Promise.all([
-          loadGitHub().catch(e => console.warn('GitHub load failed:', e)),
-          loadRelease().catch(e => console.warn('Release load failed:', e)),
-          loadPyPI().catch(e => console.warn('PyPI load failed:', e))
+        const results = await Promise.allSettled([
+          loadGitHub(),
+          loadRelease(),
+          loadPyPI(),
         ]);
+        partialFailure = results.some((r) => r.status === 'rejected');
+        if (results[0].status === 'rejected') {
+          const err = results[0].reason;
+          const msg = String(err && err.message ? err.message : err);
+          if (msg.includes('429')) {
+            showError('Rate limited — showing last data. Retry shortly.');
+          }
+        }
         
         $('updated').textContent = 'Updated ' + new Date().toLocaleString();
-        showSuccess();
+        if (partialFailure) {
+          $('status').textContent = 'Partial data — some sources unavailable';
+          $('status').classList.add('err');
+          statusDot.style.background = 'var(--orange)';
+          $('last-check').textContent = new Date().toLocaleTimeString() + ' (stale/partial)';
+        } else {
+          showSuccess();
+        }
       } catch (err) {
         console.error('Refresh failed:', err);
-        showError('Failed to load some metrics. Retrying in 30s…');
+        showError('Failed to load metrics. Retrying on interval…');
+        $('last-check').textContent = 'Stale — refresh failed';
       } finally {
         refreshBtn.innerHTML = originalText;
         refreshBtn.disabled = false;

@@ -7,8 +7,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from kite.agent.exceptions import InterruptAgentFlow
 from kite.application.policy.engine import PolicyEngine
 from kite.application.tools.contracts import PolicyDecision, ToolCall, ToolIntent, ToolResult
+
+_PASSTHROUGH_KEYS = (
+    "returncode",
+    "path",
+    "diff",
+    "submitted",
+    "blocked",
+    "secrets_redacted",
+    "cancelled",
+    "directory",
+    "items",
+    "summary",
+)
 
 
 @dataclass
@@ -20,7 +34,13 @@ class ToolExecutor:
     approver: Callable[[ToolIntent, PolicyDecision], bool] | None = None
     redactor: Callable[[str], str] | None = None
 
-    def execute(self, call: ToolCall, run_context: dict[str, Any] | None = None) -> ToolResult:
+    def execute(
+        self,
+        call: ToolCall,
+        run_context: dict[str, Any] | None = None,
+        *,
+        skip_approval: bool = False,
+    ) -> ToolResult:
         run_context = run_context or {}
         intent = self.policy.derive_intent(call)
         decision = self.policy.authorize(intent)
@@ -32,7 +52,12 @@ class ToolExecutor:
                 error=decision.reason,
                 policy_decision=decision,
             )
-        if decision.requires_approval and self.approver and not self.approver(intent, decision):
+        if (
+            not skip_approval
+            and decision.requires_approval
+            and self.approver
+            and not self.approver(intent, decision)
+        ):
             return ToolResult(
                 call_id=call.call_id,
                 status="denied",
@@ -43,6 +68,8 @@ class ToolExecutor:
         start = time.monotonic()
         try:
             raw = self.runner(call)
+        except InterruptAgentFlow:
+            raise
         except Exception as exc:
             return ToolResult(
                 call_id=call.call_id,
@@ -56,6 +83,10 @@ class ToolExecutor:
         if self.redactor:
             output = self.redactor(output)
         changed = tuple(str(p) for p in raw.get("changed_paths") or ())
+        metadata: dict[str, Any] = {"run_context": run_context}
+        for key in _PASSTHROUGH_KEYS:
+            if key in raw:
+                metadata[key] = raw[key]
         return ToolResult(
             call_id=call.call_id,
             status="ok" if raw.get("ok", True) else "error",
@@ -65,5 +96,5 @@ class ToolExecutor:
             changed_paths=changed,
             duration=time.monotonic() - start,
             policy_decision=decision,
-            metadata={"run_context": run_context},
+            metadata=metadata,
         )

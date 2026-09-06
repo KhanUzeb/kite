@@ -49,12 +49,26 @@ DEFAULT_TOOL_METADATA: dict[str, ToolMetadata] = {
     "webcrawl": _meta(read_only=True, network=True, expensive=True),
     "context7_resolve": _meta(read_only=True, network=True, expensive=True),
     "context7_docs": _meta(read_only=True, network=True, expensive=True),
-    "subagent": _meta(read_only=True, expensive=True),
-    "task": _meta(read_only=True, expensive=True),
+    "subagent": _meta(expensive=True),
+    "task": _meta(expensive=True),
     "write": _meta(mutating=True),
     "edit": _meta(mutating=True),
     "todo_write": _meta(mutating=True),
     "bash": _meta(mutating=True, cancellable=True, expensive=True),
+}
+
+# Scheduling hints aligned with canonical effects (authorization uses PolicyEngine).
+EFFECT_HINTS: dict[str, tuple[str, ...]] = {
+    "read": ("workspace_read",),
+    "write": ("workspace_write",),
+    "edit": ("workspace_write",),
+    "bash": ("long_running", "workspace_write"),
+    "skill": ("workspace_read",),
+    "memory": ("workspace_read", "durable_memory"),
+    "task": ("nested_agent", "long_running"),
+    "subagent": ("nested_agent",),
+    "web_search": ("network",),
+    "web_fetch": ("network",),
 }
 
 
