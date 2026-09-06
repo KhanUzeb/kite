@@ -61,6 +61,7 @@ def assemble_system_prompt(
     override_system: str | None = None,
     append_system: str | None = None,
     memory: str | None = None,
+    continuity: str | None = None,
     cwd: str | Path | None = None,
 ) -> str:
     """Assemble the immutable-ish base prompt + optional append + live context.
@@ -90,6 +91,9 @@ def assemble_system_prompt(
 
     if memory and memory.strip():
         parts.append(memory.strip())
+
+    if continuity and continuity.strip():
+        parts.append(continuity.strip())
 
     if config.skills.enabled and config.skills.auto_index_in_system_prompt and skills:
         parts.append(build_skill_index(skills))

@@ -53,6 +53,7 @@ class HarnessConfig:
     attachments: list | None = None
     execution_mode: str | None = None  # restricted | host
     long_task: bool = False
+    memory_in_prompt: bool = False
 
 
 @dataclass
@@ -123,6 +124,7 @@ class Harness:
                 attachments=self.config.attachments,
                 execution_mode=self.config.execution_mode,
                 long_task=self.config.long_task,
+                memory_in_prompt=self.config.memory_in_prompt,
             ),
             user_config=self.user_config,
         )
