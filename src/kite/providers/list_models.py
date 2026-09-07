@@ -248,6 +248,20 @@ def _fetch_anthropic(spec: ProviderSpec, cfg: UserConfig) -> ListModelsResult:
     return ListModelsResult(spec.name, tuple(models), "live")
 
 
+def _redact_url_secrets(url: str) -> str:
+    from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+    parsed = urlparse(url)
+    if not parsed.query:
+        return url
+    qs = parse_qs(parsed.query, keep_blank_values=True)
+    for secret_key in ("key", "api_key", "token", "access_token"):
+        if secret_key in qs:
+            qs[secret_key] = ["[REDACTED]"]
+    redacted_query = urlencode({k: v[0] if len(v) == 1 else v for k, v in qs.items()}, doseq=True)
+    return urlunparse(parsed._replace(query=redacted_query))
+
+
 def _fetch_gemini(spec: ProviderSpec, cfg: UserConfig) -> ListModelsResult:
     key = _api_key(spec)
     if not key:
@@ -266,9 +280,11 @@ def _fetch_gemini(spec: ProviderSpec, cfg: UserConfig) -> ListModelsResult:
         data = _http_json(url, {"Accept": "application/json"})
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")[:300]
+        body = body.replace(key, "[REDACTED]")
         return ListModelsResult(spec.name, (), "live", error=f"HTTP {e.code}: {body}")
     except Exception as e:  # noqa: BLE001
-        return ListModelsResult(spec.name, (), "live", error=f"{type(e).__name__}: {e}")
+        msg = str(e).replace(key, "[REDACTED]")
+        return ListModelsResult(spec.name, (), "live", error=f"{type(e).__name__}: {msg}")
 
     rows = data.get("models") if isinstance(data, dict) else None
     if not isinstance(rows, list):
@@ -492,7 +508,8 @@ def list_models_for_provider(
         # openai, groq, openrouter, huggingface, openai-compatible, …
         result = _fetch_openai_compatible(spec, cfg)
 
-    _LIST_CACHE[cache_key] = (now, result)
+    if result.ok:
+        _LIST_CACHE[cache_key] = (now, result)
     return result
 
 

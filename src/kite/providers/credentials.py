@@ -190,13 +190,22 @@ def _secure_env_file(path: Path) -> None:
 
             user = os.getenv("USERNAME") or os.getenv("USER") or ""
             if user:
-                subprocess.run(
+                completed = subprocess.run(
                     ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
                     check=False,
                     capture_output=True,
                 )
-        except Exception:
-            pass
+                if completed.returncode != 0:
+                    import warnings
+
+                    warnings.warn(
+                        f"icacls could not secure {path} (exit {completed.returncode})",
+                        stacklevel=2,
+                    )
+        except OSError as exc:
+            import warnings
+
+            warnings.warn(f"could not secure env file {path}: {exc}", stacklevel=2)
 
 
 def write_api_key(env_var: str, value: str) -> Path:

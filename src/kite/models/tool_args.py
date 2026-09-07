@@ -45,7 +45,7 @@ def repair_tool_arguments(raw: str) -> tuple[dict[str, Any] | None, str | None]:
             pass
 
     # Single-quoted keys/values (invalid JSON but models sometimes emit)
-    if "'" in text and '"' not in text:
+    if "'" in text and '"' not in text and text.lstrip().startswith("{"):
         try:
             parsed = json.loads(text.replace("'", '"'))
             if isinstance(parsed, dict):

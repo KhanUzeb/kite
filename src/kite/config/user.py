@@ -100,6 +100,9 @@ class UserConfig:
     def save(self) -> Path:
         ensure_home()
         path = kite_home() / "config.toml"
+        existing: dict = {}
+        if path.is_file():
+            existing = tomllib.loads(path.read_text(encoding="utf-8"))
         payload = {
             "default_provider": self.default_provider,
             "default_model": self.default_model,
@@ -122,8 +125,12 @@ class UserConfig:
             "theme": self.theme,
             "font": self.font,
         }
-        payload = {k: v for k, v in payload.items() if v is not None}
-        path.write_text(tomli_w.dumps(payload), encoding="utf-8")
+        for key, val in payload.items():
+            if val is None:
+                existing.pop(key, None)
+            else:
+                existing[key] = val
+        path.write_text(tomli_w.dumps(existing), encoding="utf-8")
         _invalidate_user_config_cache()
         return path
 

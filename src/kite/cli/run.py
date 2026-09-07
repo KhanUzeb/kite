@@ -86,7 +86,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     console = _console()
     task = args.task
     if args.stdin:
-        task = sys.stdin.read().strip()
+        chunks: list[str] = []
+        total = 0
+        while True:
+            block = sys.stdin.read(65536)
+            if not block:
+                break
+            total += len(block)
+            if total > 2_000_000:
+                console.print("[red]stdin exceeds 2MB limit[/]")
+                return 2
+            chunks.append(block)
+        task = "".join(chunks).strip()
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
     try:

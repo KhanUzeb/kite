@@ -159,7 +159,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
             instance=str(prompts.get("instance", "instance")),
         ),
         tools=ToolsConfig(
-            enabled=list(tools.get("enabled") or ToolsConfig().enabled),
+            enabled=list(tools["enabled"]) if "enabled" in tools else ToolsConfig().enabled,
             bash_timeout_seconds=int(tools.get("bash_timeout_seconds", 120)),
             progress_interval_seconds=float(tools.get("progress_interval_seconds", 5.0)),
         ),
@@ -201,9 +201,13 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
 
 def _merge_dict(base: dict, overlay: dict) -> dict:
     out = dict(base)
+    merge_lists = {"trusted_paths", "deny_bash_patterns", "dirs"}
     for k, v in overlay.items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k] = _merge_dict(out[k], v)
+        elif isinstance(v, list) and isinstance(out.get(k), list) and k in merge_lists:
+            seen = set(out[k])
+            out[k] = list(out[k]) + [item for item in v if item not in seen]
         else:
             out[k] = v
     return out
@@ -251,15 +255,16 @@ def load_runtime_config(name_or_path: str | Path | None = None) -> AgentRuntimeC
         if path.is_file():
             data = _merge_dict(data, _read_toml(path))
         else:
-            # named config: packaged or ~/.kite/configs/<name>.toml
             user = kite_home() / "configs" / f"{name_or_path}.toml"
             if user.is_file():
                 data = _merge_dict(data, _read_toml(user))
             else:
                 try:
                     data = _merge_dict(data, _read_packaged(str(name_or_path)))
-                except (FileNotFoundError, OSError):
-                    pass
+                except (FileNotFoundError, OSError) as exc:
+                    import warnings
+
+                    warnings.warn(f"unknown runtime config {name_or_path!r}: {exc}", stacklevel=2)
 
     cfg = _from_dict(data)
     _RUNTIME_CACHE[key] = cfg

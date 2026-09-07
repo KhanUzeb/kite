@@ -32,8 +32,7 @@ _TRANSIENT_HINTS = (
     "connection reset",
     "api connection",
     "openai.error",
-    "anthropic",
-    "litellm",
+    "litellm.exceptions",
 )
 
 _TRANSIENT_TYPES = frozenset(

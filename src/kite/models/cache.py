@@ -63,7 +63,10 @@ def _hash_prefix(messages: list[dict]) -> str:
 
 def _supports_breakpoints(provider: str) -> bool:
     p = (provider or "").lower()
-    return any(p.startswith(x) or x in p for x in _CACHE_PROVIDERS)
+    for x in _CACHE_PROVIDERS:
+        if p == x or p.endswith(f"/{x}") or p.startswith(f"{x}/"):
+            return True
+    return False
 
 
 def apply_cache_breakpoints(messages: list[dict], *, provider: str, enabled: bool = True) -> list[dict]:
