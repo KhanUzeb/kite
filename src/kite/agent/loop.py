@@ -670,7 +670,11 @@ class DefaultAgent:
                         delay_s=delay,
                         error=str(e)[:240],
                     )
-                    time.sleep(delay)
+                    deadline = time.monotonic() + delay
+                    while time.monotonic() < deadline:
+                        if self._interrupt:
+                            raise _user_interrupt()
+                        time.sleep(min(0.1, deadline - time.monotonic()))
             if last_error is not None:
                 raise last_error
         except KeyboardInterrupt:
@@ -1073,9 +1077,14 @@ class DefaultAgent:
         threading.Thread(target=worker, daemon=True).start()
         start = time.monotonic()
         interval = max(0.5, float(self.tool_progress_interval_seconds))
+        max_wait = max(600.0, interval * 240)
         while not done.wait(timeout=interval):
             if self._interrupt and self.cancel is not None:
                 self.cancel.request()
+            if time.monotonic() - start > max_wait:
+                if self.cancel is not None:
+                    self.cancel.request()
+                break
             elapsed = int(time.monotonic() - start)
             hint = ""
             if tool == "bash":
@@ -1089,7 +1098,9 @@ class DefaultAgent:
             if isinstance(exc, InterruptAgentFlow):
                 raise exc
             raise exc
-        tr = holder["tr"]
+        tr = holder.get("tr")
+        if tr is None:
+            return _blocked("tool worker failed without result")
         if tr.status == "denied":
             return _blocked(tr.error or "denied")
         return self._tool_result_to_dict(tr)
@@ -1110,10 +1121,15 @@ class DefaultAgent:
         threading.Thread(target=worker, daemon=True).start()
         start = time.monotonic()
         interval = max(0.5, float(self.tool_progress_interval_seconds))
+        max_wait = max(600.0, interval * 240)
         while not done.wait(timeout=interval):
             if self._interrupt:
                 if self.cancel is not None:
                     self.cancel.request()
+            if time.monotonic() - start > max_wait:
+                if self.cancel is not None:
+                    self.cancel.request()
+                break
             elapsed = int(time.monotonic() - start)
             hint = ""
             if tool == "bash":
@@ -1125,6 +1141,8 @@ class DefaultAgent:
             self._emit("tool_progress", tool=tool, elapsed_s=elapsed, hint=hint)
         if error:
             raise error[0]
+        if "out" not in result:
+            raise RuntimeError("tool worker returned no output")
         return result["out"]
 
     def _preview_diff(self, tool: str, args: dict) -> str:

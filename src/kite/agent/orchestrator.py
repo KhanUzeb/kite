@@ -163,7 +163,8 @@ class SubagentOrchestrator:
         for i in sorted(results):
             r = results[i]
             mark = "✓" if r.get("ok") else "✗"
-            sections.append(f"\n--- {mark} {labels[i-1]} ---\n{str(r.get('output') or '')[:2000]}")
+            label = labels[i - 1] if i - 1 < len(labels) else f"worker-{i}"
+            sections.append(f"\n--- {mark} {label} ---\n{str(r.get('output') or '')[:2000]}")
         text = "\n".join(sections)
         return {
             "ok": ok,
@@ -192,6 +193,8 @@ class SubagentOrchestrator:
             if task.id == task_id and task.status == "running" and task.cancel is not None:
                 task.cancel.request()
                 task.status = "killed"
+                if self.jobs is not None:
+                    self.jobs.mark_done(task_id, ok=False, status="killed")
                 return True
         return False
 

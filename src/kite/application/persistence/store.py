@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,6 +48,7 @@ class SQLiteEventStore(EventSink):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path), timeout=30.0, isolation_level=None)
+        self._lock = threading.RLock()
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(_SCHEMA)
@@ -66,38 +68,40 @@ class SQLiteEventStore(EventSink):
 
     def append(self, envelope: EventEnvelope) -> None:
         payload = redact_payload(envelope.payload)
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            self.ensure_run(envelope.run_id)
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO events(
-                    event_id, run_id, parent_event_id, sequence, timestamp, kind,
-                    payload_json, schema_version, redaction_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    envelope.event_id, envelope.run_id, envelope.parent_event_id,
-                    envelope.sequence, envelope.timestamp, envelope.kind,
-                    json.dumps(payload), envelope.schema_version, envelope.redaction_version,
-                ),
-            )
-            now = datetime.now(UTC).isoformat()
-            self._conn.execute("UPDATE runs SET updated_at=? WHERE run_id=?", (now, envelope.run_id))
-            self._conn.execute("COMMIT")
-        except Exception:
-            self._conn.execute("ROLLBACK")
-            raise
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self.ensure_run(envelope.run_id)
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO events(
+                        event_id, run_id, parent_event_id, sequence, timestamp, kind,
+                        payload_json, schema_version, redaction_version
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        envelope.event_id, envelope.run_id, envelope.parent_event_id,
+                        envelope.sequence, envelope.timestamp, envelope.kind,
+                        json.dumps(payload), envelope.schema_version, envelope.redaction_version,
+                    ),
+                )
+                now = datetime.now(UTC).isoformat()
+                self._conn.execute("UPDATE runs SET updated_at=? WHERE run_id=?", (now, envelope.run_id))
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
 
     def load_run(self, run_id: str) -> list[EventEnvelope]:
-        rows = self._conn.execute(
-            """
-            SELECT event_id, run_id, parent_event_id, sequence, timestamp, kind,
-                   payload_json, schema_version, redaction_version
-            FROM events WHERE run_id=? ORDER BY sequence
-            """,
-            (run_id,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT event_id, run_id, parent_event_id, sequence, timestamp, kind,
+                       payload_json, schema_version, redaction_version
+                FROM events WHERE run_id=? ORDER BY sequence
+                """,
+                (run_id,),
+            ).fetchall()
         return [
             EventEnvelope(
                 event_id=row[0], run_id=row[1], parent_event_id=row[2], sequence=row[3],

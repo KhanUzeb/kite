@@ -74,9 +74,9 @@ def _read(path: Path) -> str:
 
 
 def _write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    body = text if text.endswith("\n") else text + "\n"
-    path.write_text(body, encoding="utf-8")
+    from kite.util.atomic import atomic_write_text
+
+    atomic_write_text(path, text)
 
 
 def render_file(pin: str, notes: list[Note]) -> str:
