@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from kite.skills.install import _copy_skill_trees, parse_install_spec
 from kite.skills.loader import classify_skill_dir, invalidate_skills, load_skills
 

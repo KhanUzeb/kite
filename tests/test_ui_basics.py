@@ -19,9 +19,9 @@ from kite.ui.complete import (
     make_repl_key_bindings,
 )
 from kite.ui.render import RunDisplay, render_status
+from kite.ui.spinner import WaitSpinner, stop_all_spinners
 from kite.ui.state import SessionUiState, TodoItem
 from kite.ui.status import cache_meter, context_meter, format_metrics_tail, format_status_tail
-from kite.ui.spinner import WaitSpinner, stop_all_spinners
 from kite.ui.style import KITE_THEME
 from tests.conftest import strip_ansi
 

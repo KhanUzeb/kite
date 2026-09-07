@@ -11,9 +11,9 @@ from kite.agent.cancel import CancelToken
 from kite.agent.events import Event
 from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
-from kite.agent.queue import RunMessageQueue
 from kite.agent.mode import AgentMode, ApprovalMode, parse_approval_mode, tools_for_mode
 from kite.agent.orchestrator import SubagentOrchestrator
+from kite.agent.queue import RunMessageQueue
 from kite.agent.role import AgentRole, parse_role, tools_for_role
 from kite.agent.verification import VerificationCollector
 from kite.cli.slash import expand_prompt_slash
