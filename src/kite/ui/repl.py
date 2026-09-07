@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import queue
 import sys
 import threading
 import time
@@ -97,9 +98,12 @@ class ChatSession:
         self._approval_coordinator = ApprovalCoordinator(interactive=sys.stdin.isatty())
         self._approval_coordinator.wake_main = self._wake_composer
         self._approval_resolving = False
+        self._approval_wake_sent = False
+        self._approval_panel_id: str | None = None
+        self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
         from kite.tools.jobs import JobRegistry
 
-        self.jobs = JobRegistry(on_event=self.display)
+        self.jobs = JobRegistry(on_event=self._ui_event_handler)
         self._sync_from_config()
 
     def _sync_from_config(self) -> None:
@@ -227,6 +231,66 @@ class ChatSession:
             coordinator=self._approval_coordinator,
         )
 
+    def _ensure_policy(self) -> None:
+        from kite.ui.approval import ApprovalPolicy
+
+        if self.policy is None:
+            self.policy = ApprovalPolicy.load()
+
+    def _show_pending_approval_panel(self) -> None:
+        req = self._approval_coordinator.pending
+        if req is None:
+            self._approval_panel_id = None
+            return
+        if self._approval_panel_id == req.request_id:
+            return
+        from kite.ui.approval import render_approval_panel
+
+        self.console.print(
+            render_approval_panel(
+                req.tool,
+                req.arguments,
+                diff=req.diff,
+                reason=req.reason,
+                mandatory=req.mandatory,
+            )
+        )
+        self._approval_panel_id = req.request_id
+
+    def _resolve_approval_decision(self, decision: str) -> None:
+        from kite.ui.approval import ApprovalPolicy, action_pattern
+
+        req = self._approval_coordinator.pending
+        if req is None:
+            return
+        self._ensure_policy()
+        if decision in {"session", "always"} and not req.mandatory:
+            pattern = action_pattern(req.tool, req.arguments)
+            self.policy.remember(pattern, always=(decision == "always"))
+        mapped = decision if decision in {"allow", "session", "always", "deny", "stop"} else "deny"
+        self._approval_coordinator.resolve(mapped, request_id=req.request_id)
+        self._approval_panel_id = None
+        self.state.awaiting_approval = ""
+        self.state.awaiting_approval_mandatory = False
+        self.state.touch()
+
+    def _handle_slash_while_busy(self, raw: str) -> None:
+        parsed = resolve_slash(raw, self._index())
+        if parsed.kind == "unknown":
+            self.console.print(f"[kite.error]{parsed.message}[/]")
+            return
+        cmd, arg = parsed.command, parsed.arg
+        cmd, arg = self._apply_legacy_slash(cmd, arg, parsed.legacy)
+        cmd, arg = self._normalize_slash_cmd(cmd, arg)
+        safe = {"tasks", "task", "status", "help", "jobs"}
+        if cmd not in safe:
+            self.console.print(
+                "[kite.muted]still working[/]  — /tasks · /status · /help · /jobs  "
+                "(Enter queue · Esc stop · Ctrl+G steer)"
+            )
+            return
+        self._handle_slash(raw, parsed)
+
     def _prompt_app_running(self) -> bool:
         session = self._prompt
         if session is None:
@@ -234,10 +298,30 @@ class ChatSession:
         app = getattr(session, "app", None)
         return app is not None and bool(getattr(app, "is_running", False))
 
+    def _ui_event_handler(self, event) -> None:
+        """Queue agent/job events during busy turns — render only on the main thread."""
+        if self._busy:
+            self._ui_queue.put(event)
+        else:
+            self.display(event)
+
+    def _drain_ui_queue(self, *, limit: int = 500) -> None:
+        for _ in range(limit):
+            try:
+                self.display(self._ui_queue.get_nowait())
+            except queue.Empty:
+                break
+        self.state.flush_pending_touch()
+
+    def _busy_tick(self) -> None:
+        self._drain_ui_queue()
+        self._resolve_pending_approval()
+
     def _poll_pending_approval(self) -> None:
         """Toolbar poll — surface pending approval and break out of composer if needed."""
         req = self._approval_coordinator.pending
         if req is None:
+            self._approval_wake_sent = False
             if self.state.awaiting_approval:
                 self.state.awaiting_approval = ""
                 self.state.awaiting_approval_mandatory = False
@@ -246,25 +330,26 @@ class ChatSession:
         self.state.awaiting_approval = req.tool
         self.state.awaiting_approval_mandatory = bool(getattr(req, "mandatory", False))
         self.state.touch()
-        if self._prompt_app_running():
+        if self._prompt_app_running() and not self._approval_wake_sent:
             self._wake_composer()
+            self._approval_wake_sent = True
 
     def _resolve_pending_approval(self) -> None:
-        """Main-thread approval modal — worker blocks on coordinator.request()."""
+        """Main-thread approval — composer keys when prompt_toolkit is active."""
         self._poll_pending_approval()
-        if self._approval_coordinator.pending is None:
-            return
-        if self._prompt_app_running():
-            return
-        if self._approval_resolving:
-            return
         req = self._approval_coordinator.pending
         if req is None:
+            return
+        if self._prompt is not None and (self._busy or self._prompt_app_running()):
+            self._show_pending_approval_panel()
+            return
+        if self._approval_resolving:
             return
         self._approval_resolving = True
         try:
             from kite.ui.approval import prompt_approval
 
+            self._ensure_policy()
             decision = prompt_approval(
                 self.console,
                 req.tool,
@@ -277,6 +362,7 @@ class ChatSession:
             self._approval_coordinator.resolve(decision, request_id=req.request_id)
         finally:
             self._approval_resolving = False
+            self._approval_panel_id = None
             self.state.awaiting_approval = ""
             self.state.awaiting_approval_mandatory = False
             self.state.touch()
@@ -330,7 +416,7 @@ class ChatSession:
             )
         )
         h.job_registry = self.jobs
-        h.subscribe(self.display)
+        h.subscribe(self._ui_event_handler)
         self._harness = h
         self._harness_key = key
         return h
@@ -879,6 +965,10 @@ class ChatSession:
             on_build=lambda: self._flash_note(_build()),
             on_status=lambda: self._flash_note(_status()),
             is_busy=lambda: self._busy,
+            is_awaiting_approval=lambda: bool(self.state.awaiting_approval),
+            can_remember_approval=lambda: bool(
+                self.state.awaiting_approval and not self.state.awaiting_approval_mandatory
+            ),
             action_slot=self._composer_action,
         )
         self._prompt = make_prompt_session(completer, key_bindings=bindings)
@@ -1058,6 +1148,7 @@ class ChatSession:
             "detach": self._detach,
             "attachments": self._show_attachments,
             "skills": self._show_skills,
+            "skill": self._run_skill,
             "commands": self._handle_commands,
             "plugins": self._handle_plugins,
             "memory": self._slash_memory,
@@ -1498,6 +1589,8 @@ class ChatSession:
         handler = self._slash_handlers().get(cmd)
         if handler is not None:
             handler(arg)
+        else:
+            self.console.print(f"[kite.error]unknown command /{cmd}[/]  — type /help")
         return True
 
     def _reset_chat(self) -> None:
@@ -1652,6 +1745,25 @@ class ChatSession:
             return
         # Bare id: /session 20260829-…
         self._open_session(raw)
+
+    def _run_skill(self, arg: str) -> None:
+        """Run a skill as the current turn (/skill name [args])."""
+        raw = (arg or "").strip()
+        if not raw:
+            self._show_skills("")
+            return
+        name, _, extra = raw.partition(" ")
+        if name.lower() in {"add", "install"}:
+            self._show_skills(arg)
+            return
+        prompt = self._index().expand(f"skill:{name}", extra.strip())
+        if prompt is None:
+            prompt = self._index().expand(name, extra.strip())
+        if prompt is None:
+            self.console.print(f"[kite.error]unknown skill '{name}'[/]  — /skills")
+            return
+        self.console.print(f"[kite.muted]/skill {name}[/]")
+        self._run_task(prompt)
 
     def _show_skills(self, name: str) -> None:
         raw = (name or "").strip()
@@ -1934,7 +2046,8 @@ class ChatSession:
 
         def _slash_busy_hint() -> None:
             self.console.print(
-                "[kite.muted]still working[/]  — Enter queues · Esc stop · Ctrl+G steer · /tasks"
+                "[kite.muted]still working[/]  — /tasks · /status · /help · /jobs  "
+                "(Enter queue · Esc stop · Ctrl+G steer)"
             )
 
         def _spawn_and_wait(prompt_task: str) -> None:
@@ -1967,15 +2080,17 @@ class ChatSession:
                     on_stop=self._request_stop,
                     on_steer=self._queue_steer,
                     on_slash_while_busy=_slash_busy_hint,
+                    on_busy_slash=self._handle_slash_while_busy,
+                    on_approval=self._resolve_approval_decision,
                     on_eof=lambda: setattr(self, "_quit_after_turn", True),
-                    on_tick=self._resolve_pending_approval,
+                    on_tick=self._busy_tick,
                     on_poll=self._poll_pending_approval,
                 )
             else:
                 while not done.is_set():
-                    self._resolve_pending_approval()
+                    self._busy_tick()
                     if self._approval_coordinator.pending:
-                        time.sleep(0.15)
+                        time.sleep(0.05)
                         continue
                     got = self._read_input()
                     if done.is_set():
@@ -2004,11 +2119,18 @@ class ChatSession:
                             self._queue_steer(classified.text)
                             self._request_stop()
                             break
+                        if classified.kind == "busy_slash":
+                            self._handle_slash_while_busy(classified.text)
+                            continue
                         if classified.kind == "slash":
                             _slash_busy_hint()
                             continue
                         self._queue_message(got.text)
-            done.wait()
+            while not done.is_set():
+                self._busy_tick()
+                if done.wait(timeout=0.1):
+                    break
+            self._drain_ui_queue()
 
         while True:
             _spawn_and_wait(run_task)

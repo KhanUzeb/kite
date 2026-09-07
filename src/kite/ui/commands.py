@@ -87,22 +87,18 @@ for _b in BUILTINS:
 # Legacy shortcuts — still parsed; listed under “legacy aliases” in /help.
 LEGACY_ALIASES: dict[str, str] = {
     "cost": "status",
-    "collapse": "expand",
     "thinking": "reasoning",
     "fast": "reasoning",
     "semantic": "memory",
     "episodic": "memory",
-    "skill": "skills",
 }
 
 LEGACY_HELP: dict[str, str] = {
     "cost": "→ /status (includes cost)",
-    "collapse": "→ /collapse (same as /expand off)",
     "thinking": "→ /reasoning thinking",
     "fast": "→ /reasoning fast",
     "semantic": "→ /memory semantic",
     "episodic": "→ /memory episodic",
-    "skill": "→ /skills",
 }
 
 ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
