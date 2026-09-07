@@ -106,7 +106,23 @@ def save_checkpoint(
     folder.mkdir(parents=True, exist_ok=True)
     path = _checkpoint_path(session_id, cp.id)
     path.write_text(json.dumps(cp.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _prune_checkpoints(session_id)
     return cp
+
+
+_MAX_CHECKPOINTS_PER_SESSION = 5
+
+
+def _prune_checkpoints(session_id: str, keep: int = _MAX_CHECKPOINTS_PER_SESSION) -> None:
+    folder = checkpoints_dir(session_id)
+    if not folder.is_dir():
+        return
+    paths = sorted(folder.glob("cp-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in paths[keep:]:
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def load_checkpoint(session_id: str, checkpoint_id: str) -> ContextCheckpoint:

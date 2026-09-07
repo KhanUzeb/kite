@@ -88,6 +88,10 @@ DURABLE_EVENT_KINDS = frozenset(
         "tool_end",
         "approval",
         "compact",
+        "compaction_start",
+        "compaction_end",
+        "steer",
+        "follow_up",
         "checkpoint",
         "todo",
         "interrupt",
@@ -190,20 +194,8 @@ class Session:
         self._touch_meta_timestamp(path)
 
     def _persist_compact_snapshot(self, messages: list[dict]) -> None:
-        """Append a compaction snapshot — O(new messages), not O(transcript)."""
-        path = self._session_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.is_file() or path.stat().st_size == 0:
-            self._write_meta()
-            return
-        row = {
-            "type": "compact_snapshot",
-            "updated_at": self.meta.updated_at,
-            "messages": messages,
-        }
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        self._touch_meta_timestamp(path)
+        """Rewrite session file to current messages — avoids unbounded JSONL growth."""
+        self._write_meta()
 
     def record_context_checkpoint(self, checkpoint_id: str, *, label: str = "", reason: str = "manual") -> None:
         """Append checkpoint metadata to the session audit trail."""
@@ -346,13 +338,17 @@ def load_session(session_id: str) -> Session:
     return Session(meta=meta, messages=messages, path=path)
 
 
-def list_sessions(*, limit: int = 30) -> list[SessionMeta]:
+def list_sessions(*, limit: int = 30, query: str = "") -> list[SessionMeta]:
     rows: list[SessionMeta] = []
     for path in sessions_dir().glob("*.jsonl"):
         meta = _read_session_meta(path)
         if meta is not None:
             rows.append(meta)
     rows.sort(key=lambda m: m.updated_at, reverse=True)
+    if query:
+        from kite.memory.session_format import match_sessions
+
+        rows = match_sessions(rows, query)
     return rows[:limit]
 
 

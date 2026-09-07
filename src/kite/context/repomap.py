@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -99,6 +100,35 @@ def _score_path(path: Path, root: Path, changed: set[str]) -> tuple[int, str]:
     return (score + depth, rel.lower())
 
 
+_MAX_REPO_SCAN_FILES = 600
+
+
+def _iter_source_files(root: Path) -> list[Path]:
+    """Walk the tree with skip dirs — capped to avoid stat storms on huge repos."""
+    root = root.expanduser().resolve()
+    candidates: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name not in SKIP_DIRS and not name.startswith(".")
+        ]
+        base = Path(dirpath)
+        for name in filenames:
+            path = base / name
+            if path.suffix.lower() not in _SOURCE_EXTS:
+                continue
+            try:
+                if path.stat().st_size > 120_000:
+                    continue
+            except OSError:
+                continue
+            candidates.append(path)
+            if len(candidates) >= _MAX_REPO_SCAN_FILES:
+                return candidates
+    return candidates
+
+
 def build_repo_map(
     root: Path,
     *,
@@ -110,21 +140,7 @@ def build_repo_map(
     """Return a compact symbol map for prompt injection."""
     root = root.expanduser().resolve()
     changed = git_changed_paths(root) if prefer_git_changed else set()
-    candidates: list[Path] = []
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        if path.suffix.lower() not in _SOURCE_EXTS:
-            continue
-        if any(part in SKIP_DIRS or part.startswith(".") for part in path.parts):
-            continue
-        try:
-            if path.stat().st_size > 120_000:
-                continue
-        except OSError:
-            continue
-        candidates.append(path)
-
+    candidates = _iter_source_files(root)
     candidates.sort(key=lambda p: _score_path(p, root, changed))
     lines: list[str] = []
     for path in candidates[:max_files]:

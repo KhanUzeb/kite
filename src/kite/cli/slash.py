@@ -18,7 +18,7 @@ from kite.skills.loader import Skill, expand_skill_slash, format_skill_invocatio
 from kite.ui.commands import SlashResult, parse_slash
 from kite.util.cache import TtlCache
 
-_INDEX_CACHE: TtlCache[tuple[str, tuple[str, ...]], CommandIndex] = TtlCache(120.0)
+_INDEX_CACHE: TtlCache[tuple[str, tuple[str, ...]], CommandIndex] = TtlCache(120.0, maxsize=4)
 
 
 def invalidate_command_index() -> None:
