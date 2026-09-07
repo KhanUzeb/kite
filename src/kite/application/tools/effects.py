@@ -29,6 +29,16 @@ _PACKAGE_INSTALL = re.compile(
     r"(?i)\b(pip3?|npm|yarn|pnpm|cargo|apt|apt-get|brew|dnf|yum)\s+"
     r"(install|uninstall|ci|add|remove)\b"
 )
+_GIT_NETWORK = re.compile(r"(?i)\bgit\s+(clone|pull|push)\b")
+_CLOUD_CLI = re.compile(r"(?i)\b(gh|az)\s+\w")
+_READ_ONLY_BASH = re.compile(
+    r"(?i)^\s*("
+    r"git\s+(status|diff|log|show|branch|stash\s+list|rev-parse|describe)"
+    r"|ls\b|dir\b|cat\b|head\b|tail\b|rg\b|grep\b|find\b|fd\b"
+    r"|pwd\b|echo\b|which\b|where\b|type\b|wc\b|file\b|stat\b|tree\b|realpath\b"
+    r"|pytest\b|npm\s+test\b|cargo\s+test\b|go\s+test\b"
+    r")\b"
+)
 _LONG_RUNNING = re.compile(r"(?i)\b(sleep\b|tail\s+-f|watch\b|while\s+true)\b")
 
 
@@ -44,12 +54,18 @@ def _bash_effects(command: str) -> set[SideEffect]:
     cmd = command or ""
     if _DESTRUCTIVE_BASH.search(cmd):
         effects.add("destructive")
-    if _NETWORK_BASH.search(cmd) or _PACKAGE_INSTALL.search(cmd):
+    if (
+        _NETWORK_BASH.search(cmd)
+        or _PACKAGE_INSTALL.search(cmd)
+        or _GIT_NETWORK.search(cmd)
+        or _CLOUD_CLI.search(cmd)
+    ):
         effects.add("network")
     if _PACKAGE_INSTALL.search(cmd):
         effects.add("package_or_skill_install")
-    if not _DESTRUCTIVE_BASH.search(cmd) and not _NETWORK_BASH.search(cmd):
-        effects.add("workspace_write")
+    if not _READ_ONLY_BASH.match(cmd.strip()) and not _DESTRUCTIVE_BASH.search(cmd):
+        if not _NETWORK_BASH.search(cmd) and not _GIT_NETWORK.search(cmd):
+            effects.add("workspace_write")
     return effects
 
 

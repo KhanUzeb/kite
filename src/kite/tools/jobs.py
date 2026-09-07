@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from kite.agent.cancel import CancelToken
 from kite.agent.events import Event
+from kite.guardrails.env_filter import filtered_child_env
 
 JobKind = Literal["bash", "subagent"]
 JobStatus = Literal["running", "done", "killed", "failed"]
@@ -109,8 +110,18 @@ class JobRegistry:
         *,
         cwd: str,
         env: dict[str, str] | None = None,
+        timeout_seconds: float = 3600.0,
     ) -> BackgroundJob:
         """Start a shell command without waiting; drain stdout into a ring buffer."""
+        try:
+            from kite.guardrails.sandbox import clamp_cwd, workspace_root
+
+            clamped, reason = clamp_cwd(cwd, workspace_root(cwd), allow_outside=False)
+            if clamped is None:
+                raise OSError(reason or "cwd escapes sandbox")
+            cwd = str(clamped)
+        except ImportError:
+            pass
         creationflags = 0
         popen_kw: dict[str, Any] = {
             "shell": True,
@@ -120,7 +131,7 @@ class JobRegistry:
             "text": True,
             "encoding": "utf-8",
             "errors": "replace",
-            "env": env or (os.environ | {"PAGER": "cat", "GIT_PAGER": "cat"}),
+            "env": env or filtered_child_env({"PAGER": "cat", "GIT_PAGER": "cat"}),
         }
         if sys.platform == "win32":
             creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -152,22 +163,43 @@ class JobRegistry:
             label=job.display_label(),
             active=self.active_count(),
         )
-        threading.Thread(target=self._drain_bash, args=(job,), daemon=True, name=f"kite-job-{job_id}").start()
+        threading.Thread(
+            target=self._drain_bash,
+            args=(job, timeout_seconds),
+            daemon=True,
+            name=f"kite-job-{job_id}",
+        ).start()
         return job
 
-    def _drain_bash(self, job: BackgroundJob) -> None:
+    def _drain_bash(self, job: BackgroundJob, timeout_seconds: float = 3600.0) -> None:
         proc = job.proc
         if proc is None or proc.stdout is None:
             return
+        drained_bytes = 0
+        max_bytes = 512_000
         try:
             for line in iter(proc.stdout.readline, ""):
+                drained_bytes += len(line.encode("utf-8", errors="replace"))
                 job.append_log(line)
+                if drained_bytes >= max_bytes:
+                    job.append_log("\n...[job output truncated]...\n")
+                    break
         except OSError:
             pass
-        try:
-            rc = proc.wait()
-        except OSError:
+        deadline = time.monotonic() + max(1.0, timeout_seconds)
+        rc: int | None = None
+        while rc is None and time.monotonic() < deadline:
+            try:
+                rc = proc.wait(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                continue
+        if rc is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
             rc = -1
+            job.append_log("\n...[job killed: timeout]...\n")
         with self._lock:
             if job.status != "running":
                 return  # killed already emitted job_end
@@ -282,12 +314,14 @@ class JobRegistry:
         pid = proc.pid
         if sys.platform == "win32" and pid:
             try:
-                subprocess.run(
+                completed = subprocess.run(
                     ["taskkill", "/PID", str(pid), "/T", "/F"],
                     capture_output=True,
                     timeout=10,
                     check=False,
                 )
+                if completed.returncode not in {0, 128, 255}:
+                    job.append_log(f"\n...[taskkill exit {completed.returncode}]...\n")
             except (OSError, subprocess.TimeoutExpired):
                 pass
             try:

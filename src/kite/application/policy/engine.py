@@ -8,7 +8,7 @@ from pathlib import Path
 
 from kite.application.tools.contracts import PolicyDecision, ToolCall, ToolIntent
 from kite.application.tools.effects import MANDATORY_EFFECTS, derive_effects, mandatory_reason
-from kite.guardrails.sandbox import is_inside, protected_roots, resolve_in_workspace
+from kite.guardrails.sandbox import check_command_paths, is_inside, protected_roots, resolve_in_workspace
 
 POLICY_VERSION = "0.9.0"
 
@@ -107,7 +107,7 @@ class PolicyEngine:
                 )
 
         for target in intent.canonical_targets:
-            if intent.tool in ("read", "write", "edit", "grep", "glob", "ls") or "path" in intent.normalized_arguments:
+            if intent.tool in ("read", "write", "edit", "grep", "glob", "ls", "apply_patch") or "path" in intent.normalized_arguments:
                 write = intent.tool in ("write", "edit", "apply_patch")
                 ok, reason = check_path_access(
                     target,
@@ -117,6 +117,24 @@ class PolicyEngine:
                 )
                 if not ok:
                     return PolicyDecision(allowed=False, reason=reason, policy_version=self.policy_version)
+
+        if intent.tool == "bash" and self.execution_mode != "host":
+            cmd = str(intent.normalized_arguments.get("command") or "")
+            escaped = check_command_paths(cmd, Path(self.workspace))
+            if escaped:
+                return PolicyDecision(allowed=False, reason=escaped, policy_version=self.policy_version)
+            cwd = intent.normalized_arguments.get("cwd")
+            if cwd:
+                ok, reason = check_path_access(str(cwd), self.workspace, execution_mode=self.execution_mode)
+                if not ok:
+                    return PolicyDecision(allowed=False, reason=reason, policy_version=self.policy_version)
+
+        if intent.tool == "skill" and intent.normalized_arguments.get("install"):
+            return PolicyDecision(
+                allowed=False,
+                reason="skill install must go through approval pipeline",
+                policy_version=self.policy_version,
+            )
 
         requires_approval = any(e in intent.side_effects for e in MANDATORY_EFFECTS) or any(
             e in intent.side_effects for e in ("workspace_write", "long_running")
