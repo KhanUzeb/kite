@@ -150,27 +150,27 @@ def is_inside(path: Path, root: Path) -> bool:
 
 
 def is_user_skill_read(path: Path) -> bool:
-    """True when *path* resolves inside ~/.kite/skills or a skill tree linked from there."""
-    from kite.config import kite_home
+    """True when *path* resolves inside a user-global skill tree (~/.kite/skills or ~/.agents/skills)."""
+    from kite.skills.loader import user_skill_dirs
 
-    skills_root = kite_home() / "skills"
     try:
         resolved = path.resolve()
     except OSError:
         return False
     roots: list[Path] = []
-    try:
-        roots.append(skills_root.resolve())
-        if skills_root.is_dir():
-            for child in skills_root.iterdir():
-                try:
-                    target = child.resolve()
-                    if target.is_dir():
-                        roots.append(target)
-                except OSError:
-                    continue
-    except OSError:
-        return False
+    for skills_root in user_skill_dirs():
+        try:
+            roots.append(skills_root.resolve())
+            if skills_root.is_dir():
+                for child in skills_root.iterdir():
+                    try:
+                        target = child.resolve()
+                        if target.is_dir():
+                            roots.append(target)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
     for root in roots:
         try:
             if resolved == root or resolved.is_relative_to(root):
