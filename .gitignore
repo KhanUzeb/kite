@@ -22,3 +22,4 @@ docs/*.pdf
 dashboard.html
 .hermes/
 .peek/
+src/app.py
