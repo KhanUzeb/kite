@@ -55,7 +55,7 @@ REPL essentials (type /help in chat)
   /jobs /kill [id|all]          background bash + live subagents
 
 Flags on run/chat/resume: -p provider  -m model  --cwd PATH  --mode plan|build
-  --approval auto|approve|trust|readonly  -v  -q  --attach PATH
+  --approval auto|approve|supervised|yolo|trust|readonly  --auto-compact  -v  -q  --attach PATH
 
 Docs: kite_commands.md
 """

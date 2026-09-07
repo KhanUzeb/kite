@@ -37,11 +37,12 @@ Shared flags on `run` / `chat` / `resume`:
 | `--cwd` | Workspace |
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
-| `--approval yolo\|auto\|supervised` | `yolo` = no prompts; `auto` = workspace-scoped; `supervised` = approve all mutations (default: `auto` for `run`, `supervised` for chat) |
+| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | `yolo` = no prompts; `auto`/`trust` = workspace-scoped; `supervised`/`approve` = approve mutations; `readonly` = block writes |
 | `--steps` `--cost` `--time` | Limits |
 | `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `-v` / `-q` | Verbose tool bodies / quiet |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
+| `--auto-compact` | Persist auto-compaction on/off in `~/.kite/config.toml` (`kite config --auto-compact true\|false`) |
 | `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. |
 
 **Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
