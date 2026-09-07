@@ -352,7 +352,7 @@ class LitellmModel:
             raise
         except Exception as e:
             if not looks_like_reasoning_error(e):
-                return self._query_blocking(messages)
+                raise
             self.reasoning_mode = "off"
             self._drop_reasoning = True
             try:

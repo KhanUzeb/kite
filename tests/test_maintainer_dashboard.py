@@ -15,5 +15,5 @@ def test_maintainer_disabled_without_key(monkeypatch) -> None:
 
 
 def test_maintainer_enabled_with_key(monkeypatch) -> None:
-    monkeypatch.setenv("KITE_MAINTAINER_KEY", "my-secret")
+    monkeypatch.setenv("KITE_MAINTAINER_KEY", "my-secret-key-16chars")
     assert maintainer_enabled() is True

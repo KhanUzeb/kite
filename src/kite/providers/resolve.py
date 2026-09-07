@@ -96,7 +96,12 @@ def resolve_model(
             live = list_models_for_provider(spec, config=cfg, catalog=cat)
             if live.ok:
                 model_name = live.models[0].id
-        except Exception:  # noqa: BLE001 — resolve must stay non-fatal
+        except Exception as exc:  # noqa: BLE001 — resolve must stay non-fatal
+            import logging
+
+            logging.getLogger("kite.providers.resolve").debug(
+                "live model list failed for %s: %s", provider_name, exc
+            )
             model_name = ""
 
     api_base = (
