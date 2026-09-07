@@ -119,6 +119,7 @@ class AgentRuntimeConfig:
     loop_hard_threshold: int = 5
     provider_max_retries: int = 4
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    auto_venv: bool = True
 
     def with_overrides(self, **kwargs: Any) -> AgentRuntimeConfig:
         return replace(self, **{k: v for k, v in kwargs.items() if v is not None})
@@ -135,6 +136,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
     orch = data.get("orchestrator") or {}
     ui = data.get("ui") or {}
     memory = data.get("memory") or {}
+    env_cfg = data.get("environment") or {}
     return AgentRuntimeConfig(
         name=str(agent.get("name", "kite-default")),
         step_limit=int(agent.get("step_limit", 40)),
@@ -196,6 +198,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         ui_theme=str(ui.get("theme") or "auto"),
         ui_font=str(ui.get("font") or "unicode"),
         memory=MemoryConfig(inject=str(memory.get("inject", "opt_in"))),
+        auto_venv=bool(env_cfg.get("auto_venv", True)),
     )
 
 
