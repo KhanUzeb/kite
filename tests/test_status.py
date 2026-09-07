@@ -51,9 +51,33 @@ def test_format_status_tail_includes_cache_and_agents() -> None:
     )
     tail = format_status_tail(state)
     metrics = format_metrics_tail(state)
-    assert "cache 25%" in metrics
+    assert "cache" in metrics
+    assert "25%" in metrics
+    assert "4.00k tok" in metrics
     assert "agents 2" in tail
     assert "$0.120" in metrics
+
+
+def test_format_running_status_includes_activity_preview() -> None:
+    from kite.ui.status import format_running_status
+
+    state = SessionUiState(
+        busy=True,
+        running_label="pytest -q",
+        running_since="12:00:00",
+        activity_preview="tests passed",
+    )
+    text = format_running_status(state)
+    assert "pytest -q" in text
+    assert "tests passed" in text
+
+
+def test_cache_meter_renders_bar() -> None:
+    from kite.ui.status import cache_meter
+
+    text = cache_meter(0.25)
+    assert "cache" in text
+    assert "25%" in text
 
 
 def test_format_status_tail_plan_shows_checklist_progress() -> None:

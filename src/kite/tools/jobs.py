@@ -123,8 +123,10 @@ class JobRegistry:
         except ImportError:
             pass
         creationflags = 0
+        from kite.env.shell import resolve_shell_invocation
+
+        argv, cmd_text = resolve_shell_invocation(command)
         popen_kw: dict[str, Any] = {
-            "shell": True,
             "cwd": cwd,
             "stdout": subprocess.PIPE,
             "stderr": subprocess.STDOUT,
@@ -133,6 +135,12 @@ class JobRegistry:
             "errors": "replace",
             "env": env or filtered_child_env({"PAGER": "cat", "GIT_PAGER": "cat"}),
         }
+        if argv is not None:
+            popen_kw["shell"] = False
+            launch = argv
+        else:
+            popen_kw["shell"] = True
+            launch = cmd_text
         if sys.platform == "win32":
             creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             if creationflags:
@@ -140,7 +148,7 @@ class JobRegistry:
         else:
             popen_kw["preexec_fn"] = os.setsid
 
-        proc = subprocess.Popen(command, **popen_kw)
+        proc = subprocess.Popen(launch, **popen_kw)
         job_id = self._new_id()
         job = BackgroundJob(
             id=job_id,

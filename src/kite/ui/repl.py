@@ -302,6 +302,7 @@ class ChatSession:
         """Queue agent/job events during busy turns — render only on the main thread."""
         if self._busy:
             self._ui_queue.put(event)
+            self._wake_composer()
         else:
             self.display(event)
 
@@ -546,17 +547,14 @@ class ChatSession:
 
     def _pick_session(self, title: str) -> str | None:
         from kite.memory.session import list_sessions
+        from kite.ui.status import format_session_row
 
         rows = list_sessions(limit=20)
         if not rows:
             self.console.print("[kite.muted]no sessions[/]")
             return None
         items = [
-            (
-                meta.id,
-                f"{meta.id}  {meta.provider}/{meta.model}  {(meta.label or meta.task or '')[:40]}"
-                + ("  *" if meta.id == self._session_id else ""),
-            )
+            (meta.id, format_session_row(meta, current=self._session_id))
             for meta in rows
         ]
         return self._pick(items, title=title, current=self._session_id, noun="session")
@@ -1613,11 +1611,28 @@ class ChatSession:
         self.state.pending_attach = 0
 
     def _print_session(self, session, *, tail: int = 12) -> None:
+        from kite.memory.session_analytics import load_session_stats
+        from kite.ui.status import cache_meter, format_token_count
+
         meta = session.meta
-        self.console.print(
+        stats = load_session_stats(session.id)
+        header = (
             f"[kite.muted]{session.id}[/]  {meta.provider}/{meta.model}  "
             f"{meta.exit_status or 'open'}  {(meta.label or meta.task)[:60]}"
         )
+        if stats and (stats.estimated_tokens or stats.cost or stats.cache_hit_tokens):
+            bits: list[str] = []
+            if stats.estimated_tokens:
+                bits.append(format_token_count(stats.estimated_tokens))
+            if stats.cost:
+                bits.append(f"${stats.cost:.3f}")
+            if stats.cache_hit_tokens:
+                denom = max(stats.estimated_tokens, stats.cache_hit_tokens, 1)
+                bits.append(cache_meter(stats.cache_hit_tokens / denom) or f"cache {stats.cache_hit_tokens}")
+            if stats.api_calls:
+                bits.append(f"{stats.api_calls} calls")
+            header += "  · " + " · ".join(bits)
+        self.console.print(header)
         shown = session.messages[-tail:]
         if not shown:
             self.console.print("[kite.muted](empty transcript)[/]")
@@ -2093,7 +2108,7 @@ class ChatSession:
                     on_approval=self._resolve_approval_decision,
                     on_eof=lambda: setattr(self, "_quit_after_turn", True),
                     on_tick=self._busy_tick,
-                    on_poll=self._poll_pending_approval,
+                    on_poll=self._busy_tick,
                 )
             else:
                 while not done.is_set():

@@ -512,6 +512,7 @@ class RunDisplay:
         elif not detail:
             detail = tool
         self.state.set_running(label=detail, kind=tool)
+        self.state.touch(force=True)
         self.console.print(render_tool_card_start(card))
         if reason:
             self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted italic"))
@@ -527,23 +528,37 @@ class RunDisplay:
         self._spin(True, label)
 
     def _on_tool_output(self, p: dict[str, Any]) -> None:
+        line = str(p.get("line") or "").rstrip()
+        if line:
+            preview = line.strip()
+            if len(preview) > 60:
+                preview = preview[:57] + "…"
+            self.state.activity_preview = preview
+            self.state.touch(force=True)
         if not self.state.live_terminal:
             return
-        line = str(p.get("line") or "")
         if not line:
             return
-        self.console.print(Text(f"{GUTTER}{GUTTER}{line.rstrip()}", style="kite.terminal"), highlight=False)
+        self.console.print(Text(f"{GUTTER}{GUTTER}{line}", style="kite.terminal"), highlight=False)
 
     def _on_job_output(self, p: dict[str, Any]) -> None:
+        line = str(p.get("line") or "").rstrip()
+        if line:
+            job_id = str(p.get("id") or "")
+            prefix = f"[{job_id}] " if job_id else ""
+            preview = f"{prefix}{line.strip()}"
+            if len(preview) > 60:
+                preview = preview[:57] + "…"
+            self.state.activity_preview = preview
+            self.state.touch(force=True)
         if not self.state.live_terminal:
             return
-        line = str(p.get("line") or "")
         if not line:
             return
         job_id = str(p.get("id") or "")
         prefix = f"[{job_id}] " if job_id else ""
         self.console.print(
-            Text(f"{GUTTER}{GUTTER}{prefix}{line.rstrip()}", style="kite.terminal"),
+            Text(f"{GUTTER}{GUTTER}{prefix}{line}", style="kite.terminal"),
             highlight=False,
         )
 

@@ -345,17 +345,22 @@ def make_coding_tools(
             }
         try:
             limit = _safe_int(args.get("timeout"), timeout, minimum=1, maximum=3600)
-            proc = subprocess.Popen(
-                command,
-                shell=True,
-                cwd=workdir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env=_child_env(workdir),
-            )
+            from kite.env.shell import resolve_shell_invocation
+
+            argv, cmd_text = resolve_shell_invocation(command)
+            popen_kw: dict[str, Any] = {
+                "cwd": workdir,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "env": _child_env(workdir),
+            }
+            if argv is not None:
+                proc = subprocess.Popen(argv, shell=False, **popen_kw)
+            else:
+                proc = subprocess.Popen(cmd_text, shell=True, **popen_kw)
             output_parts: list[str] = []
             output_bytes = 0
             stream_redactions = 0
