@@ -9,8 +9,6 @@ import time
 import tomllib
 from pathlib import Path
 
-import pytest
-
 from kite.agent.exceptions import ProviderFault
 from kite.agent.tool_result import ToolResult
 from kite.config.runtime import load_runtime_config

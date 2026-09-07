@@ -9,7 +9,6 @@ import pytest
 
 from kite.ui.repl import ChatSession
 
-
 # --- lazy model resolve ---
 
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from kite.agent.loop import _MAX_IDLE_TURNS, DefaultAgent, _allow_text_submit
 from kite.agent.mode import AgentMode
 

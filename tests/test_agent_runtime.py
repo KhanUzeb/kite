@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.loop import DefaultAgent
 from kite.agent.queue import RunMessageQueue

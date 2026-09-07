@@ -12,7 +12,6 @@ from kite.ui.commands import LEGACY_ALIASES, parse_slash
 from kite.ui.pick import numbered_pick
 from kite.ui.repl import ChatSession
 
-
 # --- apply ---
 
 

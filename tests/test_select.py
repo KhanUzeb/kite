@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from kite.providers.select import _can_use_radiolist, _numbered_pick, connect_interactive, select_model_interactive
+from kite.providers.select import _can_use_radiolist, _numbered_pick, select_model_interactive
 
 
 def test_can_use_radiolist_false_on_windows(monkeypatch) -> None:
