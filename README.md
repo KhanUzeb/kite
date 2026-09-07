@@ -5,9 +5,9 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
-[![Version](https://img.shields.io/badge/version-0.9.4-cyan.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.5-cyan.svg)](CHANGELOG.md)
 
-**Version:** 0.9.4
+**Version:** 0.9.5
 
 **Keywords:** coding agent, AI code assistant, terminal coding assistant, agent CLI, SWE-agent style loop, repository automation, code review automation
 
@@ -203,7 +203,7 @@ kite config --select-model
 kite bench [--json] [--save PATH] [--compare BASELINE.json]   # harness timing (no LLM)
 ```
 
-UX notes: `docs/cli-ux.md` · spec coverage: `docs/ideal-cli-spec.md` · command map: `kite_commands.md`
+Command map: [kite_commands.md](kite_commands.md)
 
 Install on a new machine: `scripts/install.sh` (macOS/Linux) or `scripts/install.ps1` (Windows). See [Setup](#setup).
 
@@ -230,13 +230,11 @@ Canonical markdown:
 - [`architecture.md`](architecture.md): system overview — layers, lifecycle, memory, extension points
 - `CONTEXT.md`: domain glossary (terms agents and humans share)
 - `AGENTS.md`: how to hack on this repo (map, conventions, tests)
-- `docs/kite-system-design.md`: architecture, atlas, tradeoffs
-- `docs/cli-ux.md`: plan/build TUI, style guide, render loop
-- [`docs/kite-0.9-architecture-program.md`](docs/kite-0.9-architecture-program.md): 0.9 seams and adapter status
-- [`docs/RELEASE-0.9.2.md`](docs/RELEASE-0.9.2.md): latest release notes
+- `docs/kite-system-design.md`: architecture atlas and tradeoffs
+- [`docs/RELEASE-0.9.5.md`](docs/RELEASE-0.9.5.md): latest release notes
 - [`docs/RELEASE-0.9.0.md`](docs/RELEASE-0.9.0.md): 0.9 release notes
 
-Generated PDFs (gitignored): `docs/kite-system-design.pdf`, `docs/cli-ux.pdf`, `docs/ideal-cli-spec.pdf`, `docs/kite_commands.pdf`
+Generated PDFs (gitignored): `docs/kite-system-design.pdf`, `docs/kite_commands.pdf`
 
 ```bash
 uv pip install fpdf2

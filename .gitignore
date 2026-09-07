@@ -21,3 +21,4 @@ docs/*.pdf
 # Private maintainer dashboard (local only)
 dashboard.html
 .hermes/
+.peek/

@@ -80,5 +80,4 @@ CI runs Linux + Windows on Python 3.11 and 3.12.
 
 See [CHANGELOG.md](../CHANGELOG.md) for the [0.9.0] entry.
 
-Architecture: [kite-0.9-architecture-program.md](kite-0.9-architecture-program.md),
-[ADR 0001](adr/0001-application-harness-seam.md).
+Architecture: [architecture.md](../architecture.md) and [kite-system-design.md](kite-system-design.md).

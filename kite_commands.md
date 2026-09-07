@@ -26,6 +26,12 @@ kite chat [--mode plan|build] [--approval auto|approve|trust|readonly] [--sessio
 kite run "task"              # one-shot
 kite resume <session-id>                 # open that transcript in chat
 kite resume <session-id> [follow-up]     # one-shot continue
+kite resume abc12345                     # id prefix works when unique
+kite sessions                            # table: date, time, title, model, status, id
+kite sessions humanize                   # filter by title, cwd, date, or id prefix
+kite sessions -q docs                    # same filter flag
+kite sessions --no-pick                  # print table only (no picker)
+kite sessions --show <id> [--tail N]     # meta + transcript tail + resume hint
 ```
 
 Shared flags on `run` / `chat` / `resume`:
@@ -50,8 +56,10 @@ Shared flags on `run` / `chat` / `resume`:
 Housekeeping (no model):
 
 ```
-kite sessions                  # TTY: pick to open / show / delete
-kite sessions [--limit N] [--show id] [--tail N]
+kite sessions                  # TTY: table then pick → resume / show / delete
+kite sessions [query]          # filter by title, cwd, date, or id prefix
+kite sessions -q text          # same as positional filter
+kite sessions [--limit N] [--show id] [--tail N] [--no-pick]
 kite sessions --delete <id> [<id> ...]
 kite sessions --delete-all     # TTY confirms; else pass -y
 kite setup [-p provider]       # first-run wizard: credentials + model
@@ -71,8 +79,29 @@ kite commands
 kite plugins
 kite memory [--remember text] [--forget query] [--project]
 kite runtime-config [--config name]
+kite bench [--json] [--save PATH] [--compare BASELINE.json] [--check]
 kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
 ```
+
+### Harness timing (`kite bench`)
+
+Repeatable micro-benchmarks for the **harness only** — no live LLM calls. Use before/after refactors to catch startup, context, and tool regressions.
+
+```bash
+kite bench                      # table: name · category · median ms
+kite bench --json               # machine-readable report
+kite bench --save before.json   # baseline snapshot
+kite bench --compare before.json
+kite bench --check              # exit 1 if any case exceeds budget (CI gate)
+```
+
+| Category | Benchmarks |
+|----------|------------|
+| **startup** | `cli_import`, `config_load`, `user_config_load`, `catalog_load`, `skills_load`, `repl_chat_init`, `model_resolve`, `slash_index`, `runtime_prepare` |
+| **context** | `repo_map`, `prompt_cache_prepare`, `context_gather`, `prompt_assembly` |
+| **tools** | `tool_registry`, `read_tool`, `grep_tool`, `bash_echo`, `subprocess_spawn` |
+
+Budget ceilings live in `src/kite/bench/budgets.py`. `pytest tests/test_bench.py` runs the same suite in CI.
 
 `kite dashboard` is per-user: it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
 
@@ -120,7 +149,7 @@ These never go to the model.
 | `/live` | Stream bash/job output in real time while tools run |
 | `/collapse` | Collapse tool output (default) |
 | `/trace` | Last traceback |
-| `/skills [name]` | List skills, or print one. Empty: pick to show. User-home skills show `~` |
+| `/skills [name]` | List skills, or print one. Empty: pick to show. User-home skills show `~` (`~/.kite/skills`, `~/.agents/skills`) |
 | `/skills add pkg\|path` | Install npm/npx/GitHub into `~/.kite/skills`, or **link** a local skill folder |
 | `/commands` | List markdown slash prompts |
 | `/commands new name` | Write `.kite/commands/name.md` |
@@ -146,6 +175,7 @@ Ctrl+C stops the **current turn**, not the process.
 |----------|--------|
 | `Esc` / `Ctrl+C` | Stop the running turn (session stays). Idle `Ctrl+C` clears the line; does not quit |
 | `Ctrl+G` | Steer: stop and send the composer text as the next turn |
+| `Ctrl+U` | Dequeue: restore all queued messages into the composer for editing |
 | `Enter` | Send the line. While working, queues a chat follow-up |
 | `Ctrl+V` / `Shift+Insert` | Paste OS clipboard into the composer |
 | `Ctrl+Insert` | Copy composer selection to OS clipboard |
@@ -159,6 +189,8 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+D` / `/quit` | Close the REPL |
 
 Drag-select, copy, and right-click paste stay with the terminal (mouse capture off by default). Set `KITE_MOUSE=1` for slash-menu wheel scroll (then use Shift+drag to select in most terminals).
+
+While a turn runs, the bottom toolbar shows a **running line** (`[HH:MM:SS] label running`) and, when bash or background jobs stream output, the latest sanitized line as `› …`. Queued messages show separate **steer** and **follow-up** counts plus `next steer:` / `next follow-up:` preview. Provider retries tick down in the running line. Auto-compaction shows `compacting context`. Metrics row: tok/s, cache %, context meter, and session cost.
 
 `/thinking` and `/fast` appear in the menu only when the current model’s API advertises both effort modes (e.g. OpenRouter, Groq, Nemotron). Use `/reasoning` when only one mode exists.
 
@@ -346,7 +378,7 @@ Install once. Activate the venv (install script prints the path; or add `.venv/b
 
 `--cwd` is on `run`, `chat`, `resume`, `context`, `skills`, `commands`, `plugins`, `memory`, `apply`, `import`, and `cloud apply`.
 
-Global: `~/.kite/` (sessions, config, user skills). Per-repo: `<repo>/.kite/commands`, `skills`, `plugins`, `memory`.
+Global: `~/.kite/` (sessions, config, user skills). Also loads skills from `~/.agents/skills` on any machine. Per-repo: `<repo>/.kite/commands`, `skills`, `plugins`, `memory`, and `<repo>/.agents/skills`.
 
 ### Tests
 
