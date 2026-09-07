@@ -16,6 +16,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from kite.guardrails import GuardrailPolicy, redact_secrets
+from kite.guardrails.env_filter import filtered_child_env
 from kite.memory.store import MemoryScope, MemoryStore
 from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
@@ -34,6 +35,20 @@ except ImportError:  # pragma: no cover
 
 
 _SKIP_NAMES = frozenset({".git", ".venv", "node_modules", "__pycache__"})
+_BASH_MAX_OUTPUT_BYTES = 256_000
+_STDIN_MAX_BYTES = 2_000_000
+
+
+def _safe_int(value: Any, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    if n < minimum:
+        return minimum
+    if maximum is not None and n > maximum:
+        return maximum
+    return n
 
 
 def _resolve(path: str, cwd: str) -> Path:
@@ -180,30 +195,35 @@ def make_coding_tools(
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
             return _io_fail(path, e)
-        start = int(args.get("offset", 1))
-        limit = args.get("limit")
+        start = _safe_int(args.get("offset"), 1, minimum=1)
+        limit_raw = args.get("limit")
+        limit = _safe_int(limit_raw, 0, minimum=0) if limit_raw is not None else None
         numbered = bool(args.get("numbered"))
         lines = text.splitlines(keepends=True)
         chunk = lines[start - 1 :] if start > 1 else lines
-        if limit is not None:
-            chunk = chunk[: int(limit)]
+        if limit is not None and limit > 0:
+            chunk = chunk[:limit]
         if numbered:
             body = "".join(f"{i + start:6}|{line}" for i, line in enumerate(chunk))
         else:
             body = "".join(chunk)
         truncated = False
-        if limit is None and len(lines) > 800:
-            chunk = lines[:400]
+        if limit is None and len(lines) > 200:
+            chunk = lines[:200]
             if numbered:
                 body = "".join(f"{i + start:6}|{line}" for i, line in enumerate(chunk))
             else:
                 body = "".join(chunk)
-            body += f"\n... [{len(lines) - 400} lines truncated; use bash: wc -l / head / sed -n, or read offset/limit] ...\n"
+            body += f"\n... [{len(lines) - 200} lines truncated; use bash: wc -l / head / sed -n, or read offset/limit] ...\n"
             truncated = True
         return {"ok": True, "path": str(path), "output": body, "truncated": truncated}
 
     def write_file(args: dict[str, Any]) -> dict[str, Any]:
         path = _resolve(str(args["path"]), _root())
+        if guardrails is not None:
+            verdict = guardrails.check_path(str(path), for_write=True)
+            if not verdict.allowed:
+                return {"ok": False, "error": verdict.reason, "output": verdict.reason, "blocked": True}
         if path.exists() and path.is_dir():
             msg = f"cannot write: {path} is a directory"
             return {"ok": False, "error": msg, "path": str(path), "output": msg}
@@ -221,10 +241,15 @@ def make_coding_tools(
             "bytes": path.stat().st_size,
             "output": f"wrote {path}",
             "diff": diff,
+            "changed_paths": [str(path)],
         }
 
     def edit_file(args: dict[str, Any]) -> dict[str, Any]:
         path = _resolve(str(args["path"]), _root())
+        if guardrails is not None:
+            verdict = guardrails.check_path(str(path), for_write=True)
+            if not verdict.allowed:
+                return {"ok": False, "error": verdict.reason, "output": verdict.reason, "blocked": True}
         if path.is_dir():
             msg = f"cannot edit: {path} is a directory"
             return {"ok": False, "error": msg, "path": str(path), "output": msg}
@@ -257,6 +282,7 @@ def make_coding_tools(
             "replacements": n,
             "output": f"edited {path} ({n} hunk{'s' if n != 1 else ''})",
             "diff": _unified_diff(str(path), text, after),
+            "changed_paths": [str(path)],
         }
 
     def bash(args: dict[str, Any]) -> dict[str, Any]:
@@ -289,7 +315,7 @@ def make_coding_tools(
                 job = jobs.spawn_bash(
                     command,
                     cwd=workdir,
-                    env=os.environ | {"PAGER": "cat", "GIT_PAGER": "cat"},
+                    env=filtered_child_env({"PAGER": "cat", "GIT_PAGER": "cat"}),
                 )
             except OSError as e:
                 return {"ok": False, "returncode": -1, "output": "", "error": str(e)}
@@ -301,7 +327,7 @@ def make_coding_tools(
                 "output": f"background job {job.id} (pid {job.pid})",
             }
         try:
-            limit = int(args.get("timeout") or timeout)
+            limit = _safe_int(args.get("timeout"), timeout, minimum=1, maximum=3600)
             proc = subprocess.Popen(
                 command,
                 shell=True,
@@ -311,16 +337,20 @@ def make_coding_tools(
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                env=os.environ | {"PAGER": "cat", "GIT_PAGER": "cat"},
+                env=filtered_child_env({"PAGER": "cat", "GIT_PAGER": "cat"}),
             )
             output_parts: list[str] = []
+            output_bytes = 0
             stream_redactions = 0
 
             def _emit_line(raw_line: str) -> None:
-                nonlocal stream_redactions
+                nonlocal stream_redactions, output_bytes
+                if output_bytes >= _BASH_MAX_OUTPUT_BYTES:
+                    return
                 safe, n = redact_secrets(raw_line)
                 stream_redactions += n
                 output_parts.append(safe)
+                output_bytes += len(safe.encode("utf-8", errors="replace"))
                 try:
                     sys.stderr.write(safe)
                     sys.stderr.flush()
@@ -329,8 +359,16 @@ def make_coding_tools(
 
             def _drain() -> None:
                 assert proc.stdout is not None
-                for line in iter(proc.stdout.readline, ""):
-                    _emit_line(line)
+                try:
+                    for line in iter(proc.stdout.readline, ""):
+                        _emit_line(line)
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        proc.stdout.close()
+                    except OSError:
+                        pass
 
             reader = threading.Thread(target=_drain, daemon=True)
             reader.start()
@@ -362,10 +400,17 @@ def make_coding_tools(
                                 "output": partial,
                                 "error": f"timeout after {limit}s",
                             }
-            except OSError:
-                raise
+            except OSError as e:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                reader.join(timeout=1.0)
+                return {"ok": False, "returncode": -1, "output": "".join(output_parts), "error": str(e)}
             reader.join(timeout=2.0)
             output = "".join(output_parts)
+            if output_bytes >= _BASH_MAX_OUTPUT_BYTES:
+                output += "\n...[guardrail truncated bash output]...\n"
             lines = output.lstrip().splitlines(keepends=True)
             submitted = (
                 bool(lines)
@@ -389,7 +434,7 @@ def make_coding_tools(
         pattern = str(args["pattern"])
         root_path = _resolve(str(args.get("path") or "."), _root())
         glob_pat = str(args.get("glob") or "")
-        max_hits = int(args.get("max_hits") or 50)
+        max_hits = _safe_int(args.get("max_hits"), 50, minimum=1, maximum=500)
         rg = shutil.which("rg")
         if rg:
             cmd = [rg, "--line-number", "--no-heading", "--color", "never", "--hidden", "-g", "!.git", "-e", pattern]
@@ -415,7 +460,10 @@ def make_coding_tools(
                 body += "\n… truncated …"
             return {"ok": True, "output": body, "hits": min(len(lines), max_hits), "engine": "rg"}
 
-        rx = re.compile(pattern)
+        try:
+            rx = re.compile(pattern)
+        except re.error as e:
+            return {"ok": False, "error": f"invalid regex: {e}", "output": f"invalid regex: {e}"}
         hits: list[str] = []
         glob_use = glob_pat or "*"
         paths = [root_path] if root_path.is_file() else sorted(root_path.rglob(glob_use))
@@ -453,7 +501,7 @@ def make_coding_tools(
             if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in p.parts):
                 continue
             matches.append(str(p.relative_to(root_path) if p.is_relative_to(root_path) else p))
-            if len(matches) >= int(args.get("max") or 200):
+            if len(matches) >= _safe_int(args.get("max"), 200, minimum=1, maximum=2000):
                 matches.append("…")
                 break
         return {"ok": True, "output": "\n".join(matches) if matches else "(no matches)", "count": len(matches)}
@@ -529,10 +577,14 @@ def make_coding_tools(
         return _todo_view(store.read())
 
     def _single_task(prompt: str, glob_pat: str, pattern: Any, root_path: Path) -> str:
-        matches = glob_files({"pattern": glob_pat, "root": str(root_path), "max": 40})
+        matches = gated("glob", {"pattern": glob_pat, "root": str(root_path), "max": 40}, glob_files)
         parts = [f"task: {prompt}", "files:", matches.get("output") or "(none)"]
         if pattern:
-            grepped = grep_files({"pattern": str(pattern), "path": str(root_path), "max_hits": 30})
+            grepped = gated(
+                "grep",
+                {"pattern": str(pattern), "path": str(root_path), "max_hits": 30},
+                grep_files,
+            )
             parts.append("hits:")
             parts.append(str(grepped.get("output") or ""))
         return "\n".join(parts)

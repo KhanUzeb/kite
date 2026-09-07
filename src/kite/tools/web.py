@@ -11,12 +11,13 @@ import html
 import ipaddress
 import json
 import re
+import socket
 import time
 from html.parser import HTMLParser
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, OpenerDirector, Request, build_opener, urlopen
 
 try:
     from kite import __version__
@@ -27,6 +28,128 @@ _USER_AGENT = f"kite-agent/{__version__} (+https://github.com/KhanUzeb/kite)"
 _MAX_BODY = 120_000
 _FETCH_TIMEOUT = 20
 _DEFAULT_FETCH_CHARS = 24_000
+_MAX_REDIRECTS = 5
+_BLOCKED_HOSTS = frozenset(
+    {
+        "localhost",
+        "0.0.0.0",
+        "metadata.google.internal",
+        "metadata.google",
+    }
+)
+_BLOCKED_IPS = frozenset(
+    {
+        "169.254.169.254",
+        "100.100.100.200",
+        "127.0.0.1",
+        "0.0.0.0",
+    }
+)
+
+
+def _parse_host_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    token = (host or "").strip().lower().rstrip(".")
+    if not token:
+        return None
+    if token in _BLOCKED_HOSTS:
+        return ipaddress.ip_address("127.0.0.1")
+    if token.isdigit():
+        try:
+            return ipaddress.IPv4Address(int(token))
+        except ValueError:
+            return None
+    if token.startswith("0x"):
+        try:
+            return ipaddress.IPv4Address(int(token, 16))
+        except ValueError:
+            return None
+    if token.startswith("0") and len(token) > 1 and token[1:].isdigit():
+        try:
+            return ipaddress.IPv4Address(int(token, 8))
+        except ValueError:
+            pass
+    try:
+        return ipaddress.ip_address(token)
+    except ValueError:
+        pass
+    if token.startswith("[") and token.endswith("]"):
+        try:
+            return ipaddress.ip_address(token[1:-1])
+        except ValueError:
+            return None
+    return None
+
+
+def _ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if str(ip) in _BLOCKED_IPS:
+        return True
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return bool(
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+    )
+
+
+class _SafeRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        err = _url_blocked(newurl)
+        if err:
+            raise URLError(err)
+        old = urlparse(req.full_url)
+        new = urlparse(newurl)
+        if new.scheme not in {"http", "https"}:
+            raise URLError("redirect to non-http(s) scheme blocked")
+        if old.scheme == "https" and new.scheme == "http":
+            raise URLError("https→http downgrade redirect blocked")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _safe_opener() -> OpenerDirector:
+    return build_opener(_SafeRedirectHandler())
+
+
+def _resolve_host_ips(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    literal = _parse_host_ip(host)
+    if literal is not None:
+        return [literal]
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return []
+    ips: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    seen: set[str] = set()
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        key = str(ip)
+        if key not in seen:
+            seen.add(key)
+            ips.append(ip)
+    return ips
+
+
+def _url_blocked(url: str) -> str | None:
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return "only http(s) URLs allowed"
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return "invalid URL"
+    if host in _BLOCKED_HOSTS or host.endswith(".local"):
+        return "local URLs blocked"
+    literal = _parse_host_ip(host)
+    if literal is not None and _ip_blocked(literal):
+        return "private network URLs blocked"
+    for ip in _resolve_host_ips(host):
+        if _ip_blocked(ip):
+            return "private network URLs blocked"
+    return None
 
 
 def _urlencode(text: str) -> str:
@@ -53,24 +176,6 @@ def unwrap_tracking_url(url: str) -> str:
     return text
 
 
-def _url_blocked(url: str) -> str | None:
-    parsed = urlparse(url.strip())
-    if parsed.scheme not in {"http", "https"}:
-        return "only http(s) URLs allowed"
-    host = (parsed.hostname or "").lower()
-    if not host:
-        return "invalid URL"
-    if host in {"localhost", "0.0.0.0"} or host.endswith(".local"):
-        return "local URLs blocked"
-    try:
-        ip = ipaddress.ip_address(host)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-            return "private network URLs blocked"
-    except ValueError:
-        pass
-    return None
-
-
 def _fetch_url(
     url: str,
     *,
@@ -89,7 +194,7 @@ def _fetch_url(
         },
     )
     try:
-        with urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        with _safe_opener().open(req, timeout=timeout) as resp:  # noqa: S310
             ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             return resp.read(max_bytes), ctype, None
     except (URLError, OSError, TimeoutError, ValueError) as e:
