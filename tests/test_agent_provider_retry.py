@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from kite.agent.events import Event
 from kite.agent.exceptions import ProviderFault
 from kite.agent.loop import DefaultAgent
-from kite.agent.mode import AgentMode
 from kite.env.local import LocalEnvironment
 from kite.tools import ToolRegistry
 

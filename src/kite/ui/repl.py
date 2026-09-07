@@ -258,7 +258,7 @@ class ChatSession:
         self._approval_panel_id = req.request_id
 
     def _resolve_approval_decision(self, decision: str) -> None:
-        from kite.ui.approval import ApprovalPolicy, action_pattern
+        from kite.ui.approval import action_pattern
 
         req = self._approval_coordinator.pending
         if req is None:

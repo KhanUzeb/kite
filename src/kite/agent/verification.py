@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from kite.application.tools.contracts import ToolResult
 from kite.application.verification.collector_ops import (
     apply_bash,
     apply_read,
@@ -20,14 +21,13 @@ from kite.application.verification.collector_ops import (
 from kite.application.verification.collector_ops import (
     unfounded_claim_reason as _unfounded_claim_reason,
 )
+from kite.application.verification.evidence import EvidenceVerifier, is_check_command
 from kite.application.verification.plan import (
     VerificationRecord,
     build_verification_plan,
     plan_status,
 )
-from kite.application.verification.evidence import EvidenceVerifier, is_check_command
 from kite.application.verification.workspace_profile import WorkspaceProfile, discover_workspace_profile
-from kite.application.tools.contracts import ToolResult
 
 VerificationStatus = Literal[
     "verified", "partial", "unverified", "failed", "idle", "changed_unverified", "blocked"

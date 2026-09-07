@@ -7,6 +7,12 @@ import sys
 from kite.env.venv import apply_venv, discover_venv, prepare_child_env
 
 
+def _path_value(env: dict[str, str]) -> str:
+    if sys.platform == "win32":
+        return env.get("Path", env.get("PATH", ""))
+    return env.get("PATH", "")
+
+
 def test_discover_venv_finds_dot_venv(tmp_path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
@@ -33,23 +39,30 @@ def test_apply_venv_prepends_path(tmp_path) -> None:
         bindir = venv / "bin"
     bindir.mkdir(parents=True)
     env = apply_venv({"PATH": "/usr/bin"}, venv)
-    path_key = "Path" if sys.platform == "win32" and "Path" in env else "PATH"
-    assert str(bindir.resolve()) in env[path_key]
+    path_value = _path_value(env)
+    assert str(bindir.resolve()) in path_value
     assert env["VIRTUAL_ENV"] == str(venv.resolve())
 
 
-def test_prepare_child_env_respects_auto_venv_flag(tmp_path, monkeypatch) -> None:
+def test_prepare_child_env_respects_auto_venv_flag(tmp_path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
     venv = root / "venv"
     if sys.platform == "win32":
-        (venv / "Scripts").mkdir(parents=True)
-        (venv / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+        bindir = venv / "Scripts"
+        bindir.mkdir(parents=True)
+        (bindir / "python.exe").write_text("", encoding="utf-8")
     else:
-        (venv / "bin").mkdir(parents=True)
-        (venv / "bin" / "python").write_text("", encoding="utf-8")
+        bindir = venv / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "python").write_text("", encoding="utf-8")
     (venv / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
+    bindir_resolved = str(bindir.resolve())
+
     off = prepare_child_env(cwd=root, auto_venv=False)
     on = prepare_child_env(cwd=root, auto_venv=True)
-    assert "VIRTUAL_ENV" not in off
+
+    assert bindir_resolved not in _path_value(off)
+    assert off.get("VIRTUAL_ENV") != str(venv.resolve())
     assert on.get("VIRTUAL_ENV") == str(venv.resolve())
+    assert bindir_resolved in _path_value(on)

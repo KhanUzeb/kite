@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
-from kite.agent.mode import BUILD_TOOLS, PLAN_TOOLS, READONLY_TOOLS, filter_enabled
+from kite.agent.mode import BUILD_TOOLS, PLAN_TOOLS, filter_enabled
 
 
-class AgentRole(str, Enum):
+class AgentRole(StrEnum):
     AUTO = "auto"  # infer from mode
     ARCHITECT = "architect"
     IMPLEMENTER = "implementer"

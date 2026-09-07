@@ -1,5 +1,6 @@
 """User prefs (~/.kite) and merged agent runtime TOML."""
 
+from kite.config.readiness import SetupStatus, assess_setup_status, is_fresh_install, needs_setup
 from kite.config.runtime import (
     AgentRuntimeConfig,
     ContextConfig,
@@ -10,7 +11,6 @@ from kite.config.runtime import (
     load_runtime_config,
 )
 from kite.config.user import UserConfig, ensure_home, kite_home
-from kite.config.readiness import SetupStatus, assess_setup_status, is_fresh_install, needs_setup
 
 __all__ = [
     "AgentRuntimeConfig",

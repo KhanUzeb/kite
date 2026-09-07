@@ -24,8 +24,8 @@ def test_plan_mode_allows_inspection_bash(workspace, tmp_path) -> None:
     from kite.agent.loop import DefaultAgent
     from kite.agent.mode import AgentMode
     from kite.env.local import LocalEnvironment
-    from kite.tools import ToolRegistry
     from kite.guardrails import GuardrailConfig, GuardrailPolicy
+    from kite.tools import ToolRegistry
     from kite.tools.coding import make_coding_tools
 
     tools = make_coding_tools(
@@ -46,8 +46,8 @@ def test_plan_mode_blocks_mutating_bash(workspace) -> None:
     from kite.agent.loop import DefaultAgent
     from kite.agent.mode import AgentMode
     from kite.env.local import LocalEnvironment
-    from kite.tools import ToolRegistry
     from kite.guardrails import GuardrailConfig, GuardrailPolicy
+    from kite.tools import ToolRegistry
     from kite.tools.coding import make_coding_tools
 
     tools = make_coding_tools(

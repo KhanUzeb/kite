@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from kite.agent.exceptions import Submitted
 from kite.agent.loop import (
+    _MAX_IDLE_TURNS,
     DefaultAgent,
     _allow_text_submit,
     _is_casual_chat,
-    _MAX_IDLE_TURNS,
 )
 from kite.agent.mode import AgentMode
-from kite.agent.exceptions import Submitted
 
 
 class _TextOnlyModel:

@@ -42,9 +42,9 @@ def _load_attachments(paths: list[str], task: str, cwd: str):
 
 
 def _wire_display(harness, console, args: argparse.Namespace):
-    from kite.ui.render import make_run_display
     from kite.agent.mode import ApprovalMode
     from kite.ui.git import GitCheckpoints, git_branch
+    from kite.ui.render import make_run_display
     from kite.ui.state import SessionUiState
 
     mode = _parse_mode(getattr(args, "mode", None))
@@ -1009,9 +1009,9 @@ def build_parser() -> argparse.ArgumentParser:
     providers = sub.add_parser("providers", help="List providers + credential status")
     providers.set_defaults(func=cmd_providers)
 
+    from kite.cli.dashboard import cmd_dashboard
     from kite.cli.setup import cmd_keys, cmd_login, cmd_setup
     from kite.cli.stats import cmd_maintainer_dashboard
-    from kite.cli.dashboard import cmd_dashboard
 
     setup = sub.add_parser("setup", help="First-run wizard — credentials, provider, model")
     setup.add_argument("-p", "--provider", help="Skip provider picker")
@@ -1184,9 +1184,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Bare `kite` → interactive chat (cold-start REPL). `kite --help` still works.
     if args.command is None:
-        from kite.ui.style import make_console
-
         from kite.cli.setup import maybe_run_first_setup
+        from kite.ui.style import make_console
 
         console = make_console(stderr=True)
         setup_code = maybe_run_first_setup(console)

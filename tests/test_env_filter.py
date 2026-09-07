@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from kite.guardrails import env_dump_blocked
 from kite.guardrails.env_filter import filtered_child_env, is_sensitive_env_key
 

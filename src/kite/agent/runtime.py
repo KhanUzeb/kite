@@ -8,24 +8,24 @@ from pathlib import Path
 from typing import Any
 
 from kite.agent.cancel import CancelToken
+from kite.agent.events import Event
 from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
-from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode, parse_approval_mode, tools_for_mode
+from kite.agent.orchestrator import SubagentOrchestrator
 from kite.agent.role import AgentRole, parse_role, tools_for_role
+from kite.agent.verification import VerificationCollector
 from kite.cli.slash import expand_prompt_slash
 from kite.config import AgentRuntimeConfig, UserConfig, ensure_home, load_runtime_config
 from kite.context.discovery import gather_project_context
 from kite.context.workspace import ExecutionMode, ExecutionSession, WorkspaceContext
 from kite.env.local import LocalEnvironment
 from kite.guardrails import GuardrailPolicy
+from kite.memory.audit import AuditLog
 from kite.memory.session import Session, create_session, load_session
 from kite.memory.store import MemoryStore
-from kite.memory.audit import AuditLog
-from kite.agent.verification import VerificationCollector
-from kite.models.litellm_model import LitellmModel
 from kite.models.cache import PromptCacheManager
-from kite.agent.orchestrator import SubagentOrchestrator
+from kite.models.litellm_model import LitellmModel
 from kite.prompts import assemble_instance_prompt, assemble_system_prompt, load_prompt_template
 from kite.providers.resolve import ResolvedModel, missing_credentials, missing_model, resolve_model
 from kite.skills.loader import load_skills
@@ -412,7 +412,6 @@ class AgentRuntime:
         tool_executor = self.tool_executor_override
         if tool_executor is None and self.options.use_tool_executor:
             from kite.application.execution import build_tool_executor
-            from kite.application.tools.contracts import ToolCall
 
             exec_mode = "host" if rcfg.guardrails.host_access() else "restricted"
             no_gr = bool(self.options.no_guardrails or not rcfg.guardrails.enabled)

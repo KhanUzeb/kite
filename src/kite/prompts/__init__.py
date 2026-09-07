@@ -7,8 +7,8 @@ from importlib import resources
 from pathlib import Path
 
 from kite.config import AgentRuntimeConfig, PromptsConfig
-from kite.context.discovery import ProjectContext
 from kite.context.clock import session_time_section
+from kite.context.discovery import ProjectContext
 from kite.skills.loader import Skill, build_skill_index
 
 

@@ -12,7 +12,6 @@ from kite.ui.tool_cards import (
     render_tool_card_done,
     render_tool_card_start,
     render_tool_summary,
-    truncate_preview,
 )
 
 

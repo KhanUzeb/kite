@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class AgentMode(str, Enum):
+class AgentMode(StrEnum):
     PLAN = "plan"
     BUILD = "build"
 
 
-class ApprovalMode(str, Enum):
+class ApprovalMode(StrEnum):
     """How much autonomy is granted — surfaced in the prompt itself."""
 
     AUTO = "auto"

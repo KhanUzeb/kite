@@ -6,7 +6,6 @@ import json
 import re
 from typing import Any
 
-
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 
@@ -53,4 +52,4 @@ def repair_tool_arguments(raw: str) -> tuple[dict[str, Any] | None, str | None]:
         except json.JSONDecodeError:
             pass
 
-    return None, f"Invalid tool arguments JSON after repair attempts"
+    return None, "Invalid tool arguments JSON after repair attempts"

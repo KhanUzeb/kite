@@ -453,7 +453,7 @@ class DefaultAgent:
                 if self.session is not None and getattr(self.session.meta, "cwd", None):
                     cwd = str(self.session.meta.cwd)
                 elif hasattr(self.env, "cwd"):
-                    cwd = str(getattr(self.env, "cwd") or ".")
+                    cwd = str(self.env.cwd or ".")
                 store = MemoryStore.open(cwd)
                 todos = self.todos.read() if self.todos is not None else None
                 record_continuity_after_compact(
@@ -673,7 +673,7 @@ class DefaultAgent:
                     deadline = time.monotonic() + delay
                     while time.monotonic() < deadline:
                         if self._interrupt:
-                            raise _user_interrupt()
+                            raise _user_interrupt() from None
                         time.sleep(min(0.1, deadline - time.monotonic()))
             if last_error is not None:
                 raise last_error

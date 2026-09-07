@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
-
-from kite.tools.coding import _unified_diff
 
 
 def _apply_edit(path: Path, old: str, new: str, *, replace_all: bool = False) -> bool:

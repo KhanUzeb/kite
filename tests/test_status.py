@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from kite.ui.render import render_status
 from kite.ui.state import SessionUiState
 from kite.ui.status import context_meter, format_status_tail
-from kite.ui.render import render_status
 
 
 def test_set_context_usage_updates_meter() -> None:

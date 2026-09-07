@@ -8,7 +8,6 @@ import stat
 from kite.providers.catalog import load_catalog
 from kite.providers.credentials import (
     api_key_fingerprint,
-    env_file_path,
     load_kite_env,
     mask_api_key_fingerprint,
     prompt_api_key,

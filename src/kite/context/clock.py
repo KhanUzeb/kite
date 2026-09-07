@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def session_time_section() -> str:
     """Compact UTC + local timestamp block (recomputed each run)."""
-    utc = datetime.now(timezone.utc)
+    utc = datetime.now(UTC)
     local = datetime.now().astimezone()
     return (
         "## Session time\n"

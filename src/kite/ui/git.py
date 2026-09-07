@@ -6,7 +6,6 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 KITE_MARK = "kite:"
 
 

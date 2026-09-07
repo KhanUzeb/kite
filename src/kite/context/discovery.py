@@ -48,7 +48,7 @@ class ProjectContext:
     tree_snippet: str
     repo_map: str = ""
 
-    def render_for_prompt(self, *, max_chars: int = 24_000) -> str:
+    def render_for_prompt(self, *, max_chars: int = 12_000) -> str:
         parts: list[str] = [
             f"## Workspace\n- cwd: {self.cwd}\n- project_root: {self.root}",
         ]
@@ -193,7 +193,7 @@ def gather_project_context(
         root = find_project_root(cwd_path)
         repo_map = ""
         if include_repo_map and build_repo_map is not None:
-            repo_map = build_repo_map(root)
+            repo_map = build_repo_map(root, max_chars=4_000)
         return ProjectContext(
             root=root,
             cwd=cwd_path,

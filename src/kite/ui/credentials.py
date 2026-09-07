@@ -29,7 +29,7 @@ def render_byok_login_panel(
     body.append(env_path, style="cyan")
     body.append(" (owner-only).\n", style="kite.muted")
     body.append(f"{GUTTER}┊ ", style="kite.muted")
-    body.append(f"Saved as ", style="kite.muted")
+    body.append("Saved as ", style="kite.muted")
     body.append(env_var, style="bold")
     body.append(" — never echoed or logged.\n", style="kite.muted")
     if spec.docs_url:
@@ -98,7 +98,6 @@ def render_credentials_table_rows(
 ) -> Text:
     """Plain-text credential rows for REPL /keys (no Rich Table)."""
     from kite.providers.catalog import load_catalog
-    from kite.providers.byos import is_oauth_provider
     from kite.providers.credentials import credential_type_label, provider_credential_status
     from kite.providers.keys import api_key_env_names
 

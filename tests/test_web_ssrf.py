@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
+import ipaddress
 
 from kite.tools.web import _parse_host_ip, _url_blocked
 
@@ -30,4 +30,5 @@ def test_allows_public_https() -> None:
 def test_parse_host_ip_ipv4_mapped() -> None:
     ip = _parse_host_ip("::ffff:127.0.0.1")
     assert ip is not None
-    assert str(ip) == "::ffff:127.0.0.1"
+    assert ip.ipv4_mapped == ipaddress.IPv4Address("127.0.0.1")
+    assert ip.is_loopback

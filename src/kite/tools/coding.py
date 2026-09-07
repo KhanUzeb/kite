@@ -12,16 +12,15 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
-from kite.guardrails import GuardrailPolicy, redact_secrets
 from kite.env.venv import prepare_child_env
+from kite.guardrails import GuardrailPolicy, redact_secrets
 from kite.memory.store import MemoryScope, MemoryStore
 from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
 from kite.tools.store import TodoStore
-from kite.tools.web import webcrawl, webfetch as fetch_url, websearch
+from kite.tools.web import webcrawl, websearch
+from kite.tools.web import webfetch as fetch_url
 
 try:
     from kite.context.workspace import ExecutionSession
@@ -108,7 +107,7 @@ def _line_trimmed_unique_match(text: str, old: str) -> str | None:
     matches: list[str] = []
     for i in range(len(text_lines) - len(old_lines) + 1):
         chunk_lines = text_lines[i : i + len(old_lines)]
-        if all(a.rstrip() == b.rstrip() for a, b in zip(chunk_lines, old_lines)):
+        if all(a.rstrip() == b.rstrip() for a, b in zip(chunk_lines, old_lines, strict=False)):
             matched = "\n".join(chunk_lines)
             if old.endswith("\n") and matched and not matched.endswith("\n"):
                 matched += "\n"
@@ -139,7 +138,7 @@ def make_coding_tools(
             return str(execution.execution_cwd)
         return cwd or os.getcwd()
 
-    root = _root()
+    _root()
     project_root = str(execution.project_root) if execution is not None else (cwd or os.getcwd())
 
     def _child_env(workdir: str) -> dict[str, str]:

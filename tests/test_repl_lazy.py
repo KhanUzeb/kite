@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 
 def test_chat_session_init_skips_model_resolve(monkeypatch, tmp_path) -> None:
     calls: list[dict] = []

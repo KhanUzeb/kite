@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
-from kite.context.window import ContextUsage, compact_messages, estimate_usage, should_compact
+from kite.context.window import ContextUsage, compact_messages, estimate_usage, should_compact, trim_stale_tool_messages
 from kite.memory.context_checkpoint import ContextCheckpoint, save_checkpoint
 
 
@@ -76,14 +77,20 @@ def run_compaction(
     extra_facts: list[str] | None = None,
 ) -> CompactionRunResult:
     usage = estimate_usage(system=system, messages=messages, tool_schemas=tool_schemas, window=window)
-    before = len(messages)
+    working = messages
+    if usage.ratio >= 0.55:
+        trimmed = trim_stale_tool_messages(messages)
+        if trimmed is not messages:
+            working = trimmed
+            usage = estimate_usage(system=system, messages=working, tool_schemas=tool_schemas, window=window)
+    before = len(working)
     checkpoint: ContextCheckpoint | None = None
 
     will_compact = force or (enabled and should_compact(usage, reserve=reserve_tokens, ratio=compact_ratio))
     if will_compact and checkpoint_before and session_id:
         checkpoint = maybe_checkpoint_before_compact(
             session_id=session_id,
-            messages=messages,
+            messages=working,
             cwd=cwd,
             usage=usage,
             checkpoint_ratio=checkpoint_ratio if not force else 0.0,
@@ -94,6 +101,15 @@ def run_compaction(
         )
 
     if not will_compact:
+        if working is not messages:
+            return CompactionRunResult(
+                messages=working,
+                compacted=False,
+                before=len(messages),
+                after=len(working),
+                usage=usage,
+                checkpoint=checkpoint,
+            )
         return CompactionRunResult(
             messages=messages,
             compacted=False,
@@ -108,21 +124,21 @@ def run_compaction(
         effective_summarizer = None
 
     compacted = compact_messages(
-        messages,
+        working,
         keep_recent_tokens=keep_recent_tokens,
+        window=window,
         summarizer=effective_summarizer,
         force=force,
         extra_facts=extra_facts,
     )
-    after = len(compacted)
-    did = compacted != messages
-    if did:
+    did = compacted != working
+    if did or working is not messages:
         usage = estimate_usage(system=system, messages=compacted, tool_schemas=tool_schemas, window=window)
     return CompactionRunResult(
         messages=compacted,
         compacted=did,
-        before=before,
-        after=after,
+        before=len(messages),
+        after=len(compacted),
         usage=usage,
         checkpoint=checkpoint,
     )

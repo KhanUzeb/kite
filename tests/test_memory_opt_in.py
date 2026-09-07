@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from kite.config.runtime import AgentRuntimeConfig, MemoryConfig
-from kite.memory.continuity import format_continuity_section, save_continuity, build_continuity_brief
+from kite.memory.continuity import build_continuity_brief, format_continuity_section, save_continuity
 from kite.memory.store import MemoryStore
 from kite.prompts import assemble_system_prompt
 

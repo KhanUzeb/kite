@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from kite.ui.complete import SlashCompleter, _PT
+from kite.ui.complete import _PT, SlashCompleter
 
 
 class _Doc:

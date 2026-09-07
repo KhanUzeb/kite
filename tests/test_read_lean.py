@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from kite.env.local import LocalEnvironment
-from kite.tools import ToolRegistry
 from kite.guardrails import GuardrailConfig, GuardrailPolicy
+from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
 
 

@@ -9,7 +9,6 @@ from pathlib import Path
 
 import tomli_w
 
-
 _ensured: set[str] = set()
 
 

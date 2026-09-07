@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from kite.ui.animations import default_loader_style, format_elapsed, loader_glyph
 
 

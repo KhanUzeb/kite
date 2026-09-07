@@ -925,7 +925,7 @@ wheels = [
 
 [[package]]
 name = "kite"
-version = "0.9.1"
+version = "0.9.4"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },

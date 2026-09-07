@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from kite.context.discovery import find_project_root
@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover
     discover_venv = None  # type: ignore[assignment,misc]
 
 
-class ExecutionMode(str, Enum):
+class ExecutionMode(StrEnum):
     RESTRICTED = "restricted"
     HOST = "host"
 

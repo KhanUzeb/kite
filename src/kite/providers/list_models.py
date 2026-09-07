@@ -15,7 +15,7 @@ from kite.config import UserConfig
 from kite.providers.catalog import Catalog, ProviderSpec, load_catalog
 from kite.providers.keys import api_key_env_names, api_key_for
 
-_LIST_CACHE: dict[str, tuple[float, "ListModelsResult"]] = {}
+_LIST_CACHE: dict[str, tuple[float, ListModelsResult]] = {}
 _LIST_TTL = 90.0
 
 

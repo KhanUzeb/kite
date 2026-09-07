@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from kite.context.window import COMPACTION_PREFIX, compact_messages, extract_compaction_facts
 from kite.memory.compaction_ops import run_compaction
 from kite.memory.context_checkpoint import list_checkpoints, load_checkpoint, save_checkpoint
