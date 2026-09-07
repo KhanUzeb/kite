@@ -6,7 +6,7 @@ Instructions for coding agents (Cursor, Claude Code, Kite itself, etc.) hacking 
 
 ## What this repo is
 
-**Kite** v0.9.4 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
+**Kite** v0.9.5 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
 
 - **Engine:** mini-swe-agent style loop (`agent/loop.py`) — query → tools → observe → repeat
 - **Cockpit:** tau-inspired assembly — catalog providers, skills, guardrails, Rich TUI, JSONL sessions
@@ -38,7 +38,7 @@ src/kite/
   extensions/     .kite/extensions loader (register_tool → Harness.extra_tools)
   data/           Bundled catalog.toml, prompts, skills, commands
 tests/            pytest unit tests (no live LLM)
-docs/             Design + UX specs (source of truth for behavior)
+docs/             RELEASE notes + kite-system-design.md
 scripts/          install.sh, install.ps1, build_design_pdf.py
 ```
 
@@ -76,7 +76,7 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 4. **New CLI subcommands** — `cli/run.py` `build_parser()` + handler module.
 5. **Provider behavior** — `providers/` + `models/reasoning.py`; don’t hardcode model id lists.
 6. **Secrets** — `providers/credentials.py` writes `~/.kite/.env` with owner-only perms; never log key values.
-7. **Docs** — User-facing behavior changes need `kite_commands.md` and/or `docs/cli-ux.md`. Glossary changes → `CONTEXT.md`. Prompt changes → `data/prompts/system.md`. Project/user overrides: `.kite/SYSTEM.md` / `APPEND_SYSTEM.md` (same idea as pi / Prime Agent).
+7. **Docs** — User-facing behavior changes need `kite_commands.md`. Glossary changes → `CONTEXT.md`. Layer/architecture changes → `architecture.md` or `docs/kite-system-design.md`. Prompt changes → `data/prompts/system.md`. Project/user overrides: `.kite/SYSTEM.md` / `APPEND_SYSTEM.md` (same idea as pi / Prime Agent).
 
 ---
 
@@ -110,6 +110,8 @@ kite models -p groq --select    # pick default model
 kite chat                       # REPL
 kite bench                      # harness timing baseline
 pytest -q                       # verify changes
+pytest tests/test_bench.py -q   # harness timing budgets
+kite bench --check              # same budgets from CLI
 ```
 
 Full map: [kite_commands.md](kite_commands.md).
@@ -134,11 +136,9 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 
 | Doc | Use when |
 |-----|----------|
-| [docs/kite-0.9-architecture-program.md](docs/kite-0.9-architecture-program.md) | 0.9 seams, adapter status, CI matrix |
-| [docs/adr/0001-application-harness-seam.md](docs/adr/0001-application-harness-seam.md) | Why `ApplicationRunService` exists |
+| [architecture.md](architecture.md) | Layers, lifecycle, extension points |
+| [docs/kite-system-design.md](docs/kite-system-design.md) | Full module atlas, tradeoffs, provider table |
 | [docs/RELEASE-0.9.0.md](docs/RELEASE-0.9.0.md) | 0.9 release notes |
-| [docs/cli-ux.md](docs/cli-ux.md) | REPL cells, footer, shortcuts, approval UX |
-| [docs/ideal-cli-spec.md](docs/ideal-cli-spec.md) | Feature coverage checklist |
 | [kite_commands.md](kite_commands.md) | CLI/REPL command reference |
 | [CONTEXT.md](CONTEXT.md) | Term definitions |
 

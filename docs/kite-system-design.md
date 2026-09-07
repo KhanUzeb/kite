@@ -1,9 +1,9 @@
 # Kite — System design, code atlas & engineering notes
 
-**Version:** 0.9.4
+**Version:** 0.9.5
 **Stack:** Python 3.12 · LiteLLM · Rich · uv
 **Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)
-**Companion UX spec:** [cli-ux.md](cli-ux.md) (PDF: `docs/cli-ux.pdf`)
+**Companion command reference:** [kite_commands.md](../kite_commands.md)
 **Install:** [README.md](../README.md#setup) · `scripts/install.sh` / `scripts/install.ps1`
 **Generated for:** a weekend hybrid slim coding-agent harness
 
@@ -300,7 +300,7 @@ Mutating tools: `write`, `edit`, `bash`. Cheap tools are unrestricted.
 ### 4.20 `ui/` — Rich terminal front-end
 **Job:** All rendering. Core still never imports Rich.
 **Modules:** `style` (palette/symbols), `theme` (`/theme` palettes, `/font` glyph packs), `state`, `render` (stream → collapse → git-stat diff → footer), `approval` (once/session/always), `git` (checkpoint + `/undo`), `commands` (slash parser), `repl` (cold-start chat), `spinner`, `diff` (`+N,-M` + colored hunks).
-**Spec:** [cli-ux.md](cli-ux.md).
+**Spec:** [kite_commands.md](../kite_commands.md).
 
 ---
 
@@ -413,7 +413,7 @@ Plan mode: mutating tools never enter the schema (and are denied if called). Sub
 If the task is a prompt-kind slash (`/commit`, `/explain`, `/skill:debug …`, custom `.md` command), expand it to the skill/command body before `agent.run`.
 
 ### 9.7 Plan vs build
-`AgentMode` + `ApprovalMode` live on `RuntimeOptions`. Chat defaults: build + approve. `kite run` defaults: build + auto. See [cli-ux.md](cli-ux.md).
+`AgentMode` + `ApprovalMode` live on `RuntimeOptions`. Chat defaults: build + approve. `kite run` defaults: build + auto. See [kite_commands.md](../kite_commands.md).
 
 ### 9.8 Git undo
 After a successful write/edit, paths are staged under the **current in-progress todo** (or the user task if there is no checklist). Completing a todo or ending the turn flushes **one `kite:` commit** for that step's files. `/undo` runs `git reset --hard HEAD~1` only if HEAD subject starts with `kite:`.

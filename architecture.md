@@ -1,10 +1,10 @@
 # Kite architecture
 
-**Version:** 0.9.4 · Python 3.11+ · Entry: `kite.cli.run:main`
+**Version:** 0.9.5 · Python 3.11+ · Entry: `kite.cli.run:main`
 
 Kite is a **slim hybrid coding-agent harness**: a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) style control loop wrapped in tau-inspired **runtime assembly** (providers, tools, guardrails, compaction, sessions). 0.9 adds an **application layer** (`RunSpec`, `ApplicationRunService`, `PolicyEngine`, `ToolExecutor`) while `Harness` remains the compatibility adapter. The brain never renders UI; the CLI never calls LiteLLM directly.
 
-Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (full atlas) · [docs/cli-ux.md](docs/cli-ux.md) (TUI) · [CONTEXT.md](CONTEXT.md) (glossary) · [AGENTS.md](AGENTS.md) (contributing)
+Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (full atlas) · [kite_commands.md](kite_commands.md) (CLI/REPL) · [CONTEXT.md](CONTEXT.md) (glossary) · [AGENTS.md](AGENTS.md) (contributing)
 
 ---
 
@@ -206,10 +206,7 @@ Focus areas: guardrails, approval, loop detection, sessions, render helpers, cre
 
 | Doc | Use when |
 |-----|----------|
-| [docs/kite-0.9-architecture-program.md](docs/kite-0.9-architecture-program.md) | 0.9 application seams |
 | [docs/kite-system-design.md](docs/kite-system-design.md) | Full module atlas, tradeoffs, provider table |
-| [docs/cli-ux.md](docs/cli-ux.md) | REPL cells, footer, shortcuts, approval UX |
-| [docs/ideal-cli-spec.md](docs/ideal-cli-spec.md) | Feature coverage checklist |
 | [kite_commands.md](kite_commands.md) | CLI/REPL command reference |
 | [CONTEXT.md](CONTEXT.md) | Term definitions |
 | [AGENTS.md](AGENTS.md) | Hacking on this repository |

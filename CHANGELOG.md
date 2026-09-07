@@ -4,6 +4,33 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-09-07
+
+### Added
+- **Pi-style runtime steering** — mid-turn corrections inject into the active run and continue the same turn; follow-ups queue at turn boundaries (`RunMessageQueue`, `harness.inject_user_message()`).
+- **REPL message inbox** — Enter queues a follow-up while busy; Ctrl+G steers; Ctrl+U dequeue-to-composer; `/steer` and `/tasks`; steer vs follow-up labels on the toolbar.
+- **Compaction lifecycle events** — `compaction_start` / `compaction_end` on the agent event bus (durable in session JSONL).
+- **Harness timing budgets** — `kite bench --check` and `tests/test_bench.py` enforce median-ms ceilings; budgets in `src/kite/bench/budgets.py`.
+- Expanded `kite bench` suite (18 cases): `user_config_load`, `catalog_load`, `slash_index`, `repo_map`, `runtime_prepare`, plus existing startup/context/tool benchmarks.
+- **Session browser** — `kite sessions` table (date, time, title, model, status); `kite sessions -q` filter; `kite resume <id>` with prefix match and suggestions.
+- **`~/.agents/skills`** — global Agent Skills library loaded on any machine (sandbox read allowed).
+- **`docs/RELEASE-0.9.5.md`** — release notes for this version.
+
+### Changed
+- **REPL cold start** — startup banner uses `assess_setup_status_fast()` (no `resolve_model` on boot).
+- **Busy composer** — unified slash dispatch while a turn is running; live activity preview on the toolbar during bash/jobs.
+- **Resource use** — session rewrite on compact (not append-only snapshots); bounded `read` (256 KB / 400 lines); TTL cache LRU caps; discovery/slash/skills cache limits; job registry prune (24 h finished); checkpoint cap (5); repo-map walk capped at 600 files.
+- **Application run state** — `ApplicationRunService` tracks run transitions from loop events; `after_prepare` hook fired from runtime.
+- **Test suite** — ~320 focused tests (down from ~540); merged `test_util`, `test_ui_basics`, `test_cli_misc`, `test_agent_loop`, `test_agent_runtime`, `test_repl_misc`; removed redundant/trivial modules.
+- **Docs** — removed stale `docs/adr/`, `docs/superpowers/`, `cli-ux.md`, `ideal-cli-spec.md`, `kite-0.9-architecture-program.md`; updated references in AGENTS, README, architecture, CONTEXT, kite_commands.
+- **CI** — `pytest` and `kite bench --check` on every push/PR; release verify script checks bench gate.
+
+### Fixed
+- **Streaming TUI** — busy composer no longer restarts on every agent event; hints use toolbar flash instead of scrollback spam.
+- Provider retry countdown in the running line; compaction start/end render in the transcript.
+- Status tail rendering aligned with `format_status_tail` expectations in tests.
+- `compaction_end` always emitted after `compaction_start`.
+
 ## [0.9.4] - 2026-09-07
 
 ### Added
@@ -24,7 +51,7 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - Footer **running line** clears on `agent_end` so idle chrome does not show `working · 1 task` after completion.
 
 ### Changed
-- System prompt + `CONTEXT.md` + `docs/cli-ux.md` document the completion decision table (user intent vs model reply).
+- System prompt + `CONTEXT.md` + `kite_commands.md` document the completion decision table (user intent vs model reply).
 - `_is_casual_user_turn` recognizes `hi kite` and task keywords (`test`, `lower`, `can you`, …).
 
 ## [0.9.2] - 2026-09-06
@@ -67,7 +94,7 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 ### Changed
 - Default `compaction_ratio` **0.80 → 0.75** (auto-checkpoint remains ~72%).
 - `LimitsExceeded` / `TimeExceeded` render as soft pauses with continue hints (not hard error spam).
-- Documentation refreshed for adaptive budget, continuity, and busy composer chrome (`docs/cli-ux.md`).
+- Documentation refreshed for adaptive budget, continuity, and busy composer chrome (`kite_commands.md`).
 
 ### Fixed
 - `/compact` (and other zero-arg slash handlers) no longer raise `TypeError` when dispatch passes an empty arg.

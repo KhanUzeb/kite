@@ -8,7 +8,7 @@ Patch fix: stop greeting-only model replies from falsely completing coding tasks
 
 - **Completion keyed on user intent** — `hi` / thanks → text reply ends the turn.  
   `lower number of tests` + model says only `Hey! 👋` → **idle nudge**, not `✓ work complete`.
-- **Documented harness rules** — decision table in system prompt, `CONTEXT.md`, and `cli-ux.md`.
+- **Documented harness rules** — decision table in system prompt, `CONTEXT.md`, and `kite_commands.md`.
 - Footer running line clears when the turn ends.
 
 ## Upgrade

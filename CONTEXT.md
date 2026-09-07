@@ -102,7 +102,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 ## Extensions
 
-**Skill** — A `SKILL.md` pack the model can load when a task matches its description. Invoked via the `skill` tool or prompt slashes like `/commit`. Global library is `~/.kite/skills` (symlinks and Windows junctions followed). Project copies may link from `.kite/skills/<name>`.
+**Skill** — A `SKILL.md` pack the model can load when a task matches its description. Invoked via the `skill` tool or prompt slashes like `/commit`. Global libraries: `~/.kite/skills` and `~/.agents/skills` (symlinks and Windows junctions followed). Project copies may link from `.kite/skills/<name>` or `.agents/skills/<name>`.
 
 **Skill install** — `/skills add` or `kite skills --add`: npm/npx/GitHub copy into the global library, or a local path **linked** there. Reinstall unlinks the pointer; it does not delete the real tree.
 
@@ -179,7 +179,6 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 - [AGENTS.md](AGENTS.md) — how to work on this repository
 - [kite_commands.md](kite_commands.md) — full CLI and slash map
-- [docs/cli-ux.md](docs/cli-ux.md) — TUI behavior and shortcuts
+- [architecture.md](architecture.md) — layers and extension points
 - [docs/kite-system-design.md](docs/kite-system-design.md) — architecture atlas
-- [docs/kite-0.9-architecture-program.md](docs/kite-0.9-architecture-program.md) — 0.9 seams
 - [docs/RELEASE-0.9.0.md](docs/RELEASE-0.9.0.md) — 0.9 release notes
