@@ -38,8 +38,38 @@ except Exception:  # pragma: no cover
 class ComposerResult:
     """One composer submission. `eof` leaves the REPL; empty text is a no-op."""
 
-    kind: str  # text | stop | steer | eof | empty | slash
+    kind: str  # text | stop | steer | eof | empty | slash | approval | busy_slash
     text: str = ""
+
+
+# Slash commands safe to run while a turn is in flight (read-only / status).
+BUSY_SAFE_SLASHES = frozenset({"tasks", "task", "status", "help", "jobs", "h", "?"})
+
+_APPROVAL_CHOICES = {
+    "a": "allow",
+    "s": "session",
+    "p": "always",
+    "n": "deny",
+    "q": "stop",
+}
+
+
+def is_busy_safe_slash(line: str) -> bool:
+    raw = (line or "").strip().lower()
+    if not raw.startswith("/"):
+        return False
+    cmd = raw[1:].split()[0].split("@")[0]
+    return cmd in BUSY_SAFE_SLASHES
+
+
+def parse_approval_choice(text: str, *, mandatory: bool) -> str | None:
+    """Map composer input to an approval decision key, or None."""
+    choice = (text or "").strip().lower()
+    if not choice or choice not in _APPROVAL_CHOICES:
+        return None
+    if mandatory and choice in {"s", "p"}:
+        return None
+    return _APPROVAL_CHOICES[choice]
 
 
 def classify_busy_line(line: str) -> ComposerResult:
@@ -55,6 +85,8 @@ def classify_busy_line(line: str) -> ComposerResult:
     if low.startswith("/steer "):
         return ComposerResult("steer", text.split(" ", 1)[1])
     if text.startswith("/"):
+        if is_busy_safe_slash(text):
+            return ComposerResult("busy_slash", text)
         return ComposerResult("slash", text)
     return ComposerResult("text", text)
 
@@ -507,6 +539,8 @@ def make_repl_key_bindings(
     on_build: Callable[[], str] | None = None,
     on_status: Callable[[], str] | None = None,
     is_busy: Callable[[], bool] | None = None,
+    is_awaiting_approval: Callable[[], bool] | None = None,
+    can_remember_approval: Callable[[], bool] | None = None,
     action_slot: dict[str, str] | None = None,
 ) -> Any:
     """Keyboard shortcuts while the composer is focused.
@@ -527,7 +561,15 @@ def make_repl_key_bindings(
     def _busy() -> bool:
         return bool(is_busy and is_busy())
 
+    def _awaiting_approval() -> bool:
+        return bool(is_awaiting_approval and is_awaiting_approval())
+
+    def _can_remember() -> bool:
+        return bool(can_remember_approval and can_remember_approval())
+
     busy = Condition(_busy)
+    awaiting = Condition(_awaiting_approval)
+    remember = Condition(_can_remember)
 
     def _fire(cb: Callable[[], str] | None, event) -> None:  # noqa: ANN001
         if cb:
@@ -575,7 +617,33 @@ def make_repl_key_bindings(
         slot["kind"] = "steer"
         event.app.exit(result=event.current_buffer.text)
 
-    @bindings.add("enter", eager=True)
+    for key in ("a", "n", "q"):
+        @bindings.add(key, eager=True, filter=awaiting)
+        def _approval_key(event, *, _key=key) -> None:  # noqa: ANN001
+            slot["kind"] = "approval"
+            event.app.exit(result=_key)
+
+    for key in ("s", "p"):
+        @bindings.add(key, eager=True, filter=remember)
+        def _approval_remember(event, *, _key=key) -> None:  # noqa: ANN001
+            slot["kind"] = "approval"
+            event.app.exit(result=_key)
+
+    @bindings.add("enter", eager=True, filter=awaiting)
+    def _approval_enter(event) -> None:  # noqa: ANN001
+        """Enter with empty input denies; typed approval keys submit."""
+        buf = event.current_buffer
+        buf.complete_state = None
+        text = (buf.text or "").strip().lower()
+        if not text:
+            slot["kind"] = "approval"
+            event.app.exit(result="n")
+            return
+        buf.validate_and_handle()
+
+    not_awaiting = Condition(lambda: not _awaiting_approval())
+
+    @bindings.add("enter", eager=True, filter=not_awaiting)
     def _submit(event) -> None:  # noqa: ANN001
         # complete_while_typing keeps an invisible menu open; default Enter
         # then "accepts" the completion instead of sending the line.
@@ -860,7 +928,7 @@ def _prompt_once(
         if state.awaiting_approval_mandatory:
             placeholder = "[a] once · [n] deny · [q] stop — approval required"
         else:
-            placeholder = "[a] once · [s] session · [n] deny · [q] stop"
+            placeholder = "[a] once · [s] session · [p] always · [n] deny · [q] stop"
     elif busy:
         placeholder = "add a follow-up while Kite works…"
     else:
@@ -876,7 +944,7 @@ def _prompt_once(
             HTML(f"<style fg='{brand}'>{glyph('prompt')}</style> "),
             placeholder=HTML(f"<style fg='{placeholder_fg}'>{placeholder}</style>"),
             bottom_toolbar=_toolbar,
-            refresh_interval=0.25 if busy else 0,
+            refresh_interval=0.25 if (busy or state.awaiting_approval) else 0,
         )
     except EOFError:
         return ComposerResult("eof")
@@ -894,12 +962,23 @@ def _prompt_once(
 
     kind = action_slot.get("kind") or "submit"
     text = (text or "").strip()
+    if kind == "approval":
+        decision = parse_approval_choice(text, mandatory=state.awaiting_approval_mandatory) or "deny"
+        return ComposerResult("approval", decision)
     if kind == "stop":
         return ComposerResult("stop")
     if kind == "steer":
         return ComposerResult("steer", text)
+    if state.awaiting_approval:
+        decision = parse_approval_choice(text, mandatory=state.awaiting_approval_mandatory)
+        if decision:
+            return ComposerResult("approval", decision)
+        if not text:
+            return ComposerResult("approval", "deny")
     if not text:
         return ComposerResult("empty")
+    if busy and is_busy_safe_slash(text):
+        return ComposerResult("busy_slash", text)
     return ComposerResult("text", text)
 
 
@@ -913,6 +992,8 @@ def read_repl_busy_composer(
     on_stop: Callable[[], None],
     on_steer: Callable[[str], None],
     on_slash_while_busy: Callable[[], None],
+    on_busy_slash: Callable[[str], None] | None = None,
+    on_approval: Callable[[str], None] | None = None,
     on_eof: Callable[[], None],
     on_tick: Callable[[], None] | None = None,
     on_poll: Callable[[], None] | None = None,
@@ -957,6 +1038,12 @@ def read_repl_busy_composer(
                     on_steer(result.text)
                     on_stop()
                     break
+                if result.kind == "approval" and on_approval is not None:
+                    on_approval(result.text)
+                    continue
+                if result.kind == "busy_slash" and on_busy_slash is not None:
+                    on_busy_slash(result.text)
+                    continue
                 if result.kind == "empty":
                     if on_tick is not None:
                         on_tick()
@@ -974,6 +1061,12 @@ def read_repl_busy_composer(
                     on_steer(classified.text)
                     on_stop()
                     break
+                if classified.kind == "approval" and on_approval is not None:
+                    on_approval(classified.text)
+                    continue
+                if classified.kind == "busy_slash" and on_busy_slash is not None:
+                    on_busy_slash(classified.text)
+                    continue
                 if classified.kind == "slash":
                     on_slash_while_busy()
                     continue

@@ -74,7 +74,9 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 | `Ctrl+D` / `/quit` | Close the REPL |
 | `Tab` | Cycle slash / `@` completions (`Enter` always submits) |
 
-While a turn is running the composer stays pinned (placeholder: `add a follow-up while Kite works…`). **Enter** queues a follow-up without tearing down the input box; **Esc** stops; **Ctrl+G** steers. `/tasks` lists the running command and the queue. The footer shows a running line (`[HH:MM:SS] command  running`) plus metrics: **tok/s**, **cache hit %**, context meter, and cost. After stop, keep typing in the **same session** until `/quit` or `Ctrl+D`.
+While a turn is running the composer stays pinned (placeholder: `add a follow-up while Kite works…`). **Enter** queues a follow-up without tearing down the input box; **Esc** stops; **Ctrl+G** steers. **`/tasks`**, **`/status`**, **`/help`**, and **`/jobs`** work during a turn; other slash commands wait until the turn ends. The footer shows a running line (`[HH:MM:SS] command  running`) plus metrics: **tok/s**, **cache hit %**, context meter, and cost. After stop, keep typing in the **same session** until `/quit` or `Ctrl+D`.
+
+**Approval prompt:** when a tool needs permission, the composer switches to approval mode. Press **`a`** allow once, **`s`** session, **`p`** always (when not mandatory), **`n`** deny, **`q`** stop. Empty **Enter** denies. Mandatory approvals omit session/always shortcuts.
 
 **Loaders** (beautifului-inspired, TTY-only): default pixel-grid loader with shimmer label and elapsed time. Override with `KITE_LOADER=grid|dots|orbit|wave|spin`.
 

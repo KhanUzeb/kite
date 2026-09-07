@@ -73,12 +73,27 @@ class SessionUiState:
     running_kind: str = ""
     budget_limit: float | None = None  # turn cost ceiling; toolbar chip while busy
     _refresh: Callable[[], None] | None = field(default=None, repr=False, compare=False)
+    _last_touch_at: float = field(default=0.0, repr=False, compare=False)
+    _touch_pending: bool = field(default=False, repr=False, compare=False)
 
-    def touch(self) -> None:
+    def touch(self, *, force: bool = False) -> None:
         """Notify live composer toolbar (prompt_toolkit) to redraw."""
         self.maybe_clear_flash()
+        import time
+
+        now = time.monotonic()
+        if not force and self._refresh and (now - self._last_touch_at) < 0.125:
+            self._touch_pending = True
+            return
+        self._last_touch_at = now
+        self._touch_pending = False
         if self._refresh:
             self._refresh()
+
+    def flush_pending_touch(self) -> None:
+        """Apply a throttled toolbar refresh deferred during fast streaming."""
+        if self._touch_pending:
+            self.touch(force=True)
 
     def set_flash(self, text: str) -> None:
         import time

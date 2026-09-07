@@ -284,4 +284,22 @@ def help_text(index: CommandIndex) -> str:
             break
     if not seen:
         lines.append("  (none yet — /commands new name  or  /plugins init name)")
+    lines.extend(
+        [
+            "",
+            "while working (turn in flight)",
+            "  Enter       queue a follow-up",
+            "  Esc         stop the turn",
+            "  Ctrl+G      steer (stop + send composer text)",
+            "  /tasks      list running work + queue",
+            "  /status     footer snapshot",
+            "  /help       this list",
+            "  /jobs       background jobs",
+            "",
+            "approval prompt (when shown)",
+            "  a  allow once   s  allow this session   p  allow always",
+            "  n  deny         q  stop run",
+            "  Enter (empty)  deny",
+        ]
+    )
     return "\n".join(lines)

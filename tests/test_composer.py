@@ -100,8 +100,20 @@ def test_classify_busy_line() -> None:
     assert classify_busy_line("/quit").kind == "eof"
     assert classify_busy_line("/steer use grep").kind == "steer"
     assert classify_busy_line("/steer use grep").text == "use grep"
-    assert classify_busy_line("/tasks").kind == "slash"
+    assert classify_busy_line("/tasks").kind == "busy_slash"
+    assert classify_busy_line("/model").kind == "slash"
     assert classify_busy_line("follow up").kind == "text"
+
+
+def test_approval_choice_and_busy_slash() -> None:
+    from kite.ui.complete import is_busy_safe_slash, parse_approval_choice
+
+    assert is_busy_safe_slash("/tasks")
+    assert is_busy_safe_slash("/HELP")
+    assert not is_busy_safe_slash("/compact")
+    assert parse_approval_choice("a", mandatory=False) == "allow"
+    assert parse_approval_choice("s", mandatory=True) is None
+    assert parse_approval_choice("n", mandatory=True) == "deny"
 
 
 def test_busy_placeholder_is_quiet(monkeypatch) -> None:

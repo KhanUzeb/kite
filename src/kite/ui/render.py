@@ -348,6 +348,7 @@ class RunDisplay:
     def _coalesced_stream(self, channel: str, text: str) -> None:
         chunk = self._stream_coalesce.push(channel, text)
         if chunk:
+            self.state.note_stream_delta(chunk)
             self._spin(False)
             self._stream_write(chunk, channel=channel)
 
@@ -443,7 +444,6 @@ class RunDisplay:
     def _on_stream_reasoning(self, p: dict[str, Any]) -> None:
         text = p.get("text") or ""
         if text:
-            self.state.note_stream_delta(str(text))
             self._append_thinking(str(text))
         else:
             self._spin(True, "thinking")
@@ -453,7 +453,6 @@ class RunDisplay:
         if text:
             if self._thinking_buf:
                 self._finalize_thinking()
-            self.state.note_stream_delta(str(text))
             self._coalesced_stream("answer", str(text))
         else:
             self._spin(True, "thinking")

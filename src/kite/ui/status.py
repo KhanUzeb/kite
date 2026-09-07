@@ -114,14 +114,33 @@ def status_context_parts(state: SessionUiState) -> list[str]:
 
 def format_status_tail(state: SessionUiState) -> str:
     """Everything after the kite brand — shared by render + composer toolbar."""
+    import shutil
+
+    try:
+        width = shutil.get_terminal_size(fallback=(120, 24)).columns
+    except OSError:
+        width = 120
+    compact = width < 100
     mode_label = "plan" if state.mode is AgentMode.PLAN else state.mode.value
     mode_bits = [mode_label, approval_display_name(state.approval)]
-    if state.mode is AgentMode.PLAN and state.todos:
+    if not compact and state.mode is AgentMode.PLAN and state.todos:
         done = sum(1 for t in state.todos if t.status == "completed")
         mode_bits.append(f"list {done}/{len(state.todos)}")
     if state.sandbox_restricted:
         mode_bits.append("restricted")
-    parts = [*mode_bits, *status_context_parts(state)]
+    parts = [*mode_bits]
+    ctx = status_context_parts(state)
+    if compact:
+        for bit in ctx:
+            if bit.startswith("approve "):
+                parts.insert(0, bit)
+                break
+        if state.busy:
+            parts.append("working")
+        elif state.queued:
+            parts.append(f"q{state.queued}")
+    else:
+        parts.extend(ctx)
     return f" {SYMBOL_SEP} ".join(parts)
 
 
