@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 0.9.3
+# kite-release-version: 0.9.4
 # Pre-release checks on main or a release branch.
 # Usage:
 #   ./scripts/verify_release_pr.sh
