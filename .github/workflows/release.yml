@@ -29,6 +29,9 @@ jobs:
       - name: Verify version stamps
         run: python scripts/sync_version.py --check
 
+      - name: Run tests
+        run: pytest -q
+
       - name: Resolve release version
         id: meta
         run: |
