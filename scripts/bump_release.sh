@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# kite-release-version: 0.9.4
+# kite-release-version: 0.9.5
 # Bump Kite version, sync stamped files, prepend CHANGELOG stub, tag, and push.
 #
 # Usage (after changes are merged to main):
-#   ./scripts/bump_release.sh 0.9.4
+#   ./scripts/bump_release.sh 0.9.5
 #
 # Then edit CHANGELOG.md and docs/RELEASE-X.Y.Z.md, commit if needed, push:
 #   git push origin main --tags
@@ -97,7 +97,7 @@ fi
 
 python scripts/sync_version.py --check
 
-git add pyproject.toml src/kite/__init__.py CHANGELOG.md README.md AGENTS.md architecture.md docs/cli-ux.md docs/kite-system-design.md docs/ideal-cli-spec.md scripts/ "$RELEASE_DOC"
+git add pyproject.toml src/kite/__init__.py CHANGELOG.md README.md AGENTS.md architecture.md docs/kite-system-design.md scripts/ "$RELEASE_DOC"
 git commit -m "chore: release v$NEW"
 
 if git rev-parse "v$NEW" >/dev/null 2>&1; then

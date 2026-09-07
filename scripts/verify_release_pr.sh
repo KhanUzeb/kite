@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 0.9.4
+# kite-release-version: 0.9.5
 # Pre-release checks on main or a release branch.
 # Usage:
 #   ./scripts/verify_release_pr.sh
@@ -32,12 +32,16 @@ ok "version stamps synced ($EXPECTED)"
 grep -q "pull_request" .github/workflows/tests.yml || fail "CI missing pull_request trigger"
 ok "CI workflow runs on push/PR"
 
+grep -q "bench --check" .github/workflows/tests.yml || fail "CI missing kite bench --check gate"
+ok "CI workflow runs bench budget check"
+
 # Tests
 export KITE_HOME="${KITE_HOME:-${TMPDIR:-/tmp}/kite-verify-$$}"
 export KITE_SKIP_SETUP=1
 mkdir -p "$KITE_HOME"
 command -v pytest >/dev/null 2>&1 || fail "pytest not installed (run: uv pip install -e '.[dev]')"
 pytest -q
+python -m kite.cli.run bench --check
 ok "pytest passed"
 
 # Optional GitHub PR check
