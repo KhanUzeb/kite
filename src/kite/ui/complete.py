@@ -946,7 +946,7 @@ def _prompt_once(
             HTML(f"<style fg='{brand}'>{glyph('prompt')}</style> "),
             placeholder=HTML(f"<style fg='{placeholder_fg}'>{placeholder}</style>"),
             bottom_toolbar=_toolbar,
-            refresh_interval=0.25 if (busy or state.awaiting_approval) else 0,
+            refresh_interval=0.1 if (busy or state.awaiting_approval) else 0,
         )
     except EOFError:
         return ComposerResult("eof")

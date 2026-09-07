@@ -72,6 +72,7 @@ class SessionUiState:
     running_label: str = ""
     running_since: str = ""
     running_kind: str = ""
+    activity_preview: str = ""  # last bash/job line for toolbar while busy
     budget_limit: float | None = None  # turn cost ceiling; toolbar chip while busy
     _refresh: Callable[[], None] | None = field(default=None, repr=False, compare=False)
     _last_touch_at: float = field(default=0.0, repr=False, compare=False)
@@ -127,6 +128,7 @@ class SessionUiState:
         self.running_label = ""
         self.running_since = ""
         self.running_kind = ""
+        self.activity_preview = ""
         self.touch()
 
     def reset_stream_stats(self) -> None:
