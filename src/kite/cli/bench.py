@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 
+from kite.bench.budgets import check_report
 from kite.bench.suite import BenchmarkReport, load_report, run_suite, save_report
 
 
@@ -39,25 +40,38 @@ def _print_compare(current: BenchmarkReport, baseline: BenchmarkReport) -> None:
 
 def cmd_bench(args: argparse.Namespace) -> int:
     report = run_suite(cwd=args.cwd)
+    violations = check_report(report) if args.check else []
 
     if args.compare:
         baseline = load_report(args.compare)
         if args.json:
-            print(json.dumps({"current": report.to_dict(), "compare": report.compare(baseline)}, indent=2))
+            payload = {"current": report.to_dict(), "compare": report.compare(baseline)}
+            if violations:
+                payload["budget_violations"] = violations
+            print(json.dumps(payload, indent=2))
         else:
             _print_compare(report, baseline)
-        return 0
+        return 1 if violations else 0
 
     if args.save:
         save_report(report, args.save)
 
     if args.json:
-        print(json.dumps(report.to_dict(), indent=2))
-        return 0
+        payload = report.to_dict()
+        if violations:
+            payload["budget_violations"] = violations
+        print(json.dumps(payload, indent=2))
+        return 1 if violations else 0
 
     _print_table(report)
     if args.save:
         print(f"\nSaved: {args.save}", file=sys.stderr)
+    if violations:
+        for line in violations:
+            print(line, file=sys.stderr)
+        return 1
+    if args.check:
+        print("All harness benchmarks within budget.", file=sys.stderr)
     return 0
 
 
@@ -70,5 +84,10 @@ def add_bench_parser(sub) -> None:
         "--compare",
         metavar="BASELINE.json",
         help="Compare against a saved baseline (BEFORE/AFTER/DELTA table)",
+    )
+    bench.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit 1 if any benchmark exceeds the harness timing budget",
     )
     bench.set_defaults(func=cmd_bench)
