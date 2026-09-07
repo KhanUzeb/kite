@@ -99,6 +99,74 @@ def _bench_config_load() -> BenchmarkResult:
     return _sample("config_load", "startup", sample)
 
 
+def _bench_user_config_load() -> BenchmarkResult:
+    from kite.config import UserConfig
+
+    _, sample = measure_many("user_config_load", UserConfig.load, iterations=5)
+    return _sample("user_config_load", "startup", sample)
+
+
+def _bench_catalog_load() -> BenchmarkResult:
+    from kite.providers import catalog as catalog_mod
+    from kite.providers.catalog import load_catalog
+
+    def _run():
+        catalog_mod._CATALOG_CACHE.clear()
+        return load_catalog()
+
+    _, sample = measure_many("catalog_load", _run, iterations=3)
+    return _sample("catalog_load", "startup", sample)
+
+
+def _bench_slash_index(cwd: Path) -> BenchmarkResult:
+    import kite.cli.slash as slash_mod
+    from kite.cli.slash import CommandIndex
+
+    def _run():
+        slash_mod._INDEX_CACHE.clear()
+        return CommandIndex.load(str(cwd))
+
+    idx, sample = measure_many("slash_index", _run, iterations=3)
+    return _sample("slash_index", "startup", sample, command_count=len(getattr(idx, "specs", {}) or {}))
+
+
+def _bench_repo_map(cwd: Path) -> BenchmarkResult:
+    from kite.context.repomap import build_repo_map
+
+    def _run():
+        return len(build_repo_map(cwd, prefer_git_changed=False))
+
+    count, sample = measure_many("repo_map", _run, iterations=3)
+    return _sample("repo_map", "context", sample, symbols=count)
+
+
+def _bench_runtime_prepare(cwd: Path) -> BenchmarkResult:
+    from unittest.mock import MagicMock
+
+    from kite.agent import runtime as runtime_mod
+    from kite.agent.runtime import AgentRuntime, RuntimeOptions
+
+    resolved = MagicMock(provider="bench", model="bench", context_window=128_000)
+
+    def _run():
+        rt = AgentRuntime(RuntimeOptions(cwd=str(cwd), no_context=True, provider="bench", model="bench"))
+        old_resolve = runtime_mod.resolve_model
+        old_miss_cred = runtime_mod.missing_credentials
+        old_miss_model = runtime_mod.missing_model
+        runtime_mod.resolve_model = lambda **_: resolved
+        runtime_mod.missing_credentials = lambda _: None
+        runtime_mod.missing_model = lambda _: None
+        try:
+            return rt.prepare()
+        finally:
+            runtime_mod.resolve_model = old_resolve
+            runtime_mod.missing_credentials = old_miss_cred
+            runtime_mod.missing_model = old_miss_model
+
+    _, sample = measure_many("runtime_prepare", _run, iterations=3)
+    return _sample("runtime_prepare", "startup", sample)
+
+
 def _bench_context_gather(cwd: Path) -> BenchmarkResult:
     import kite.context.discovery as discovery
 
@@ -262,10 +330,15 @@ def run_suite(*, cwd: str | Path | None = None) -> BenchmarkReport:
     builders: list[Callable[[], BenchmarkResult]] = [
         _bench_cli_import,
         _bench_config_load,
+        _bench_user_config_load,
+        _bench_catalog_load,
         _bench_skills_load,
         lambda: _bench_repl_chat_init(root),
         _bench_model_resolve,
+        lambda: _bench_slash_index(root),
+        lambda: _bench_runtime_prepare(root),
         _bench_prompt_cache_prepare,
+        lambda: _bench_repo_map(root),
         lambda: _bench_context_gather(root),
         lambda: _bench_tool_registry(root),
         lambda: _bench_read_tool(root),
