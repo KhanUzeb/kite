@@ -18,7 +18,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-
 SLOTS = ("model", "tools", "env", "summarizer", "memory", "assemble_system")
 
 HookFn = Callable[..., Any]

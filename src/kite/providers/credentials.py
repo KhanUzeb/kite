@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from kite.config import UserConfig, ensure_home, kite_home
-from kite.providers.catalog import load_catalog
 from kite.providers.byos import (
     credential_label,
     has_oauth_session,
@@ -19,6 +18,7 @@ from kite.providers.byos import (
     login_oauth,
     logout_oauth,
 )
+from kite.providers.catalog import load_catalog
 from kite.providers.keys import api_key_env_names, api_key_for
 
 if TYPE_CHECKING:

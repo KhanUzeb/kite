@@ -6,6 +6,24 @@ import json
 from typing import Any
 
 DEFAULT_OBSERVATION_MAX_CHARS = 5_000
+_LINE_ELIDE_THRESHOLD = 80
+
+
+def _line_aware_elide(text: str, max_chars: int) -> str:
+    """Keep first/last lines for multiline tool output; head/tail for single blocks."""
+    lines = text.splitlines()
+    if len(lines) >= _LINE_ELIDE_THRESHOLD:
+        head_n, tail_n = 35, 12
+        head = "\n".join(lines[:head_n])
+        tail = "\n".join(lines[-tail_n:])
+        omitted = len(lines) - head_n - tail_n
+        body = f"{head}\n...[{omitted} lines elided]...\n{tail}"
+        if len(body) <= max_chars:
+            return body
+    head = max_chars // 2
+    tail = max_chars // 4
+    omitted = len(text) - head - tail
+    return f"{text[:head]}\n...<elided {omitted:,} chars>...\n{text[-tail:]}"
 
 
 def observation_content(output: dict[str, Any], *, max_chars: int = DEFAULT_OBSERVATION_MAX_CHARS) -> str:
@@ -36,4 +54,6 @@ def observation_content(output: dict[str, Any], *, max_chars: int = DEFAULT_OBSE
     head = max_chars // 2
     tail = max_chars // 4
     omitted = len(raw) - head - tail
-    return f"{raw[:head]}\n...<elided {omitted:,} chars>...\n{raw[-tail:]}"
+    return _line_aware_elide(raw, max_chars) if "\n" in raw else (
+        f"{raw[:head]}\n...<elided {omitted:,} chars>...\n{raw[-tail:]}"
+    )

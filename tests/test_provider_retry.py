@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from kite.agent.exceptions import ProviderFault
 from kite.models.retry import is_transient_provider_error, retry_delay_s
 

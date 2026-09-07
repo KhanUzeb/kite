@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from io import StringIO
-from unittest.mock import MagicMock
 
 from rich.console import Console
 

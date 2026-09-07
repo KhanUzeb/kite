@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from kite.models.tool_args import repair_tool_arguments
 
 

@@ -10,7 +10,6 @@ from typing import Any
 
 from kite.config.user import kite_home
 
-
 # Short names accepted by `kite models -p` / `-p`.
 ALIASES: dict[str, str] = {
     "zen": "opencode-zen",

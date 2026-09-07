@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Callable
 from typing import Any
 
 from kite.agent.events import Event
 from kite.agent.exceptions import FormatError
-from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, split_reasoning
-from kite.models.cache import PromptCacheManager, parse_cache_usage
 from kite.context.observation import observation_content
+from kite.models.cache import PromptCacheManager, parse_cache_usage
+from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, split_reasoning
 from kite.models.tool_args import repair_tool_arguments
 from kite.providers.byos import ensure_oauth_env, is_oauth_provider
 from kite.providers.resolve import ResolvedModel
@@ -376,7 +375,7 @@ class LitellmModel:
     ) -> list[dict]:
         actions = message.get("extra", {}).get("actions", [])
         obs: list[dict] = []
-        for action, output in zip(actions, outputs):
+        for action, output in zip(actions, outputs, strict=False):
             content = observation_content(output, max_chars=self.observation_max_chars)
             if action.get("id"):
                 obs.append(

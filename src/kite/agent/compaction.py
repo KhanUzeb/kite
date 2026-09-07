@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
+from kite.agent.events import Event
 from kite.context.window import (
     ContextUsage,
     estimate_usage,
     should_compact,
 )
 from kite.memory.compaction_ops import run_compaction
-from kite.agent.events import Event
 
 
 @dataclass
 class CompactionConfig:
     enabled: bool = True
     window: int = 128_000
-    reserve_tokens: int = 16_384
-    keep_recent_tokens: int = 20_000
+    reserve_tokens: int = 12_288
+    keep_recent_tokens: int = 12_000
     compact_ratio: float = 0.75
     compaction_llm_ratio: float = 0.92
 

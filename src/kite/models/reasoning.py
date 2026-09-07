@@ -34,7 +34,7 @@ _REASONING_PARAMS = frozenset(
 _EFFORT_RANK = ("none", "disable", "disabled", "minimal", "min", "low", "medium", "high", "xhigh", "max")
 _OFF_EFFORTS = frozenset({"none", "disable", "disabled"})
 
-_cache: dict[tuple[str, str], "ReasoningSupport"] = {}
+_cache: dict[tuple[str, str], ReasoningSupport] = {}
 
 
 # extra_body.include_reasoning is OpenRouter-style. Strict OpenAI clones

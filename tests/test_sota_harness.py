@@ -7,10 +7,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from kite.agent.loop import DefaultAgent
-from kite.agent.mode import BUILD_TOOLS, tools_for_mode, AgentMode
+from kite.agent.mode import AgentMode, tools_for_mode
 from kite.agent.verification import VerificationCollector
 from kite.application.execution import build_tool_executor
-from kite.application.tools.contracts import ToolResult
 from kite.context.repomap import build_repo_map, git_changed_paths
 from kite.env.local import LocalEnvironment
 from kite.eval import ReplayBundle, run_replay

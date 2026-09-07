@@ -8,8 +8,6 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from kite.agent.cancel import CancelToken
 from kite.agent.loop import DefaultAgent
 from kite.agent.mode import PARALLEL_SAFE_TOOLS

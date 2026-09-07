@@ -7,21 +7,18 @@ from kite.config.readiness import (
     RECOMMENDED_PROVIDERS,
     assess_setup_status,
     config_path,
-    format_setup_banner,
     is_fresh_install,
     offer_setup_interactive,
 )
+from kite.providers.byos import is_oauth_provider
+from kite.providers.catalog import load_catalog
 from kite.providers.credentials import (
     configured_providers,
     env_file_path,
     login_provider,
     provider_credential_status,
-    provider_needs_login,
     write_api_key,
 )
-from kite.providers.catalog import load_catalog
-from kite.providers.byos import is_oauth_provider
-from kite.providers.keys import api_key_for
 from kite.providers.select import connect_interactive, select_provider_interactive
 
 # Re-export for tests and legacy imports.
@@ -110,11 +107,11 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
     console.print(
         Panel(
             "[green]You're ready.[/]\n\n"
-            f"  [cyan]kite[/]              interactive chat in this folder\n"
-            f"  [cyan]kite run \"…\"[/]     one-shot task\n"
-            f"  [cyan]/login groq[/]      BYOK key or BYOS OAuth\n"
-            f"  [cyan]kite login chatgpt[/] link a subscription plan\n"
-            f"  [cyan]/keys[/]            see credential status\n\n"
+            "  [cyan]kite[/]              interactive chat in this folder\n"
+            "  [cyan]kite run \"…\"[/]     one-shot task\n"
+            "  [cyan]/login groq[/]      BYOK key or BYOS OAuth\n"
+            "  [cyan]kite login chatgpt[/] link a subscription plan\n"
+            "  [cyan]/keys[/]            see credential status\n\n"
             "[dim]REPL shortcuts: Ctrl+O expand tools · Ctrl+P plan · Ctrl+B build · /help[/]",
             title="next steps",
             border_style="green",
@@ -242,7 +239,7 @@ def cmd_keys(args) -> int:
             return code
         console.print(f"[green]{msg}[/]")
         if needs_model_after_key(provider):
-            console.print("[dim]Next:[/] [cyan]kite models -p {0} --select[/]".format(provider))
+            console.print(f"[dim]Next:[/] [cyan]kite models -p {provider} --select[/]")
         return 0
 
     from kite.ui.pick import can_prompt, numbered_pick
@@ -265,7 +262,7 @@ def cmd_keys(args) -> int:
                 return code
             console.print(f"[green]{msg}[/]")
             if needs_model_after_key(picked):
-                console.print("[dim]Next:[/] [cyan]kite models -p {0}[/]".format(picked))
+                console.print(f"[dim]Next:[/] [cyan]kite models -p {picked}[/]")
     return 0
 
 

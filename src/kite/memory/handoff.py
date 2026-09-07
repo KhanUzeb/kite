@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from kite.context.window import COMPACTION_PREFIX, deterministic_summary, estimate_usage
-from kite.memory.context_checkpoint import ContextCheckpoint, save_checkpoint
+from kite.memory.context_checkpoint import save_checkpoint
 from kite.memory.session import Session, SessionMeta
 
 

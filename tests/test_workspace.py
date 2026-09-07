@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from kite.config.runtime import GuardrailConfig
 from kite.context.workspace import ExecutionMode, ExecutionSession, WorkspaceContext
 from kite.env.local import LocalEnvironment

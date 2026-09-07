@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from kite.config import UserConfig
 from kite.config.readiness import (
     assess_setup_status,
     has_config_file,
     is_fresh_install,
     needs_setup,
 )
-from kite.config import UserConfig
 
 
 def test_fresh_install_without_config_or_keys(kite_home, monkeypatch) -> None:

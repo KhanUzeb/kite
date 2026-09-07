@@ -7,7 +7,6 @@ cache_read / cache_creation / cached_tokens from API usage for the status line.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import Any
 

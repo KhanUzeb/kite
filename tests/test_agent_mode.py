@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from kite.agent.mode import (
-    AgentMode,
     BUILD_TOOLS,
     MUTATING_TOOLS,
     PLAN_TOOLS,
     READONLY_TOOLS,
+    AgentMode,
     tools_for_mode,
 )
 from kite.prompts import load_prompt_template
@@ -67,8 +67,8 @@ def test_mode_build_prompt_picks_up_checklist() -> None:
 def test_plan_mode_blocks_submit_as_done(workspace) -> None:
     from kite.agent.loop import DefaultAgent
     from kite.env.local import LocalEnvironment
-    from kite.tools import ToolRegistry
     from kite.guardrails import GuardrailConfig, GuardrailPolicy
+    from kite.tools import ToolRegistry
     from kite.tools.coding import make_coding_tools
 
     tools = make_coding_tools(

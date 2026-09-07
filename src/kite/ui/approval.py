@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.text import Text
 
-from kite.config import kite_home
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
+from kite.config import kite_home
 from kite.guardrails.sandbox import (
     check_dangerous,
     is_benign_cache_delete,
@@ -22,7 +23,7 @@ from kite.guardrails.sandbox import (
     workspace_root,
 )
 from kite.ui.diff import count_diff_lines, diff_path, render_diff_stat
-from kite.ui.style import GUTTER, SYMBOL_WARN
+from kite.ui.style import GUTTER
 
 Decision = Literal["allow", "session", "always", "deny", "stop"]
 
@@ -448,7 +449,7 @@ def render_approval_panel(
     """Permission gate — left-bar layout, no duplicate waiting line elsewhere."""
     body = Text()
     body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.pending")
-    body.append(f"approve ", style="kite.pending")
+    body.append("approve ", style="kite.pending")
     body.append(tool, style="bold")
     body.append("\n")
 

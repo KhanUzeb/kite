@@ -40,6 +40,53 @@ def test_compact_keeps_assistant_tool_pair() -> None:
         assert roles[tool_idx - 1] == "assistant"
 
 
+def test_observation_line_aware_elision() -> None:
+    lines = [f"line {i}: {'payload ' * 12}" for i in range(120)]
+    raw = "\n".join(lines)
+    out = observation_content({"output": raw}, max_chars=2_000)
+    assert "lines elided" in out or "elided" in out.lower()
+    assert "line 0" in out
+
+
+def test_scale_keep_recent_tokens() -> None:
+    from kite.context.window import scale_keep_recent_tokens
+
+    assert scale_keep_recent_tokens(32_000, 12_000) <= 12_000
+    assert scale_keep_recent_tokens(32_000, 12_000) == max(4_000, int(32_000 * 0.12))
+    assert scale_keep_recent_tokens(128_000, 12_000) == 12_000
+
+
+def test_trim_stale_tool_messages() -> None:
+    from kite.context.window import trim_stale_tool_messages
+
+    big = "x\n" * 2000
+    msgs = [
+        {"role": "user", "content": "old task"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "bash"}}]},
+        {"role": "tool", "tool_call_id": "1", "content": big},
+        {"role": "user", "content": "new task"},
+        {"role": "assistant", "content": "ok"},
+    ]
+    out = trim_stale_tool_messages(msgs, keep_recent_segments=1)
+    tool = next(m for m in out if m.get("role") == "tool")
+    assert len(str(tool.get("content") or "")) < len(big)
+    assert tool.get("extra", {}).get("trimmed")
+
+
+def test_coalesce_compaction_summaries() -> None:
+    from kite.context.window import COMPACTION_PREFIX, coalesce_compaction_summaries
+
+    msgs = [
+        {"role": "user", "content": COMPACTION_PREFIX + "first", "extra": {"compacted": True}},
+        {"role": "user", "content": COMPACTION_PREFIX + "second", "extra": {"compacted": True}},
+        {"role": "user", "content": "live question"},
+    ]
+    out = coalesce_compaction_summaries(msgs)
+    compact = [m for m in out if str(m.get("content", "")).startswith(COMPACTION_PREFIX)]
+    assert len(compact) == 1
+    assert "first" in compact[0]["content"] and "second" in compact[0]["content"]
+
+
 def test_run_compaction_skips_llm_below_threshold() -> None:
     calls: list[str] = []
 

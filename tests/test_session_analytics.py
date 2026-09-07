@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import json
 
+from kite.memory.session import create_session
 from kite.memory.session_analytics import (
+    SessionStats,
     build_dashboard_summary,
     build_user_profile,
     list_session_events,
     save_session_stats,
     scan_session_file,
-    SessionStats,
 )
-from kite.memory.session import create_session
 
 
 def test_user_profile_has_username(kite_home) -> None:

@@ -11,7 +11,7 @@ from kite.models.reasoning import (
     reasoning_badge,
     split_reasoning,
 )
-from kite.ui.complete import SlashCompleter, _PT, _visible_specs, effort_menu
+from kite.ui.complete import _PT, SlashCompleter, _visible_specs, effort_menu
 from kite.ui.state import SessionUiState
 from kite.ui.status import format_status_tail
 
@@ -98,7 +98,6 @@ def test_thinking_dropdown_lists_thinking_levels() -> None:
     assert "medium" in levels
     assert "low" not in levels
 
-    from kite.ui.complete import _PT
 
     if not _PT:
         return

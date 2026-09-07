@@ -5,8 +5,6 @@ from __future__ import annotations
 import sys
 import time
 
-import pytest
-
 from kite.agent.cancel import CancelToken
 from kite.tools.jobs import JobRegistry
 
