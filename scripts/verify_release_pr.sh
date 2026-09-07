@@ -29,23 +29,16 @@ EXPECTED="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml',
 python scripts/sync_version.py --check || fail "version stamps out of sync (run: python scripts/sync_version.py)"
 ok "version stamps synced ($EXPECTED)"
 
-# CI workflow — no batch gate
-if grep -q "run_tests=false" .github/workflows/tests.yml 2>/dev/null; then
-  fail "CI workflow still has batch skip logic"
-fi
 grep -q "pull_request" .github/workflows/tests.yml || fail "CI missing pull_request trigger"
-ok "CI workflow runs on push/PR (no batch gate)"
+ok "CI workflow runs on push/PR"
 
 # Tests
 export KITE_HOME="${KITE_HOME:-${TMPDIR:-/tmp}/kite-verify-$$}"
 export KITE_SKIP_SETUP=1
 mkdir -p "$KITE_HOME"
-if command -v pytest >/dev/null 2>&1; then
-  pytest -q
-  ok "pytest passed"
-else
-  echo "SKIP: pytest not installed (run: uv pip install -e '.[dev]')"
-fi
+command -v pytest >/dev/null 2>&1 || fail "pytest not installed (run: uv pip install -e '.[dev]')"
+pytest -q
+ok "pytest passed"
 
 # Optional GitHub PR check
 if [[ "$PR" -gt 0 ]]; then
