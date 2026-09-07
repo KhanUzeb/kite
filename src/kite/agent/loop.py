@@ -23,6 +23,7 @@ from kite.agent.exceptions import (
 )
 from kite.agent.loop_guard import LoopGuard
 from kite.agent.mode import MUTATING_TOOLS, PARALLEL_SAFE_TOOLS, AgentMode, ApprovalMode
+from kite.agent.queue import RunMessageQueue
 from kite.agent.verification import VerificationCollector
 from kite.application.verification.collector_ops import looks_like_test
 from kite.guardrails.sandbox import is_inspection_bash
@@ -77,6 +78,7 @@ _TOOL_FAIL_NUDGE = (
     "Last {n} tool calls failed. Read the errors. Do not claim the task is done. "
     "Fix the failure or submit honestly with what is still broken."
 )
+_STEER_PREFIX = "[User steering]\n"
 _CASUAL_CHAT = frozenset(
     {
         "hi",
@@ -243,6 +245,7 @@ class DefaultAgent:
         phase_checkpoint_interval: int = 10,
         provider_max_retries: int = 4,
         cancel=None,
+        message_queue: RunMessageQueue | None = None,
     ):
         self.model = model
         self.env = env
@@ -283,6 +286,7 @@ class DefaultAgent:
         self.phase_checkpoint_interval = max(3, phase_checkpoint_interval)
         self.provider_max_retries = max(1, int(provider_max_retries))
         self.cancel = cancel
+        self.message_queue = message_queue
         self._cost_warned = False
         self._last_verification_status: str | None = None
 
@@ -310,6 +314,57 @@ class DefaultAgent:
         if self.cancel is not None:
             self.cancel.request()
         self._emit("interrupt")
+
+    def inject_user_message(self, text: str, *, steer: bool = False) -> bool:
+        if self.message_queue is None:
+            return False
+        if steer:
+            return self.message_queue.steer(text)
+        return self.message_queue.enqueue(text)
+
+    def _clear_interrupt(self) -> None:
+        self._interrupt = False
+        if self.cancel is not None:
+            self.cancel.reset()
+        if hasattr(self.model, "should_stop"):
+            self.model.should_stop = lambda: self._interrupt
+
+    def _inject_steer_messages(self, texts: list[str]) -> None:
+        for text in texts:
+            self.add_messages(
+                self.model.format_message(role="user", content=f"{_STEER_PREFIX}{text}")
+            )
+            self._emit("steer", text=text[:500])
+        self._emit_queue_update()
+
+    def _inject_turn_followups(self) -> None:
+        if self.message_queue is None:
+            return
+        for text in self.message_queue.drain_followups():
+            self.add_messages(self.model.format_message(role="user", content=text))
+            self._emit("follow_up", text=text[:500])
+        self._emit_queue_update()
+
+    def _continue_after_steer(self) -> bool:
+        if self.message_queue is None or not self._interrupt:
+            return False
+        steers = self.message_queue.pop_steers()
+        if not steers:
+            return False
+        self._clear_interrupt()
+        self._inject_steer_messages(steers)
+        return True
+
+    def _emit_queue_update(self) -> None:
+        if self.message_queue is None:
+            return
+        steer, follow = self.message_queue.counts()
+        self._emit(
+            "queue_update",
+            steer=steer,
+            follow=follow,
+            total=len(self.message_queue),
+        )
 
     def _active_task_label(self) -> str:
         if self.todos is not None:
@@ -528,6 +583,7 @@ class DefaultAgent:
                 try:
                     self._emit("turn_start")
                     self._maybe_compact()
+                    self._inject_turn_followups()
                     self.step()
                     self.n_consecutive_format_errors = 0
                     self._emit("turn_end")
@@ -540,6 +596,9 @@ class DefaultAgent:
                     else:
                         self.add_messages(*e.messages)
                 except Interrupted as e:
+                    if self._continue_after_steer():
+                        self._emit("turn_end")
+                        continue
                     self.add_messages(*e.messages, _exit_msg("Interrupted"))
                 except InterruptAgentFlow as e:
                     self.add_messages(*e.messages)
@@ -687,7 +746,7 @@ class DefaultAgent:
         if self._interrupt:
             raise _user_interrupt()
         self.cost += message.get("extra", {}).get("cost", 0.0)
-        self._emit("cost", cost=self.cost)
+        self._emit("cost", cost=self.cost, usage=getattr(self.model, "last_usage", None))
         if (
             not self._cost_warned
             and self.cost_limit > 0

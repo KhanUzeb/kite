@@ -44,6 +44,11 @@ EventKind = Literal[
     "cache_hit",
     "warning",
     "checkpoint",
+    "steer",
+    "follow_up",
+    "compaction_start",
+    "compaction_end",
+    "queue_update",
 ]
 
 
