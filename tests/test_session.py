@@ -1,4 +1,4 @@
-"""Session persistence — append-only messages and meta timestamps."""
+"""Session persistence and analytics."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from kite.memory.session import Session, SessionMeta, create_session, format_meta_line, load_session
+from kite.memory.session_analytics import SessionStats, save_session_stats, scan_session_file
 
 
 def test_append_messages_without_full_rewrite(kite_home) -> None:
@@ -78,14 +79,13 @@ def test_touch_meta_reads_only_first_line(kite_home, monkeypatch) -> None:
     session.append({"role": "assistant", "content": "hello"})
 
 
-def test_replace_messages_appends_compact_snapshot(kite_home) -> None:
+def test_replace_messages_rewrites_session_file(kite_home) -> None:
     session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
     for i in range(5):
         session.append({"role": "user", "content": f"turn {i}" * 50})
     path = session.path
     assert path is not None
     size_before = path.stat().st_size
-    lines_before = len(path.read_text(encoding="utf-8").splitlines())
 
     compacted = [
         {"role": "user", "content": "Previous conversation summary:\ncompacted"},
@@ -93,9 +93,9 @@ def test_replace_messages_appends_compact_snapshot(kite_home) -> None:
     ]
     session.replace_messages(compacted)
     text = path.read_text(encoding="utf-8")
-    assert "compact_snapshot" in text
-    assert len(text.splitlines()) > lines_before
-    assert path.stat().st_size > size_before
+    assert "compact_snapshot" not in text
+    assert path.stat().st_size < size_before
+    assert len(text.splitlines()) == 3
 
     loaded = load_session(session.id)
     assert len(loaded.messages) == 2
@@ -105,3 +105,38 @@ def test_replace_messages_appends_compact_snapshot(kite_home) -> None:
     loaded = load_session(session.id)
     assert len(loaded.messages) == 3
     assert loaded.messages[-1]["content"] == "follow-up"
+
+
+def test_save_and_scan_session_stats(kite_home, tmp_path) -> None:
+    session = create_session(task="demo", cwd=str(tmp_path), provider="groq", model="test")
+    stats = SessionStats(
+        session_id=session.id,
+        created_at=1.0,
+        updated_at=10.0,
+        duration_s=9.0,
+        provider="groq",
+        model="test",
+        cwd=str(tmp_path),
+        tool_calls=3,
+        tool_counts={"read": 2, "bash": 1},
+        api_calls=5,
+        cost=0.12,
+        estimated_tokens=4000,
+        cache_hit_tokens=800,
+    )
+    save_session_stats(stats)
+    row = scan_session_file(session.save())
+    assert row is not None
+    assert row.tool_calls == 3
+    assert row.cache_hit_tokens >= 800
+
+
+def test_scan_session_events(kite_home, tmp_path) -> None:
+    session = create_session(task="events", cwd=str(tmp_path), provider="groq", model="test")
+    session.record_event("tool_end", {"tool": "grep", "ok": True})
+    session.record_event("compact", {"before": 10, "after": 4})
+    session.record_event("tool_end", {"tool": "edit", "ok": False, "blocked": True})
+    row = scan_session_file(session._session_path())
+    assert row is not None
+    assert row.compaction_count == 1
+    assert row.tool_blocked == 1

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import sys
 
-from kite.env.shell import resolve_shell_invocation
+from kite.env.shell import resolve_shell_invocation, sanitize_shell_line
+
+
+def test_sanitize_shell_line_strips_control_chars() -> None:
+    assert sanitize_shell_line("hello\r\nworld\t!") == "hello world !"
+    assert sanitize_shell_line("ok\x00bad") == "okbad"
 
 
 def test_resolve_shell_unix_passthrough() -> None:
