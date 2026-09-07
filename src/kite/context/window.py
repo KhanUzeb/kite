@@ -190,8 +190,8 @@ def deterministic_summary(messages: list[dict], *, max_chars: int = 6_000) -> st
         if m.get("tool_calls"):
             names = ", ".join(tc.get("function", {}).get("name", "?") for tc in m["tool_calls"])
             content = f"{content} [tools: {names}]".strip()
-        if len(content) > 240:
-            content = content[:237] + "..."
+        if len(content) > 180:
+            content = content[:177] + "..."
         lines.append(f"{i}. {role}: {content}")
     text = "\n".join(lines)
     if len(text) > max_chars:
