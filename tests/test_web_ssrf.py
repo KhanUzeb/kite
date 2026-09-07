@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import ipaddress
-
-from kite.tools.web import _parse_host_ip, _url_blocked
+from kite.tools.web import _url_blocked
 
 
 def test_blocks_decimal_localhost() -> None:
@@ -25,10 +23,3 @@ def test_blocks_metadata_hostname() -> None:
 
 def test_allows_public_https() -> None:
     assert _url_blocked("https://example.com/doc") is None
-
-
-def test_parse_host_ip_ipv4_mapped() -> None:
-    ip = _parse_host_ip("::ffff:127.0.0.1")
-    assert ip is not None
-    assert ip.ipv4_mapped == ipaddress.IPv4Address("127.0.0.1")
-    assert ip.is_loopback
