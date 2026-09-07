@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from kite.agent.events import Event
 from kite.agent.harness import Harness
 from kite.application.adapters.harness import harness_config_from_run_spec
 from kite.application.contracts import RunResult, RunSpec, StopReason
@@ -28,6 +29,34 @@ def _map_exit_status(exit_status: str | None) -> tuple[str, StopReason | None]:
     if status:
         return "failed", "error"
     return "completed", None
+
+
+def _apply_run_state(state: RunState, event: Event) -> None:
+    kind = event.kind
+    current = state.value
+    if current in {"completed", "failed", "cancelled"}:
+        return
+    if kind in {"agent_start", "turn_start"}:
+        if current in {"prepared", "observing", "compacting", "executing_tools"}:
+            state.transition("awaiting_model")
+    elif kind == "compaction_start":
+        if current in {"awaiting_model", "observing"}:
+            state.transition("compacting")
+    elif kind in {"compact", "compaction_end"}:
+        if current == "compacting":
+            state.transition("awaiting_model")
+    elif kind == "approval":
+        if current == "awaiting_model":
+            state.transition("awaiting_approval")
+    elif kind == "tool_start":
+        if current in {"awaiting_model", "awaiting_approval"}:
+            state.transition("executing_tools")
+    elif kind == "tool_end":
+        if current == "executing_tools":
+            state.transition("observing")
+    elif kind == "turn_end":
+        if current in {"awaiting_model", "executing_tools", "observing"}:
+            state.transition("observing")
 
 
 class ApplicationRunService:
@@ -56,7 +85,10 @@ class ApplicationRunService:
         if deps.policy_engine is not None:
             h.policy_engine = deps.policy_engine
 
-        unsubscribe = h.subscribe(bridge.wrap_listener())
+        def _state_listener(event: Event) -> None:
+            _apply_run_state(state, event)
+
+        unsubscribe = h.subscribe(bridge.wrap_listener(_state_listener))
         state.transition("awaiting_model")
 
         try:
@@ -66,7 +98,8 @@ class ApplicationRunService:
 
         exit_status = str(legacy.get("exit_status") or "")
         run_status, stop_reason = _map_exit_status(exit_status)
-        state.transition(run_status)
+        if run_status != state.value:
+            state.transition(run_status)
         return _build_run_result(state.value, stop_reason, run_id, legacy)
 
 

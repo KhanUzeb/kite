@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from kite.agent.events import Event
 from kite.agent.hooks import SLOTS, HarnessSlots, HookBus
+from kite.agent.queue import RunMessageQueue
 from kite.agent.runtime import AgentRuntime, RuntimeOptions
 from kite.config import UserConfig
 from kite.memory.session import Session
@@ -71,6 +72,7 @@ class Harness:
     checkpoints: object | None = None
     todos: TodoStore | None = None
     job_registry: JobRegistry | None = None
+    message_queue: RunMessageQueue | None = None
     _extensions_loaded: bool = field(default=False, init=False)
 
     def use(self, slot: str, impl: Any) -> Harness:
@@ -156,6 +158,8 @@ class Harness:
             runtime.tool_executor_override = self.tool_executor
         if self.policy_engine is not None:
             runtime.policy_engine_override = self.policy_engine
+        if self.message_queue is not None:
+            runtime.message_queue = self.message_queue
         try:
             result = runtime.run(task)
         finally:
@@ -169,6 +173,13 @@ class Harness:
     def request_interrupt(self) -> None:
         if self._runtime is not None:
             self._runtime.request_interrupt()
+
+    def inject_user_message(self, text: str, *, steer: bool = False) -> bool:
+        if self._runtime is not None and self._runtime.last_agent is not None:
+            return self._runtime.last_agent.inject_user_message(text, steer=steer)
+        if self.message_queue is not None:
+            return self.message_queue.steer(text) if steer else self.message_queue.enqueue(text)
+        return False
 
     def teardown_jobs(self) -> int:
         if self.job_registry is not None:

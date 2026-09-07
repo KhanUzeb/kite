@@ -119,6 +119,15 @@ class LoopCompactor:
         ):
             return CompactionResult(messages=messages, usage=usage, compacted=False, before=before, after=before)
 
+        self._emit(
+            "compaction_start",
+            before=before,
+            total_tokens=usage.total_tokens,
+            window=usage.window,
+            ratio=round(usage.ratio, 3),
+        )
+        self._emit("tool_progress", tool="compact", elapsed_s=0, hint="")
+
         summarizer = self.summarizer
         if summarizer and usage.ratio < self.config.compaction_llm_ratio:
             summarizer = None
@@ -151,6 +160,15 @@ class LoopCompactor:
                 window=usage.window,
                 ratio=round(usage.ratio, 3),
             )
+        self._emit(
+            "compaction_end",
+            before=before,
+            after=after,
+            compacted=did,
+            total_tokens=usage.total_tokens,
+            window=usage.window,
+            ratio=round(usage.ratio, 3),
+        )
         return CompactionResult(
             messages=result.messages,
             usage=usage,

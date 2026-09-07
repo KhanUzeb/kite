@@ -11,6 +11,7 @@ from kite.agent.cancel import CancelToken
 from kite.agent.events import Event
 from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
+from kite.agent.queue import RunMessageQueue
 from kite.agent.mode import AgentMode, ApprovalMode, parse_approval_mode, tools_for_mode
 from kite.agent.orchestrator import SubagentOrchestrator
 from kite.agent.role import AgentRole, parse_role, tools_for_role
@@ -88,6 +89,7 @@ class AgentRuntime:
     cancel_token: CancelToken | None = None  # inject for nested/subagent runs
     tool_executor_override: Any = None
     policy_engine_override: Any = None
+    message_queue: RunMessageQueue | None = None
 
     def request_interrupt(self) -> None:
         if self.last_agent is not None:
@@ -244,6 +246,13 @@ class AgentRuntime:
                 continuity=continuity_text,
                 cwd=cwd,
             )
+        self.hooks.fire(
+            "after_prepare",
+            config=rcfg,
+            resolved=resolved,
+            system=system,
+            cwd=cwd,
+        )
         return rcfg, resolved, system
 
     def run(self, task: str) -> dict:
@@ -519,8 +528,11 @@ class AgentRuntime:
             resume_messages=resume_messages,
             context_window=resolved.context_window,
             auto_compact=rcfg.auto_compact and ucfg.auto_compact and not self.options.no_compact,
-            compaction_reserve_tokens=rcfg.compaction_reserve_tokens,
-            compaction_keep_recent_tokens=rcfg.compaction_keep_recent_tokens,
+            compaction_reserve_tokens=max(rcfg.compaction_reserve_tokens, ucfg.compaction_reserve_tokens),
+            compaction_keep_recent_tokens=min(
+                rcfg.compaction_keep_recent_tokens,
+                ucfg.compaction_keep_recent_tokens,
+            ),
             compaction_ratio=rcfg.compaction_ratio,
             compaction_llm_ratio=rcfg.compaction_llm_ratio,
             mode=mode,
@@ -542,6 +554,7 @@ class AgentRuntime:
             provider_max_retries=rcfg.provider_max_retries,
             long_task=self.options.long_task,
             cancel=cancel,
+            message_queue=self.message_queue,
         )
         self.last_agent = agent
 
