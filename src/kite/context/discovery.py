@@ -14,6 +14,8 @@ except ImportError:  # pragma: no cover
     build_repo_map = None  # type: ignore[assignment,misc]
 
 PROJECT_MARKERS = (".git", "pyproject.toml", "package.json", "Cargo.toml", "go.mod")
+INSTRUCTION_BASENAMES = frozenset({"KITE.md", "AGENTS.md", "CONTEXT.md"})
+MAX_INSTRUCTION_FILE_CHARS = 8_000
 SKIP_DIRS = {
     ".git",
     ".hg",
@@ -97,6 +99,7 @@ def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
         pass
 
     seen: set[Path] = set()
+    seen_basenames: set[str] = set()
     files: list[ContextFile] = []
     for path in candidates:
         try:
@@ -105,11 +108,20 @@ def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
             continue
         if resolved in seen or not resolved.is_file():
             continue
+        basename = resolved.name
+        if basename in INSTRUCTION_BASENAMES and basename in seen_basenames:
+            continue
         seen.add(resolved)
+        if basename in INSTRUCTION_BASENAMES:
+            seen_basenames.add(basename)
         try:
             content = resolved.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = resolved.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        if len(content) > MAX_INSTRUCTION_FILE_CHARS:
+            content = content[: MAX_INSTRUCTION_FILE_CHARS - 20] + "\n\n...[truncated]..."
         files.append(ContextFile(path=str(resolved), content=content))
     return tuple(files)
 
@@ -163,7 +175,7 @@ def tree_snippet(root: Path, *, max_entries: int = 80) -> str:
     return "\n".join(lines)
 
 
-_CTX_CACHE: TtlCache[tuple[str, bool, bool, bool, int], ProjectContext] = TtlCache(30.0)
+_CTX_CACHE: TtlCache[tuple[str, bool, bool, bool, int], ProjectContext] = TtlCache(120.0)
 
 
 def gather_project_context(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-DEFAULT_OBSERVATION_MAX_CHARS = 8_000
+DEFAULT_OBSERVATION_MAX_CHARS = 5_000
 
 
 def observation_content(output: dict[str, Any], *, max_chars: int = DEFAULT_OBSERVATION_MAX_CHARS) -> str:

@@ -14,9 +14,9 @@ max_consecutive_format_errors = 3
 auto_compact = true
 compaction_ratio = 0.75
 compaction_llm_ratio = 0.92
-observation_max_chars = 8000
-compaction_reserve_tokens = 16384
-compaction_keep_recent_tokens = 20000
+observation_max_chars = 5000
+compaction_reserve_tokens = 12288
+compaction_keep_recent_tokens = 12000
 interactive_step_limit = 80
 interactive_cost_limit = 10.0
 max_budget_continues = 2
@@ -53,8 +53,8 @@ deny_bash_patterns = [
   "bcdedit",
 ]
 block_secret_writes = true
-max_bash_output_chars = 32768
-max_read_chars = 200000
+max_bash_output_chars = 16384
+max_read_chars = 100000
 
 [skills]
 enabled = true
@@ -64,8 +64,8 @@ dirs = []  # extra skill dirs
 [context]
 include_git_status = true
 include_tree_snippet = true
-tree_max_entries = 80
-max_context_chars = 24000
+tree_max_entries = 60
+max_context_chars = 12000
 
 [memory]
 inject = "opt_in"  # opt_in | always — durable MEMORY.md/episodic only when user asks
