@@ -205,6 +205,8 @@ _RENDER_EVENT_KINDS = (
     "subagent_end",
     "job_start",
     "job_end",
+    "tool_output",
+    "job_output",
     "warning",
     "mode",
 )
@@ -523,6 +525,27 @@ class RunDisplay:
         hint = str(p.get("hint") or "")
         label = f"working  {tool}  {elapsed}s{hint}"
         self._spin(True, label)
+
+    def _on_tool_output(self, p: dict[str, Any]) -> None:
+        if not self.state.live_terminal:
+            return
+        line = str(p.get("line") or "")
+        if not line:
+            return
+        self.console.print(Text(f"{GUTTER}{GUTTER}{line.rstrip()}", style="kite.terminal"), highlight=False)
+
+    def _on_job_output(self, p: dict[str, Any]) -> None:
+        if not self.state.live_terminal:
+            return
+        line = str(p.get("line") or "")
+        if not line:
+            return
+        job_id = str(p.get("id") or "")
+        prefix = f"[{job_id}] " if job_id else ""
+        self.console.print(
+            Text(f"{GUTTER}{GUTTER}{prefix}{line.rstrip()}", style="kite.terminal"),
+            highlight=False,
+        )
 
     def _on_tool_end(self, p: dict[str, Any]) -> None:
         self._end_stream_line()

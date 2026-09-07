@@ -464,6 +464,8 @@ def _toolbar_html(state: SessionUiState) -> Any:
             bits.append(f"queued {state.queued}")
         if state.budget_limit is not None and state.budget_limit > 0:
             bits.append(f"budget ≤${state.budget_limit:.2f}")
+        if state.live_terminal:
+            bits.append("live")
         bits.append("/tasks")
         hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
     main = (

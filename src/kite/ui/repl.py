@@ -1117,6 +1117,7 @@ class ChatSession:
             "sandbox": self._slash_restricted,
             "cost": self._slash_cost,
             "expand": self._slash_expand,
+            "live": self._slash_live,
             "expand-thinking": self._slash_expand_thinking,
             "collapse": self._slash_collapse,
             "trace": self._slash_trace,
@@ -1259,6 +1260,14 @@ class ChatSession:
         self.state.expanded_all = not self.state.expanded_all
         mode = "expanded" if self.state.expanded_all else "collapsed"
         self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
+
+    def _slash_live(self, _arg: str) -> None:
+        self.state.live_terminal = not self.state.live_terminal
+        mode = "on" if self.state.live_terminal else "off"
+        self.console.print(
+            f"[kite.muted]live terminal {mode}[/]  — bash output streams as it runs  (/live to toggle)"
+        )
+        self.state.touch()
 
     def _slash_expand_thinking(self, arg: str) -> None:
         note = self._toggle_thinking_display(arg=arg)
