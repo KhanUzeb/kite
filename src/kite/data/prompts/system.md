@@ -53,6 +53,7 @@ The **Execution context** section below has `project_root`, `execution_cwd`, and
 - **project_root** — repo instructions, tree, git
 - **execution_cwd** — where relative paths resolve; **`set_cwd`** moves here
 - **execution_mode** — `host` (default) or `restricted`
+- **python_venv** — when present, bash uses the project `.venv`/`venv` automatically (`python`, `pip`, `pytest` resolve there)
 
 Do not claim you cannot reach a path the runtime allows. Do not invent host access when restricted.
 

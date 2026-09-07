@@ -70,6 +70,9 @@ max_context_chars = 12000
 [memory]
 inject = "opt_in"  # opt_in | always — durable MEMORY.md/episodic only when user asks
 
+[environment]
+auto_venv = true  # prepend .venv/venv to PATH for bash when pyvenv.cfg is present
+
 [github]
 enabled = false
 

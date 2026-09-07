@@ -16,7 +16,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from kite.guardrails import GuardrailPolicy, redact_secrets
-from kite.guardrails.env_filter import filtered_child_env
+from kite.env.venv import prepare_child_env
 from kite.memory.store import MemoryScope, MemoryStore
 from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
@@ -30,8 +30,10 @@ except ImportError:  # pragma: no cover
 
 try:
     from kite.agent.cancel import CancelToken
+    from kite.agent.events import Event
 except ImportError:  # pragma: no cover
     CancelToken = None  # type: ignore[misc, assignment]
+    Event = None  # type: ignore[misc, assignment]
 
 
 _SKIP_NAMES = frozenset({".git", ".venv", "node_modules", "__pycache__"})
@@ -129,6 +131,8 @@ def make_coding_tools(
     execution: ExecutionSession | None = None,
     cancel: CancelToken | None = None,
     jobs=None,
+    on_event=None,
+    auto_venv: bool = True,
 ) -> list[Tool]:
     def _root() -> str:
         if execution is not None:
@@ -137,6 +141,20 @@ def make_coding_tools(
 
     root = _root()
     project_root = str(execution.project_root) if execution is not None else (cwd or os.getcwd())
+
+    def _child_env(workdir: str) -> dict[str, str]:
+        venv = execution.venv_path if execution is not None else None
+        return prepare_child_env(
+            cwd=workdir,
+            project_root=project_root,
+            venv=venv,
+            auto_venv=auto_venv,
+        )
+
+    def _emit_bash_line(line: str) -> None:
+        if on_event is None or Event is None:
+            return
+        on_event(Event(kind="tool_output", payload={"line": line, "tool": "bash"}))
     allow = set(
         enabled
         or [
@@ -315,7 +333,7 @@ def make_coding_tools(
                 job = jobs.spawn_bash(
                     command,
                     cwd=workdir,
-                    env=filtered_child_env({"PAGER": "cat", "GIT_PAGER": "cat"}),
+                    env=_child_env(workdir),
                 )
             except OSError as e:
                 return {"ok": False, "returncode": -1, "output": "", "error": str(e)}
@@ -337,7 +355,7 @@ def make_coding_tools(
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                env=filtered_child_env({"PAGER": "cat", "GIT_PAGER": "cat"}),
+                env=_child_env(workdir),
             )
             output_parts: list[str] = []
             output_bytes = 0
@@ -351,11 +369,14 @@ def make_coding_tools(
                 stream_redactions += n
                 output_parts.append(safe)
                 output_bytes += len(safe.encode("utf-8", errors="replace"))
-                try:
-                    sys.stderr.write(safe)
-                    sys.stderr.flush()
-                except OSError:
-                    pass
+                if on_event is not None:
+                    _emit_bash_line(safe)
+                else:
+                    try:
+                        sys.stderr.write(safe)
+                        sys.stderr.flush()
+                    except OSError:
+                        pass
 
             def _drain() -> None:
                 assert proc.stdout is not None

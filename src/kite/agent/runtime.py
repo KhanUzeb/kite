@@ -304,8 +304,9 @@ class AgentRuntime:
         workspace = WorkspaceContext.discover(
             cwd,
             execution_mode=ExecutionMode.HOST if rcfg.guardrails.host_access() else ExecutionMode.RESTRICTED,
+            auto_venv=rcfg.auto_venv,
         )
-        execution = ExecutionSession(workspace)
+        execution = ExecutionSession(workspace, auto_venv=rcfg.auto_venv)
 
         guard = None
         if rcfg.guardrails.enabled and not self.options.no_guardrails:
@@ -388,6 +389,8 @@ class AgentRuntime:
                 execution=execution,
                 cancel=cancel,
                 jobs=self.job_registry,
+                on_event=self._on_event,
+                auto_venv=rcfg.auto_venv,
             )
         extras = list(self.extra_tools)
         if rcfg.github_tools:
