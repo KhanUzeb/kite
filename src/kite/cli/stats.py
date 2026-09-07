@@ -12,8 +12,9 @@ from kite.memory.audit import AuditLog
 
 
 def maintainer_enabled() -> bool:
-    """True when ~/.kite/.env sets KITE_MAINTAINER_KEY (any non-empty value you choose)."""
-    return bool(os.getenv("KITE_MAINTAINER_KEY", "").strip())
+    """True when ~/.kite/.env sets KITE_MAINTAINER_KEY (min 16 chars)."""
+    key = os.getenv("KITE_MAINTAINER_KEY", "").strip()
+    return len(key) >= 16
 
 _GITHUB_REPO = "KhanUzeb/kite"
 _PYPI_PACKAGE = "kite-agent"  # fallback name if published later

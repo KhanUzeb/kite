@@ -27,6 +27,6 @@ def api_key_env_names(spec: ProviderSpec) -> tuple[str, ...]:
 def api_key_for(spec: ProviderSpec) -> str | None:
     for name in api_key_env_names(spec):
         val = os.getenv(name)
-        if val:
-            return val
+        if val and val.strip():
+            return val.strip()
     return None

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from kite.config import kite_home
+from kite.guardrails import redact_secrets
 
 
 class AuditLog:
@@ -18,7 +19,12 @@ class AuditLog:
 
     def append(self, kind: str, **payload: Any) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        row = {"ts": time.time(), "kind": kind, **payload}
+        row: dict[str, Any] = {"ts": time.time(), "kind": kind}
+        for key, val in payload.items():
+            if isinstance(val, str):
+                row[key], _ = redact_secrets(val)
+            else:
+                row[key] = val
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, default=str) + "\n")
 

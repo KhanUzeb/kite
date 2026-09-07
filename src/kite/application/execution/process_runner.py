@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import time
 from dataclasses import dataclass
+
+from kite.guardrails.env_filter import filtered_child_env
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,9 +19,6 @@ class ProcessResult:
     cancelled: bool = False
 
 
-_DROP_ENV = frozenset({"AWS_SECRET_ACCESS_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY"})
-
-
 class ProcessRunner:
     """Cross-platform subprocess runner with timeout and output limits."""
 
@@ -29,7 +27,7 @@ class ProcessRunner:
         self.max_output_bytes = max_output_bytes
 
     def run(self, command: list[str] | str, *, cwd: str | None = None, shell: bool = False) -> ProcessResult:
-        env = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
+        env = filtered_child_env()
         start = time.monotonic()
         try:
             completed = subprocess.run(
