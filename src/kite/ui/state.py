@@ -48,6 +48,7 @@ class SessionUiState:
     todos: list[TodoItem] = field(default_factory=list)
     last_tool: ToolBlock | None = None
     expanded_all: bool = False
+    live_terminal: bool = False  # stream bash/job output as it runs (/live)
     thinking_expanded: bool = True  # stream full thinking by default; Ctrl+T toggles
     last_thinking: str = ""
     reasoning: str = "auto"

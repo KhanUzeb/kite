@@ -1,7 +1,7 @@
 # Kite CLI UX
 
 **Agent:** kite
-**Version:** 0.9.3
+**Version:** 0.9.4
 **Language:** Python · Rich + prompt_toolkit (single-column, not a full-screen TUI)
 **Companion:** [kite-system-design.md](kite-system-design.md) (architecture, atlas, tradeoffs)
 
@@ -77,6 +77,10 @@ Effort (Antigravity `/effort`, Codex thinking): `/thinking` `/fast` `/reasoning 
 While a turn is running the composer stays pinned (placeholder: `add a follow-up while Kite works…`). **Enter** queues a follow-up without tearing down the input box; **Esc** stops; **Ctrl+G** steers. **`/tasks`**, **`/status`**, **`/help`**, and **`/jobs`** work during a turn; other slash commands wait until the turn ends. The footer shows a running line (`[HH:MM:SS] command  running`) plus metrics: **tok/s**, **cache hit %**, context meter, and cost. After stop, keep typing in the **same session** until `/quit` or `Ctrl+D`.
 
 **Approval prompt:** when a tool needs permission, the composer switches to approval mode. Press **`a`** allow once, **`s`** session, **`p`** always (when not mandatory), **`n`** deny, **`q`** stop. Empty **Enter** denies. Mandatory approvals omit session/always shortcuts.
+
+**Live terminal (`/live`):** toggle streaming bash and background-job output as it runs (default off). When on, the footer shows `live`. Tool output still collapses at `tool_end` unless `/expand` is on.
+
+**Python venv:** when the repo has `.venv/` or `venv/` with `pyvenv.cfg`, Kite prepends it to `PATH` for bash automatically (`[environment] auto_venv = true` in config). The execution context block in the system prompt lists the detected venv.
 
 **Loaders** (beautifului-inspired, TTY-only): default pixel-grid loader with shimmer label and elapsed time. Override with `KITE_LOADER=grid|dots|orbit|wave|spin`.
 

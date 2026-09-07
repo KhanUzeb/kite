@@ -291,6 +291,7 @@ def help_text(index: CommandIndex) -> str:
             "  Enter       queue a follow-up",
             "  Esc         stop the turn",
             "  Ctrl+G      steer (stop + send composer text)",
+            "  /live       stream bash output in real time",
             "  /tasks      list running work + queue",
             "  /status     footer snapshot",
             "  /help       this list",

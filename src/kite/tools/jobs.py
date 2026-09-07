@@ -181,6 +181,7 @@ class JobRegistry:
             for line in iter(proc.stdout.readline, ""):
                 drained_bytes += len(line.encode("utf-8", errors="replace"))
                 job.append_log(line)
+                self._emit("job_output", id=job.id, line=line, kind="bash")
                 if drained_bytes >= max_bytes:
                     job.append_log("\n...[job output truncated]...\n")
                     break

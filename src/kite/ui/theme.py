@@ -40,6 +40,7 @@ _KITE_STYLES = {
     "kite.pending": "bold bright_yellow",
     "kite.error": "bold bright_red",
     "kite.muted": "#6e6e6e",
+    "kite.terminal": "#8a8a8a",
     "kite.tool": "bright_cyan",
     "kite.diff.add": "bold bright_green",
     "kite.diff.del": "bold bright_red",

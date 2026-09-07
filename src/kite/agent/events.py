@@ -40,6 +40,8 @@ EventKind = Literal[
     "subagent_end",
     "job_start",
     "job_end",
+    "job_output",
+    "tool_output",
     "cache_hit",
     "warning",
     "checkpoint",
