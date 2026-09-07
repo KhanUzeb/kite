@@ -219,14 +219,9 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
 
 def _session_pick_items(rows) -> list[tuple[str, str]]:
-    items: list[tuple[str, str]] = []
-    for meta in rows:
-        label = (
-            f"{meta.id}  {meta.provider}/{meta.model}  "
-            f"{meta.exit_status or '-'}  {(meta.label or meta.task or '')[:40]}"
-        )
-        items.append((meta.id, label))
-    return items
+    from kite.memory.session_format import session_pick_items
+
+    return session_pick_items(rows)
 
 
 def _pick_session_id(console, *, title: str = "Pick a session") -> str | None:
@@ -248,23 +243,43 @@ def _pick_session_id(console, *, title: str = "Pick a session") -> str | None:
 
 def cmd_resume(args: argparse.Namespace) -> int:
     from kite.agent.harness import Harness, HarnessConfig
+    from kite.memory.session import load_session
+    from kite.memory.session_format import format_session_resume_hint, suggest_sessions
 
     if not getattr(args, "session", None):
         from kite.ui.pick import can_prompt
 
         console = _console()
         if not can_prompt():
-            console.print("[red]session id required[/]  —  kite resume <id>  or run in a terminal to pick")
+            console.print("[red]session id required[/]  —  kite resume <id>  or  kite sessions")
             return 2
         picked = _pick_session_id(console, title="Resume a session")
         if not picked:
             return 130
         args.session = picked
 
+    console = _console()
+    try:
+        session = load_session(args.session)
+    except FileNotFoundError:
+        hints = suggest_sessions(args.session, limit=5)
+        console.print(f"[red]no session matching[/] {args.session!r}")
+        if hints:
+            console.print("[dim]did you mean:[/]")
+            for meta in hints:
+                console.print(f"  [bold]kite resume {meta.id}[/]  — {format_session_resume_hint(meta)}")
+        else:
+            console.print("[dim]list sessions:[/]  kite sessions")
+        return 2
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        return 2
+
+    console.print(f"[dim]resuming[/]  {format_session_resume_hint(session.meta)}")
+
     follow = args.message or args.task
     if not follow:
         return cmd_chat(args)
-    console = _console()
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
     try:
@@ -314,13 +329,14 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 def cmd_sessions(args: argparse.Namespace) -> int:
     from rich.panel import Panel
-    from rich.table import Table
 
     from kite.config import kite_home
     from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
+    from kite.memory.session_format import render_sessions_table
     from kite.ui.pick import can_prompt, confirm, numbered_pick
 
     console = _console()
+    query = (getattr(args, "search", None) or getattr(args, "query", None) or "").strip()
     if args.delete_all:
         rows = list_sessions(limit=10_000)
         if not rows:
@@ -350,37 +366,59 @@ def cmd_sessions(args: argparse.Namespace) -> int:
             console.print(f"deleted {gone.id}{extra}")
         return 1 if failed else 0
     if args.show:
-        session = load_session(args.show)
-        console.print(Panel(json.dumps(session.meta.to_dict(), indent=2), title=session.id))
+        try:
+            session = load_session(args.show)
+        except (OSError, ValueError) as e:
+            console.print(f"[red]{e}[/]")
+            return 2
+        from kite.memory.session_format import format_session_resume_hint
+
+        console.print(f"[bold]{session.id}[/]  {format_session_resume_hint(session.meta)}")
+        console.print(Panel(json.dumps(session.meta.to_dict(), indent=2), title="meta"))
         for i, m in enumerate(session.messages[-args.tail :], 1):
             role = m.get("role")
             content = (m.get("content") or "")[:200].replace("\n", " ")
             console.print(f"[dim]{i}[/] [cyan]{role}[/] {content}")
+        console.print(f"[dim]resume:[/] [bold]kite resume {session.id}[/]")
         return 0
 
-    rows = list_sessions(limit=args.limit)
-    if can_prompt() and rows:
+    rows = list_sessions(limit=args.limit, query=query)
+    if not rows:
+        if query:
+            console.print(f"[dim]no sessions matching[/] {query!r}")
+        else:
+            console.print("[dim]no sessions[/]")
+        return 0
+
+    title = f"Sessions in {kite_home() / 'sessions'}"
+    if query:
+        title += f"  ·  filter: {query}"
+
+    if can_prompt() and rows and not getattr(args, "no_pick", False):
+        render_sessions_table(console, rows, title=title)
         sid = numbered_pick(
             console,
             _session_pick_items(rows),
             current=None,
-            title=f"Sessions in {kite_home() / 'sessions'}",
+            title=title,
             noun="session",
         )
         if not sid:
+            render_sessions_table(console, rows, title=title)
             return 0
         action = numbered_pick(
             console,
             [
+                ("resume", "resume in chat (kite resume)"),
                 ("open", "open in chat"),
                 ("show", "print transcript"),
                 ("delete", "delete this session"),
             ],
-            current="open",
+            current="resume",
             title=sid,
             noun="action",
         )
-        if action == "open":
+        if action in {"open", "resume"}:
             args.session = sid
             if not getattr(args, "cwd", None):
                 args.cwd = os.getcwd()
@@ -408,14 +446,7 @@ def cmd_sessions(args: argparse.Namespace) -> int:
             return 0
         return 0
 
-    table = Table(title=f"Sessions in {kite_home() / 'sessions'}")
-    table.add_column("id")
-    table.add_column("model")
-    table.add_column("status")
-    table.add_column("label")
-    for meta in rows:
-        table.add_row(meta.id, f"{meta.provider}/{meta.model}", meta.exit_status or "-", meta.label[:50])
-    console.print(table)
+    render_sessions_table(console, rows, title=title)
     return 0
 
 
@@ -985,17 +1016,24 @@ def build_parser() -> argparse.ArgumentParser:
     chat.add_argument("--session", help="Open an existing session id")
     chat.set_defaults(func=cmd_chat)
 
-    resume = sub.add_parser("resume", help="Continue an existing session (omit id to pick)")
-    resume.add_argument("session", nargs="?", help="Session id (omit to pick in a terminal)")
-    resume.add_argument("message", nargs="?", help="Follow-up message")
+    resume = sub.add_parser("resume", help="Continue a saved session in chat (kite resume <id>)")
+    resume.add_argument("session", nargs="?", help="Session id or unique prefix (omit to pick)")
+    resume.add_argument("message", nargs="?", help="Optional one-shot follow-up message")
     resume.add_argument("--task", help="Alias for follow-up message")
     _add_run_flags(resume)
     resume.set_defaults(func=cmd_resume)
 
-    sessions = sub.add_parser("sessions", help="List or inspect saved sessions")
-    sessions.add_argument("--limit", type=int, default=20)
-    sessions.add_argument("--show", help="Show session id")
+    sessions = sub.add_parser("sessions", help="List, search, or inspect saved sessions")
+    sessions.add_argument("query", nargs="?", help="Filter by id prefix, title, cwd, or date")
+    sessions.add_argument("-q", "--query", dest="search", help="Filter sessions (same as positional query)")
+    sessions.add_argument("--limit", type=int, default=30)
+    sessions.add_argument("--show", help="Show session id (full transcript tail)")
     sessions.add_argument("--tail", type=int, default=12, help="Messages to show with --show")
+    sessions.add_argument(
+        "--no-pick",
+        action="store_true",
+        help="Print table only (no interactive picker in a TTY)",
+    )
     sessions.add_argument(
         "--delete",
         nargs="+",
