@@ -13,6 +13,16 @@ from kite.util.cache import TtlCache
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 
 
+def agents_skills_dir() -> Path:
+    """Global Agent Skills library (Cursor/Codex-style ~/.agents/skills)."""
+    return Path.home() / ".agents" / "skills"
+
+
+def user_skill_dirs() -> list[Path]:
+    """User-global skill roots — readable outside workspace sandbox."""
+    return [kite_home() / "skills", agents_skills_dir()]
+
+
 @dataclass(frozen=True)
 class Skill:
     name: str
@@ -71,7 +81,10 @@ def classify_skill_dir(directory: Path, cwd: Path) -> str:
     except OSError:
         resolved = directory
     home_skills = kite_home() / "skills"
+    agents_skills = agents_skills_dir()
     if _is_under(resolved, home_skills) or resolved == home_skills:
+        return "user"
+    if _is_under(resolved, agents_skills) or resolved == agents_skills:
         return "user"
     if _is_under(resolved, cwd / ".kite" / "skills") or _is_under(resolved, cwd / ".agents" / "skills"):
         return "project"
@@ -89,6 +102,7 @@ def _iter_skill_dirs(cwd: Path, extra: list[str] | None = None) -> list[Path]:
     except Exception:
         pass
     dirs.append(kite_home() / "skills")
+    dirs.append(agents_skills_dir())
     try:
         from kite.plugins.loader import plugin_skill_dirs
 
@@ -162,7 +176,7 @@ def _load_from_dir(skills_dir: Path, *, source: str) -> list[Skill]:
     return skills
 
 
-_SKILLS_CACHE: TtlCache[tuple[str, tuple[str, ...]], list[Skill]] = TtlCache(45.0)
+_SKILLS_CACHE: TtlCache[tuple[str, tuple[str, ...]], list[Skill]] = TtlCache(45.0, maxsize=8)
 
 
 def invalidate_skills() -> None:
