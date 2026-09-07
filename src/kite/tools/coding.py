@@ -38,6 +38,17 @@ except ImportError:  # pragma: no cover
 _SKIP_NAMES = frozenset({".git", ".venv", "node_modules", "__pycache__"})
 _BASH_MAX_OUTPUT_BYTES = 256_000
 _STDIN_MAX_BYTES = 2_000_000
+_READ_MAX_BYTES = 256_000
+_READ_MAX_LINES = 400
+
+
+def _read_text_bounded(path: Path, *, max_bytes: int = _READ_MAX_BYTES) -> tuple[str, bool]:
+    with path.open("rb") as handle:
+        data = handle.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        data = data[:max_bytes]
+        return data.decode("utf-8", errors="replace"), True
+    return data.decode("utf-8", errors="replace"), False
 
 
 def _safe_int(value: Any, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
@@ -209,7 +220,7 @@ def make_coding_tools(
             msg = f"{path} is a directory. Use ls, or read a file inside it.\n{listing}"
             return {"ok": True, "path": str(path), "output": msg, "directory": True, "count": len(names)}
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text, file_truncated = _read_text_bounded(path)
         except OSError as e:
             return _io_fail(path, e)
         start = _safe_int(args.get("offset"), 1, minimum=1)
@@ -220,18 +231,18 @@ def make_coding_tools(
         chunk = lines[start - 1 :] if start > 1 else lines
         if limit is not None and limit > 0:
             chunk = chunk[:limit]
+        elif limit is None and len(chunk) > _READ_MAX_LINES:
+            chunk = chunk[:_READ_MAX_LINES]
         if numbered:
             body = "".join(f"{i + start:6}|{line}" for i, line in enumerate(chunk))
         else:
             body = "".join(chunk)
-        truncated = False
-        if limit is None and len(lines) > 200:
-            chunk = lines[:200]
-            if numbered:
-                body = "".join(f"{i + start:6}|{line}" for i, line in enumerate(chunk))
-            else:
-                body = "".join(chunk)
-            body += f"\n... [{len(lines) - 200} lines truncated; use bash: wc -l / head / sed -n, or read offset/limit] ...\n"
+        truncated = file_truncated
+        if limit is None and len(lines) > _READ_MAX_LINES:
+            body += (
+                f"\n... [{len(lines) - _READ_MAX_LINES} lines truncated; "
+                "use read offset/limit or bash: head/sed -n] ...\n"
+            )
             truncated = True
         return {"ok": True, "path": str(path), "output": body, "truncated": truncated}
 
@@ -369,7 +380,9 @@ def make_coding_tools(
                 nonlocal stream_redactions, output_bytes
                 if output_bytes >= _BASH_MAX_OUTPUT_BYTES:
                     return
-                safe, n = redact_secrets(raw_line)
+                from kite.env.shell import sanitize_shell_line
+
+                safe, n = redact_secrets(sanitize_shell_line(raw_line) + ("\n" if raw_line.endswith("\n") else ""))
                 stream_redactions += n
                 output_parts.append(safe)
                 output_bytes += len(safe.encode("utf-8", errors="replace"))

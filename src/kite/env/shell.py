@@ -13,6 +13,12 @@ _PS_MARKERS = re.compile(
 _UNIX_MARKERS = re.compile(
     r"(?:&&|\|\||\$\(|`[^`]+`|(?<!\w)(?:grep|sed|awk|find|xargs|wc|head|tail|rg)\b)"
 )
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def sanitize_shell_line(text: str) -> str:
+    cleaned = _CONTROL_CHARS.sub("", text or "")
+    return " ".join(cleaned.replace("\r", " ").replace("\n", " ").replace("\t", " ").split())
 
 
 def _looks_powershell(command: str) -> bool:

@@ -175,7 +175,7 @@ def tree_snippet(root: Path, *, max_entries: int = 80) -> str:
     return "\n".join(lines)
 
 
-_CTX_CACHE: TtlCache[tuple[str, bool, bool, bool, int], ProjectContext] = TtlCache(120.0)
+_CTX_CACHE: TtlCache[tuple[str, bool, bool, bool, int], ProjectContext] = TtlCache(120.0, maxsize=8)
 
 
 def gather_project_context(

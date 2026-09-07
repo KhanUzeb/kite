@@ -21,6 +21,7 @@ JobKind = Literal["bash", "subagent"]
 JobStatus = Literal["running", "done", "killed", "failed"]
 
 _LOG_RING = 200
+_MAX_FINISHED_JOBS = 24
 
 
 @dataclass
@@ -103,6 +104,15 @@ class JobRegistry:
 
     def active_count(self) -> int:
         return len(self.list(active_only=True))
+
+    def _prune_finished(self) -> None:
+        with self._lock:
+            finished = [job for job in self._jobs.values() if job.status != "running"]
+            if len(finished) <= _MAX_FINISHED_JOBS:
+                return
+            finished.sort(key=lambda job: job.started_at)
+            for job in finished[: len(finished) - _MAX_FINISHED_JOBS]:
+                self._jobs.pop(job.id, None)
 
     def spawn_bash(
         self,
@@ -223,6 +233,7 @@ class JobRegistry:
             label=job.display_label(),
             active=self.active_count(),
         )
+        self._prune_finished()
 
     def register_subagent(
         self,
@@ -278,6 +289,7 @@ class JobRegistry:
             label=label,
             active=self.active_count(),
         )
+        self._prune_finished()
 
     def kill(self, job_id: str) -> bool:
         with self._lock:
@@ -314,6 +326,7 @@ class JobRegistry:
             label=job.display_label(),
             active=self.active_count(),
         )
+        self._prune_finished()
         return True
 
     def _kill_bash(self, job: BackgroundJob) -> None:

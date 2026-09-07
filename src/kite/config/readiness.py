@@ -114,6 +114,60 @@ def needs_setup(
     return not assess_setup_status(provider=provider, model=model, config=config).ready
 
 
+def assess_setup_status_fast(
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    config: UserConfig | None = None,
+) -> SetupStatus:
+    """Lightweight readiness — no catalog/model resolution (REPL cold start)."""
+    cfg = config or UserConfig.load()
+    ready_names = configured_provider_names()
+    prov = (provider or cfg.default_provider or "").strip()
+    mod = model or cfg.default_model
+    blockers: list[str] = []
+    hints: list[str] = []
+
+    if prov and prov not in ready_names:
+        blockers.append(f"no API key for provider '{prov}'")
+    if not mod:
+        blockers.append("no default model configured")
+
+    if not blockers:
+        return SetupStatus(
+            ready=True,
+            has_config_file=has_config_file(),
+            has_any_api_key=has_any_api_key(),
+            configured_providers=ready_names,
+            default_provider=prov,
+            default_model=mod,
+            blockers=(),
+            hints=(),
+        )
+
+    if ready_names:
+        others = [n for n in ready_names if n != prov]
+        if others:
+            hints.append(f"Keys ready for: {', '.join(others)} — run /model select or kite setup")
+    elif is_fresh_install():
+        hints.append("Free tier BYOK: groq.com → /login groq  ·  BYOS: /login chatgpt|claude|grok")
+        hints.append("Run kite setup or /setup for the guided wizard")
+
+    if not has_config_file():
+        hints.append(f"Config not saved yet — setup writes {config_path()}")
+
+    return SetupStatus(
+        ready=False,
+        has_config_file=has_config_file(),
+        has_any_api_key=has_any_api_key(),
+        configured_providers=ready_names,
+        default_provider=prov,
+        default_model=mod,
+        blockers=tuple(blockers),
+        hints=tuple(hints),
+    )
+
+
 def format_setup_banner(status: SetupStatus) -> str:
     if status.ready:
         return ""
