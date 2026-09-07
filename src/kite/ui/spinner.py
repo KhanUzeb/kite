@@ -144,7 +144,7 @@ class WaitSpinner:
         return f"  {glyph}  {label}{elapsed}"
 
     def _run(self) -> None:
-        while not self._stop.wait(0.06):
+        while not self._stop.wait(0.12):
             if _interpreter_finalizing():
                 return
             with self._lock:

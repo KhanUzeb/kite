@@ -73,7 +73,6 @@ def parse_approval_choice(text: str, *, mandatory: bool) -> str | None:
 
 
 def classify_busy_line(line: str) -> ComposerResult:
-    """Map composer text entered while a turn is running."""
     text = (line or "").strip()
     if not text:
         return ComposerResult("empty")
@@ -89,6 +88,74 @@ def classify_busy_line(line: str) -> ComposerResult:
             return ComposerResult("busy_slash", text)
         return ComposerResult("slash", text)
     return ComposerResult("text", text)
+
+
+@dataclass(frozen=True)
+class BusyComposerHandlers:
+    on_queue: Callable[[str], None]
+    on_stop: Callable[[], None]
+    on_steer: Callable[[str], None]
+    on_slash_while_busy: Callable[[], None]
+    on_busy_slash: Callable[[str], None] | None = None
+    on_approval: Callable[[str], None] | None = None
+    on_eof: Callable[[], None] | None = None
+    on_empty: Callable[[], None] | None = None
+    on_dequeue: Callable[[], None] | None = None
+
+
+def dispatch_classified_busy(result: ComposerResult, handlers: BusyComposerHandlers) -> bool:
+    if result.kind == "eof":
+        if handlers.on_eof is not None:
+            handlers.on_eof()
+        handlers.on_stop()
+        return True
+    if result.kind == "stop":
+        handlers.on_stop()
+        return True
+    if result.kind == "steer":
+        handlers.on_steer(result.text)
+        handlers.on_stop()
+        return True
+    if result.kind == "approval" and handlers.on_approval is not None:
+        handlers.on_approval(result.text)
+        return False
+    if result.kind == "busy_slash" and handlers.on_busy_slash is not None:
+        handlers.on_busy_slash(result.text)
+        return False
+    if result.kind == "slash":
+        handlers.on_slash_while_busy()
+        return False
+    if result.kind == "text":
+        handlers.on_queue(result.text)
+        return False
+    if result.kind == "dequeue":
+        if handlers.on_dequeue is not None:
+            handlers.on_dequeue()
+        return False
+    if result.kind == "empty":
+        if handlers.on_empty is not None:
+            handlers.on_empty()
+        else:
+            handlers.on_slash_while_busy()
+        return False
+    return False
+
+
+def apply_busy_composer_result(result: ComposerResult, handlers: BusyComposerHandlers) -> bool:
+    if result.kind == "eof":
+        if handlers.on_eof is not None:
+            handlers.on_eof()
+        handlers.on_stop()
+        return True
+    if result.kind in {"stop", "steer", "approval", "busy_slash", "empty", "dequeue"}:
+        return dispatch_classified_busy(result, handlers)
+    if result.kind == "text":
+        return dispatch_classified_busy(classify_busy_line(result.text), handlers)
+    return False
+
+
+def apply_busy_text_line(line: str, handlers: BusyComposerHandlers) -> bool:
+    return dispatch_classified_busy(classify_busy_line(line), handlers)
 
 
 def _pt_style(*, dark: bool) -> Any:
@@ -228,7 +295,6 @@ class SlashCompleter(Completer):  # type: ignore[misc]
 
     def _arg_completions(self, cmd: str, rest: str, index: CommandIndex, *, legacy_cmd: str = ""):
         token = rest
-        # only complete the last token
         prefix = token.split()[-1] if token and not token.endswith(" ") else ""
         start = -len(prefix) if prefix else 0
         choices: list[tuple[str, str]] = []
@@ -315,7 +381,6 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         if routed == "select" or (cmd == "model" and sub == "select"):
             want_providers = True
             if sub == "select" and (len(parts) > 1 or trailing):
-                # /model select <provider> — still providers only
                 pass
         elif routed == "provider" or (cmd == "model" and sub == "provider"):
             want_providers = True
@@ -332,7 +397,6 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         elif cmd == "model" and sub == "refresh":
             want_providers = True
         elif cmd == "model":
-            # /model <list|select|refresh|id> — verbs + live model ids for current provider
             choices.extend(ARG_CHOICES.get("model", []))
             for mid in self._models_for(None):
                 choices.append((mid, "model"))
@@ -376,8 +440,9 @@ def _slash_completion_display(spec: SlashSpec, index: CommandIndex) -> Any:
 
 def _session_rows() -> list[tuple[str, str]]:
     from kite.memory.session import list_sessions
+    from kite.memory.session_format import format_session_picker_label
 
-    return [(meta.id, (meta.label or meta.task)[:50]) for meta in list_sessions(limit=30)]
+    return [(meta.id, format_session_picker_label(meta)[:72]) for meta in list_sessions(limit=30)]
 
 
 def _at_attach_prefix(raw: str) -> tuple[str, int] | None:
@@ -459,9 +524,21 @@ def _toolbar_html(state: SessionUiState) -> Any:
             bits = ["[a] once", "[s] session", "[p] always", "[n] deny", "[q] stop"]
         hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
     elif state.busy:
-        bits = ["Esc stop", "Enter queue", "Ctrl+G steer"]
-        if state.queued:
+        bits = ["Esc stop", "Enter queue", "Ctrl+G steer", "Ctrl+U dequeue"]
+        if state.queue_steer:
+            bits.append(f"steer {state.queue_steer}")
+        if state.queue_follow:
+            bits.append(f"follow-up {state.queue_follow}")
+        elif state.queued:
             bits.append(f"queued {state.queued}")
+        head = (state.queue_head or "").strip()
+        if head:
+            kind = "steer" if state.queue_head_kind == "steer" else "follow-up"
+            if len(head) > 36:
+                head = head[:33] + "…"
+            bits.append(f"next {kind}: {head}")
+        if state.compacting:
+            bits.append("compacting")
         if state.budget_limit is not None and state.budget_limit > 0:
             bits.append(f"budget ≤${state.budget_limit:.2f}")
         if state.live_terminal:
@@ -545,13 +622,7 @@ def make_repl_key_bindings(
     can_remember_approval: Callable[[], bool] | None = None,
     action_slot: dict[str, str] | None = None,
 ) -> Any:
-    """Keyboard shortcuts while the composer is focused.
-
-    Custom bindings use eager=True so they win over emacs Ctrl+P/B/T/O.
-    Ctrl+S is not bound — terminals steal it for XOFF; use F2 for status.
-    Mouse is off by default (see ``_mouse_support_enabled``) so drag-copy and
-    right-click paste stay with the terminal.
-    """
+    """Keyboard shortcuts while the composer is focused."""
     if not _PT:
         return None
     from prompt_toolkit.filters import Condition
@@ -618,6 +689,11 @@ def make_repl_key_bindings(
     def _steer(event) -> None:  # noqa: ANN001
         slot["kind"] = "steer"
         event.app.exit(result=event.current_buffer.text)
+
+    @bindings.add("c-u", eager=True, filter=busy)
+    def _dequeue(event) -> None:  # noqa: ANN001
+        slot["kind"] = "dequeue"
+        event.app.exit(result="")
 
     for key in ("a", "n", "q"):
         @bindings.add(key, eager=True, filter=awaiting)
@@ -923,6 +999,7 @@ def _prompt_once(
     busy: bool,
     action_slot: dict[str, str],
     on_poll: Callable[[], None] | None = None,
+    prefill: str = "",
 ) -> ComposerResult:
     placeholder_fg = "#888888" if not is_dark() else "#555555"
     brand = brand_ansi()
@@ -942,11 +1019,13 @@ def _prompt_once(
         return _toolbar_html(state)
 
     try:
+        if prefill:
+            session.default_buffer.text = prefill
         text = session.prompt(
             HTML(f"<style fg='{brand}'>{glyph('prompt')}</style> "),
             placeholder=HTML(f"<style fg='{placeholder_fg}'>{placeholder}</style>"),
             bottom_toolbar=_toolbar,
-            refresh_interval=0.1 if (busy or state.awaiting_approval) else 0,
+            refresh_interval=0.25 if (busy or state.awaiting_approval) else 0,
         )
     except EOFError:
         return ComposerResult("eof")
@@ -971,6 +1050,8 @@ def _prompt_once(
         return ComposerResult("stop")
     if kind == "steer":
         return ComposerResult("steer", text)
+    if kind == "dequeue":
+        return ComposerResult("dequeue")
     if state.awaiting_approval:
         decision = parse_approval_choice(text, mandatory=state.awaiting_approval_mandatory)
         if decision:
@@ -997,6 +1078,8 @@ def read_repl_busy_composer(
     on_busy_slash: Callable[[str], None] | None = None,
     on_approval: Callable[[str], None] | None = None,
     on_eof: Callable[[], None],
+    on_empty: Callable[[], None] | None = None,
+    on_dequeue: Callable[[], str] | None = None,
     on_tick: Callable[[], None] | None = None,
     on_poll: Callable[[], None] | None = None,
 ) -> None:
@@ -1017,61 +1100,42 @@ def read_repl_busy_composer(
         from prompt_toolkit.patch_stdout import patch_stdout
 
         with patch_stdout(raw=True):
+            prefill_ref: list[str] = [""]
+
+            def _handle_dequeue() -> None:
+                if on_dequeue is not None:
+                    prefill_ref[0] = on_dequeue()
+
             while should_continue():
                 if on_tick is not None:
                     on_tick()
                 action_slot["kind"] = "submit"
+                prefill = prefill_ref[0]
+                prefill_ref[0] = ""
                 result = _prompt_once(
                     session,
                     state,
                     busy=True,
                     action_slot=action_slot,
                     on_poll=on_poll or on_tick,
+                    prefill=prefill,
                 )
                 if not should_continue():
                     break
-                if result.kind == "eof":
-                    on_eof()
+                handlers = BusyComposerHandlers(
+                    on_queue=on_queue,
+                    on_stop=on_stop,
+                    on_steer=on_steer,
+                    on_slash_while_busy=on_slash_while_busy,
+                    on_busy_slash=on_busy_slash,
+                    on_approval=on_approval,
+                    on_eof=on_eof,
+                    on_empty=on_empty,
+                    on_dequeue=_handle_dequeue if on_dequeue else None,
+                )
+                if apply_busy_composer_result(result, handlers):
                     break
-                if result.kind == "stop":
-                    on_stop()
-                    break
-                if result.kind == "steer":
-                    on_steer(result.text)
-                    on_stop()
-                    break
-                if result.kind == "approval" and on_approval is not None:
-                    on_approval(result.text)
-                    continue
-                if result.kind == "busy_slash" and on_busy_slash is not None:
-                    on_busy_slash(result.text)
-                    continue
-                if result.kind == "empty":
-                    if on_tick is not None:
-                        on_tick()
-                    continue
-                line = result.text
-                classified = classify_busy_line(line)
-                if classified.kind == "stop":
-                    on_stop()
-                    break
-                if classified.kind == "eof":
-                    on_eof()
-                    on_stop()
-                    break
-                if classified.kind == "steer":
-                    on_steer(classified.text)
-                    on_stop()
-                    break
-                if classified.kind == "approval" and on_approval is not None:
-                    on_approval(classified.text)
-                    continue
-                if classified.kind == "busy_slash" and on_busy_slash is not None:
-                    on_busy_slash(classified.text)
-                    continue
-                if classified.kind == "slash":
-                    on_slash_while_busy()
-                    continue
-                on_queue(line)
+                if result.kind == "empty" and on_tick is not None:
+                    on_tick()
     finally:
         state._refresh = None
