@@ -52,7 +52,7 @@ GitHub Actions runs `pytest` on **every push and pull request to `main`** (Pytho
 | `test_session_list.py` | session list/delete |
 | `test_cache.py` | prompt cache stats |
 | `test_context_checkpoint_handoff.py` | checkpoints, handoff export, compaction facts |
-| `test_bench.py` | `kite bench` suite |
+| `test_bench.py` | Harness timing suite + budget regression (`kite bench --check`) |
 | `test_tool_result.py` | ToolResult contract, tool metadata |
 | `test_workspace.py` | execution cwd, host/restricted mode, `set_cwd` |
 | `test_cancellation_parallel.py` | bash cancel, parallel read tools |

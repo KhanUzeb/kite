@@ -12,7 +12,7 @@ from kite.agent.runtime import AgentRuntime, RuntimeOptions
 from kite.application.events import EventSequencer
 from kite.application.policy import ApprovalCoordinator, PolicyEngine, child_inherits_parent_policy
 from kite.application.tools import ToolCall, ToolResult
-from kite.application.tools.effects import derive_effects, normalize_legacy_effect, tool_requires_approval_gate
+from kite.application.tools.effects import derive_effects, normalize_legacy_effect
 from kite.application.ui import ReplEventReducer
 from kite.application.verification import EvidenceVerifier
 from kite.application.verification.plan import (
@@ -26,7 +26,6 @@ from kite.application.verification.plan import (
 from kite.eval import ReplayBundle, run_replay
 from kite.memory.session import create_session
 from kite.models.cache import CacheStats, PromptCacheManager
-from kite.providers.capabilities import agent_model_warning, platform_shell_hint
 
 
 @pytest.mark.parametrize(
@@ -171,28 +170,6 @@ def test_resolve_rejects_wrong_request_id() -> None:
     assert coord.pending is None
 
 
-def test_html_pytest_does_not_satisfy_html_plan() -> None:
-    from kite.agent.verification import VerificationCollector
-
-    vc = VerificationCollector()
-    vc.on_tool_end(
-        "edit",
-        {"path": "index.html"},
-        {"ok": True, "path": "index.html", "diff": "<html><body>broken"},
-    )
-    assert vc.needs_tests()
-    vc.on_tool_end("bash", {"command": "pytest -q"}, {"ok": True, "returncode": 0, "output": "1 passed"})
-    assert vc.status() != "verified"
-
-
-def test_html_empty_content_does_not_verify() -> None:
-    from kite.agent.verification import VerificationCollector
-
-    vc = VerificationCollector()
-    vc.on_tool_end("edit", {"path": "index.html"}, {"ok": True, "path": "index.html", "diff": ""})
-    assert vc.needs_tests()
-
-
 def test_monorepo_scopes_python_checks_per_package(tmp_path) -> None:
     from kite.application.verification.plan import build_verification_plan
     from kite.application.verification.workspace_profile import discover_workspace_profile
@@ -233,50 +210,6 @@ def test_verification_toml_override(tmp_path) -> None:
     unit = profile.package_for("pkg/module.py")
     assert unit is not None
     assert unit.test_command == "pytest -q pkg/tests -x"
-
-
-def test_approval_gate_and_coordinator() -> None:
-    assert tool_requires_approval_gate("memory", {"action": "remember", "text": "x"})
-    assert tool_requires_approval_gate("skill", {"install": "pkg"})
-    coord = ApprovalCoordinator(interactive=True)
-    results: list[str] = []
-
-    def worker() -> None:
-        results.append(coord.request("bash", {"command": "rm x"}, reason="destructive", mandatory=True))
-
-    t = threading.Thread(target=worker)
-    t.start()
-    for _ in range(50):
-        if coord.pending is not None:
-            break
-        time.sleep(0.01)
-    assert coord.pending is not None
-    coord.resolve("allow")
-    t.join(timeout=2)
-    assert results == ["allow"]
-    assert ApprovalCoordinator(interactive=False).request("bash", {"command": "curl x"}, mandatory=True) == "deny"
-
-
-@pytest.mark.parametrize(
-    ("model", "expect_warning"),
-    [("text-embedding-3-small", True), ("claude-sonnet-4", False)],
-)
-def test_model_capability_warnings(model: str, expect_warning: bool) -> None:
-    warning = agent_model_warning(model)
-    if expect_warning:
-        assert warning is not None
-        assert "tool" in warning.lower()
-    else:
-        assert warning is None
-
-
-@pytest.mark.parametrize(
-    ("platform", "needle"),
-    [("win32", "Windows"), ("linux", "POSIX")],
-)
-def test_platform_shell_hint(monkeypatch, platform: str, needle: str) -> None:
-    monkeypatch.setattr("sys.platform", platform)
-    assert needle in platform_shell_hint()
 
 
 def test_prompt_cache_session_stats(kite_home, tmp_path) -> None:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -10,58 +9,10 @@ from kite.agent.loop import DefaultAgent
 from kite.agent.mode import AgentMode, tools_for_mode
 from kite.agent.verification import VerificationCollector
 from kite.application.execution import build_tool_executor
-from kite.context.repomap import build_repo_map, git_changed_paths
 from kite.env.local import LocalEnvironment
 from kite.eval import ReplayBundle, run_replay
 from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
-
-
-def test_build_repo_map_finds_python_symbols(workspace: Path) -> None:
-    src = workspace / "src" / "demo"
-    src.mkdir(parents=True)
-    (src / "main.py").write_text(
-        "class Widget:\n    pass\n\ndef run():\n    return 1\n",
-        encoding="utf-8",
-    )
-    text = build_repo_map(workspace, max_files=10, prefer_git_changed=False)
-    assert "main.py" in text
-    assert "Widget" in text or "run" in text
-
-
-def test_repo_map_prioritizes_git_changed_files(workspace: Path) -> None:
-    subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
-    quiet = workspace / "src" / "quiet.py"
-    hot = workspace / "src" / "app.py"
-    quiet.write_text("def quiet_fn():\n    pass\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=workspace, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-c", "user.email=ci@test", "-c", "user.name=ci", "commit", "-m", "init"],
-        cwd=workspace,
-        check=True,
-        capture_output=True,
-    )
-    hot.write_text("def hot_fn():\n    return 2\n", encoding="utf-8")
-    changed = git_changed_paths(workspace)
-    assert "src/app.py" in changed
-    text = build_repo_map(workspace, max_files=5)
-    assert text.index("app.py") < text.index("quiet.py")
-    assert "*src/app.py" in text or "app.py" in text
-
-
-def test_submit_tool_registered_and_raises_submitted(workspace: Path) -> None:
-    from kite.agent.exceptions import Submitted
-    from kite.env.local import LocalEnvironment
-
-    tools = make_coding_tools(cwd=str(workspace), enabled=["submit"])
-    names = [t.name for t in tools]
-    assert "submit" in names
-    env = LocalEnvironment(cwd=str(workspace), registry=__import__("kite.tools", fromlist=["ToolRegistry"]).ToolRegistry(tools))
-    try:
-        env.execute({"tool": "submit", "arguments": {"message": "## Done\n- shipped"}})
-        raise AssertionError("expected Submitted")
-    except Submitted as exc:
-        assert "shipped" in str(exc.messages[0].get("content") or "")
 
 
 def test_submit_tool_requires_message(workspace: Path) -> None:

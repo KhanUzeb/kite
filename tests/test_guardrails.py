@@ -82,6 +82,20 @@ def test_restricted_read_allows_global_skill_tree(workspace: Path, kite_home: Pa
     assert not write.allowed
 
 
+def test_restricted_read_allows_agents_home_skills(workspace: Path, monkeypatch, tmp_path: Path) -> None:
+    from kite.guardrails.sandbox import is_user_skill_read
+
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    skill = tmp_path / ".agents" / "skills" / "tdd"
+    skill.mkdir(parents=True)
+    notes = skill / "mocking.md"
+    notes.write_text("patterns\n", encoding="utf-8")
+    policy = GuardrailPolicy(GuardrailConfig(execution_mode="restricted"), workspace)
+    verdict = policy.check_path(str(notes))
+    assert verdict.allowed
+    assert is_user_skill_read(notes)
+
+
 def test_path_escape_blocked_in_restricted_mode(workspace: Path, tmp_path: Path) -> None:
     external = tmp_path / "outside.txt"
     external.write_text("secret\n", encoding="utf-8")
