@@ -1,8 +1,4 @@
-"""Core render loop: history cells, not mixed token soup.
-
-Codex: user / thinking / answer / exec as separate cells.
-Antigravity: effort on the footer, compaction as a boundary, tools as rows.
-"""
+"""Core render loop: history cells, not mixed token soup."""
 
 from __future__ import annotations
 
@@ -66,7 +62,6 @@ def _tool_meta(duration_ms: int | None, exit_code: int | None) -> str:
     return " ".join(bits)
 
 def render_thinking_summary(chars: int, lines: int, *, expanded_hint: bool = True) -> Text:
-    """Collapsed thinking row — expand with Ctrl+T or /expand-thinking."""
     t = Text()
     t.append(f"{GUTTER}{SYMBOL_REASON} ", style="kite.thinking")
     t.append("thinking", style="kite.thinking bold")
@@ -77,7 +72,6 @@ def render_thinking_summary(chars: int, lines: int, *, expanded_hint: bool = Tru
     return t
 
 def render_reasoning_block(text: str, *, step: int | None = None) -> Text:
-    """Structured reasoning cell — distinct from answer, never mixed."""
     t = Text()
     prefix = f"{SYMBOL_REASON} "
     if step is not None:
@@ -159,13 +153,19 @@ def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: 
     return t
 
 def render_user_cell(task: str) -> Text:
-    """Codex user cell: › first line, then a matching gutter."""
     t = Text()
     lines = task.splitlines() or [task]
     for i, line in enumerate(lines):
         t.append(f"{SYMBOL_USER} " if i == 0 else "  ", style="kite.muted")
         t.append(line + "\n", style="kite.user")
     return t
+
+def _composer_owns_bottom(state: SessionUiState) -> bool:
+    return state.busy
+
+
+def _composer_suppresses_scrollprint(state: SessionUiState) -> bool:
+    return state.busy
 
 _RENDER_EVENT_KINDS = (
     "attach",
@@ -209,6 +209,8 @@ _RENDER_EVENT_KINDS = (
     "job_output",
     "warning",
     "mode",
+    "compaction_start",
+    "compaction_end",
 )
 
 class RunDisplay:
@@ -260,7 +262,6 @@ class RunDisplay:
         self._need_prefix = False
 
     def _ensure_channel(self, channel: str) -> None:
-        """thinking and answer never share a cell."""
         if self._channel == channel:
             return
         had = self._channel is not None
@@ -357,9 +358,7 @@ class RunDisplay:
     def _spin(self, on: bool, label: str = "thinking") -> None:
         if on and not self.quiet:
             self._anim_tick += 1
-            if self.state.busy:
-                # Composer owns the bottom of the screen — keep activity in the
-                # toolbar only. stderr WaitSpinner \r frames overwrite the prompt.
+            if _composer_owns_bottom(self.state):
                 if self._spinner_on:
                     self._spinner.stop()
                     self._spinner_on = False
@@ -435,6 +434,8 @@ class RunDisplay:
 
     def _on_stream_start(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
+        self.state.retry_until = None
+        self.state.retry_label = ""
         self.state.reset_stream_stats()
         self.state.provider = str(p.get("provider") or self.state.provider)
         self.state.model = str(p.get("model") or self.state.model)
@@ -524,36 +525,33 @@ class RunDisplay:
         tool = str(p.get("tool") or "?")
         elapsed = int(p.get("elapsed_s") or 0)
         hint = str(p.get("hint") or "")
+        if tool == "compact":
+            self.state.set_running(label="Auto-compacting context", kind="compact")
+            self.state.touch(force=True)
+            return
         label = f"working  {tool}  {elapsed}s{hint}"
+        self.state.set_running(label=label.strip(), kind=tool)
         self._spin(True, label)
 
     def _on_tool_output(self, p: dict[str, Any]) -> None:
-        line = str(p.get("line") or "").rstrip()
-        if line:
-            preview = line.strip()
-            if len(preview) > 60:
-                preview = preview[:57] + "…"
-            self.state.activity_preview = preview
-            self.state.touch(force=True)
-        if not self.state.live_terminal:
-            return
+        from kite.env.shell import sanitize_shell_line
+
+        line = sanitize_shell_line(str(p.get("line") or ""))
         if not line:
+            return
+        self.state.set_activity_preview(line)
+        if not self.state.live_terminal:
             return
         self.console.print(Text(f"{GUTTER}{GUTTER}{line}", style="kite.terminal"), highlight=False)
 
     def _on_job_output(self, p: dict[str, Any]) -> None:
-        line = str(p.get("line") or "").rstrip()
-        if line:
-            job_id = str(p.get("id") or "")
-            prefix = f"[{job_id}] " if job_id else ""
-            preview = f"{prefix}{line.strip()}"
-            if len(preview) > 60:
-                preview = preview[:57] + "…"
-            self.state.activity_preview = preview
-            self.state.touch(force=True)
-        if not self.state.live_terminal:
-            return
+        from kite.env.shell import sanitize_shell_line
+
+        line = sanitize_shell_line(str(p.get("line") or ""))
         if not line:
+            return
+        self.state.set_activity_preview(line)
+        if not self.state.live_terminal:
             return
         job_id = str(p.get("id") or "")
         prefix = f"[{job_id}] " if job_id else ""
@@ -602,7 +600,7 @@ class RunDisplay:
             self.console.print(summary_line)
 
         if isinstance(diff, str) and diff.strip():
-            # Always show colour-coded hunks (first preview window); /expand for full.
+
             self.console.print(render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all)))
         elif not ok:
             err = str(p.get("error") or p.get("output") or "")
@@ -657,8 +655,7 @@ class RunDisplay:
         if limit > 0:
             self.state.budget_limit = limit
             self._touch_state()
-        # Prefer toolbar chip while composer is active — avoid mid-prompt scrollprint.
-        if self.state.busy:
+        if _composer_suppresses_scrollprint(self.state):
             return
         note = str(p.get("note") or "")
         if note:
@@ -745,6 +742,34 @@ class RunDisplay:
             )
         )
 
+    def _on_compaction_start(self, p: dict[str, Any]) -> None:
+        self._end_stream_line()
+        self._spin(False)
+        self.state.compacting = True
+        total = p.get("total_tokens")
+        window = p.get("window")
+        ratio = p.get("ratio")
+        self.state.set_running(label="Auto-compacting context", kind="compact")
+        line = Text()
+        line.append(f"{GUTTER}{SYMBOL_COMPACT}  ", style="kite.muted")
+        line.append("compacting context", style="kite.muted bold")
+        if isinstance(total, int) and isinstance(window, int):
+            line.append(f"  ·  {total:,}/{window:,} tok", style="kite.muted")
+        elif ratio is not None:
+            line.append(f"  ·  {float(ratio):.0%}", style="kite.muted")
+        line.append("\n")
+        self.console.print(line)
+
+    def _on_compaction_end(self, p: dict[str, Any]) -> None:
+        self.state.compacting = False
+        if not p.get("compacted"):
+            if self.state.running_kind == "compact":
+                self.state.clear_running()
+        total = p.get("total_tokens")
+        window = p.get("window")
+        if isinstance(total, int) and isinstance(window, int):
+            self.state.set_context_usage(total_tokens=total, window=window)
+
     def _on_checkpoint(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self.console.print(
@@ -776,12 +801,19 @@ class RunDisplay:
         self.console.print(f"[kite.error]{SYMBOL_FAIL} stopped[/] [kite.muted]— steer with a follow-up to continue[/]")
 
     def _on_provider_retry(self, p: dict[str, Any]) -> None:
+        import time
+
         self._end_stream_line()
-        self._spin(True, f"retrying  {p.get('attempt')}/{p.get('max_attempts')}")
+        delay = float(p.get("delay_s") or 0)
+        attempt = p.get("attempt")
+        max_attempts = p.get("max_attempts")
+        self.state.retry_until = time.monotonic() + max(0.0, delay)
+        self.state.retry_label = f"{attempt}/{max_attempts}"
+        self.state.set_running(label=f"retry {attempt}/{max_attempts}", kind="retry")
         line = Text()
         line.append(f"{GUTTER}{SYMBOL_WARN} ", style="kite.pending")
         line.append(
-            f"provider retry {p.get('attempt')}/{p.get('max_attempts')} in {float(p.get('delay_s') or 0):.0f}s",
+            f"provider retry {attempt}/{max_attempts} in {delay:.0f}s",
             style="kite.pending bold",
         )
         err = str(p.get("error") or "").strip()
@@ -923,10 +955,13 @@ class RunDisplay:
             self.state.cost = float(p.get("cost") or self.state.cost)
         except (TypeError, ValueError):
             pass
+        usage = p.get("usage") if isinstance(p.get("usage"), dict) else None
+        self.state.apply_usage(usage)
         self._touch_state()
 
     def _on_cache_hit(self, p: dict[str, Any]) -> None:
         session = p.get("session") if isinstance(p.get("session"), dict) else {}
+        self.state.apply_usage(p, session=session)
         hits = int(session.get("cache_hit_tokens") or p.get("cache_read") or p.get("cached") or 0)
         if hits:
             self.state.cache_hit_tokens = hits

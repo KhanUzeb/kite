@@ -11,18 +11,7 @@ from kite.ui.theme import glyph
 _CONTEXT_BAR_WIDTH = 8
 
 
-def format_token_count(tokens: int) -> str:
-    if tokens >= 1_000_000:
-        return f"{tokens / 1_000_000:.1f}M tok"
-    if tokens >= 10_000:
-        return f"{tokens / 1_000:.1f}k tok"
-    if tokens >= 1_000:
-        return f"{tokens / 1_000:.2f}k tok"
-    return f"{tokens} tok"
-
-
 def cache_meter(ratio: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
-    """Mini bar: cache ████░░░░ 25%"""
     if ratio is None or ratio <= 0:
         return ""
     clamped = max(0.0, min(1.0, ratio))
@@ -32,39 +21,33 @@ def cache_meter(ratio: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
 
 
 def format_session_row(meta, *, current: str | None = None) -> str:
-    """One-line session picker label with token/cache/cost when available."""
-    from kite.memory.session_analytics import load_session_stats
+    """One-line session picker label (date, title, model, id)."""
+    from kite.memory.session_format import format_session_picker_label
 
-    label = (meta.label or meta.task or "").strip()[:36]
-    row = f"{meta.id}  {meta.provider}/{meta.model}"
-    if label:
-        row += f"  {label}"
-    if current and meta.id == current:
-        row += "  *"
-    stats = load_session_stats(meta.id)
-    if stats is None:
-        return row
-    bits: list[str] = []
-    if stats.estimated_tokens:
-        bits.append(format_token_count(stats.estimated_tokens))
-    if stats.cost > 0:
-        bits.append(f"${stats.cost:.3f}")
-    if stats.cache_hit_tokens:
-        denom = max(stats.estimated_tokens, stats.cache_hit_tokens, 1)
-        bits.append(cache_meter(stats.cache_hit_tokens / denom) or f"cache {stats.cache_hit_tokens}")
-    if stats.api_calls:
-        bits.append(f"{stats.api_calls} calls")
-    if bits:
-        row += "  · " + " · ".join(bits)
-    return row
+    return format_session_picker_label(meta, current=current)
 
 
 def active_task_count(state: SessionUiState) -> int:
-    """Current turn plus queued follow-ups."""
     return (1 if state.busy else 0) + max(0, state.queued)
 
 
 def format_running_status(state: SessionUiState) -> str:
+    if state.retry_until is not None:
+        import time
+
+        left = state.retry_until - time.monotonic()
+        if left > 0:
+            secs = max(1, int(left + 0.999))
+            label = state.retry_label or "provider retry"
+            return f"retrying in {secs}s  {label}"
+    if state.compacting and not state.running_label:
+        import time
+
+        from kite.ui.animations import loader_glyph
+
+        tick = int(time.monotonic() * 10)
+        spin = loader_glyph("spin", tick)
+        return f"{spin} compacting context"
     if not state.busy or not state.running_label:
         return ""
     import time
@@ -78,19 +61,20 @@ def format_running_status(state: SessionUiState) -> str:
     tick = int(time.monotonic() * 10)
     spin = loader_glyph("spin", tick)
     line = f"{spin} [{ts}] {label}  running"
-    preview = (state.activity_preview or "").strip()
+    preview = sanitize_status_text(state.activity_preview)
     if preview:
-        if len(preview) > 56:
-            preview = preview[:53] + "…"
+        if len(preview) > 60:
+            preview = preview[:57] + "…"
         line += f"  › {preview}"
     return line
 
 
+def sanitize_status_text(text: str) -> str:
+    return " ".join((text or "").replace("\r", " ").replace("\n", " ").replace("\t", " ").split())
+
+
 def format_metrics_tail(state: SessionUiState) -> str:
-    """Throughput, cache, context, and cost — always-on footer metrics."""
     parts: list[str] = []
-    if state.tokens:
-        parts.append(format_token_count(state.tokens))
     if state.busy or state.tps > 0:
         parts.append(f"{state.tps:.0f} tok/s" if state.tps > 0 else "— tok/s")
     if state.cache_hit_tokens > 0 or state.cache_hit_ratio > 0:
@@ -103,14 +87,11 @@ def format_metrics_tail(state: SessionUiState) -> str:
         parts.append(meter)
     elif state.tokens and state.window:
         parts.append(f"ctx {state.tokens}/{state.window}")
-    if state.busy and state.n_calls:
-        parts.append(f"{state.n_calls} calls")
     parts.append(f"${state.cost:.3f}")
     return " · ".join(parts)
 
 
 def context_meter(pct: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
-    """Mini bar: ctx ████░░░░ 45%"""
     if pct is None:
         return ""
     clamped = max(0.0, min(1.0, pct))
@@ -142,7 +123,6 @@ def _verification_badge(status: str) -> str | None:
 
 
 def status_context_parts(state: SessionUiState) -> list[str]:
-    """Model, context, cost — everything after mode and approval."""
     parts: list[str] = [format_model_label(state)]
     if state.reasoning and state.reasoning != "auto":
         parts.append(reasoning_badge(state.reasoning) or state.reasoning)
@@ -172,7 +152,6 @@ def status_context_parts(state: SessionUiState) -> list[str]:
 
 
 def format_status_tail(state: SessionUiState) -> str:
-    """Everything after the kite brand — shared by render + composer toolbar."""
     import shutil
 
     try:

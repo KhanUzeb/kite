@@ -6,7 +6,6 @@ import queue
 import sys
 import threading
 import time
-from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -22,15 +21,17 @@ from kite.config import UserConfig, kite_home
 from kite.plugins.loader import project_plugins_dir, write_plugin_stub
 from kite.tools.store import TodoStore
 from kite.ui.complete import (
+    BusyComposerHandlers,
     ComposerResult,
     SlashCompleter,
-    classify_busy_line,
+    apply_busy_composer_result,
     make_prompt_session,
     make_repl_key_bindings,
     read_repl_busy_composer,
     read_repl_line,
 )
 from kite.ui.git import GitCheckpoints
+from kite.ui.inbox import MessageInbox
 from kite.ui.render import RunDisplay, render_compact_boundary, render_status
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_PROMPT, make_console
@@ -89,7 +90,7 @@ class ChatSession:
         self._pending_open = session_id
         self._flash: str = ""
         self._slash_handler_map: dict[str, Callable[[str], None]] | None = None
-        self._inbox: deque[str] = deque()
+        self._inbox = MessageInbox()
         self._composer_action: dict[str, str] = {"kind": "submit"}
         self._busy = False
         self._quit_after_turn = False
@@ -99,6 +100,7 @@ class ChatSession:
         self._approval_coordinator.wake_main = self._wake_composer
         self._approval_resolving = False
         self._approval_wake_sent = False
+        self._composer_wake = False
         self._approval_panel_id: str | None = None
         self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
         from kite.tools.jobs import JobRegistry
@@ -116,7 +118,6 @@ class ChatSession:
         self.state.model = self.model or self.state.model
 
     def _ensure_model_resolved(self) -> None:
-        """Resolve provider/model on first task — keeps REPL cold start cheap."""
         if self._model_resolved and self.provider and self.model:
             return
         from kite.providers.resolve import resolve_model
@@ -147,18 +148,12 @@ class ChatSession:
             return provider or "", model or ""
 
     def _startup_banner(self) -> None:
-        from kite.config.readiness import assess_setup_status, format_setup_banner, is_fresh_install
-        from kite.providers.resolve import missing_credentials, missing_model, resolve_model
+        from kite.config.readiness import assess_setup_status_fast, format_setup_banner, is_fresh_install
 
         cfg = UserConfig.load()
-        resolved = None
-        try:
-            resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
-            cred = missing_credentials(resolved) or missing_model(resolved)
-            model_line = f"{resolved.provider}/{resolved.model or '—'}"
-        except Exception as e:
-            cred = str(e)
-            model_line = f"{self.provider or cfg.default_provider or '—'}/{self.model or cfg.default_model or '—'}"
+        prov = self.provider or cfg.default_provider or "—"
+        mod = self.model or cfg.default_model or "—"
+        model_line = f"{prov}/{mod}"
 
         banner = Text()
         banner.append("kite", style="kite.brand")
@@ -180,7 +175,7 @@ class ChatSession:
         banner.append("/help", style="kite.brand")
         self.console.print(banner)
 
-        status = assess_setup_status(provider=self.provider, model=self.model)
+        status = assess_setup_status_fast(provider=self.provider, model=self.model)
         if is_fresh_install():
             self.console.print(
                 "[kite.brand]Welcome![/]  First time here? Run [kite.brand]/setup[/] "
@@ -190,12 +185,6 @@ class ChatSession:
             note = format_setup_banner(status)
             if note:
                 self.console.print(note)
-        elif cred:
-            prov = resolved.provider if resolved else cfg.default_provider
-            self.console.print(
-                f"[kite.pending]⚠[/]  [kite.muted]Not ready — [kite.brand]/login {prov}[/] "
-                f"or [kite.brand]/setup[/][/]"
-            )
         elif not cfg.default_model:
             self.console.print(
                 "[kite.muted]Tip:[/]  [kite.brand]/model select[/] or [kite.brand]kite models -p groq --select[/]"
@@ -277,17 +266,14 @@ class ChatSession:
     def _handle_slash_while_busy(self, raw: str) -> None:
         parsed = resolve_slash(raw, self._index())
         if parsed.kind == "unknown":
-            self.console.print(f"[kite.error]{parsed.message}[/]")
+            self._flash_note(parsed.message or "unknown command")
             return
         cmd, arg = parsed.command, parsed.arg
         cmd, arg = self._apply_legacy_slash(cmd, arg, parsed.legacy)
         cmd, arg = self._normalize_slash_cmd(cmd, arg)
         safe = {"tasks", "task", "status", "help", "jobs"}
         if cmd not in safe:
-            self.console.print(
-                "[kite.muted]still working[/]  — /tasks · /status · /help · /jobs  "
-                "(Enter queue · Esc stop · Ctrl+G steer)"
-            )
+            self._flash_note("still working — /tasks · /status · /help · /jobs")
             return
         self._handle_slash(raw, parsed)
 
@@ -299,10 +285,8 @@ class ChatSession:
         return app is not None and bool(getattr(app, "is_running", False))
 
     def _ui_event_handler(self, event) -> None:
-        """Queue agent/job events during busy turns — render only on the main thread."""
         if self._busy:
             self._ui_queue.put(event)
-            self._wake_composer()
         else:
             self.display(event)
 
@@ -312,6 +296,7 @@ class ChatSession:
                 self.display(self._ui_queue.get_nowait())
             except queue.Empty:
                 break
+        self._sync_queue_count()
         self.state.flush_pending_touch()
 
     def _busy_tick(self) -> None:
@@ -396,6 +381,7 @@ class ChatSession:
             h.config.attachments = list(self.attachments)
             h.config.memory_in_prompt = self._memory_in_prompt
             h.job_registry = self.jobs
+            h.message_queue = self._inbox
             return h
 
         h = Harness(
@@ -417,6 +403,7 @@ class ChatSession:
             )
         )
         h.job_registry = self.jobs
+        h.message_queue = self._inbox
         h.subscribe(self._ui_event_handler)
         self._harness = h
         self._harness_key = key
@@ -545,19 +532,33 @@ class ChatSession:
 
         return numbered_pick(self.console, items, current=current, title=title, noun=noun)
 
-    def _pick_session(self, title: str) -> str | None:
+    def _pick_session(self, title: str, *, query: str = "", show_table: bool = True) -> str | None:
         from kite.memory.session import list_sessions
-        from kite.ui.status import format_session_row
+        from kite.memory.session_format import render_sessions_table, session_pick_items
 
-        rows = list_sessions(limit=20)
+        rows = list_sessions(limit=30, query=query)
         if not rows:
             self.console.print("[kite.muted]no sessions[/]")
             return None
-        items = [
-            (meta.id, format_session_row(meta, current=self._session_id))
-            for meta in rows
-        ]
+        if show_table:
+            render_sessions_table(
+                self.console,
+                rows,
+                title=title,
+                current=self._session_id,
+            )
+        items = session_pick_items(rows, current=self._session_id)
         return self._pick(items, title=title, current=self._session_id, noun="session")
+
+    def _print_sessions_list(self, query: str = "") -> None:
+        from kite.memory.session import list_sessions
+        from kite.memory.session_format import render_sessions_table
+
+        rows = list_sessions(limit=30, query=query.strip())
+        title = "Sessions"
+        if query.strip():
+            title += f"  ·  {query.strip()}"
+        render_sessions_table(self.console, rows, title=title, current=self._session_id)
 
     def _set_font(self, raw: str) -> None:
         from kite.ui.theme import FONT_NAMES, glyph_preview, set_font
@@ -1488,12 +1489,19 @@ class ChatSession:
         if not self._inbox:
             self.console.print("[kite.muted]queue empty[/]  · Enter adds a follow-up while Kite works")
             return
-        self.console.print(f"[kite.muted]queued {len(self._inbox)}[/]  ({active_task_count(self.state)} total)")
-        for i, msg in enumerate(self._inbox, start=1):
+        steer, follow = self._inbox.counts()
+        self.console.print(
+            f"[kite.muted]queued {len(self._inbox)}[/]  "
+            f"({active_task_count(self.state)} total)"
+            + (f"  ·  steer {steer}" if steer else "")
+            + (f"  ·  follow-up {follow}" if follow else "")
+        )
+        for i, (msg, is_steer) in enumerate(self._inbox.entries(), start=1):
             preview = msg.replace("\n", " ").strip()
             if len(preview) > 100:
                 preview = preview[:97] + "…"
-            self.console.print(f"  {i}. {preview}")
+            label = "steer" if is_steer else "follow-up"
+            self.console.print(f"  {i}. [{label}] {preview}")
 
     def _slash_jobs(self, _arg: str) -> None:
         rows = self.jobs.list(active_only=True)
@@ -1611,28 +1619,10 @@ class ChatSession:
         self.state.pending_attach = 0
 
     def _print_session(self, session, *, tail: int = 12) -> None:
-        from kite.memory.session_analytics import load_session_stats
-        from kite.ui.status import cache_meter, format_token_count
+        from kite.memory.session_format import format_session_resume_hint
 
         meta = session.meta
-        stats = load_session_stats(session.id)
-        header = (
-            f"[kite.muted]{session.id}[/]  {meta.provider}/{meta.model}  "
-            f"{meta.exit_status or 'open'}  {(meta.label or meta.task)[:60]}"
-        )
-        if stats and (stats.estimated_tokens or stats.cost or stats.cache_hit_tokens):
-            bits: list[str] = []
-            if stats.estimated_tokens:
-                bits.append(format_token_count(stats.estimated_tokens))
-            if stats.cost:
-                bits.append(f"${stats.cost:.3f}")
-            if stats.cache_hit_tokens:
-                denom = max(stats.estimated_tokens, stats.cache_hit_tokens, 1)
-                bits.append(cache_meter(stats.cache_hit_tokens / denom) or f"cache {stats.cache_hit_tokens}")
-            if stats.api_calls:
-                bits.append(f"{stats.api_calls} calls")
-            header += "  · " + " · ".join(bits)
-        self.console.print(header)
+        self.console.print(f"[kite.muted]{session.id}[/]  {format_session_resume_hint(meta)}")
         shown = session.messages[-tail:]
         if not shown:
             self.console.print("[kite.muted](empty transcript)[/]")
@@ -1657,9 +1647,18 @@ class ChatSession:
 
     def _open_session(self, session_id: str) -> None:
         from kite.memory.session import load_session
+        from kite.memory.session_format import format_session_resume_hint, suggest_sessions
 
         try:
             session = load_session(session_id)
+        except FileNotFoundError:
+            hints = suggest_sessions(session_id, limit=5)
+            self.console.print(f"[kite.error]no session matching[/] {session_id!r}")
+            for meta in hints:
+                self.console.print(
+                    f"  [kite.muted]/resume {meta.id}[/]  — {format_session_resume_hint(meta)}"
+                )
+            return
         except (OSError, ValueError) as e:
             self.console.print(f"[kite.error]{e}[/]")
             return
@@ -1672,7 +1671,10 @@ class ChatSession:
             self.model = session.meta.model
             self.state.model = session.meta.model
         self._print_session(session, tail=8)
-        self.console.print(f"[kite.success]opened[/] {session.id}  — type to pick up where you left off")
+        self.console.print(
+            f"[kite.success]opened[/] {session.id}  — type to continue  "
+            f"[kite.muted]· kite resume {session.id}[/]"
+        )
 
     def _handle_session(self, arg: str) -> None:
         from kite.memory.session import delete_all_sessions, delete_session, load_session
@@ -1688,7 +1690,8 @@ class ChatSession:
                 self.console.print("[kite.muted]no session yet[/]  ·  /sessions")
             return
         if verb in {"list", "ls"}:
-            sid = self._pick_session("Sessions")
+            self._print_sessions_list(rest)
+            sid = self._pick_session("Open a session", query=rest, show_table=False)
             if not sid:
                 return
             action = self._pick(
@@ -1767,7 +1770,6 @@ class ChatSession:
             extra = " + trajectory" if gone.trajectory else ""
             self.console.print(f"[kite.success]removed[/] {gone.id}{extra}")
             return
-        # Bare id: /session 20260829-…
         self._open_session(raw)
 
     def _run_skill(self, arg: str) -> None:
@@ -1954,25 +1956,51 @@ class ChatSession:
         self._harness_key = None
 
     def _sync_queue_count(self) -> None:
+        steer, follow = self._inbox.counts()
         self.state.queued = len(self._inbox)
+        self.state.queue_steer = steer
+        self.state.queue_follow = follow
+        entry = self._inbox.peek_entry()
+        if entry is None:
+            self.state.queue_head = ""
+            self.state.queue_head_kind = ""
+        else:
+            head, is_steer = entry
+            self.state.queue_head = head[:80] + ("…" if len(head) > 80 else "")
+            self.state.queue_head_kind = "steer" if is_steer else "follow"
         self.state.touch()
 
-    def _queue_message(self, text: str) -> None:
-        text = text.strip()
-        if not text:
-            return
-        self._inbox.append(text)
+    def _dequeue_to_composer(self) -> str:
+        items = self._inbox.drain_all()
+        if not items:
+            self._flash_note("queue empty")
+            return ""
+        parts: list[str] = []
+        for text, is_steer in items:
+            prefix = "[steer] " if is_steer else ""
+            parts.append(f"{prefix}{text}")
         self._sync_queue_count()
-        self._flash_note(f"queued {len(self._inbox)}")
-        self.console.print(f"[kite.muted]queued[/]  {text[:80]}{'…' if len(text) > 80 else ''}")
+        self._flash_note("restored queued messages to composer")
+        return "\n\n".join(parts)
+
+    def _queue_message(self, text: str) -> None:
+        if self._harness is not None:
+            self._harness.inject_user_message(text)
+        elif not self._inbox.enqueue(text):
+            return
+        self._sync_queue_count()
+        preview = text[:80] + ("…" if len(text) > 80 else "")
+        self._flash_note(f"queued {len(self._inbox)}  {preview}")
 
     def _queue_steer(self, text: str) -> None:
-        text = text.strip()
-        if text:
-            self._inbox.appendleft(text)
-            self._sync_queue_count()
-            self._flash_note("steering")
-            self.console.print(f"[kite.pending]steer[/]  {text[:80]}{'…' if len(text) > 80 else ''}")
+        if self._harness is not None:
+            if not self._harness.inject_user_message(text, steer=True):
+                return
+        elif not self._inbox.steer(text):
+            return
+        self._sync_queue_count()
+        preview = text[:80] + ("…" if len(text) > 80 else "")
+        self._flash_note(f"steer  {preview}")
 
     def _request_stop(self) -> None:
         if self._harness is not None:
@@ -1982,6 +2010,7 @@ class ChatSession:
 
     def _wake_composer(self) -> None:
         """Interrupt prompt_toolkit so the main thread can show approval UI."""
+        self._composer_wake = True
         candidates: list[Any] = []
         session = self._prompt
         if session is not None:
@@ -2055,6 +2084,7 @@ class ChatSession:
 
         resume = bool(self._session_id)
         harness = self._make_harness(resume=resume, follow_up=task if resume else None)
+        self._harness = harness
         harness.approver = self._approver()
         harness.checkpoints = self.git
         harness.todos = self.todos
@@ -2069,10 +2099,15 @@ class ChatSession:
         session = self._ensure_prompt()
 
         def _slash_busy_hint() -> None:
-            self.console.print(
-                "[kite.muted]still working[/]  — /tasks · /status · /help · /jobs  "
-                "(Enter queue · Esc stop · Ctrl+G steer)"
-            )
+            self._flash_note("Enter queues · Esc stop · Ctrl+G steer")
+
+        def _composer_empty() -> None:
+            if getattr(self, "_composer_wake", False):
+                self._composer_wake = False
+                return
+            if self.state.awaiting_approval:
+                return
+            self._flash_note("Enter queues · Esc stop · Ctrl+G steer")
 
         def _spawn_and_wait(prompt_task: str) -> None:
             nonlocal box
@@ -2107,10 +2142,21 @@ class ChatSession:
                     on_busy_slash=self._handle_slash_while_busy,
                     on_approval=self._resolve_approval_decision,
                     on_eof=lambda: setattr(self, "_quit_after_turn", True),
+                    on_empty=_composer_empty,
+                    on_dequeue=self._dequeue_to_composer,
                     on_tick=self._busy_tick,
                     on_poll=self._busy_tick,
                 )
             else:
+                handlers = BusyComposerHandlers(
+                    on_queue=self._queue_message,
+                    on_stop=self._request_stop,
+                    on_steer=self._queue_steer,
+                    on_slash_while_busy=_slash_busy_hint,
+                    on_busy_slash=self._handle_slash_while_busy,
+                    on_eof=lambda: setattr(self, "_quit_after_turn", True),
+                    on_empty=_composer_empty,
+                )
                 while not done.is_set():
                     self._busy_tick()
                     if self._approval_coordinator.pending:
@@ -2119,37 +2165,12 @@ class ChatSession:
                     got = self._read_input()
                     if done.is_set():
                         break
-                    if got.kind == "eof":
-                        self._quit_after_turn = True
-                        self._request_stop()
-                        break
-                    if got.kind == "stop":
-                        self._request_stop()
-                        break
                     if got.kind == "steer":
                         self._queue_steer(got.text)
                         self._request_stop()
                         break
-                    if got.kind == "text":
-                        classified = classify_busy_line(got.text)
-                        if classified.kind == "stop":
-                            self._request_stop()
-                            break
-                        if classified.kind == "eof":
-                            self._quit_after_turn = True
-                            self._request_stop()
-                            break
-                        if classified.kind == "steer":
-                            self._queue_steer(classified.text)
-                            self._request_stop()
-                            break
-                        if classified.kind == "busy_slash":
-                            self._handle_slash_while_busy(classified.text)
-                            continue
-                        if classified.kind == "slash":
-                            _slash_busy_hint()
-                            continue
-                        self._queue_message(got.text)
+                    if apply_busy_composer_result(got, handlers):
+                        break
             while not done.is_set():
                 self._busy_tick()
                 if done.wait(timeout=0.1):
@@ -2177,7 +2198,10 @@ class ChatSession:
                 break
             continues_used += 1
             messages: list[dict] = []
-            if self._session_id:
+            agent = getattr(harness, "_runtime", None)
+            if agent is not None and getattr(agent, "last_agent", None) is not None:
+                messages = list(agent.last_agent.messages)
+            elif self._session_id:
                 try:
                     from kite.memory.session import load_session
 
@@ -2224,6 +2248,7 @@ class ChatSession:
         self.state.busy = False
         self.state.clear_running()
         self.display.close()
+        self._harness = None
         self._bind_session(harness)
         if box.get("err") is not None:
             err = box["err"]
@@ -2268,9 +2293,11 @@ class ChatSession:
                 self.console.print("[kite.muted]bye[/]")
                 return 0
             if self._inbox:
-                line = self._inbox.popleft()
+                line = self._inbox.dequeue()
+                assert line is not None
                 self._sync_queue_count()
-                self.console.print(f"[kite.muted]› queued[/]  {line[:80]}{'…' if len(line) > 80 else ''}")
+                preview = line[:80] + ("…" if len(line) > 80 else "")
+                self.console.print(f"[kite.muted]› queued[/]  {preview}")
             else:
                 got = self._read_input()
                 if got.kind == "eof":
