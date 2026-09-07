@@ -30,7 +30,13 @@ jobs:
         run: python scripts/sync_version.py --check
 
       - name: Run tests
-        run: pytest -q
+        env:
+          KITE_HOME: /tmp/kite-home-release
+          KITE_SKIP_SETUP: "1"
+        run: |
+          mkdir -p "$KITE_HOME"
+          pytest -q
+          python -m kite.cli.run bench --check
 
       - name: Resolve release version
         id: meta

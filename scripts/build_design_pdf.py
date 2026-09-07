@@ -1,4 +1,4 @@
-# kite-release-version: 0.9.4
+# kite-release-version: 0.9.5
 """Render docs/*.md to docs/*.pdf (fpdf2)."""
 
 from __future__ import annotations
@@ -12,8 +12,6 @@ DOCS = ROOT / "docs"
 
 SOURCES = [
     DOCS / "kite-system-design.md",
-    DOCS / "cli-ux.md",
-    DOCS / "ideal-cli-spec.md",
     ROOT / "kite_commands.md",
 ]
 

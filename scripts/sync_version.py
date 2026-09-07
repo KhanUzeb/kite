@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# kite-release-version: 0.9.4
+# kite-release-version: 0.9.5
 """Keep Kite version stamps in sync with pyproject.toml.
 
 Usage:
   python scripts/sync_version.py              # sync all files to pyproject version
-  python scripts/sync_version.py 0.9.4        # set pyproject + all stamps to 0.9.4
+  python scripts/sync_version.py 0.9.5        # set pyproject + all stamps to 0.9.5
   python scripts/sync_version.py --check      # exit 1 if any stamp differs
 
 Called by scripts/bump_release.sh and CI on every push/tag.
@@ -44,13 +44,7 @@ RULES: tuple[StampRule, ...] = (
     StampRule(ROOT / "README.md", r"\*\*Version:\*\* [\d.]+", "**Version:** {v}"),
     StampRule(ROOT / "AGENTS.md", r"\*\*Kite\*\* v[\d.]+", "**Kite** v{v}"),
     StampRule(ROOT / "architecture.md", r"\*\*Version:\*\* [\d.]+", "**Version:** {v}"),
-    StampRule(ROOT / "docs/cli-ux.md", r"\*\*Version:\*\* [\d.]+", "**Version:** {v}"),
     StampRule(ROOT / "docs/kite-system-design.md", r"\*\*Version:\*\* [\d.]+", "**Version:** {v}"),
-    StampRule(
-        ROOT / "docs/ideal-cli-spec.md",
-        r"# Ideal CLI spec coverage \(Kite [\d.]+\)",
-        "# Ideal CLI spec coverage (Kite {v})",
-    ),
     StampRule(
         ROOT / "scripts/bump_release.sh",
         r"(?m)^#   ./scripts/bump_release\.sh [\d.]+$",
