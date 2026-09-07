@@ -78,6 +78,10 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Compaction** — Summarizing older turns to free context window space while keeping recent messages and **preserved facts** (constraints, errors, paths, edited paths from verification). Defaults (override in `data/configs/default.toml`): ~12k chars project context, 12k-token recent tail, 5k-char tool observations, deterministic per-line summaries when no LLM summarizer runs.
 
+**Auto venv** — When `[environment] auto_venv = true` (default), bash subprocesses prepend the project `.venv`/`venv` to `PATH` if `pyvenv.cfg` exists.
+
+**Live terminal** — `/live` toggles streaming bash/job output in the REPL footer and transcript while tools run.
+
 **Context checkpoint** — Named snapshot of the full model transcript (and todos) at a point in time. Distinct from git undo. Stored under `~/.kite/checkpoints/<session>/`.
 
 **Handoff** — Export bundle (markdown + JSON + checkpoint) so another agent or machine can resume the task. Written to `<project>/.kite/handoff-<session>.*`.

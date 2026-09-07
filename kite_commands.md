@@ -117,6 +117,7 @@ These never go to the model.
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Toggle expanded tool output |
+| `/live` | Stream bash/job output in real time while tools run |
 | `/collapse` | Collapse tool output (default) |
 | `/trace` | Last traceback |
 | `/skills [name]` | List skills, or print one. Empty: pick to show. User-home skills show `~` |

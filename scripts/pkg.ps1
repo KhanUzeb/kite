@@ -1,4 +1,4 @@
-# kite-release-version: 0.9.3
+# kite-release-version: 0.9.4
 # Kite package maintenance (not part of `kite` CLI): update, reinstall, uninstall.
 param(
     [Parameter(Position = 0, Mandatory = $true)]

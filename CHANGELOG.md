@@ -4,6 +4,19 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-09-07
+
+### Added
+- **`/live`** — toggle real-time bash and background-job output in the REPL (`SessionUiState.live_terminal`).
+- **Auto venv** — `discover_venv()` + `prepare_child_env()` prepend project `.venv`/`venv` to bash `PATH` when `pyvenv.cfg` is present (`[environment] auto_venv` in config).
+- Execution context prompt line documents detected `python_venv`.
+
+### Changed
+- Bash output routes through `tool_output` / `job_output` events when a subscriber is attached (Rich TUI); stderr fallback for headless runs.
+
+### Fixed
+- (Includes all fixes shipped on main since v0.9.3: guardrails, SSRF, REPL responsiveness, approval composer keys, token defaults, agent/persistence reliability, CI gates.)
+
 ## [0.9.3] - 2026-09-06
 
 ### Fixed
