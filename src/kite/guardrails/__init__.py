@@ -24,6 +24,7 @@ SECRET_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|secret|token|password|passwd|authorization)\s*[:=]\s*['\"]?[^\s'\"]{8,}"),
     re.compile(r"(?i)-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"(?i)\b(sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|xox[baprs]-[a-zA-Z0-9-]{20,})\b"),
+    re.compile(r"(?i)(?:key|token|secret|password)\s*[:=]\s*['\"]?[A-Za-z0-9+/]{24,}={0,2}"),
 ]
 
 _ENV_DUMP_PATTERNS = (
@@ -34,6 +35,8 @@ _ENV_DUMP_PATTERNS = (
     re.compile(r"(?i)(Get-ChildItem|gci)\s+Env:"),
     re.compile(r"(?i)\bdir\s+env:"),
 )
+
+_CHAIN_SPLIT = re.compile(r"\s*&&\s*|\s*;\s*|\s*\|\s*")
 
 
 def redact_secrets(text: str) -> tuple[str, int]:
@@ -51,13 +54,17 @@ def redact_secrets(text: str) -> tuple[str, int]:
 
 def env_dump_blocked(command: str) -> str:
     """Non-empty reason when bash would dump the process environment."""
-    for line in command.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        for rx in _ENV_DUMP_PATTERNS:
-            if rx.search(stripped):
-                return "refusing to dump process environment via bash"
+    segments = _CHAIN_SPLIT.split(command) if command else []
+    if not segments:
+        segments = [command]
+    for segment in segments:
+        for line in segment.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            for rx in _ENV_DUMP_PATTERNS:
+                if rx.search(stripped):
+                    return "refusing to dump process environment via bash"
     return ""
 
 
@@ -156,7 +163,7 @@ class GuardrailPolicy:
             return GuardrailVerdict(True)
         args = dict(arguments)
 
-        if tool in {"read", "write", "edit", "grep", "glob", "ls"}:
+        if tool in {"read", "write", "edit", "grep", "glob", "ls", "task"}:
             path_key = "path" if "path" in args else ("root" if "root" in args else None)
             if path_key and args.get(path_key):
                 v = self.check_path(str(args[path_key]), for_write=tool in {"write", "edit"})
@@ -205,9 +212,43 @@ class GuardrailPolicy:
                 text = text[: limit // 2] + "\n...<guardrail truncated>...\n" + text[-(limit // 2) :]
                 out["truncated"] = True
             out["output"] = text
-        if isinstance(out.get("error"), str):
-            err, redacted = self.redact_secrets(out["error"])
-            out["error"] = err
-            if redacted:
-                out["secrets_redacted"] = int(out.get("secrets_redacted") or 0) + redacted
+        for key in ("error", "diff", "path", "directory", "summary"):
+            val = out.get(key)
+            if isinstance(val, str):
+                redacted_text, n = self.redact_secrets(val)
+                out[key] = redacted_text
+                if n:
+                    out["secrets_redacted"] = int(out.get("secrets_redacted") or 0) + n
+        items = out.get("items")
+        if isinstance(items, list):
+            safe_items: list[Any] = []
+            total_redacted = int(out.get("secrets_redacted") or 0)
+            for item in items:
+                if isinstance(item, str):
+                    safe, n = self.redact_secrets(item)
+                    total_redacted += n
+                    safe_items.append(safe)
+                elif isinstance(item, dict):
+                    safe_item = dict(item)
+                    for ik, iv in list(safe_item.items()):
+                        if isinstance(iv, str):
+                            safe_item[ik], n = self.redact_secrets(iv)
+                            total_redacted += n
+                    safe_items.append(safe_item)
+                else:
+                    safe_items.append(item)
+            out["items"] = safe_items
+            if total_redacted:
+                out["secrets_redacted"] = total_redacted
+        metadata = out.get("metadata")
+        if isinstance(metadata, dict):
+            safe_meta = dict(metadata)
+            total_redacted = int(out.get("secrets_redacted") or 0)
+            for mk, mv in list(safe_meta.items()):
+                if isinstance(mv, str):
+                    safe_meta[mk], n = self.redact_secrets(mv)
+                    total_redacted += n
+            out["metadata"] = safe_meta
+            if total_redacted:
+                out["secrets_redacted"] = total_redacted
         return out

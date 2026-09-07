@@ -55,6 +55,18 @@ class ToolExecutor:
         if (
             not skip_approval
             and decision.requires_approval
+            and self.approver is None
+        ):
+            return ToolResult(
+                call_id=call.call_id,
+                status="denied",
+                ok=False,
+                error="approval required but no approver (headless run)",
+                policy_decision=decision,
+            )
+        if (
+            not skip_approval
+            and decision.requires_approval
             and self.approver
             and not self.approver(intent, decision)
         ):
@@ -82,6 +94,9 @@ class ToolExecutor:
         output = str(raw.get("output", ""))
         if self.redactor:
             output = self.redactor(output)
+        error = str(raw.get("error", ""))
+        if self.redactor and error:
+            error = self.redactor(error)
         changed = tuple(str(p) for p in raw.get("changed_paths") or ())
         metadata: dict[str, Any] = {"run_context": run_context}
         for key in _PASSTHROUGH_KEYS:
@@ -92,7 +107,7 @@ class ToolExecutor:
             status="ok" if raw.get("ok", True) else "error",
             ok=bool(raw.get("ok", True)),
             output=output,
-            error=str(raw.get("error", "")),
+            error=error,
             changed_paths=changed,
             duration=time.monotonic() - start,
             policy_decision=decision,

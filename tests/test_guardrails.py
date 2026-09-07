@@ -113,5 +113,15 @@ def test_blocks_env_dump_commands(workspace: Path) -> None:
         verdict = policy.check_bash(cmd)
         assert not verdict.allowed, cmd
         assert "environment" in verdict.reason.lower()
+    chained = policy.check_bash("echo ok && env")
+    assert not chained.allowed
     assert policy.check_bash("echo hello").allowed
     assert policy.check_bash("npm test").allowed
+
+
+def test_blocks_rm_rf_dot_and_git_reset(workspace: Path) -> None:
+    assert check_dangerous("rm -rf .")
+    assert check_dangerous("rm -rf ..")
+    assert check_dangerous("git reset --hard")
+    assert check_dangerous("git clean -fdx")
+    assert not check_dangerous("rm -rf .pytest_cache")

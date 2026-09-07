@@ -35,16 +35,34 @@ DANGEROUS_BASH = (
         r"(?i)\b(remove-item|ri)\b(?=.*(?:-recurse|-r)\b)(?=.*(?:-force|-fo)\b).*[A-Za-z]:\\"
     ),
     re.compile(
+        r"(?i)\b(remove-item|ri)\b(?=.*(?:-recurse|-r)\b)(?!.*(?:-force|-fo)\b).*[A-Za-z]:\\"
+    ),
+    re.compile(
         r"(?i)\b(remove-item|ri)\b(?=.*(?:-recurse|-r)\b)(?=.*(?:-force|-fo)\b).*"
         r"[\"']?/(?:etc|usr|bin|sbin|var|tmp|home|root|System|Library|private)\b"
     ),
     re.compile(r"(?i)\breg\s+(delete|add)\b.*\bHK(LM|CU|U)\\"),
     re.compile(r"(?i)\bnet\s+(user|localgroup|share)\b"),
     re.compile(r"(?i)\b(schtasks|takeown|icacls)\b"),
-    re.compile(r"(?i)powershell\s+(-enc|-encodedcommand)\b"),
+    re.compile(r"(?i)powershell(?:\.exe)?\s+(-enc|-encodedcommand|--enc)\b"),
+    re.compile(r"(?i)powershell(?:\.exe)?\s+[^\s]*encodedcommand\b"),
     re.compile(r"(?i)\b(curl|wget|iwr|invoke-webrequest)\b.*\|\s*(sh|bash|powershell|iex)\b"),
+    re.compile(r"(?i)\b(certutil|bitsadmin)\b"),
+    re.compile(r"(?i)\bpip\s+install\b.*\|\s*(sh|bash)\b"),
+    re.compile(r"(?i)\bpython(?:3)?\s+-c\b.*\bsocket\b"),
+    re.compile(r"(?i)FromBase64String.*\|\s*(iex|invoke-expression)\b"),
+    re.compile(r"(?i)\binvoke-expression\s+\$env:"),
     re.compile(r"(?i)\binvoke-expression\b|\biex\s*\("),
-    re.compile(r"(?i)\bgit\s+push\b"),
+    re.compile(r"(?i)\bgit\s+(push|clone)\b"),
+    re.compile(r"(?i)\bgit\s+clean\s+-[^\\n]*f"),
+    re.compile(r"(?i)\bgit\s+reset\s+--hard\b"),
+    re.compile(r"(?i)\bchmod\s+-R\s+/"),
+    re.compile(r"(?i)\brm\s+-rf\s+\.\s*$"),
+    re.compile(r"(?i)\brm\s+-rf\s+\.\.\s*$"),
+    re.compile(r"(?i)\brm\s+-rf\s+~"),
+    re.compile(r"(?i)\brm\s+-rf\s+\$HOME\b"),
+    re.compile(r"(?i)\brm\s+-rf\s+%USERPROFILE%"),
+    re.compile(r"(?i)\brd\s+/s(?:\s+/q)?\b"),
 )
 
 # Known tool/cache dirs — auto/yolo may remove these without mandatory approval.
@@ -77,9 +95,13 @@ _ABS_PATH = re.compile(
     r"""(?x)
     (?P<path>
         (?:[A-Za-z]:[\\/][^\s'\"|&;<>]*)
+        | (?:[A-Za-z]:[^\s'\"|&;<>]+)
         | (?:\\\\[^\s'\"|&;<>]+)
         | (?:~[\\/][^\s'\"|&;<>]+)
-        | (?:/(?:etc|usr|bin|sbin|root|var|sys|System|private|home|opt|boot)[^\s'\"|&;<>]*)
+        | (?:\$HOME(?:[\\/][^\s'\"|&;<>]*)?)
+        | (?:%[A-Za-z_]+%(?:[\\/][^\s'\"|&;<>]*)?)
+        | (?:\.\./[^\s'\"|&;<>]+)
+        | (?:/(?:etc|usr|bin|sbin|root|var|sys|System|private|home|opt|boot|data)[^\s'\"|&;<>]*)
     )
     """
 )
@@ -201,8 +223,23 @@ def protected_roots() -> list[Path]:
     return roots
 
 
+def _resolve_path_best_effort(path: Path) -> Path:
+    try:
+        return path.expanduser().resolve()
+    except OSError:
+        cur = path.expanduser()
+        try:
+            while not cur.exists() and cur.parent != cur:
+                cur = cur.parent
+            if cur.exists():
+                return cur.resolve()
+        except OSError:
+            pass
+        return path.expanduser()
+
+
 def is_protected(path: Path) -> bool:
-    resolved = path.resolve() if path.exists() else path
+    resolved = _resolve_path_best_effort(path)
     name = resolved.name
     if name in SENSITIVE_NAMES:
         return True
@@ -308,7 +345,10 @@ def _is_systemish_delete_target(token: str) -> bool:
         return True
     if re.match(r"^[A-Za-z]:\\?$", t):
         return True
+    if t.startswith("\\\\?\\") or t.startswith("\\\\"):
+        return True
     low = t.replace("/", "\\").lower()
+    home = str(Path.home()).replace("/", "\\").lower()
     system_prefixes = (
         r"c:\windows",
         r"c:\program files",
@@ -321,8 +361,15 @@ def _is_systemish_delete_target(token: str) -> bool:
         "/System",
         "/Library",
         "/private",
+        "/data",
     )
-    return any(low == p or low.startswith(p + "\\") or low.startswith(p + "/") for p in system_prefixes)
+    if any(low == p or low.startswith(p + "\\") or low.startswith(p + "/") for p in system_prefixes):
+        return True
+    if low.startswith(r"c:\users\\") and low != home and not low.startswith(home + "\\"):
+        return True
+    if low.startswith("$home") or low.startswith("%userprofile%"):
+        return True
+    return False
 
 
 def is_benign_cache_delete(command: str) -> bool:
