@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import stat
+import sys
 
 from kite.config.user import UserConfig
 from kite.memory.session import create_session
@@ -31,8 +32,9 @@ def test_redacted_mode_sanitizes_nested_secrets(kite_home) -> None:
     text = path.read_text(encoding="utf-8")
     assert "SECRETTOKEN" not in text
     assert "[REDACTED]" in text
-    mode = path.stat().st_mode & 0o777
-    assert mode == stat.S_IRUSR | stat.S_IWUSR
+    if sys.platform != "win32":
+        mode = path.stat().st_mode & 0o777
+        assert mode == stat.S_IRUSR | stat.S_IWUSR
 
 
 def test_full_mode_persists_raw_content(kite_home) -> None:
