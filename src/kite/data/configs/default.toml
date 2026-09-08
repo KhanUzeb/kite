@@ -91,5 +91,5 @@ cost_limit = 1.0
 # Terminal UI — also KITE_THEME / KITE_FONT / KITE_LOADER
 [ui]
 loader = "grid"  # pixel-grid default; override with KITE_LOADER=grid|dots|orbit|wave|spin
-theme = "auto"  # auto|kite|dark|light|dim|mono
+theme = "auto"  # auto|kite|dark|light|dim|mono|monochrome|catppuccin|ember|forest|hues
 font = "unicode"  # unicode|ascii

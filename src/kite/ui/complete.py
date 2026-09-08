@@ -14,7 +14,7 @@ from kite.ui.attach import IMAGE_EXTS
 from kite.ui.commands import ALIASES, ARG_CHOICES
 from kite.ui.state import SessionUiState
 from kite.ui.status import format_metrics_tail, format_running_status, format_status_tail
-from kite.ui.theme import brand_ansi, glyph, is_dark
+from kite.ui.theme import brand_fg, glyph, pt_style_dict, ui_colors
 
 try:
     from prompt_toolkit import PromptSession
@@ -158,46 +158,10 @@ def apply_busy_text_line(line: str, handlers: BusyComposerHandlers) -> bool:
     return dispatch_classified_busy(classify_busy_line(line), handlers)
 
 
-def _pt_style(*, dark: bool) -> Any:
+def prompt_style() -> Any:
     if not _PT:
         return None
-    if dark:
-        return Style.from_dict(
-            {
-                "prompt": "ansibrightcyan bold",
-                "placeholder": "#4a4a4a",
-                "bottom-toolbar": "noreverse #5c5c5c bg:#050505",
-                "completion-menu": "bg:#050505 #b8b8b8",
-                "completion-menu.completion": "bg:#050505 #b8b8b8",
-                "completion-menu.completion.current": "bg:#003333 #a8ffff bold",
-                "completion-menu.meta.completion": "#555555",
-                "completion-menu.meta.completion.current": "#7a9a9a",
-                "completion-menu.multi-column-meta": "bg:#0a0a0a #555555",
-                "scrollbar.background": "bg:#0a0a0a",
-                "scrollbar.button": "bg:#2a2a2a",
-                "auto-suggestion": "#3a3a3a",
-            }
-        )
-    return Style.from_dict(
-        {
-            "prompt": "ansiblue bold",
-            "placeholder": "#888888",
-            "bottom-toolbar": "noreverse #555555 bg:#f0f0f0",
-            "completion-menu": "bg:#ffffff #222222",
-            "completion-menu.completion": "bg:#ffffff #222222",
-            "completion-menu.completion.current": "bg:#d6ebff #000000 bold",
-            "completion-menu.meta.completion": "#777777",
-            "completion-menu.meta.completion.current": "#444444",
-            "completion-menu.multi-column-meta": "bg:#f4f4f4 #777777",
-            "scrollbar.background": "bg:#eeeeee",
-            "scrollbar.button": "bg:#cccccc",
-            "auto-suggestion": "#aaaaaa",
-        }
-    )
-
-
-def prompt_style() -> Any:
-    return _pt_style(dark=is_dark())
+    return Style.from_dict(pt_style_dict())
 
 
 _LEVEL_META = {
@@ -434,8 +398,7 @@ def _slash_completion_display(spec: SlashSpec, index: CommandIndex) -> Any:
     label = _slash_display(spec, index)
     if not _PT:
         return label
-    brand = brand_ansi()
-    return HTML(f"<style fg='{brand}'><b>{_escape_html(label)}</b></style>")
+    return HTML(f"<style fg='{brand_fg()}'><b>{_escape_html(label)}</b></style>")
 
 
 def _session_rows() -> list[tuple[str, str]]:
@@ -508,57 +471,66 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
     return rows
 
 
+def _toolbar_approval_bits(state: SessionUiState) -> list[str]:
+    if state.awaiting_approval_mandatory:
+        return ["[a] once", "[n] deny", "[q] stop", "mandatory"]
+    return ["[a] once", "[s] session", "[p] always", "[n] deny", "[q] stop"]
+
+
+def _toolbar_busy_bits(state: SessionUiState) -> list[str]:
+    bits = ["Esc/Ctrl+C stop", "Enter queue", "Ctrl+G steer", "Ctrl+U dequeue", "F8 attach clip"]
+    if state.queue_steer:
+        bits.append(f"steer {state.queue_steer}")
+    if state.queue_follow:
+        bits.append(f"follow-up {state.queue_follow}")
+    elif state.queued:
+        bits.append(f"queued {state.queued}")
+    head = (state.queue_head or "").strip()
+    if head:
+        kind = "steer" if state.queue_head_kind == "steer" else "follow-up"
+        if len(head) > 36:
+            head = head[:33] + "…"
+        bits.append(f"next {kind}: {head}")
+    if state.compacting:
+        bits.append("compacting")
+    if state.budget_limit is not None and state.budget_limit > 0:
+        bits.append(f"budget ≤${state.budget_limit:.2f}")
+    if state.live_terminal:
+        bits.append("live")
+    bits.append("/tasks")
+    return bits
+
+
+def _toolbar_hint_line(bits: list[str]) -> str:
+    if not bits:
+        return ""
+    return f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
+
+
 def _toolbar_html(state: SessionUiState) -> Any:
+    ui = ui_colors()
     tail = format_status_tail(state)
-    brand = brand_ansi()
-    muted = "#555555" if is_dark() else "#666666"
-    accent = "#c9a227" if is_dark() else "#9a7b0a"
-    flash = ""
-    if state.flash:
-        flash = f"  {glyph('sep')} {_escape_html(state.flash)}"
-    hints = ""
+    flash = f"  {glyph('sep')} {_escape_html(state.flash)}" if state.flash else ""
     if state.awaiting_approval:
-        if state.awaiting_approval_mandatory:
-            bits = ["[a] once", "[n] deny", "[q] stop", "mandatory"]
-        else:
-            bits = ["[a] once", "[s] session", "[p] always", "[n] deny", "[q] stop"]
-        hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
+        hints = _toolbar_hint_line(_toolbar_approval_bits(state))
     elif state.busy:
-        bits = ["Esc/Ctrl+C stop", "Enter queue", "Ctrl+G steer", "Ctrl+U dequeue", "F8 attach clip"]
-        if state.queue_steer:
-            bits.append(f"steer {state.queue_steer}")
-        if state.queue_follow:
-            bits.append(f"follow-up {state.queue_follow}")
-        elif state.queued:
-            bits.append(f"queued {state.queued}")
-        head = (state.queue_head or "").strip()
-        if head:
-            kind = "steer" if state.queue_head_kind == "steer" else "follow-up"
-            if len(head) > 36:
-                head = head[:33] + "…"
-            bits.append(f"next {kind}: {head}")
-        if state.compacting:
-            bits.append("compacting")
-        if state.budget_limit is not None and state.budget_limit > 0:
-            bits.append(f"budget ≤${state.budget_limit:.2f}")
-        if state.live_terminal:
-            bits.append("live")
-        bits.append("/tasks")
-        hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
+        hints = _toolbar_hint_line(_toolbar_busy_bits(state))
+    else:
+        hints = ""
     main = (
-        f"<style fg='{brand}'><b>kite</b></style>"
-        f"<style fg='{muted}'> {glyph('sep')} {_escape_html(tail)}{flash}{hints}</style>"
+        f"<style fg='{brand_fg()}'><b>kite</b></style>"
+        f"<style fg='{ui.muted}'> {glyph('sep')} {_escape_html(tail)}{flash}{hints}</style>"
     )
     lines: list[str] = []
     running = format_running_status(state)
     if running:
         lines.append(
-            f"<style fg='{accent}'>●</style>"
-            f"<style fg='{muted}'> {_escape_html(running)}</style>"
+            f"<style fg='{ui.accent}'>●</style>"
+            f"<style fg='{ui.muted}'> {_escape_html(running)}</style>"
         )
     metrics = format_metrics_tail(state)
     if metrics:
-        lines.append(f"<style fg='{muted}'>{_escape_html(metrics)}</style>")
+        lines.append(f"<style fg='{ui.muted}'>{_escape_html(metrics)}</style>")
     lines.append(main)
     return HTML("\n".join(lines))
 
@@ -939,8 +911,7 @@ def _prompt_once(
     on_poll: Callable[[], None] | None = None,
     prefill: str = "",
 ) -> ComposerResult:
-    placeholder_fg = "#888888" if not is_dark() else "#555555"
-    brand = brand_ansi()
+    ui = ui_colors()
     if state.awaiting_approval:
         if state.awaiting_approval_mandatory:
             placeholder = "[a] once · [n] deny · [q] stop — approval required"
@@ -960,8 +931,8 @@ def _prompt_once(
         if prefill:
             session.default_buffer.text = prefill
         text = session.prompt(
-            HTML(f"<style fg='{brand}'>{glyph('prompt')}</style> "),
-            placeholder=HTML(f"<style fg='{placeholder_fg}'>{placeholder}</style>"),
+            HTML(f"<style fg='{brand_fg()}'>{glyph('prompt')}</style> "),
+            placeholder=HTML(f"<style fg='{ui.placeholder}'>{placeholder}</style>"),
             bottom_toolbar=_toolbar,
             refresh_interval=0.25 if (busy or state.awaiting_approval) else 0,
         )
