@@ -153,8 +153,8 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("hues", "vivid accents — purple brand, rainbow tools"),
     ],
     "font": [
-        ("unicode", "✓ ⚠ › — default"),
-        ("ascii", "+ ! > — plain ASCII"),
+        ("unicode", "+ ! > * — plain symbols (default)"),
+        ("ascii", "+ ! > — strict 7-bit ASCII"),
     ],
     "kill": [
         ("all", "kill every background job and live subagent"),

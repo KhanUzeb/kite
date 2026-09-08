@@ -529,7 +529,7 @@ def _toolbar_html(state: SessionUiState) -> Any:
     running = format_running_status(state)
     if running:
         lines.append(
-            f"<style fg='{ui.accent}'>●</style>"
+            f"<style fg='{ui.accent}'>{_escape_html(glyph('spin'))}</style>"
             f"<style fg='{ui.muted}'> {_escape_html(running)}</style>"
         )
     metrics = format_metrics_tail(state)

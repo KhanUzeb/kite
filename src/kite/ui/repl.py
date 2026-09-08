@@ -37,6 +37,7 @@ from kite.ui.render import RunDisplay, render_compact_boundary
 from kite.ui.status import render_status
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_PROMPT, SYMBOL_FAIL, make_console
+from kite.ui.theme import glyph
 from kite.ui.tables import kite_table
 
 KITE_MD_STUB = """# KITE.md
@@ -627,7 +628,7 @@ class ChatSession:
         session.replace_messages(result.messages)
         if result.checkpoint is not None:
             session.record_context_checkpoint(result.checkpoint.id, label=result.checkpoint.label, reason="pre_compact")
-            self.console.print(f"[kite.muted]◇ saved {result.checkpoint.id}[/]")
+            self.console.print(f"[kite.muted]{glyph('checkpoint')} saved {result.checkpoint.id}[/]")
         pct = self.state.context_pct
         boundary = render_compact_boundary(before, result.after, context_pct=pct)
         self.console.print(boundary)
@@ -675,7 +676,7 @@ class ChatSession:
                 meta=session.meta.to_dict(),
             )
             session.record_context_checkpoint(cp.id, label=cp.label, reason="manual")
-            self.console.print(f"[kite.muted]◇ saved {cp.id}[/]  {label}")
+            self.console.print(f"[kite.muted]{glyph('checkpoint')} saved {cp.id}[/]  {label}")
             return
 
         if sub == "restore":
@@ -689,7 +690,7 @@ class ChatSession:
                 return
             session.replace_messages(cp.messages)
             self.console.print(
-                f"[kite.muted]◇ restored {cp.id}[/]  {len(cp.messages)} messages  ({cp.label})"
+                f"[kite.muted]{glyph('checkpoint')} restored {cp.id}[/]  {len(cp.messages)} messages  ({cp.label})"
             )
             return
 
@@ -2370,7 +2371,7 @@ class ChatSession:
                 assert line is not None
                 self._sync_queue_count()
                 preview = line[:80] + ("…" if len(line) > 80 else "")
-                self.console.print(f"[kite.muted]› queued[/]  {preview}")
+                self.console.print(f"[kite.muted]{glyph('prompt')} queued[/]  {preview}")
             else:
                 got = self._read_input()
                 if got.kind == "eof":

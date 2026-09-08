@@ -77,7 +77,7 @@ def format_running_status(state: SessionUiState) -> str:
     if preview:
         if len(preview) > 60:
             preview = preview[:57] + "…"
-        line += f"  › {preview}"
+        line += f"  {glyph('prompt')} {preview}"
     return line
 
 

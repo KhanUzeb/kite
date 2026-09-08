@@ -179,7 +179,7 @@ def test_toolbar_busy_and_approval_states() -> None:
     assert "follow-up 1" in busy_html
     assert "next steer: fix the flaky test" in busy_html
     assert "tok/s" in busy_html
-    assert "›" in format_running_status(busy)
+    assert ">" in format_running_status(busy)
 
     approval = SessionUiState(awaiting_approval="bash", awaiting_approval_mandatory=True)
     approval_html = str(_toolbar_html(approval))

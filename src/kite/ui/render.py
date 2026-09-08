@@ -17,6 +17,7 @@ from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState
 from kite.ui.status import render_status
 from kite.ui.stream_buffer import StreamCoalescer
+from kite.ui.theme import glyph
 from kite.ui.style import (
     CHANNEL_PREFIX,
     COLLAPSE_LINES,
@@ -670,9 +671,9 @@ class RunDisplay:
             try:
                 pct = max(0.0, min(1.0, float(ratio)))
                 filled = int(round(pct * 10))
-                from kite.ui.theme import glyph
+                from kite.ui.theme import glyph as _glyph
 
-                bar = glyph("bar_fill") * filled + glyph("bar_empty") * (10 - filled)
+                bar = _glyph("bar_fill") * filled + _glyph("bar_empty") * (10 - filled)
                 line.append(f"  {bar} {pct:.0%}", style="kite.muted")
             except (TypeError, ValueError):
                 pass
@@ -763,7 +764,7 @@ class RunDisplay:
     def _on_checkpoint(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         line = Text()
-        line.append(f"{GUTTER}◇ checkpoint  ", style="kite.muted")
+        line.append(f"{GUTTER}{glyph('checkpoint')} checkpoint  ", style="kite.muted")
         line.append(str(p.get("label", "")), style="kite.muted")
         line.append(f"  {p.get('id', '')}  ", style="kite.terminal")
         line.append(f"({p.get('tokens', '?')} tok)", style="kite.muted")
