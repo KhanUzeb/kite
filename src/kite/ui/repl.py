@@ -34,9 +34,9 @@ from kite.ui.empty import render_empty
 from kite.ui.git import GitCheckpoints
 from kite.ui.inbox import MessageInbox
 from kite.ui.render import RunDisplay, render_compact_boundary
-from kite.ui.status import render_status
 from kite.ui.state import SessionUiState
-from kite.ui.style import SYMBOL_PROMPT, SYMBOL_FAIL, make_console
+from kite.ui.status import render_status
+from kite.ui.style import SYMBOL_FAIL, SYMBOL_PROMPT, make_console
 from kite.ui.tables import kite_table
 
 KITE_MD_STUB = """# KITE.md

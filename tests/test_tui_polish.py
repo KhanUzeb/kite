@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from kite.agent.mode import AgentMode, ApprovalMode
 from kite.ui.empty import render_empty
-from kite.ui.status import format_status_tail, render_status, status_segments
 from kite.ui.state import SessionUiState, TodoItem
+from kite.ui.status import format_status_tail, render_status, status_segments
 
 
 def test_status_segments_match_tail() -> None:

@@ -20,11 +20,10 @@ from kite.providers.byos import (
     is_byok_provider,
     login_oauth,
     logout_oauth,
-    oauth_auth_file,
     register_oauth_model_fetcher,
 )
 from kite.providers.catalog import load_catalog
-from kite.providers.credentials import login_provider, logout_provider, write_api_key
+from kite.providers.credentials import logout_provider, write_api_key
 from kite.providers.resolve import missing_credentials, resolve_model
 
 
