@@ -30,11 +30,13 @@ from kite.ui.complete import (
     read_repl_busy_composer,
     read_repl_line,
 )
+from kite.ui.empty import render_empty
 from kite.ui.git import GitCheckpoints
 from kite.ui.inbox import MessageInbox
-from kite.ui.render import RunDisplay, render_compact_boundary, render_status
+from kite.ui.render import RunDisplay, render_compact_boundary
+from kite.ui.status import render_status
 from kite.ui.state import SessionUiState
-from kite.ui.style import SYMBOL_PROMPT, make_console
+from kite.ui.style import SYMBOL_PROMPT, SYMBOL_FAIL, make_console
 from kite.ui.tables import kite_table
 
 KITE_MD_STUB = """# KITE.md
@@ -538,7 +540,7 @@ class ChatSession:
 
         rows = list_sessions(limit=30, query=query)
         if not rows:
-            self.console.print("[kite.muted]no sessions[/]")
+            self.console.print(render_empty("no sessions", hint="/resume id"))
             return None
         if show_table:
             render_sessions_table(
@@ -1489,7 +1491,7 @@ class ChatSession:
             self.console.print("[kite.muted]privacy & security[/]")
             for key, value in summary.items():
                 label = key.replace("_", " ")
-                self.console.print(f"  [cyan]{label}[/]  {value}")
+                self.console.print(f"  [kite.brand]{label}[/]  {value}")
             self.console.print("  [kite.muted]change sessions:[/]  /privacy sessions redacted|full|disabled")
             return
 
@@ -1564,7 +1566,7 @@ class ChatSession:
     def _slash_jobs(self, _arg: str) -> None:
         rows = self.jobs.list(active_only=True)
         if not rows:
-            self.console.print("[kite.muted]no background jobs[/]  · bash background=true or live subagents")
+            self.console.print(render_empty("no background jobs", hint="bash background=true or live subagents"))
             return
         items = [
             (
@@ -1704,7 +1706,7 @@ class ChatSession:
                     content = f"[tools: {tools}]" if tools else "[tool call]"
                 else:
                     content = "—"
-            self.console.print(f"  [cyan]{role}[/] {content}")
+            self.console.print(f"  [kite.brand]{role}[/] {content}")
 
     def _open_session(self, session_id: str) -> None:
         from kite.memory.session import load_session
@@ -2324,7 +2326,7 @@ class ChatSession:
         if box.get("err") is not None:
             err = box["err"]
             self.state.last_error = str(err)
-            self.console.print(f"[kite.error]✗ {escape(str(err))}[/]  [kite.muted]/trace[/]")
+            self.console.print(f"[kite.error]{SYMBOL_FAIL} {escape(str(err))}[/]  [kite.muted]/trace[/]")
             return
         self.attachments = []
         self._sync_attach_count()

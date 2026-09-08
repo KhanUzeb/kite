@@ -66,11 +66,11 @@ def numbered_pick(
     try:
         raw = console.input(prompt).strip()
     except (EOFError, KeyboardInterrupt):
-        console.print("\n[yellow]Cancelled[/]")
+        console.print("\n[kite.pending]Cancelled[/]")
         return None
 
     if not raw or raw.lower() in {"q", "quit"}:
-        console.print("[yellow]Cancelled[/]")
+        console.print("[kite.pending]Cancelled[/]")
         return None
 
     if refreshable and raw.lower() in {"r", "refresh"}:
@@ -81,7 +81,7 @@ def numbered_pick(
         idx = int(raw)
         if 1 <= idx <= len(shown):
             return shown[idx - 1][0]
-        console.print("[yellow]Number out of range[/]")
+        console.print("[kite.pending]Number out of range[/]")
         return None
     if raw in ids:
         return raw
@@ -93,7 +93,7 @@ def numbered_pick(
     hits = list(dict.fromkeys(hits))
     if len(hits) == 1:
         return hits[0]
-    console.print(f"[yellow]No matching {noun}[/]")
+    console.print(f"[kite.pending]No matching {noun}[/]")
     return None
 
 
@@ -103,7 +103,7 @@ def confirm(console: Console, question: str, *, default: bool = True) -> bool:
     try:
         raw = console.input(f"{question}{suffix}").strip().lower()
     except (EOFError, KeyboardInterrupt):
-        console.print("\n[yellow]Cancelled[/]")
+        console.print("\n[kite.pending]Cancelled[/]")
         return False
     if not raw:
         return default

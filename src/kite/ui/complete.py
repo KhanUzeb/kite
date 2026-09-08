@@ -510,7 +510,11 @@ def _toolbar_hint_line(bits: list[str]) -> str:
 def _toolbar_html(state: SessionUiState) -> Any:
     ui = ui_colors()
     tail = format_status_tail(state)
-    flash = f"  {glyph('sep')} {_escape_html(state.flash)}" if state.flash else ""
+    flash = ""
+    if state.flash:
+        flash = (
+            f"  {glyph('sep')} <style fg='{ui.accent}'><b>{_escape_html(state.flash)}</b></style>"
+        )
     if state.awaiting_approval:
         hints = _toolbar_hint_line(_toolbar_approval_bits(state))
     elif state.busy:

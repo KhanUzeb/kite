@@ -96,7 +96,7 @@ def shimmer_ansi(text: str, tick: int) -> str:
             out.append(ch)
             continue
         if i == pos:
-            out.append(f"\033[1;36m{ch}\033[0m")
+            out.append(f"\033[1m{ch}\033[0m")
         else:
             out.append(f"\033[2m{ch}\033[0m")
     return "".join(out)

@@ -10,12 +10,12 @@ from rich.console import Console
 from rich.text import Text
 
 from kite.agent.events import Event
-from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name
+from kite.agent.mode import AgentMode, ApprovalMode
 from kite.ui.chips import render_plan_tasks
 from kite.ui.diff import count_diff_lines, render_diff
 from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState
-from kite.ui.status import approval_style, mode_style, status_context_parts
+from kite.ui.status import render_status
 from kite.ui.stream_buffer import StreamCoalescer
 from kite.ui.style import (
     CHANNEL_PREFIX,
@@ -120,19 +120,6 @@ def render_compact_boundary(
     if context_pct is not None:
         t.append(f"  · ctx {context_pct:.0%}", style="kite.muted")
     t.append("\n")
-    return t
-
-def render_status(state: SessionUiState) -> Text:
-    t = Text()
-    t.append("kite", style="kite.brand")
-    t.append(f" {SYMBOL_SEP} ", style="kite.muted")
-    t.append(state.mode.value, style=mode_style(state))
-    t.append(f" {SYMBOL_SEP} ", style="kite.muted")
-    t.append(approval_display_name(state.approval), style=approval_style(state))
-    ctx = status_context_parts(state)
-    if ctx:
-        t.append(f" {SYMBOL_SEP} ", style="kite.muted")
-        t.append(f" {SYMBOL_SEP} ".join(ctx), style="kite.muted")
     return t
 
 def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: str = "") -> Text:
@@ -391,6 +378,7 @@ class RunDisplay:
         if key == self._last_todo_key:
             return
         self._last_todo_key = key
+        self.console.print()
         self.console.print(render_plan_tasks(self.state.todos, tick=self._anim_tick))
 
     def print_banner(self, task: str = "") -> None:
@@ -640,12 +628,12 @@ class RunDisplay:
         self.console.print(line)
         for art in (p.get("artifacts") or [])[-5:]:
             if isinstance(art, dict):
-                mark = "✓" if art.get("ok", True) else "✗"
+                mark = SYMBOL_OK if art.get("ok", True) else SYMBOL_FAIL
                 self.console.print(
                     Text(f"{GUTTER}{mark} [{art.get('kind', '?')}] {art.get('summary', '')}", style="kite.muted")
                 )
         for gap in p.get("gaps") or []:
-            self.console.print(Text(f"{GUTTER}⚠ {gap}", style="kite.pending"))
+            self.console.print(Text(f"{GUTTER}{SYMBOL_WARN} {gap}", style="kite.pending"))
 
     def _on_cost_estimate(self, p: dict[str, Any]) -> None:
         try:
@@ -682,7 +670,9 @@ class RunDisplay:
             try:
                 pct = max(0.0, min(1.0, float(ratio)))
                 filled = int(round(pct * 10))
-                bar = "█" * filled + "░" * (10 - filled)
+                from kite.ui.theme import glyph
+
+                bar = glyph("bar_fill") * filled + glyph("bar_empty") * (10 - filled)
                 line.append(f"  {bar} {pct:.0%}", style="kite.muted")
             except (TypeError, ValueError):
                 pass
@@ -772,10 +762,13 @@ class RunDisplay:
 
     def _on_checkpoint(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
-        self.console.print(
-            f"[kite.muted]◇ checkpoint[/]  {p.get('label', '')}  "
-            f"[dim]{p.get('id', '')}[/]  ({p.get('tokens', '?')} tok)"
-        )
+        line = Text()
+        line.append(f"{GUTTER}◇ checkpoint  ", style="kite.muted")
+        line.append(str(p.get("label", "")), style="kite.muted")
+        line.append(f"  {p.get('id', '')}  ", style="kite.terminal")
+        line.append(f"({p.get('tokens', '?')} tok)", style="kite.muted")
+        line.append("\n")
+        self.console.print(line)
 
     def _on_commit(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -1023,7 +1016,7 @@ class RunDisplay:
         if kind == "bash":
             ok = p.get("ok", True)
             mark = SYMBOL_OK if ok else SYMBOL_FAIL
-            style = "kite.success" if ok else "kite.muted"
+            style = "kite.success" if ok else "kite.error"
             label = str(p.get("label") or p.get("id") or "job")
             status = str(p.get("status") or ("done" if ok else "ended"))
             self.console.print(Text(f"{GUTTER}{mark} job  {kind}  {label}  {status}", style=style))
