@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from kite.ui.attach import (
+    Attachment,
     clipboard_install_hint,
     load_clipboard,
     parse_inline_mentions,
     read_os_clipboard,
     user_content_with_attachments,
 )
-from kite.ui.attach import Attachment
 
 
 def test_parse_inline_mentions_attaches_existing_file(tmp_path) -> None:

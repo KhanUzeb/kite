@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import socket
 
-import pytest
-
 from kite.guardrails.ssrf import url_blocked
 from kite.tools.web import _url_blocked
 

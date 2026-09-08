@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -133,7 +131,6 @@ class JobRegistry:
             cwd = str(clamped)
         except ImportError:
             pass
-        creationflags = 0
         from kite.env.shell import resolve_shell_invocation
 
         argv, cmd_text = resolve_shell_invocation(command)
