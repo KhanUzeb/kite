@@ -31,7 +31,8 @@ Setup & model
   kite keys [--set [provider]]  API keys - TTY pick to link
   kite providers                status, then pick to connect
   kite models [-p groq]         pick a model (--list to dump)
-  kite config [--select-model]
+  kite config [--select-model] [--session-persistence full|redacted|disabled]
+  kite privacy                  security policy summary
 
 Project
   kite context                  preview workspace discovery
@@ -50,7 +51,8 @@ REPL essentials (type /help in chat)
   /login /keys /select          credentials
   /checkpoint /handoff /compact session continuity
   /session list | /resume <id>  transcripts
-  /status                       mode, model, cost
+  /status                       mode, model, cost, session persistence
+  /privacy                      security policy; /privacy sessions …
   /stop /steer                  stop turn or redirect (session stays)
   /jobs /kill [id|all]          background bash + live subagents
 

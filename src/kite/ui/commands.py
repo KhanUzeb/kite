@@ -28,7 +28,13 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("live", "Stream bash output in real time while tools run", group="session"),
     BuiltinCommand("expand-thinking", "Show or hide model thinking trace (expanded by default)", hint="collapse", group="session"),
     BuiltinCommand("collapse", "Collapse tool output (default)", group="session"),
-    BuiltinCommand("status", "Mode, model, effort, cost, session id", group="session"),
+    BuiltinCommand("status", "Mode, model, effort, cost, session id, privacy", group="session"),
+    BuiltinCommand(
+        "privacy",
+        "Session persistence and security policy",
+        hint="[sessions full|redacted|disabled]",
+        group="session",
+    ),
     BuiltinCommand("stop", "Stop the current turn — session stays open", group="session"),
     BuiltinCommand("steer", "Stop and inject a correction as the next turn", hint="text", group="session"),
     BuiltinCommand("tasks", "Show the running turn and queued follow-ups", group="session"),
@@ -157,6 +163,12 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "memory": [
         ("semantic", "markdown notes"),
         ("episodic", "sqlite episode log"),
+    ],
+    "privacy": [
+        ("sessions", "show or pick session persistence mode"),
+        ("sessions redacted", "sanitize secrets before session write (default)"),
+        ("sessions full", "persist raw session JSONL (opt-in)"),
+        ("sessions disabled", "no session file writes"),
     ],
 }
 

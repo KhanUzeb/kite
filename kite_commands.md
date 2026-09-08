@@ -51,7 +51,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--auto-compact` | Persist auto-compaction on/off in `~/.kite/config.toml` (`kite config --auto-compact true\|false`) |
 | `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. |
 
-**Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
+**Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory. inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
 
 Housekeeping (no model):
 
@@ -73,8 +73,10 @@ kite models [-p provider]      # TTY: pick a live model (saved). --list dumps th
 kite models --refresh          # bypass cache; re-fetch from the provider API
 kite models --select           # same picker
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
+              [--session-persistence full|redacted|disabled]
+kite privacy [--session-persistence full|redacted|disabled]   # security policy summary
 kite context [--json]
-kite skills                    # TTY: pick a skill to show
+kite skills                    # TTY: pick a skill to show (trust/origin column)
 kite skills [--show name] [--add pkg|path]
 kite commands
 kite plugins
@@ -118,6 +120,8 @@ These never go to the model.
 | `/build` `/b` | Apply edits; continues existing plan checklist; approval leaves `readonly` → supervised |
 | `/approve yolo\|auto\|supervised` | Autonomy. Empty: numbered picker. yolo skips in-workspace prompts; high-risk still asks |
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off**). Empty: pick on/off |
+| `/privacy` | Security policy summary; `/privacy sessions` picks full/redacted/disabled |
+| `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |
 | `/theme [auto\|kite\|dark\|light\|dim\|mono]` | Color palette. Empty: pick |
 | `/font [unicode\|ascii]` | Glyph pack. Empty: pick |
 | `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort. Empty: pick |
@@ -150,8 +154,8 @@ These never go to the model.
 | `/live` | Stream bash/job output in real time while tools run |
 | `/collapse` | Collapse tool output (default) |
 | `/trace` | Last traceback |
-| `/skills [name]` | List skills, or print one. Empty: pick to show. User-home skills show `~` (`~/.kite/skills`, `~/.agents/skills`) |
-| `/skills add pkg\|path` | Install npm/npx/GitHub into `~/.kite/skills`, or **link** a local skill folder |
+| `/skills [name]` | List skills (trust/origin column), or print one. Empty: pick to show. User-home skills show `~` (`~/.kite/skills`, `~/.agents/skills`) |
+| `/skills add pkg\|path` | Install npm/npx/GitHub into `~/.kite/skills` (**untrusted** — provenance in `.kite-provenance.json`), or **link** a local skill folder |
 | `/commands` | List markdown slash prompts |
 | `/commands new name` | Write `.kite/commands/name.md` |
 | `/plugins` | List plugins |
@@ -212,6 +216,8 @@ These **are** the next user turn. Overlay (later wins): bundled → `~/.kite/com
 `$ARGUMENTS` (and `$1`…`$9`) in the markdown file is replaced with whatever you typed after the command.
 
 ### Bundled skills (`data/skills/`)
+
+Bundled skills are **trusted** (shipped with Kite). npm, git, project, and user-installed skills are **untrusted** — the model sees `trust` and `origin` in listings and invocations. See [SECURITY.md](SECURITY.md).
 
 | Command | Same as |
 |---------|---------|
@@ -327,6 +333,20 @@ Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `webse
 Harness override (`--system-prompt` / config) still beats discovered `SYSTEM.md`.
 
 Human commits are the source of truth for the project. Checkpoint `kite:` commits exist so `/undo` can revert agent edits without touching your own history.
+
+---
+
+## Security & privacy
+
+Kite is **local-first**: credentials stay on disk under `~/.kite/` (or provider runtimes for BYOS). See [SECURITY.md](SECURITY.md) for the full policy.
+
+| Topic | Control |
+|-------|---------|
+| **Session persistence** | `session_persistence` in `~/.kite/config.toml`: `redacted` (default), `full`, or `disabled`. REPL: `/privacy sessions …`. CLI: `kite config --session-persistence …` or `kite privacy` |
+| **Secret redaction** | Recursive sanitizer for audit logs, events, session JSONL, and tool output (nested dicts/lists, Bearer tokens, sensitive keys) |
+| **Child processes** | Credential-like env vars stripped; `extra` overrides cannot re-inject `OPENAI_API_KEY`, `GITHUB_TOKEN`, etc. Process trees killed on timeout/cancel |
+| **Skills** | Bundled = trusted; npm/git/project/user = untrusted (`.kite-provenance.json` on install) |
+| **HTTP tools** | SSRF checks: resolve host → validate all IPs → connect; redirects re-validated |
 
 ---
 

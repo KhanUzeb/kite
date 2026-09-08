@@ -66,7 +66,11 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 ## Memory & persistence
 
-**Session** — One chat’s transcript and metadata, stored as JSONL under Kite home. Identified by a session id.
+**Session** — One chat’s transcript and metadata, stored as JSONL under Kite home. Identified by a session id. **Session persistence** (`full` | `redacted` | `disabled`) controls whether and how transcripts are written — default `redacted` recursively strips secrets before disk.
+
+**Skill trust** — Bundled skills are trusted; npm, git, project, and user-local skills are untrusted. Provenance (`origin`, `trust`) is visible to the model and in `/skills` listings.
+
+**Recursive redaction** — Sanitizer that walks nested structures (dicts, lists, strings) to remove credential-shaped values from audit logs, events, sessions, and tool output.
 
 **Trajectory** — Serializable record of a run (messages, tool events) for debug, replay, or `kite apply`.
 

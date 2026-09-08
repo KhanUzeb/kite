@@ -1157,6 +1157,7 @@ class ChatSession:
             "remember": self._remember,
             "forget": self._slash_forget,
             "status": self._slash_status,
+            "privacy": self._slash_privacy,
             "stop": self._slash_stop,
             "steer": self._slash_steer,
             "tasks": self._slash_tasks,
@@ -1448,6 +1449,7 @@ class ChatSession:
             self.console.print(f"[kite.success]forgot episode[/] {ep.id}  {ep.summary}")
 
     def _slash_status(self, _arg: str) -> None:
+        from kite.memory.session_policy import persistence_mode
         from kite.ui.theme import current_font, theme_label
 
         sid = self._session_id or "—"
@@ -1457,9 +1459,53 @@ class ChatSession:
             f"{self.state.provider or '—'}/{self.state.model or '—'} · "
             f"effort {self.state.reasoning} · "
             f"theme {theme_label()} · font {current_font()} · "
+            f"sessions {persistence_mode()} · "
             f"${self.state.cost:.4f} · session {sid}"
             + (f" · queued {len(self._inbox)}" if self._inbox else "")
         )
+
+    def _slash_privacy(self, arg: str) -> None:
+        from kite.memory.session_policy import (
+            persistence_summary,
+            set_persistence_mode,
+            valid_persistence_modes,
+        )
+
+        text = (arg or "").strip()
+        if not text or text.lower() in {"show", "status"}:
+            summary = persistence_summary()
+            self.console.print("[kite.muted]privacy & security[/]")
+            for key, value in summary.items():
+                label = key.replace("_", " ")
+                self.console.print(f"  [cyan]{label}[/]  {value}")
+            self.console.print("  [kite.muted]change sessions:[/]  /privacy sessions redacted|full|disabled")
+            return
+
+        parts = text.split()
+        if parts[0].lower() != "sessions":
+            self.console.print("[kite.muted]/privacy[/]  or  /privacy sessions redacted|full|disabled")
+            return
+
+        if len(parts) == 1:
+            choices = [
+                ("redacted", "sanitize secrets before write (default)"),
+                ("full", "raw JSONL on disk (opt-in)"),
+                ("disabled", "no session file writes"),
+            ]
+            picked = self._pick(choices, title="Session persistence", noun="mode")
+            if not picked:
+                return
+            mode = set_persistence_mode(picked)
+            self.console.print(f"[kite.success]session persistence[/]  {mode}")
+            return
+
+        mode = parts[1].lower()
+        if mode not in valid_persistence_modes():
+            allowed = ", ".join(sorted(valid_persistence_modes()))
+            self.console.print(f"[kite.error]unknown mode {mode}[/]  — choose: {allowed}")
+            return
+        saved = set_persistence_mode(mode)
+        self.console.print(f"[kite.success]session persistence[/]  {saved}")
 
     def _slash_stop(self, _arg: str) -> None:
         if not self._busy:
@@ -1576,10 +1622,13 @@ class ChatSession:
         self._open_session(arg)
 
     def _slash_home(self, _arg: str) -> None:
+        from kite.memory.session_policy import persistence_mode
+
         home = kite_home()
         self.console.print(f"{home}")
-        for name in ("commands", "skills", "plugins", "memory", "sessions"):
+        for name in ("commands", "skills", "plugins", "memory", "sessions", "audit.jsonl"):
             self.console.print(f"  {home / name}")
+        self.console.print(f"  sessions policy: {persistence_mode()}  ·  /privacy sessions")
         self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")
 
     def _handle_slash(self, raw: str, parsed: SlashResult | None = None) -> bool:
@@ -1807,8 +1856,12 @@ class ChatSession:
                 self.console.print(f"[kite.error]{e}[/]")
                 return
             listed = ", ".join(f"/{n}" for n in names)
-            self.console.print(f"[kite.success]installed[/] {listed}  ·  ~/.kite/skills")
+            self.console.print(
+                f"[kite.success]installed[/] {listed}  ·  ~/.kite/skills  "
+                f"[kite.muted](untrusted — remote/npm/git skills require explicit install)[/]"
+            )
             return
+        from kite.skills.loader import format_skill_trust_badge
         from kite.ui.theme import glyph
 
         index = self._index()
@@ -1818,15 +1871,21 @@ class ChatSession:
                 self.console.print(f"[kite.error]unknown skill {raw}[/]  — /skills")
                 return
             mark = f" {glyph('home')}" if skill.source == "user" else ""
-            self.console.print(f"[kite.muted]/{skill.name}{mark}[/]  {skill.path}")
+            badge = format_skill_trust_badge(skill)
+            self.console.print(f"[kite.muted]/{skill.name}{mark}[/]  {skill.path}  ·  {badge}")
             self.console.print(skill.content)
             return
         table = kite_table("skills")
         table.add_column("name")
+        table.add_column("trust")
         table.add_column("description")
         for skill in index.skills:
             mark = f" {glyph('home')}" if skill.source == "user" else ""
-            table.add_row(f"/{skill.name}{mark}", (skill.description or "")[:70])
+            table.add_row(
+                f"/{skill.name}{mark}",
+                format_skill_trust_badge(skill),
+                (skill.description or "")[:60],
+            )
         self.console.print(table)
         if not index.skills:
             return

@@ -616,9 +616,25 @@ def cmd_config(args: argparse.Namespace) -> int:
         cfg.api_bases[args.set_provider or cfg.default_provider] = args.set_api_base
     if args.auto_compact is not None:
         cfg.auto_compact = args.auto_compact
-    if any([args.set_provider, args.set_model, args.set_api_base, args.auto_compact is not None]):
+    persistence_set = False
+    if getattr(args, "session_persistence", None):
+        from kite.memory.session_policy import set_persistence_mode
+
+        try:
+            set_persistence_mode(args.session_persistence)
+            persistence_set = True
+            cfg = UserConfig.load()
+        except ValueError as e:
+            console.print(f"[red]{e}[/]")
+            return 2
+    config_changed = any(
+        [args.set_provider, args.set_model, args.set_api_base, args.auto_compact is not None]
+    )
+    if config_changed:
         path = cfg.save()
         console.print(f"[green]Saved[/] {path}")
+    elif persistence_set:
+        console.print(f"[green]Saved[/] session_persistence={cfg.session_persistence} → {cfg.path}")
 
     resolved = resolve_model(config=cfg)
     console.print(
@@ -640,12 +656,37 @@ def cmd_config(args: argparse.Namespace) -> int:
                     "step_limit": cfg.step_limit,
                     "cost_limit": cfg.cost_limit,
                     "auto_compact": cfg.auto_compact,
+                    "session_persistence": cfg.session_persistence,
                     "api_bases": cfg.api_bases,
                     "provider_defaults": cfg.provider_defaults,
                 },
                 indent=2,
             ),
             title="kite config",
+        )
+    )
+    return 0
+
+
+def cmd_privacy(args: argparse.Namespace) -> int:
+    from rich.panel import Panel
+
+    from kite.memory.session_policy import persistence_summary, set_persistence_mode
+
+    console = _console()
+    if getattr(args, "session_persistence", None):
+        try:
+            mode = set_persistence_mode(args.session_persistence)
+        except ValueError as e:
+            console.print(f"[red]{e}[/]")
+            return 2
+        console.print(f"[green]session_persistence[/] = {mode}")
+    summary = persistence_summary()
+    console.print(
+        Panel(
+            json.dumps(summary, indent=2),
+            title="kite privacy",
+            subtitle="See SECURITY.md for full policy",
         )
     )
     return 0
@@ -712,9 +753,9 @@ def cmd_skills(args: argparse.Namespace) -> int:
         except (ValueError, RuntimeError, OSError) as e:
             console.print(f"[red]{e}[/]")
             return 1
-        console.print(f"installed {', '.join(names)} → ~/.kite/skills")
+        console.print(f"installed {', '.join(names)} → ~/.kite/skills (untrusted — see SECURITY.md)")
         return 0
-    from kite.skills.loader import load_skills
+    from kite.skills.loader import format_skill_trust_badge, load_skills
 
     skills = load_skills(args.cwd)
     if args.show:
@@ -722,15 +763,21 @@ def cmd_skills(args: argparse.Namespace) -> int:
         if not match:
             console.print(f"[red]Unknown skill {args.show}[/]")
             return 1
-        console.print(Panel(match.content, title=f"{match.name} — {match.path}"))
+        console.print(
+            Panel(
+                match.content,
+                title=f"{match.name} — {format_skill_trust_badge(match)} — {match.path}",
+            )
+        )
         return 0
     table = Table(title="Skills")
     table.add_column("name")
+    table.add_column("trust")
     table.add_column("description")
     table.add_column("path")
     for s in skills:
         label = f"{s.name} ~" if s.source == "user" else s.name
-        table.add_row(label, (s.description or "")[:60], str(s.path))
+        table.add_row(label, format_skill_trust_badge(s), (s.description or "")[:50], str(s.path))
     console.print(table)
     from kite.ui.pick import can_prompt, numbered_pick
 
@@ -1127,7 +1174,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     config.add_argument("--set-api-base", help="Override provider base URL")
     config.add_argument("--auto-compact", type=lambda s: s.lower() in {"1", "true", "yes"}, default=None)
+    config.add_argument(
+        "--session-persistence",
+        choices=["full", "redacted", "disabled"],
+        help="Session JSONL policy: full, redacted (default), or disabled",
+    )
     config.set_defaults(func=cmd_config)
+
+    privacy = sub.add_parser("privacy", help="Security/privacy policy and session persistence")
+    privacy.add_argument(
+        "--session-persistence",
+        choices=["full", "redacted", "disabled"],
+        help="Set session JSONL persistence mode",
+    )
+    privacy.set_defaults(func=cmd_privacy)
 
     context = sub.add_parser("context", help="Preview discovered project context")
     context.add_argument("--cwd", default=os.getcwd())

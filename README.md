@@ -40,7 +40,9 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 - **Context lifecycle** — preserved-fact compaction, auto-checkpoints at ~72% context, `/checkpoint` restore, `/handoff` export; **repo map** symbols for faster orientation in large trees.
 - **Harness benchmarks** — `kite bench` for repeatable startup/context/tool timing (no live LLM).
 - **Skills & plugins** — `SKILL.md` packs (npm, npx, GitHub, or a **local path symlink** into `~/.kite/skills`), prompt commands, plugins, and `.kite/extensions/` for custom tools.
-- **Guardrails** — path sandboxing, bash danger checks, secret redaction, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
+- **Guardrails** — path sandboxing, bash danger checks, recursive secret redaction, process-tree teardown on timeout, SSRF-safe HTTP tools, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
+- **Session privacy** — `session_persistence = "redacted"` (default) sanitizes transcripts before write; `full` or `disabled` via `kite config` or `/privacy sessions`.
+- **Skill trust** — bundled skills are trusted; npm/git/project skills are labeled untrusted with provenance metadata.
 - **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, git-stat diffs, theme/font switching, and a context-usage meter.
 - **Portable** — install once, then run `kite` from any project directory via `--cwd`.
 
