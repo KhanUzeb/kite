@@ -43,8 +43,8 @@ THEME_HELP = {
 }
 
 FONT_HELP = {
-    "unicode": "+ ! > * — plain symbols (default)",
-    "ascii": "+ ! > — strict 7-bit ASCII",
+    "unicode": "✓ ⚠ › — default",
+    "ascii": "+ ! > — for terminals that chew glyphs",
 }
 
 _THEME_ALIASES = {
@@ -575,26 +575,25 @@ _PALETTES: dict[str, dict[str, Any]] = {
 }
 
 _UNICODE = {
-    "ok": "+",
-    "fail": "x",
-    "warn": "!",
-    "spin": "*",
-    "todo": "o",
-    "collapse": ">",
-    "expand": "v",
-    "tool": ">",
-    "prompt": ">",
-    "user": ">",
-    "agent": ".",
-    "compact": "~",
-    "sep": "|",
-    "reason": "...",
-    "bar_fill": "#",
-    "bar_empty": "-",
-    "chip_l": "[ ",
-    "chip_r": " ]",
+    "ok": "✓",
+    "fail": "✗",
+    "warn": "⚠",
+    "spin": "●",
+    "todo": "○",
+    "collapse": "▸",
+    "expand": "▾",
+    "tool": "▸",
+    "prompt": "›",
+    "user": "›",
+    "agent": "•",
+    "compact": "↻",
+    "sep": "·",
+    "reason": "…",
+    "bar_fill": "█",
+    "bar_empty": "░",
+    "chip_l": "╭ ",
+    "chip_r": " ╮",
     "home": "~",
-    "checkpoint": "*",
 }
 
 _ASCII = {
@@ -617,7 +616,6 @@ _ASCII = {
     "chip_l": "[ ",
     "chip_r": " ]",
     "home": "~",
-    "checkpoint": "*",
 }
 
 FONTS: dict[str, dict[str, str]] = {"unicode": _UNICODE, "ascii": _ASCII}

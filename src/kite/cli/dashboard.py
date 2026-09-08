@@ -13,14 +13,10 @@ from kite.memory.session_analytics import (
 
 
 def _bar(value: int, total: int, width: int = 24) -> str:
-    from kite.ui.theme import glyph
-
-    empty = glyph("bar_empty")
-    fill = glyph("bar_fill")
     if total <= 0 or value <= 0:
-        return empty * width
+        return "░" * width
     filled = max(1, int(width * value / total))
-    return fill * filled + empty * (width - filled)
+    return "█" * filled + "░" * (width - filled)
 
 
 def _fmt_ts(ts: float) -> str:
@@ -30,12 +26,10 @@ def _fmt_ts(ts: float) -> str:
 
 
 def _event_line(kind: str, payload: dict) -> str:
-    from kite.ui.theme import glyph
-
     if kind == "tool_end":
         tool = payload.get("tool") or "?"
         ok = payload.get("ok", True)
-        mark = glyph("ok") if ok and not payload.get("blocked") else glyph("warn")
+        mark = "✓" if ok and not payload.get("blocked") else "⚠"
         return f"{mark} {tool}"
     if kind == "agent_end":
         return f"end → {payload.get('exit_status') or 'done'}"

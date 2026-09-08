@@ -87,5 +87,5 @@ def test_prompt_api_key_requires_matching_confirm(monkeypatch) -> None:
 
 def test_api_key_fingerprint_masks_set_key(monkeypatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "gsk_test_key_abcdefgh")
-    assert api_key_fingerprint(load_catalog().get("groq")) == "****efgh"
-    assert mask_api_key_fingerprint("sk-abcdefghijklmnop") == "****mnop"
+    assert api_key_fingerprint(load_catalog().get("groq")) == "••••efgh"
+    assert mask_api_key_fingerprint("sk-abcdefghijklmnop") == "••••mnop"
