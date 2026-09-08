@@ -949,7 +949,7 @@ def _prompt_once(
     elif busy:
         placeholder = "add a follow-up while Kite works…"
     else:
-        placeholder = "/ · @file · Ctrl+V paste · F8 attach clip · Ctrl+D quit · /shortcuts"
+        placeholder = "/ · @file · Ctrl+V paste · F8 attach clip · Ctrl+D quit · /help"
 
     def _toolbar() -> Any:
         if on_poll is not None:

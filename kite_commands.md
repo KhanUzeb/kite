@@ -170,7 +170,6 @@ These never go to the model.
 | `/detach [name\|all]` | Drop queued attachments |
 | `/attachments` | List queued files |
 | `/help` `/h` | Command map + keyboard shortcuts |
-| `/shortcuts` `/kbd` | Keyboard shortcuts only |
 | `/quit` `/q` `/exit` | Leave the REPL |
 
 Ctrl+C stops the **current turn**, not the process.
