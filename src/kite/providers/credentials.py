@@ -85,8 +85,8 @@ def mask_api_key_fingerprint(value: str) -> str:
     """Show last four chars only — safe for status displays."""
     text = (value or "").strip()
     if len(text) < 4:
-        return "****"
-    return f"****{text[-4:]}"
+        return "••••"
+    return f"••••{text[-4:]}"
 
 
 def api_key_fingerprint(spec) -> str:

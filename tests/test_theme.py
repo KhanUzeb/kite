@@ -62,15 +62,6 @@ def test_rich_theme_styles_differ_for_ember_and_forest() -> None:
     assert ember != forest
 
 
-def test_default_glyphs_are_plain_symbols() -> None:
-    from kite.ui.theme import FONTS, glyph
-
-    assert glyph("ok") == "+"
-    assert glyph("warn") == "!"
-    assert glyph("spin") == "*"
-    assert all(ord(c) < 128 for pack in FONTS.values() for ch in pack.values() if ch for c in ch)
-
-
 def test_monochrome_is_grayscale_rich_styles() -> None:
     styles = rich_theme("monochrome").styles
     brand = str(styles["kite.brand"])

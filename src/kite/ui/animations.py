@@ -1,4 +1,14 @@
-"""Terminal animations — plain-symbol loaders (no braille or emoji glyphs)."""
+"""Terminal animations inspired by beautifului.dev — pure Python, no web runtime.
+
+Feasible in a TTY:
+  - Pixel-grid / block loaders with shimmer
+  - Dots, orbit, wave variants
+  - Elapsed-time label
+  - Tool chips and task status rows
+
+Not attempted (needs a browser):
+  - CSS transitions, hover glides, live charts, flowcharts, click-expand
+"""
 
 from __future__ import annotations
 
@@ -8,32 +18,39 @@ from typing import Literal
 
 LoaderStyle = Literal["spin", "dots", "orbit", "grid", "wave"]
 
-_GRID_STRIP = "-=+#"
+# 4-cell pixel strip — cycles a bright pixel with trailing shimmer (beautifului grid feel)
+_GRID_STRIP = "░▒▓█"
 
 
 def _frame_spin(tick: int) -> str:
-    return "|/-\\"[tick % 4]
+    frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    return frames[tick % len(frames)]
 
 
 def _frame_dots(tick: int) -> str:
-    phases = ("*..", ".*.", "..*", "...")
+    phases = ("●··", "·●·", "··●", "···")
     return phases[(tick // 2) % len(phases)]
 
 
 def _frame_orbit(tick: int) -> str:
-    phases = ("(\\", "/)", "(/", "\\)")
+    phases = ("◜◝", "◝◞", "◞◟", "◟◜")
     return phases[tick % len(phases)]
 
 
 def _frame_wave(tick: int) -> str:
-    phases = ("~^", "^-", "-~", "~-")
+    phases = ("∿∼", "∼≈", "≈∿", "∿∼")
     return phases[tick % len(phases)]
 
 
 def _frame_grid(tick: int) -> str:
+    """Mini pixel grid — one leading █ with shimmer tail."""
     n = len(_GRID_STRIP)
     head = tick % n
-    return "".join(_GRID_STRIP[(head + i) % n] for i in range(4))
+    cells: list[str] = []
+    for i in range(4):
+        idx = (head + i) % n
+        cells.append(_GRID_STRIP[idx])
+    return "".join(cells)
 
 
 _LOADER: dict[str, Callable[[int], str]] = {
@@ -53,6 +70,10 @@ def default_loader_style() -> LoaderStyle:
 
 
 def loader_glyph(style: str, tick: int) -> str:
+    from kite.ui.theme import current_font
+
+    if current_font() == "ascii":
+        return "|/-\\"[tick % 4]
     fn = _LOADER.get(style, _frame_grid)
     return fn(tick)
 
