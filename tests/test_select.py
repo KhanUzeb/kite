@@ -35,12 +35,8 @@ def test_select_model_byos_unlinked_asks_login(kite_home, monkeypatch) -> None:
 
 
 def test_select_model_byos_linked_picks_live(kite_home, monkeypatch) -> None:
-    from kite.providers.byos import oauth_auth_file
-
-    auth = oauth_auth_file("chatgpt")
-    auth.parent.mkdir(parents=True, exist_ok=True)
-    auth.write_text('{"access_token": "t"}', encoding="utf-8")
     monkeypatch.setattr("kite.providers.select._can_use_radiolist", lambda: False)
+    monkeypatch.setattr("kite.providers.byos.has_oauth_session", lambda _p: True)
     monkeypatch.setattr(
         "kite.providers.byos.fetch_oauth_model_ids",
         lambda spec, refresh=False: ("gpt-5.6-luna", "gpt-5.4"),

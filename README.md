@@ -103,6 +103,10 @@ Or edit keys manually:
 # Copy .env.example to .env (or ~/.kite/.env) and set your key(s)
 kite keys                     # show which keys are set
 kite keys --set groq          # paste a key into ~/.kite/.env
+kite login codex              # BYOS: ChatGPT/Codex via openai-codex SDK
+kite login claude             # BYOS: Claude Code CLI (claude auth login)
+kite login grok               # BYOS: Grok CLI (or kite login xai)
+kite logout codex             # unlink BYOS subscription
 kite models -p groq --select
 kite models -p zen --select          # OpenCode Zen (OPENCODE_API_KEY)
 kite models -p go --select           # OpenCode Go
@@ -193,8 +197,10 @@ kite memory --remember "prefer ruff"
 kite context
 kite runtime-config
 kite setup                    # first-run: key + model wizard
+kite login [provider]         # BYOK key or BYOS subscription
+kite logout [provider]        # unlink BYOS subscription
 kite keys [--set provider]    # show or paste API keys (hidden)
-kite keys --logout provider   # remove a stored key
+kite keys --logout provider   # remove a stored BYOK key or BYOS session
 kite providers
 kite models -p groq
 kite models --select

@@ -64,9 +64,10 @@ kite sessions --delete <id> [<id> ...]
 kite sessions --delete-all     # TTY confirms; else pass -y
 kite setup [-p provider]       # first-run wizard: credentials + model
 kite login [provider]          # pick provider if omitted → BYOK key or BYOS browser → pick model
+kite logout [provider]         # unlink BYOS subscription (codex, claude, grok/xai)
 kite keys                      # TTY: status then pick a provider to link
 kite keys [--set [provider]]   # paste BYOK API keys (hidden); omit provider to pick
-kite keys --logout [provider]  # unlink BYOK/BYOS; omit provider to pick
+kite keys --logout [provider]  # unlink BYOK keys or BYOS (omit provider to pick)
 kite providers                 # status; TTY then pick to connect
 kite models [-p provider]      # TTY: pick a live model (saved). --list dumps the table
 kite models --refresh          # bypass cache; re-fetch from the provider API
