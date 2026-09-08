@@ -1121,7 +1121,6 @@ class ChatSession:
         clip = self._attach_clipboard
         handlers = {
             "help": self._slash_help,
-            "shortcuts": self._slash_shortcuts,
             "plan": self._slash_plan,
             "build": self._slash_build,
             "approve": self._slash_approve,
@@ -1198,11 +1197,6 @@ class ChatSession:
 
     def _slash_help(self, _arg: str) -> None:
         self.console.print(help_text(self._index()), style="kite.muted")
-
-    def _slash_shortcuts(self, _arg: str) -> None:
-        from kite.ui.shortcuts import shortcuts_help_text
-
-        self.console.print(shortcuts_help_text(), style="kite.muted")
 
     def _slash_plan(self, _arg: str) -> None:
         self._apply_plan_mode()
