@@ -178,11 +178,13 @@ class VerificationCollector:
         }
 
     def render_lines(self) -> list[str]:
+        from kite.ui.theme import glyph
+
         st = self.status()
         lines = [f"verification: {st}"]
         for a in self.artifacts[-8:]:
-            mark = "✓" if a.ok else "✗"
+            mark = glyph("ok") if a.ok else glyph("fail")
             lines.append(f"  {mark} [{a.kind}] {a.summary}")
         for g in self.gaps:
-            lines.append(f"  ⚠ {g}")
+            lines.append(f"  {glyph('warn')} {g}")
         return lines

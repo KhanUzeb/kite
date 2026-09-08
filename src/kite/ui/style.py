@@ -3,9 +3,9 @@
 Visual language (stolen, not invented)
 --------------------------------------
   Codex CLI
-    ›  user turn (dim bullet, no box)
-    …  thinking (italic dim; a cell, not mixed into the answer)
-    •  answer  (normal weight; separate cell)
+    >  user turn (dim bullet, no box)
+    ...  thinking (italic dim; a cell, not mixed into the answer)
+    .  answer  (normal weight; separate cell)
     status words: thinking / working
     footer: one line, · separators, approval lives here
     no decorative panels around you / result / speech
@@ -29,12 +29,12 @@ Palette
 
 Symbols (always paired with color — never color alone)
 -------------------------------------------------------
-  ✓  success/applied     ✗  error/denied
-  ⚠  approval needed     ●  in-progress
-  ○  pending todo        ▸  tool row
-  ▾  expanded            ›  user / composer
-  •  answer cell         …  thinking cell
-  ↻  compact boundary    ·  status separator
+  +  success/applied     x  error/denied
+  !  approval needed     *  in-progress
+  o  pending todo        >  tool row
+  v  expanded            >  user / composer
+  .  answer cell         ...  thinking cell
+  ~  compact boundary    |  status separator
 
 Spacing
 -------
@@ -113,7 +113,7 @@ DIFF_PREVIEW_LINES = 40
 PREVIEW_FILE_MAX_BYTES = 64_000
 PREVIEW_CHUNK_BYTES = 65_536
 GUTTER = "  "
-PANEL_BAR = "┊ "
+PANEL_BAR = "| "
 
 
 def make_console(*, stderr: bool = False, quiet: bool = False) -> Console:
