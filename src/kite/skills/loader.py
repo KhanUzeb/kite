@@ -270,6 +270,12 @@ def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -
     return sorted(by_name.values(), key=lambda s: s.name)
 
 
+def format_skill_trust_badge(skill: Skill) -> str:
+    if skill.trust == "trusted":
+        return "trusted"
+    return f"untrusted · {skill.origin}"
+
+
 def build_skill_index(skills: list[Skill]) -> str:
     visible = [s for s in skills if not s.disable_model_invocation]
     if not visible:
