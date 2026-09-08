@@ -84,6 +84,7 @@ _KITE_STYLES = {
     "kite.task.bar_empty": "#3a3a3a",
     "kite.pick": "bright_cyan",
     "kite.pick.current": "bold bright_green",
+    "kite.flash": "bold bright_yellow",
 }
 
 

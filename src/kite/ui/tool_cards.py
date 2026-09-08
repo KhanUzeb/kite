@@ -9,7 +9,7 @@ from typing import Any
 from rich.text import Text
 
 from kite.ui.diff import render_diff_stat
-from kite.ui.style import GUTTER
+from kite.ui.style import GUTTER, PANEL_BAR
 from kite.ui.theme import glyph
 
 
@@ -27,7 +27,7 @@ class ToolCard:
     parallel_index: int = 1
 
 
-TOOL_BAR = "│ "
+TOOL_BAR = PANEL_BAR
 
 
 def render_bash_command_block(command: str, *, max_lines: int = 8) -> Text:
@@ -38,7 +38,7 @@ def render_bash_command_block(command: str, *, max_lines: int = 8) -> Text:
     for cmd_line in shown:
         block.append(f"{GUTTER}{TOOL_BAR}", style="kite.muted")
         block.append("$ ", style="kite.tool bold")
-        block.append(cmd_line + "\n", style="")
+        block.append(cmd_line + "\n", style="kite.terminal")
     if len(lines) > max_lines:
         block.append(f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines\n", style="kite.muted")
     return block
