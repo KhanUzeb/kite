@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from kite.skills.loader import Skill, build_skill_index, load_skills, skill_trust
 from kite.skills.install import _write_provenance
+from kite.skills.loader import Skill, build_skill_index, load_skills, skill_trust
 
 
 def test_skill_trust_levels() -> None:

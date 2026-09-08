@@ -15,13 +15,17 @@ from html.parser import HTMLParser
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
-from urllib.request import OpenerDirector, build_opener, urlopen
+from urllib.request import OpenerDirector, Request, build_opener, urlopen
 
 from kite.guardrails.ssrf import (
     SafeRedirectHandler as _SafeRedirectHandler,
+)
+from kite.guardrails.ssrf import (
     guarded_request,
-    url_blocked as _url_blocked,
     validate_request_url,
+)
+from kite.guardrails.ssrf import (
+    url_blocked as _url_blocked,
 )
 
 try:
