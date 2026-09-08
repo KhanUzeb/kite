@@ -102,6 +102,8 @@ def test_repl_key_bindings_include_paste_copy_not_scroll_by_default(monkeypatch)
     for binding in bindings.bindings:
         keys.update(binding.keys)
     assert "c-v" in keys
+    assert "f8" in keys
+    assert "c-l" in keys
     assert "escape" in keys
     assert "c-g" in keys
     assert "<scroll-up>" not in keys

@@ -53,6 +53,7 @@ REPL essentials (type /help in chat)
   /session list | /resume <id>  transcripts
   /status                       mode, model, cost, session persistence
   /privacy                      security policy; /privacy sessions …
+  /shortcuts                    keyboard shortcuts
   /stop /steer                  stop turn or redirect (session stays)
   /jobs /kill [id|all]          background bash + live subagents
 

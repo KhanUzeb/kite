@@ -769,6 +769,16 @@ class ChatSession:
         except (OSError, ValueError) as e:
             self.console.print(f"[kite.error]{e}[/]")
 
+    def _attach_clipboard_shortcut(self) -> str:
+        from kite.ui.attach import load_clipboard
+
+        try:
+            att = load_clipboard()
+            self._queue_attachment(att)
+        except (OSError, ValueError) as e:
+            return str(e)
+        return f"attached {att.name} ({att.kind})"
+
     def _attach_clipboard(self, _arg: str = "") -> None:
         from kite.ui.attach import load_clipboard
 
@@ -963,6 +973,8 @@ class ChatSession:
             on_plan=lambda: self._flash_note(_plan()),
             on_build=lambda: self._flash_note(_build()),
             on_status=lambda: self._flash_note(_status()),
+            on_attach_clipboard=lambda: self._flash_note(self._attach_clipboard_shortcut()),
+            on_clear_screen=lambda: self.console.clear(),
             is_busy=lambda: self._busy,
             is_awaiting_approval=lambda: bool(self.state.awaiting_approval),
             can_remember_approval=lambda: bool(
@@ -1109,6 +1121,7 @@ class ChatSession:
         clip = self._attach_clipboard
         handlers = {
             "help": self._slash_help,
+            "shortcuts": self._slash_shortcuts,
             "plan": self._slash_plan,
             "build": self._slash_build,
             "approve": self._slash_approve,
@@ -1185,6 +1198,11 @@ class ChatSession:
 
     def _slash_help(self, _arg: str) -> None:
         self.console.print(help_text(self._index()), style="kite.muted")
+
+    def _slash_shortcuts(self, _arg: str) -> None:
+        from kite.ui.shortcuts import shortcuts_help_text
+
+        self.console.print(shortcuts_help_text(), style="kite.muted")
 
     def _slash_plan(self, _arg: str) -> None:
         self._apply_plan_mode()

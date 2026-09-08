@@ -166,10 +166,11 @@ These never go to the model.
 | `/remember [user\|project] text` | Append a note |
 | `/forget id\|substring` | Drop matching notes |
 | `/attach path` | Queue a file or image for the next turn (any path on disk) |
-| `/clip` `/paste` `/clipboard` | Attach clipboard text or image |
+| `/clip` `/paste` `/clipboard` | Attach clipboard text or image (**F8** or **Esc v**) |
 | `/detach [name\|all]` | Drop queued attachments |
 | `/attachments` | List queued files |
-| `/help` `/h` | This map |
+| `/help` `/h` | Command map + keyboard shortcuts |
+| `/shortcuts` `/kbd` | Keyboard shortcuts only |
 | `/quit` `/q` `/exit` | Leave the REPL |
 
 Ctrl+C stops the **current turn**, not the process.
@@ -179,11 +180,15 @@ Ctrl+C stops the **current turn**, not the process.
 | Shortcut | Action |
 |----------|--------|
 | `Esc` / `Ctrl+C` | Stop the running turn (session stays). Idle `Ctrl+C` clears the line; does not quit |
+| `Ctrl+D` / `/quit` | Leave the REPL |
+| `Ctrl+V` / `Shift+Insert` | Paste OS clipboard into the composer |
+| `F8` / `Esc` then `v` | Attach clipboard to the next turn (same as `/clip`) |
+| `Ctrl+Insert` | Copy composer selection to OS clipboard |
+| `Ctrl+L` | Clear screen |
 | `Ctrl+G` | Steer: stop and send the composer text as the next turn |
 | `Ctrl+U` | Dequeue: restore all queued messages into the composer for editing |
 | `Enter` | Send the line. While working, queues a chat follow-up |
-| `Ctrl+V` / `Shift+Insert` | Paste OS clipboard into the composer |
-| `Ctrl+Insert` | Copy composer selection to OS clipboard |
+| `@path` | Inline file attach in the composer (e.g. `fix @src/foo.py`) |
 | `Ctrl+O` / `F6` | Toggle expanded tool output (`/expand`) |
 | `Ctrl+P` / `F3` | Plan mode |
 | `Ctrl+B` / `F4` | Build mode |
@@ -191,7 +196,6 @@ Ctrl+C stops the **current turn**, not the process.
 | `F2` | Flash status on the footer (`Ctrl+S` is not bound; terminals use it for XOFF) |
 | `F5` | Refresh live models from the API, then pick |
 | `Tab` | Cycle slash completions (`Enter` always submits) |
-| `Ctrl+D` / `/quit` | Close the REPL |
 
 Drag-select, copy, and right-click paste stay with the terminal (mouse capture off by default). Set `KITE_MOUSE=1` for slash-menu wheel scroll (then use Shift+drag to select in most terminals).
 
