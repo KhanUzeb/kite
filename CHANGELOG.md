@@ -4,6 +4,14 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+### Changed
+- **BYOS authentication** — production-grade, provider-delegated auth for ChatGPT/Codex (`openai-codex` SDK), Claude Code (`claude auth` CLI), and Grok (`grok` CLI). Removed LiteLLM private OAuth internals (`Authenticator`, `XAIOAuthAuthenticator`), undocumented `/backend-api` model fetches, and Claude credential-file scraping.
+- **`kite logout`** — unlink BYOS subscriptions (`kite logout codex|claude|grok|xai`).
+- Claude subscription and Anthropic API key (BYOK) are kept separate; subscription tokens are never copied into `~/.kite/.env`.
+
+### Security
+- Auth errors sanitize token-shaped strings; OAuth secrets are not logged or written to project `.env` files.
+
 ## [0.9.5] - 2026-09-07
 
 ### Added

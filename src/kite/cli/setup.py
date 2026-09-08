@@ -16,6 +16,7 @@ from kite.providers.credentials import (
     configured_providers,
     env_file_path,
     login_provider,
+    logout_provider,
     provider_credential_status,
     write_api_key,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "cmd_setup",
     "cmd_keys",
     "cmd_login",
+    "cmd_logout",
     "run_setup_wizard",
     "maybe_run_first_setup",
 ]
@@ -59,7 +61,7 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
             "[bold]Welcome to Kite[/]\n\n"
             "Choose how you connect to a model:\n"
             "  · [cyan]BYOK[/] — API key (groq, openai, anthropic, …) → [cyan]~/.kite/.env[/]\n"
-            "  · [cyan]BYOS[/] — subscription OAuth (chatgpt, claude, grok) → [cyan]~/.kite/oauth/[/]\n\n"
+            "  · [cyan]BYOS[/] — subscription auth via Codex / Claude Code / Grok CLI\n\n"
             "This wizard will:\n"
             "  1. Link credentials for your provider\n"
             "  2. Pick a provider and model (BYOK: live list; BYOS: plan default)\n"
@@ -143,7 +145,7 @@ def cmd_keys(args) -> int:
     from kite.providers.credentials import (
         api_key_fingerprint,
         credential_type_label,
-        logout_provider,
+    logout_provider,
     )
     from kite.ui.style import make_console
 
@@ -207,11 +209,12 @@ def cmd_keys(args) -> int:
     console.print(table)
     console.print(
         f"[dim]BYOK keys:[/] {env_path}  "
-        f"[dim]BYOS OAuth:[/] ~/.kite/oauth/"
+        f"[dim]BYOS:[/] provider CLIs (~/.codex, Claude Code, ~/.grok)"
     )
     console.print(
         "[dim]Add:[/] [cyan]kite keys --set groq[/] (BYOK)  ·  "
-        "[cyan]kite login chatgpt|claude|grok[/] (BYOS)"
+        "[cyan]kite login codex|claude|grok[/] (BYOS)  ·  "
+        "[cyan]kite logout <provider>[/]"
     )
 
     status = assess_setup_status()
@@ -264,6 +267,24 @@ def cmd_keys(args) -> int:
             if needs_model_after_key(picked):
                 console.print(f"[dim]Next:[/] [cyan]kite models -p {picked}[/]")
     return 0
+
+
+def cmd_logout(args) -> int:
+    """Unlink a BYOS subscription via provider-supported logout."""
+    from kite.ui.style import make_console
+
+    console = make_console(stderr=True)
+    provider = (getattr(args, "provider", None) or "").strip()
+    if not provider:
+        from kite.providers.select import select_provider_interactive
+
+        provider = select_provider_interactive(console, oauth_first=True) or ""
+        if not provider:
+            return 130
+    code, msg = logout_provider(provider, byos_aliases=True)
+    style = "green" if code == 0 else "red"
+    console.print(f"[{style}]{msg}[/]")
+    return code
 
 
 def cmd_login(args) -> int:

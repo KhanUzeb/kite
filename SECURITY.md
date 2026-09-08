@@ -28,3 +28,14 @@ Kite runs tools against your local workspace. Its guardrails protect against **m
 **Execution mode:** default `host` keeps file and bash access outside the session cwd (protected paths like `.ssh`, system dirs, `.env` still blocked). `restricted` mode clamps paths to the session sandbox. Production tool calls also pass through **`PolicyEngine`** (path/network authorization). Toggle in the REPL with `/restricted on|off`, or set `[guardrails] execution_mode = "restricted"` in runtime config. Only use host mode when you understand the blast radius.
 
 API keys live in `~/.kite/.env` (or the repo `.env`, which is gitignored). Never commit keys. If a key is leaked, rotate it immediately.
+
+**BYOS (subscription) authentication** uses each provider's official runtime locally — Kite does not operate a shared provider account, credential proxy, or remote authentication server. There is no telemetry of OAuth tokens, account identifiers, or authentication events.
+
+| Provider | Mechanism | Credential store |
+|----------|-----------|------------------|
+| ChatGPT / Codex | `openai-codex` SDK (`Codex.login_chatgpt`, device code, `account`, `logout`) | `~/.codex/` (Codex runtime) |
+| Claude subscription | Claude Code CLI (`claude auth login/status/logout`) | Claude Code (Keychain or platform store) |
+| Grok subscription | `grok` CLI (`grok login`, `--device-auth`, `logout`) | `~/.grok/auth.json` |
+| xAI API (BYOK) | `XAI_API_KEY` in `~/.kite/.env` | `~/.kite/.env` |
+
+Kite never copies subscription OAuth tokens into `~/.kite/.env` or logs access/refresh tokens.

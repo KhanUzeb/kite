@@ -1048,7 +1048,7 @@ def build_parser() -> argparse.ArgumentParser:
     providers.set_defaults(func=cmd_providers)
 
     from kite.cli.dashboard import cmd_dashboard
-    from kite.cli.setup import cmd_keys, cmd_login, cmd_setup
+    from kite.cli.setup import cmd_keys, cmd_login, cmd_logout, cmd_setup
     from kite.cli.stats import cmd_maintainer_dashboard
 
     setup = sub.add_parser("setup", help="First-run wizard — credentials, provider, model")
@@ -1067,6 +1067,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not set this provider as default in ~/.kite/config.toml",
     )
     login.set_defaults(func=cmd_login, set_default=True)
+
+    logout = sub.add_parser(
+        "logout",
+        help="Unlink a BYOS subscription (chatgpt/codex, claude, grok/xai)",
+    )
+    logout.add_argument("provider", nargs="?", help="Provider name (codex, claude, grok, xai, …)")
+    logout.set_defaults(func=cmd_logout)
 
     keys = sub.add_parser("keys", help="Show credential status or set a BYOK API key")
     keys.add_argument(

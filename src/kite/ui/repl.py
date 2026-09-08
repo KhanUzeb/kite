@@ -1024,7 +1024,7 @@ class ChatSession:
         )
         self.console.print(
             f"[kite.muted]BYOK[/]  {env_file_path()}  "
-            f"[kite.muted]BYOS[/]  ~/.kite/oauth/  "
+            f"[kite.muted]BYOS[/]  Codex / Claude Code / Grok CLI  "
             f"[kite.muted]·[/]  /login provider  ·  /logout provider"
         )
 
