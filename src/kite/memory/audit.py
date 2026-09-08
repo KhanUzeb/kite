@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
+import stat
 import time
 from pathlib import Path
 from typing import Any
-
-import stat
 
 from kite.config import kite_home
 from kite.guardrails.redact import sanitize_payload
