@@ -25,6 +25,48 @@ Kite runs tools against your local workspace. Its guardrails protect against **m
 
 **Known limits:** Secret redaction is pattern-based (not exhaustive). `/attach` and `/clip` can read user-selected paths outside the workspace. Global skill trees under `~/.kite/skills` are readable in restricted mode (symlink/junction targets included). Approval decisions and tool events may be retained in `~/.kite/approvals.json` and `~/.kite/audit.jsonl` until you delete them.
 
+## Session persistence
+
+Session transcripts are stored under `~/.kite/sessions/` as JSONL. Configure persistence in `~/.kite/config.toml`:
+
+```toml
+session_persistence = "redacted"  # full | redacted | disabled (default: redacted)
+```
+
+| Mode | Behavior |
+|------|----------|
+| `redacted` (default) | Messages, tool args/results, events, and metadata are recursively sanitized before write. Session files are owner-only (`chmod 600`). |
+| `full` | Persist raw payloads (opt-in; may retain secrets and proprietary content). |
+| `disabled` | No session file writes; in-memory session only for the current run. |
+
+Redaction uses the same recursive sanitizer as audit logs and event persistence. Sensitive key names (token, password, authorization, etc.) and inline patterns (Bearer tokens, cookies, PKCE verifiers) are replaced with `[REDACTED]`.
+
+## Skill trust model
+
+Skills are model instructions — treat them as a supply-chain / prompt-injection boundary.
+
+| Origin | Trust | Notes |
+|--------|-------|-------|
+| `bundled` | **trusted** | Shipped with Kite under `data/skills`. |
+| `user-local` | untrusted | Manually placed under `~/.kite/skills` or `~/.agents/skills`. |
+| `project` | untrusted | From `<repo>/.kite/skills` or `.agents/skills`. |
+| `npm` / `git` / `link` | untrusted | Installed via `skill install=…`; provenance recorded in `.kite-provenance.json`. |
+| `plugin` | untrusted | From `.kite/plugins` discovery. |
+
+The model sees `trust`, `origin`, and `source` attributes in skill listings and invocations. Remote skills never silently inherit bundled trust. Skills cannot bypass Kite guardrails or security policies.
+
+## Child process environment
+
+Before spawning subprocesses, Kite filters credential-like keys from the parent environment. Keys passed via `extra` env overrides that match sensitive patterns (e.g. `OPENAI_API_KEY`, `GITHUB_TOKEN`) are **refused** — they cannot reintroduce secrets after filtering.
+
+## Subprocess teardown
+
+Foreground bash, `ProcessRunner`, and background jobs run children in isolated process groups. Timeout and cancellation terminate the full process tree (Unix: `killpg`; Windows: `taskkill /T`).
+
+## SSRF protections
+
+HTTP tools resolve hostnames, validate every resolved address against private/loopback/link-local/metadata ranges, re-validate immediately before connect (DNS TOCTOU mitigation), and re-check redirect targets. Alternate IPv4 encodings (decimal, hex, octal) are blocked.
+
 **Execution mode:** default `host` keeps file and bash access outside the session cwd (protected paths like `.ssh`, system dirs, `.env` still blocked). `restricted` mode clamps paths to the session sandbox. Production tool calls also pass through **`PolicyEngine`** (path/network authorization). Toggle in the REPL with `/restricted on|off`, or set `[guardrails] execution_mode = "restricted"` in runtime config. Only use host mode when you understand the blast radius.
 
 API keys live in `~/.kite/.env` (or the repo `.env`, which is gitignored). Never commit keys. If a key is leaked, rotate it immediately.

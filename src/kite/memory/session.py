@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from kite.config import ensure_home, kite_home
+from kite.memory.session_policy import (
+    persistence_enabled,
+    prepare_persisted_row,
+    prepare_persisted_value,
+    secure_session_file,
+)
 
 
 def format_meta_line(meta: SessionMeta) -> str:
@@ -154,17 +160,20 @@ class Session:
     def append(self, *messages: dict) -> None:
         self.messages.extend(messages)
         self.meta.updated_at = time.time()
-        self._persist_tail(messages)
+        if persistence_enabled():
+            self._persist_tail(messages)
 
     def replace_messages(self, messages: list[dict]) -> None:
         self.messages = list(messages)
         self.meta.updated_at = time.time()
-        self._persist_compact_snapshot(messages)
+        if persistence_enabled():
+            self._persist_compact_snapshot(messages)
 
     def set_exit(self, status: str) -> None:
         self.meta.exit_status = status
         self.meta.updated_at = time.time()
-        self._write_meta()
+        if persistence_enabled():
+            self._write_meta()
 
     def _session_path(self) -> Path:
         if self.path is None:
@@ -177,7 +186,9 @@ class Session:
         with path.open("w", encoding="utf-8") as f:
             f.write(format_meta_line(self.meta) + "\n")
             for m in self.messages:
-                f.write(json.dumps({"type": "message", "message": m}, ensure_ascii=False) + "\n")
+                row = {"type": "message", "message": prepare_persisted_value(m)}
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        secure_session_file(path)
         self._write_meta_sidecar(path)
 
     def _persist_tail(self, messages: tuple[dict, ...] | list[dict]) -> None:
@@ -188,9 +199,9 @@ class Session:
             return
         with path.open("a", encoding="utf-8") as f:
             for m in messages:
-                f.write(
-                    json.dumps({"type": "message", "message": m}, ensure_ascii=False) + "\n"
-                )
+                row = {"type": "message", "message": prepare_persisted_value(m)}
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        secure_session_file(path)
         self._touch_meta_timestamp(path)
 
     def _persist_compact_snapshot(self, messages: list[dict]) -> None:
@@ -199,38 +210,47 @@ class Session:
 
     def record_context_checkpoint(self, checkpoint_id: str, *, label: str = "", reason: str = "manual") -> None:
         """Append checkpoint metadata to the session audit trail."""
-        path = self._session_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.is_file() or path.stat().st_size == 0:
-            self._write_meta()
-        row = {
-            "type": "context_checkpoint",
-            "checkpoint_id": checkpoint_id,
-            "label": label,
-            "reason": reason,
-            "updated_at": time.time(),
-        }
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        self.meta.updated_at = time.time()
-        self._touch_meta_timestamp(path)
-
-    def record_event(self, kind: str, payload: dict[str, Any] | None = None) -> None:
-        """Append a durable rollout event — survives crashes between model turns."""
-        if kind not in DURABLE_EVENT_KINDS:
+        if not persistence_enabled():
+            self.meta.updated_at = time.time()
             return
         path = self._session_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.is_file() or path.stat().st_size == 0:
             self._write_meta()
-        row = {
-            "type": "event",
-            "kind": kind,
-            "ts": time.time(),
-            "payload": payload or {},
-        }
+        row = prepare_persisted_row(
+            {
+                "type": "context_checkpoint",
+                "checkpoint_id": checkpoint_id,
+                "label": label,
+                "reason": reason,
+                "updated_at": time.time(),
+            }
+        )
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        secure_session_file(path)
+        self.meta.updated_at = time.time()
+        self._touch_meta_timestamp(path)
+
+    def record_event(self, kind: str, payload: dict[str, Any] | None = None) -> None:
+        """Append a durable rollout event — survives crashes between model turns."""
+        if kind not in DURABLE_EVENT_KINDS or not persistence_enabled():
+            return
+        path = self._session_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.is_file() or path.stat().st_size == 0:
+            self._write_meta()
+        row = prepare_persisted_row(
+            {
+                "type": "event",
+                "kind": kind,
+                "ts": time.time(),
+                "payload": payload or {},
+            }
+        )
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        secure_session_file(path)
         self.meta.updated_at = time.time()
         self._touch_meta_timestamp(path)
 
@@ -266,7 +286,8 @@ class Session:
             pass
 
     def save(self) -> Path:
-        self._write_meta()
+        if persistence_enabled():
+            self._write_meta()
         return self._session_path()
 
 

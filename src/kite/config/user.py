@@ -53,6 +53,7 @@ class UserConfig:
     reasoning: str = "auto"
     theme: str = ""
     font: str = ""
+    session_persistence: str = "redacted"  # full | redacted | disabled
 
     @property
     def path(self) -> Path:
@@ -92,6 +93,7 @@ class UserConfig:
                 reasoning=str(data.get("reasoning") or "auto"),
                 theme=str(data.get("theme") or ""),
                 font=str(data.get("font") or ""),
+                session_persistence=str(data.get("session_persistence") or "redacted"),
             )
         _USER_CONFIG_CACHE = (mtime, cfg)
         return cfg
@@ -123,6 +125,7 @@ class UserConfig:
             "reasoning": self.reasoning,
             "theme": self.theme,
             "font": self.font,
+            "session_persistence": self.session_persistence,
         }
         for key, val in payload.items():
             if val is None:
