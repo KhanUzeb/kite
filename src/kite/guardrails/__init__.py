@@ -201,54 +201,16 @@ class GuardrailPolicy:
     def clamp_output(self, tool: str, result: dict[str, Any]) -> dict[str, Any]:
         if not self.config.enabled:
             return result
-        out = dict(result)
+        from kite.guardrails.redact import sanitize_value
+
+        out = sanitize_value(dict(result))
+        if not isinstance(out, dict):
+            return {"output": out}
         text = out.get("output")
         if isinstance(text, str):
-            text, redacted = self.redact_secrets(text)
-            if redacted:
-                out["secrets_redacted"] = redacted
             limit = self.config.max_bash_output_chars if tool == "bash" else self.config.max_read_chars
             if len(text) > limit:
                 text = text[: limit // 2] + "\n...<guardrail truncated>...\n" + text[-(limit // 2) :]
                 out["truncated"] = True
             out["output"] = text
-        for key in ("error", "diff", "path", "directory", "summary"):
-            val = out.get(key)
-            if isinstance(val, str):
-                redacted_text, n = self.redact_secrets(val)
-                out[key] = redacted_text
-                if n:
-                    out["secrets_redacted"] = int(out.get("secrets_redacted") or 0) + n
-        items = out.get("items")
-        if isinstance(items, list):
-            safe_items: list[Any] = []
-            total_redacted = int(out.get("secrets_redacted") or 0)
-            for item in items:
-                if isinstance(item, str):
-                    safe, n = self.redact_secrets(item)
-                    total_redacted += n
-                    safe_items.append(safe)
-                elif isinstance(item, dict):
-                    safe_item = dict(item)
-                    for ik, iv in list(safe_item.items()):
-                        if isinstance(iv, str):
-                            safe_item[ik], n = self.redact_secrets(iv)
-                            total_redacted += n
-                    safe_items.append(safe_item)
-                else:
-                    safe_items.append(item)
-            out["items"] = safe_items
-            if total_redacted:
-                out["secrets_redacted"] = total_redacted
-        metadata = out.get("metadata")
-        if isinstance(metadata, dict):
-            safe_meta = dict(metadata)
-            total_redacted = int(out.get("secrets_redacted") or 0)
-            for mk, mv in list(safe_meta.items()):
-                if isinstance(mv, str):
-                    safe_meta[mk], n = self.redact_secrets(mv)
-                    total_redacted += n
-            out["metadata"] = safe_meta
-            if total_redacted:
-                out["secrets_redacted"] = total_redacted
         return out

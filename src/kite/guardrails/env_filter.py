@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+
+_log = logging.getLogger(__name__)
 
 _DROP_ENV_EXACT = frozenset(
     {
@@ -50,9 +53,31 @@ def is_sensitive_env_key(name: str) -> bool:
     return bool(_SENSITIVE_SUFFIX.search(upper))
 
 
-def filtered_child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    """Return a copy of os.environ with credential-like keys removed."""
+class SensitiveEnvInjectionError(ValueError):
+    """Raised when ``extra`` attempts to inject credential-like environment keys."""
+
+    def __init__(self, keys: tuple[str, ...]) -> None:
+        self.keys = keys
+        super().__init__(f"refused sensitive environment keys: {', '.join(keys)}")
+
+
+def filtered_child_env(extra: dict[str, str] | None = None, *, strict: bool = False) -> dict[str, str]:
+    """Return a copy of os.environ with credential-like keys removed.
+
+    Keys in ``extra`` that look sensitive are refused (never re-injected after filtering).
+    """
     env = {k: v for k, v in os.environ.items() if not is_sensitive_env_key(k)}
-    if extra:
-        env.update(extra)
+    if not extra:
+        return env
+    rejected: list[str] = []
+    for key, value in extra.items():
+        if is_sensitive_env_key(key):
+            rejected.append(key)
+        else:
+            env[key] = value
+    if rejected:
+        names = ", ".join(sorted(rejected))
+        _log.warning("refused to inject sensitive environment keys: %s", names)
+        if strict:
+            raise SensitiveEnvInjectionError(tuple(sorted(rejected)))
     return env

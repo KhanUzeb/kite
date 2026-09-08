@@ -16,6 +16,7 @@ from typing import Any, Literal
 from kite.agent.cancel import CancelToken
 from kite.agent.events import Event
 from kite.guardrails.env_filter import filtered_child_env
+from kite.guardrails.process import popen_process_group_kwargs, terminate_process_tree
 
 JobKind = Literal["bash", "subagent"]
 JobStatus = Literal["running", "done", "killed", "failed"]
@@ -151,12 +152,7 @@ class JobRegistry:
         else:
             popen_kw["shell"] = True
             launch = cmd_text
-        if sys.platform == "win32":
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            if creationflags:
-                popen_kw["creationflags"] = creationflags
-        else:
-            popen_kw["preexec_fn"] = os.setsid
+        popen_kw.update(popen_process_group_kwargs())
 
         proc = subprocess.Popen(launch, **popen_kw)
         job_id = self._new_id()
@@ -213,10 +209,7 @@ class JobRegistry:
             except subprocess.TimeoutExpired:
                 continue
         if rc is None:
-            try:
-                proc.kill()
-            except OSError:
-                pass
+            terminate_process_tree(proc)
             rc = -1
             job.append_log("\n...[job killed: timeout]...\n")
         with self._lock:
@@ -333,41 +326,4 @@ class JobRegistry:
         proc = job.proc
         if proc is None:
             return
-        pid = proc.pid
-        if sys.platform == "win32" and pid:
-            try:
-                completed = subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/T", "/F"],
-                    capture_output=True,
-                    timeout=10,
-                    check=False,
-                )
-                if completed.returncode not in {0, 128, 255}:
-                    job.append_log(f"\n...[taskkill exit {completed.returncode}]...\n")
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-            try:
-                proc.kill()
-            except OSError:
-                pass
-            return
-        # POSIX: terminate the process group started with setsid
-        try:
-            if pid:
-                os.killpg(os.getpgid(pid), 15)  # SIGTERM
-        except (OSError, ProcessLookupError):
-            try:
-                proc.terminate()
-            except OSError:
-                pass
-        try:
-            proc.wait(timeout=1.5)
-        except (subprocess.TimeoutExpired, OSError):
-            try:
-                if pid:
-                    os.killpg(os.getpgid(pid), 9)  # SIGKILL
-            except (OSError, ProcessLookupError):
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+        terminate_process_tree(proc)

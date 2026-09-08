@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from kite.config import ensure_home, kite_home
+from kite.guardrails.env_filter import filtered_child_env
 
 _SKIP_PREFIX = {
     "npx",
@@ -154,6 +155,17 @@ def _which(name: str) -> str | None:
     return None
 
 
+def _write_provenance(skill_dir: Path, origin: str, ref: str) -> None:
+    from kite.providers.auth.base import atomic_write_json
+
+    atomic_write_json(skill_dir / ".kite-provenance.json", {"origin": origin, "ref": ref})
+
+
+def _tag_installed(dest: Path, names: list[str], origin: str, ref: str) -> None:
+    for name in names:
+        _write_provenance(dest / name, origin, ref)
+
+
 def _run(cmd: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
@@ -163,6 +175,7 @@ def _run(cmd: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProc
         encoding="utf-8",
         errors="replace",
         timeout=120,
+        env=filtered_child_env(),
     )
 
 
@@ -275,10 +288,13 @@ def install_skill(
     kind, ref = parse_install_spec(spec)
     if kind == "npm":
         names = _from_npm(ref, dest)
+        _tag_installed(dest, names, "npm", ref)
     elif kind == "git":
         names = _from_git(ref, dest)
+        _tag_installed(dest, names, "git", ref)
     else:
         names = _from_path(Path(ref), dest)
+        _tag_installed(dest, names, "link", ref)
     cwd = Path(link_cwd) if link_cwd else None
     link_into_project(names, dest=dest, cwd=cwd)
     try:

@@ -368,6 +368,9 @@ def make_coding_tools(
                 "errors": "replace",
                 "env": _child_env(workdir),
             }
+            from kite.guardrails.process import popen_process_group_kwargs, terminate_process_tree
+
+            popen_kw.update(popen_process_group_kwargs())
             if argv is not None:
                 proc = subprocess.Popen(argv, shell=False, **popen_kw)
             else:
@@ -415,7 +418,7 @@ def make_coding_tools(
             try:
                 while rc is None:
                     if cancel is not None and cancel.is_set():
-                        proc.kill()
+                        terminate_process_tree(proc)
                         reader.join(timeout=1.0)
                         partial = "".join(output_parts)
                         return {
@@ -429,7 +432,7 @@ def make_coding_tools(
                         rc = proc.wait(timeout=0.15)
                     except subprocess.TimeoutExpired:
                         if time.monotonic() >= deadline:
-                            proc.kill()
+                            terminate_process_tree(proc)
                             reader.join(timeout=1.0)
                             partial = "".join(output_parts)
                             return {
@@ -440,7 +443,7 @@ def make_coding_tools(
                             }
             except OSError as e:
                 try:
-                    proc.kill()
+                    terminate_process_tree(proc)
                 except OSError:
                     pass
                 reader.join(timeout=1.0)
