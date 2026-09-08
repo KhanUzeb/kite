@@ -226,6 +226,7 @@ def expand_prompt_slash(
 
 def help_text(index: CommandIndex) -> str:
     from kite.ui.commands import BUILTINS, LEGACY_ALIASES, LEGACY_HELP
+    from kite.ui.shortcuts import shortcuts_help_text
 
     labels = {
         "session": "session",
@@ -286,20 +287,7 @@ def help_text(index: CommandIndex) -> str:
     lines.extend(
         [
             "",
-            "while working (turn in flight)",
-            "  Enter       queue a follow-up",
-            "  Esc         stop the turn",
-            "  Ctrl+G      steer (stop + send composer text)",
-            "  /live       stream bash output in real time",
-            "  /tasks      list running work + queue",
-            "  /status     footer snapshot",
-            "  /help       this list",
-            "  /jobs       background jobs",
-            "",
-            "approval prompt (when shown)",
-            "  a  allow once   s  allow this session   p  allow always",
-            "  n  deny         q  stop run",
-            "  Enter (empty)  deny",
+            shortcuts_help_text(),
         ]
     )
     return "\n".join(lines)

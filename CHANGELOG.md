@@ -18,6 +18,8 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - **Skill trust model** — bundled trusted; npm/git/project/user untrusted with provenance metadata.
 - **SSRF hardening** — resolve → validate all IPs → connect; redirect and DNS TOCTOU re-checks.
 - REPL `/privacy` and CLI `kite privacy` / `kite config --session-persistence` for user-facing controls.
+- System prompt documents harness limits, attachment handling, and user interrupt behavior for agents.
+- REPL `/shortcuts`, **F8** / **Esc v** clipboard attach, **Ctrl+L** clear screen; improved clipboard image support (pngpaste/wl-paste/xclip).
 
 ## [0.9.5] - 2026-09-07
 
