@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import stat
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -316,6 +317,7 @@ def test_oauth_not_copied_to_api_key_store(kite_home: Path, monkeypatch) -> None
         assert "ANTHROPIC_API_KEY" not in text
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix owner-only .env permissions")
 def test_kite_env_permissions(kite_home: Path) -> None:
     path = write_api_key("GROQ_API_KEY", "grq-test-key-abcdefghij")
     mode = stat.S_IMODE(path.stat().st_mode)

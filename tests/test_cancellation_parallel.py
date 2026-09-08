@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import threading
 import time
 from pathlib import Path
@@ -17,8 +16,7 @@ from kite.tools.coding import make_coding_tools
 
 
 def _sleep_cmd(seconds: float) -> str:
-    if sys.platform == "win32":
-        return f'{sys.executable} -c "import time; time.sleep({seconds})"'
+    # Bash tool runs inside a POSIX shell (Git Bash on Windows).
     return f"sleep {seconds}"
 
 
