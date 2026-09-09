@@ -46,8 +46,8 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("jobs", "List background bash jobs and live subagents", group="session"),
     BuiltinCommand(
         "agents",
-        "Subagent crew status, kill picker, or list base profiles",
-        hint="[profiles]",
+        "Subagent crew board or manage personas (not global /profile)",
+        hint="profiles|show <id>|init <id>|reload",
         group="session",
     ),
     BuiltinCommand("kill", "Kill a background job or subagent", hint="[id|all]", group="session"),
@@ -84,7 +84,12 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
     BuiltinCommand("memory", "Semantic MEMORY.md + episodic log", hint="semantic|episodic", aliases=("mem",), group="memory"),
     BuiltinCommand("user", "Global identity (~/.kite/memory/USER.md)", hint="[add text]", group="memory"),
-    BuiltinCommand("profile", "Global profile (~/.kite/memory/PROFILE.md)", hint="[add text]", group="memory"),
+    BuiltinCommand(
+        "profile",
+        "Global stack/goals (~/.kite/memory/PROFILE.md) — not subagent personas",
+        hint="[add text]",
+        group="memory",
+    ),
     BuiltinCommand("working", "Fluid working rhythm (~/.kite/memory/WORKING.md)", hint="[add text]", group="memory"),
     BuiltinCommand("remember", "Append a semantic note", hint="[user|project] text", group="memory"),
     BuiltinCommand("forget", "Drop matching notes or episodes", hint="id|substring", group="memory"),
@@ -183,6 +188,12 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("sessions redacted", "sanitize secrets before session write (default)"),
         ("sessions full", "persist raw session JSONL (opt-in)"),
         ("sessions disabled", "no session file writes"),
+    ],
+    "agents": [
+        ("profiles", "list bundled + custom subagent personas"),
+        ("show", "print one persona by id"),
+        ("init", "scaffold ~/.kite/subagents/<id>.md"),
+        ("reload", "reload profiles from disk"),
     ],
 }
 

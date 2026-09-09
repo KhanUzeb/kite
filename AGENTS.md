@@ -33,6 +33,7 @@ src/kite/
   ui/             REPL, render, approval, complete, theme, status
   memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic, user_context, working_style, secure_io
   data/subagents/ Bundled subagent personas (scout, reviewer, shell, coder, context)
+  cli/subagents.py  kite subagents list/show/init; REPL /agents profiles|show|init
   eval/           Recorded replay (ReplayBundle) without live providers
   skills/         SKILL.md loader; npm/git install; local path symlink into ~/.kite/skills
   commands/       Markdown slash prompt loader
@@ -99,7 +100,8 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 | Replay / eval | `eval/replay.py` (`ReplayBundle` + acceptance) |
 | Checkpoints / handoff | `memory/context_checkpoint.py` + `memory/handoff.py` + `ui/repl.py` |
 | User identity memory | `memory/user_context.py` — global `USER.md` / `PROFILE.md` |
-| Subagent personas | `agent/subagent_profiles.py` + `data/subagents/*.md` |
+| Subagent personas | `agent/subagent_profiles.py` + `data/subagents/*.md` + `~/.kite/subagents/` |
+| `kite subagents` / `/agents init` | `cli/subagents.py` + `ui/repl.py` `_slash_agents` |
 | Orchestrator / crew | `agent/orchestrator.py` + `tools/jobs.py` + `/agents` `/live agents` |
 | Benchmarks | `bench/` + `cli/bench.py` |
 | Streaming UI | `ui/render.py` `RunDisplay` ← `agent/events.py` |

@@ -341,6 +341,17 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             choices.append(("init", "scaffold .kite/plugins/name"))
             for plugin in index.plugins:
                 choices.append((plugin.name, (plugin.description or plugin.source)[:60]))
+        elif cmd == "agents":
+            from kite.agent.subagent_profiles import list_profiles
+
+            bits = rest.split()
+            first = bits[0].lower() if bits else ""
+            if first in {"", "profiles", "personas", "list", "show", "init", "reload"} or not bits:
+                choices.extend(ARG_CHOICES.get("agents", []))
+            if first in {"show", "init"} or (first and first not in {"profiles", "personas", "list", "reload"}):
+                for prof in list_profiles():
+                    mark = f"{glyph('home')}  " if not prof.bundled else ""
+                    choices.append((prof.id, f"{mark}{prof.label}  role={prof.role}"[:60]))
         elif cmd == "commands":
             choices.append(("new", "write .kite/commands/name.md"))
         elif cmd == "memory":

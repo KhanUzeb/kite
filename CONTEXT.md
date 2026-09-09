@@ -98,7 +98,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Live subagents** — `/live agents` streams nested crew tool and shell output with worker prefix (`◆ Scout · …`). Redacted like live terminal.
 
-**Subagent profile** — Bundled persona (`scout`, `reviewer`, `shell`, `coder`, `context`) or custom `~/.kite/subagents/*.md`. Passed as `profile=` on the `subagent` tool; composes system prompt + task. Custom profiles are untrusted.
+**Subagent profile** — Bundled persona (`scout`, `reviewer`, `shell`, `coder`, `context`) or custom `~/.kite/subagents/<id>.md` (user overrides bundled ids). Create with `kite subagents --init <id>` or `/agents init <id>`. Passed as `profile=` on the `subagent` tool; composes system prompt + task. Custom profiles are untrusted. Not the same as global **Profile** (`PROFILE.md` / `/profile`).
 
 **Subagent crew** — Parallel or background nested harness runs via `subagent` tool. Max 12 workers per dispatch; nested workers cannot recurse (`subagent` stripped) or write global memory (`memory` stripped). Monitor with `/agents`; stop with `/kill`.
 

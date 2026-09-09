@@ -12,6 +12,7 @@ common:
   kite resume [id]        continue a session (omit id to pick)
   kite models [-p groq]   pick a live model (--list to dump)
   kite bench              harness timing (no LLM)
+  kite subagents          list/show/init subagent personas
   kite tasks run FILE     headless task batch (JSONL or plain text)
 
 run `kite help` for the full map  ·  in REPL type /help
@@ -38,6 +39,7 @@ Setup & model
 Project
   kite context                  preview workspace discovery
   kite skills [--show name] [--add pkg|path]
+  kite subagents [--show id] [--init id]   bundled + ~/.kite/subagents/
   kite commands | kite plugins
   kite memory [--remember text]
 
@@ -56,7 +58,7 @@ REPL essentials (type /help in chat)
   /status                       mode, model, cost, session persistence
   /privacy                      security policy; /privacy sessions …
   /stop /steer                  stop turn or redirect (session stays)
-  /jobs /agents /kill [id|all]  background bash + live subagent crew
+  /jobs /agents /kill [id|all]  crew board; /agents profiles|init|show
 
 Flags on run/chat/resume: -p provider  -m model  --cwd PATH  --mode plan|build
   --approval auto|approve|supervised|yolo|trust|readonly  --headless  --no-stream

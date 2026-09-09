@@ -1608,47 +1608,134 @@ class ChatSession:
             self.console.print(f"  {i}. [{label}] {preview}")
 
     def _slash_agents(self, arg: str) -> None:
-        token = (arg or "").strip().lower()
-        if token in {"profiles", "personas", "list"}:
-            from kite.agent.subagent_profiles import list_profiles
+        from kite.agent.subagent_profiles import (
+            format_profile_trust,
+            get_profile,
+            init_user_profile,
+            list_profiles,
+            reload_profiles,
+            user_profiles_dir,
+        )
+        from kite.ui.theme import glyph
 
+        text = (arg or "").strip()
+        parts = text.split(None, 1)
+        sub = parts[0].lower() if parts else ""
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if sub in {"profiles", "personas", "list"}:
+            reload_profiles()
             profiles = list_profiles()
             if not profiles:
-                self.console.print("[kite.muted]no bundled profiles[/]")
+                self.console.print("[kite.muted]no profiles[/]  · /agents init my-role")
                 return
-            self.console.print("[kite.muted]base profiles[/]  · subagent tool profile=<id>")
+            table = kite_table("subagent profiles")
+            table.add_column("id")
+            table.add_column("label")
+            table.add_column("role")
+            table.add_column("trust")
+            table.add_column("description")
             for p in profiles:
-                desc = p.description or p.prompt.split("\n", 1)[0][:80]
-                self.console.print(f"  [kite.plan]{p.id}[/]  {p.label}  role={p.role}  — {desc}")
-            self.console.print("[kite.muted]custom[/]  ~/.kite/subagents/*.md")
+                mark = f"{p.id} {glyph('home')}" if not p.bundled else p.id
+                desc = p.description or p.prompt.split("\n", 1)[0][:50]
+                table.add_row(mark, p.label, p.role, format_profile_trust(p), desc)
+            self.console.print(table)
+            self.console.print(
+                f"[kite.muted]custom[/]  {user_profiles_dir()}/*.md  "
+                "· /agents init <id>  · /agents show <id>"
+            )
             return
+
+        if sub == "init":
+            name = rest or ""
+            if not name:
+                self.console.print("[kite.error]/agents init <id>[/]  · e.g. /agents init auditor")
+                return
+            try:
+                path = init_user_profile(name)
+            except (ValueError, FileExistsError, OSError) as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            self.console.print(
+                f"[kite.success]wrote[/] {path}  · edit markdown, then subagent profile={path.stem}"
+            )
+            return
+
+        if sub == "show":
+            pid = rest or ""
+            if not pid:
+                self.console.print("[kite.error]/agents show <id>[/]")
+                return
+            self._agents_show_profile(pid)
+            return
+
+        if sub == "reload":
+            reload_profiles()
+            self.console.print("[kite.success]reloaded[/] subagent profiles")
+            return
+
+        if sub and sub not in {"crew", "board"}:
+            prof = get_profile(sub)
+            if prof is not None:
+                self._agents_show_profile(sub)
+                return
+
         rows = [job for job in self.jobs.list(active_only=False) if job.kind == "subagent"]
         active = [job for job in rows if job.status == "running"]
         if not rows and not self.state.active_subagents:
             self.console.print(
-                "[kite.muted]no crew yet[/]  · subagent tool · /orchestrate skill"
+                "[kite.muted]no crew yet[/]  · subagent tool · /agents profiles · /agents init <id>"
             )
             return
         table = kite_table("crew")
         table.add_column("id", style="kite.muted")
+        table.add_column("profile", style="kite.muted")
         table.add_column("worker", style="kite.plan")
         table.add_column("outcome")
         table.add_column("prompt")
         for job in rows[-12:]:
             preview = (job.command or job.label or "").replace("\n", " ").strip()
-            if len(preview) > 56:
-                preview = preview[:53] + "…"
+            if len(preview) > 48:
+                preview = preview[:45] + "…"
             payload = job.result_payload or {}
             outcome = str(payload.get("quality") or job.status or "running")
             elapsed = payload.get("elapsed_ms")
             if elapsed:
                 outcome = f"{outcome} · {elapsed}ms"
-            table.add_row(job.id[:8], job.display_label(width=24), outcome, preview)
+            profile = job.profile or str(payload.get("profile") or "—")
+            table.add_row(job.id[:8], profile, job.display_label(width=20), outcome, preview)
         self.console.print(table)
         if active:
             self.console.print(f"[kite.muted]{len(active)} running[/]  · /kill to stop one or all")
         else:
-            self.console.print("[kite.muted]crew idle[/]  · spawn with subagent prompts + labels")
+            self.console.print("[kite.muted]crew idle[/]  · /agents profiles to list personas")
+
+    def _agents_show_profile(self, profile_id: str) -> None:
+        from kite.agent.subagent_profiles import (
+            format_profile_trust,
+            get_profile,
+            profile_source_path,
+            reload_profiles,
+        )
+
+        reload_profiles()
+        prof = get_profile(profile_id)
+        if prof is None:
+            self.console.print(f"[kite.error]unknown profile {profile_id}[/]  · /agents profiles")
+            return
+        src = profile_source_path(prof)
+        trust = format_profile_trust(prof)
+        self.console.print(
+            f"[kite.plan]{prof.id}[/]  {prof.label}  role={prof.role}  trust={trust}"
+        )
+        if src:
+            self.console.print(f"[kite.muted]{src}[/]")
+        body = prof.prompt
+        if not prof.bundled:
+            body = prof.compose("").split("## Task", 1)[0].strip()
+            if body.startswith("# Subagent:"):
+                body = "\n".join(body.split("\n", 1)[1:]).strip()
+        self.console.print(body or "[kite.muted](empty prompt)[/]")
 
     def _slash_jobs(self, _arg: str) -> None:
         rows = self.jobs.list(active_only=True)
@@ -1727,7 +1814,7 @@ class ChatSession:
 
         home = kite_home()
         self.console.print(f"{home}")
-        for name in ("commands", "skills", "plugins", "memory", "sessions", "audit.jsonl"):
+        for name in ("commands", "skills", "subagents", "plugins", "memory", "sessions", "audit.jsonl"):
             self.console.print(f"  {home / name}")
         self.console.print(f"  sessions policy: {persistence_mode()}  ·  /privacy sessions")
         self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")

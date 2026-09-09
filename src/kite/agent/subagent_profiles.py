@@ -131,6 +131,81 @@ def _user_dir() -> Path:
     return root
 
 
+PROFILE_STUB = """---
+id: {id}
+label: {label}
+role: {role}
+description: {description}
+---
+
+You are a **{label}** subagent.
+
+Describe what this persona does and how it should behave.
+
+Deliver:
+- Clear, scoped output for the assigned task
+- File:line references when reviewing or exploring code
+
+Prefer read-only tools unless the task explicitly requires edits.
+"""
+
+
+def user_profiles_dir() -> Path:
+    return _user_dir()
+
+
+def user_profile_path(profile_id: str) -> Path:
+    pid = _sanitize_id(profile_id, profile_id)
+    return user_profiles_dir() / f"{pid}.md"
+
+
+def format_profile_trust(profile: SubagentProfile) -> str:
+    return "bundled" if profile.bundled else "user-local"
+
+
+def init_user_profile(
+    profile_id: str,
+    *,
+    label: str = "",
+    role: str = "auto",
+    description: str = "",
+    force: bool = False,
+) -> Path:
+    """Write ~/.kite/subagents/<id>.md stub; returns path."""
+    raw = (profile_id or "").strip().lower()
+    if not raw or not _ID_RE.match(raw):
+        raise ValueError(f"invalid profile id '{profile_id}' — use a-z, 0-9, _, - (max 32)")
+    pid = raw
+    path = user_profile_path(pid)
+    if path.is_file() and not force:
+        raise FileExistsError(str(path))
+    resolved_label = _sanitize_label(label, pid.replace("-", " ").title())
+    resolved_role = _sanitize_role(role)
+    desc = (description or f"Custom {resolved_label} subagent persona.")[:200]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        PROFILE_STUB.format(
+            id=pid,
+            label=resolved_label,
+            role=resolved_role,
+            description=desc,
+        ),
+        encoding="utf-8",
+    )
+    reload_profiles()
+    return path
+
+
+def profile_source_path(profile: SubagentProfile) -> Path | None:
+    """Best-effort path for display — bundled or user file."""
+    if profile.bundled:
+        candidate = _bundled_dir() / f"{profile.id}.md"
+        return candidate if candidate.is_file() else None
+    candidate = user_profile_path(profile.id)
+    safe = _safe_user_profile_path(candidate, user_profiles_dir())
+    return safe
+
+
 def reload_profiles() -> None:
     load_profiles.cache_clear()
 

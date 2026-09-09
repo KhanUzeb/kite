@@ -1299,8 +1299,10 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--json", action="store_true")
     dashboard.set_defaults(func=cmd_dashboard)
 
+    from kite.cli.subagents import add_subagents_parser
     from kite.cli.tasks import add_tasks_parser
 
+    add_subagents_parser(sub)
     add_tasks_parser(sub)
 
     cloud = sub.add_parser("cloud", help="Cloud/local task parity — list and apply saved outputs")

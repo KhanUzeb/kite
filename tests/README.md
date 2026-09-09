@@ -21,7 +21,7 @@ GitHub Actions runs `pytest` on **every push and pull request to `main`** (Pytho
 | `test_guardrails.py` | sandbox, path escape, secret redaction |
 | `test_security_hardening_more.py` | meta redaction, SSRF userinfo, attach guard, gh env filter |
 | `test_security_context_subagents.py` | USER/PROFILE permissions, crew bounds, profile symlink, nested memory strip |
-| `test_user_context.py` | global USER/PROFILE, subagent profile loader |
+| `test_user_context.py` | global USER/PROFILE, subagent profile loader + init |
 | `test_working_style.py` | WORKING.md rhythm, untrusted injection |
 | `test_approval.py` | trust mode, `trusted_paths` bash skip |
 | `test_loop_guard.py` | repetitive tool detection |
