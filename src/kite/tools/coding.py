@@ -985,6 +985,7 @@ def make_coding_tools(
                 name="webfetch",
                 description=(
                     "Fetch one http(s) URL and return extracted readable text (title, description, body). "
+                    "Uses Firecrawl when FIRECRAWL_API_KEY is set; otherwise stdlib extract. "
                     "Use after websearch to read a chosen result. Set extract=false for raw bytes as text. "
                     "Set include_links=true to list outbound links from the page."
                 ),
@@ -1017,8 +1018,9 @@ def make_coding_tools(
             Tool(
                 name="websearch",
                 description=(
-                    "Search the web (free, no API key). Returns titles, URLs, and snippets "
-                    "(DuckDuckGo HTML + instant API, deduped). Use before webfetch/webcrawl when you need to find sources."
+                    "Search the web. Uses Tavily / Exa / Firecrawl when API keys are set "
+                    "in ~/.kite/.env (auto order), otherwise DuckDuckGo. Returns titles, URLs, "
+                    "and snippets. Use before webfetch/webcrawl when you need to find sources."
                 ),
                 parameters={
                     "type": "object",

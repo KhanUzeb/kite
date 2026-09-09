@@ -80,6 +80,13 @@ enabled = false
 enabled = true
 # Optional: CONTEXT7_API_KEY in ~/.kite/.env for higher rate limits (built-in docs MCP)
 
+# Optional paid web tools (same ~/.kite/.env):
+#   TAVILY_API_KEY / EXA_API_KEY / FIRECRAWL_API_KEY
+#   kite web-keys set tavily|exa|firecrawl
+#   or: kite keys --set tavily|exa|firecrawl
+# Search auto-order: tavily → exa → firecrawl → duckduckgo
+# Firecrawl also powers webfetch scrape + webcrawl
+
 [cache]
 enabled = true  # pi-style prefix caching; Anthropic cache_control + usage tracking
 

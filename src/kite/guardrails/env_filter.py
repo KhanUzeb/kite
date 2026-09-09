@@ -30,6 +30,10 @@ _DROP_ENV_EXACT = frozenset(
         "OPENROUTER_API_KEY",
         "XAI_API_KEY",
         "CHATGPT_API_KEY",
+        "CONTEXT7_API_KEY",
+        "TAVILY_API_KEY",
+        "EXA_API_KEY",
+        "FIRECRAWL_API_KEY",
     }
 )
 
