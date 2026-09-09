@@ -11,6 +11,7 @@ common:
   kite sessions           pick a transcript (or --show / --delete)
   kite resume [id]        continue a session (omit id to pick)
   kite models [-p groq]   pick a live model (--list to dump)
+  kite web-keys set tavily  optional web tool keys (also exa, firecrawl)
   kite bench              harness timing (no LLM)
   kite subagents          list/show/init subagent personas
   kite tasks run FILE     headless task batch (JSONL or plain text)
@@ -30,7 +31,8 @@ Session
 
 Setup & model
   kite setup                    first-run wizard
-  kite keys [--set [provider]]  API keys - TTY pick to link
+  kite keys [--set [provider]]  API keys - also tavily|exa|firecrawl
+  kite web-keys [status|set|logout]  optional paid web tool keys
   kite providers                status, then pick to connect
   kite models [-p groq]         pick a model (--list to dump)
   kite config [--select-model] [--session-persistence full|redacted|disabled]
