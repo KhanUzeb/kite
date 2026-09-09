@@ -146,3 +146,23 @@ def test_legacy_tool_path_denies_mutation_without_approver() -> None:
     assert out.get("blocked") is True
     assert "approval required" in str(out.get("error") or out.get("output") or "")
     environment.execute.assert_not_called()
+
+
+def test_executor_tool_path_allows_inspection_without_approver(workspace: Path) -> None:
+    calls: list[str] = []
+    executor = build_tool_executor(
+        workspace_root=workspace,
+        execution_mode="host",
+        no_guardrails=False,
+        runner=lambda call: calls.append(call.name) or {"ok": True, "output": "clean"},
+    )
+    agent = DefaultAgent(MagicMock(), MagicMock(), tool_executor=executor, mode=AgentMode.PLAN)
+
+    out = agent._run_gated_via_executor(
+        "bash",
+        {"command": "git status"},
+        {"tool": "bash", "arguments": {"command": "git status"}},
+    )
+
+    assert out.get("ok") is True
+    assert calls == ["bash"]

@@ -49,6 +49,10 @@ def test_resolve_headless_approval_preserves_user_mode(raw: str, expected: Appro
     assert resolve_headless_approval(raw, AgentMode.BUILD, headless=True) is expected
 
 
+def test_resolve_headless_approval_uses_one_shot_auto_default() -> None:
+    assert resolve_headless_approval(None, AgentMode.BUILD, headless=True) is ApprovalMode.AUTO
+
+
 def test_is_headless_run_flag() -> None:
     assert is_headless_run(headless_flag=True, quiet=False)
     assert is_headless_run(headless_flag=False, quiet=True)
