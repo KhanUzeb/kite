@@ -122,7 +122,7 @@ These never go to the model.
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off**). Empty: pick on/off |
 | `/privacy` | Security policy summary; `/privacy sessions` picks full/redacted/disabled |
 | `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |
-| `/theme [auto\|kite\|dark\|light\|dim\|mono\|monochrome\|catppuccin\|ember\|forest\|hues]` | Color palette. Empty: pick |
+| `/theme [auto\|kite\|dark\|light\|dim\|mono\|monochrome\|catppuccin\|ember\|forest\|hues\|transparent]` | Color palette. Empty: pick |
 | `/font [unicode\|ascii]` | Glyph pack. Empty: pick |
 | `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort. Empty: pick |
 | `/model [provider/id]` | Show or set model |
