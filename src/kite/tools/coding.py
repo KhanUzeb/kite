@@ -491,6 +491,7 @@ def make_coding_tools(
                     errors="replace",
                     timeout=20,
                     cwd=_root(),
+                    env=_child_env(_root()),
                 )
             except (OSError, subprocess.TimeoutExpired) as e:
                 return {"ok": False, "error": str(e), "output": str(e)}

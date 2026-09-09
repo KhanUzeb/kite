@@ -412,7 +412,9 @@ Kite is **local-first**: credentials stay on disk under `~/.kite/` (or provider 
 | **Secret redaction** | Recursive sanitizer for audit logs, events, session JSONL, and tool output (nested dicts/lists, Bearer tokens, sensitive keys) |
 | **Child processes** | Credential-like env vars stripped; `extra` overrides cannot re-inject `OPENAI_API_KEY`, `GITHUB_TOKEN`, etc. Process trees killed on timeout/cancel |
 | **Skills** | Bundled = trusted; npm/git/project/user = untrusted (`.kite-provenance.json` on install) |
-| **HTTP tools** | SSRF: resolve host → validate IPs → connect-time peer check; redirects capped; crawl budgets |
+| **HTTP tools** | SSRF + peer IP check; redirects capped; crawl budgets |
+| **OS/hardware** | `/proc` `/sys` `/dev` protected; bash blocks sudo/docker/kubectl/mount; filtered child env on all subprocess tools |
+| **Restricted mode** | Paths clamped to workspace; **all** network tools blocked (bash curl, web*, Context7) |
 
 ---
 

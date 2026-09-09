@@ -83,11 +83,24 @@ Before spawning subprocesses, Kite filters credential-like keys from the parent 
 
 Foreground bash, `ProcessRunner`, and background jobs run children in isolated process groups. Timeout and cancellation terminate the full process tree (Unix: `killpg`; Windows: `taskkill /T`).
 
-## SSRF protections
+## OS and hardware isolation (harness-wide)
+
+Kite guardrails apply to **all tools**, not only web fetch/search:
+
+| Surface | Protection |
+|---------|------------|
+| **Filesystem** | `protected_roots()` blocks `/etc`, `/usr`, `/proc`, `/sys`, `/dev`, `/run`, Windows system dirs, `~/.ssh`, `~/.aws`, `~/.kube`, `.env*`, git internals |
+| **OS interfaces** | `/proc`, `/sys`, `/dev`, `\\.\` device paths blocked for read/write/bash; `/proc/*/environ` blocked |
+| **Bash** | Denylist for `sudo`, `docker run`, `kubectl apply`, `mount`, `iptables`, fork bombs, shutdown, registry edits, pipe-to-shell, etc. |
+| **Subprocess env** | Credential-like keys stripped from bash, `rg`, `gh`, background jobs, and `ProcessRunner` children |
+| **Network (restricted)** | `restricted` mode blocks **all** network side effects: bash curls, `webfetch`, `websearch`, `webcrawl`, Context7 |
+| **Web tools** | SSRF checks in `guardrails/ssrf.py` + `GuardrailPolicy.check_tool_call` + crawl/time/download budgets |
+
+**Execution mode:** default `host` keeps file and bash access outside the session cwd (protected paths above still blocked). `restricted` mode clamps paths to the session sandbox and blocks outbound network. Production tool calls also pass through **`PolicyEngine`** (path/network authorization). Toggle in the REPL with `/restricted on|off`, or set `[guardrails] execution_mode = "restricted"` in runtime config. Only use host mode when you understand the blast radius.
+
+## SSRF protections (HTTP tools)
 
 HTTP tools resolve hostnames, validate every resolved address against private/loopback/link-local/metadata ranges, reject URLs with embedded credentials (`user:pass@host`), re-validate immediately before connect (DNS TOCTOU mitigation), verify the connected peer IP is public, and re-check redirect targets (max 5 hops). Alternate IPv4 encodings (decimal, hex, octal) are blocked. Blocked hostnames include cloud metadata endpoints, Docker/Kubernetes internal hosts, and `.internal` / `.localhost` suffixes. Search redirect unwrap and crawl queues skip blocked destinations. Crawls enforce time and download budgets so agents cannot exhaust local network or CPU via unbounded fetches.
-
-**Execution mode:** default `host` keeps file and bash access outside the session cwd (protected paths like `.ssh`, system dirs, `.env` still blocked). `restricted` mode clamps paths to the session sandbox. Production tool calls also pass through **`PolicyEngine`** (path/network authorization). Toggle in the REPL with `/restricted on|off`, or set `[guardrails] execution_mode = "restricted"` in runtime config. Only use host mode when you understand the blast radius.
 
 API keys live in `~/.kite/.env` (or the repo `.env`, which is gitignored). Never commit keys. If a key is leaked, rotate it immediately.
 
