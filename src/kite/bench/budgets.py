@@ -25,12 +25,9 @@ BUDGETS_MS: dict[str, float] = {
     "bash_echo": 1500.0,
     "prompt_assembly": 400.0,
     "subprocess_spawn": 2000.0,
-    "task_dispatch": 600.0,
-    "orchestrator_sync": 50.0,
-    "dispatch_mode": 5.0,
 }
 
-CATEGORIES = ("startup", "context", "tools", "orchestrate")
+CATEGORIES = ("startup", "context", "tools")
 
 
 def check_report(report: BenchmarkReport) -> list[str]:

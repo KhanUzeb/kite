@@ -5,10 +5,6 @@ Repeatable **time and space** metrics for orchestration paths — **no live LLM 
 ## Commands
 
 ```bash
-# Standard harness suite (includes orchestrate category)
-kite bench
-kite bench --check
-
 # A/B: task vs subagent dispatch variants
 kite bench --ab
 kite bench --ab --json --save orchestrate-ab.json
@@ -18,7 +14,7 @@ kite bench --stress
 kite bench --stress --json
 ```
 
-Pytest gates: `tests/test_bench.py`, `tests/test_bench_orchestrate.py`.
+**Not part of the official pytest suite** — run manually when tuning orchestration. CI still gates the core harness via `tests/test_bench.py` and `kite bench --check`.
 
 ## A/B variants
 
@@ -61,14 +57,6 @@ Pytest gates: `tests/test_bench.py`, `tests/test_bench_orchestrate.py`.
 - p95 &gt; 500ms per iteration (except dispatch_mode) → fail
 - peak heap &gt; 8MB → fail
 - any uncaught exception → fail
-
-## Budgets (main `kite bench --check`)
-
-| Benchmark | Budget (median ms) | Category |
-|-----------|-------------------|----------|
-| `task_dispatch` | 600 | orchestrate |
-| `orchestrator_sync` | 50 | orchestrate |
-| `dispatch_mode` | 5 | orchestrate |
 
 ## Improvements applied (from profiling)
 

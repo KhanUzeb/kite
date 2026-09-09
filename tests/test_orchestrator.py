@@ -171,3 +171,13 @@ def test_wait_for_rejects_prompt_combo() -> None:
     out = orch.dispatch({"wait_for": ["abc"], "prompt": "also run this"})
     assert out["ok"] is False
     assert "cannot be combined" in out["output"]
+
+
+def test_orchestrator_prunes_finished_tasks() -> None:
+    def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
+        return {"exit_status": "Submitted", "submission": "ok"}
+
+    orch = SubagentOrchestrator(runner=runner, timeout_seconds=0)
+    for i in range(80):
+        orch.run_one(f"p{i}", label=f"w{i}")
+    assert len(orch.tasks) <= 64
