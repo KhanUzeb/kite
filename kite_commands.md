@@ -164,6 +164,7 @@ These never go to the model.
 | `/plugins` | List plugins |
 | `/plugins init name` | Scaffold `.kite/plugins/name` |
 | `/memory [semantic\|episodic]` | Semantic markdown + episodic sqlite |
+| `/working [add text]` | Fluid working rhythm (`~/.kite/memory/WORKING.md`) — soft context, always in mind when present |
 | `/semantic` | Show `MEMORY.md` notes |
 | `/episodic` | Show sqlite episode log |
 | `/remember [user\|project] text` | Append a note |
