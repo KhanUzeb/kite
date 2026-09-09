@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -90,8 +89,8 @@ def test_materialize_missing_tokens_raises(tmp_path: Path, monkeypatch: pytest.M
 def test_codex_litellm_env_points_at_materialized_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from kite.providers.auth.codex import CodexAuthProvider
     from kite.providers.auth import codex_litellm
+    from kite.providers.auth.codex import CodexAuthProvider
 
     codex_home = tmp_path / "codex"
     codex_home.mkdir()

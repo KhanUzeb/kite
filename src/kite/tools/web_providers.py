@@ -32,8 +32,9 @@ def resolve_web_tool_env(name: str) -> str | None:
 
 
 def _env_key(name: str) -> str | None:
-    from kite.providers.credentials import load_kite_env
     import os
+
+    from kite.providers.credentials import load_kite_env
 
     load_kite_env()
     env = WEB_TOOL_ENVS.get(name)
