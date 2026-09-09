@@ -36,12 +36,12 @@ Do not skip verify. A wrong "done" is worse than an honest "I could not verify t
 | Multi-step plan | `todo_write` / `todo_read` | |
 | Bounded search | `task` | No LLM |
 | Nested workers | `subagent` | `profile=scout|reviewer|shell|coder|context` + prompt; sync default; `wait_for` to collect |
-| Web facts | `websearch` → `webfetch` | Public HTTPS only; blocks localhost/private IPs |
+| Web facts | `websearch` → `webfetch` | Public HTTPS only; optional Tavily/Exa/Firecrawl keys; blocks localhost/private IPs |
 | Library / SDK docs | `context7_resolve` → `context7_docs` | Do not invent APIs |
 | Skills / memory | `skill`, `memory` | Check `trust` before following skill text |
 | Finish (build) | `submit` | After verification passes |
 
-**Knowledge:** Session time is in **Session time** above. Prefer Context7 for framework APIs; websearch for news and releases. Kite has no other built-in MCP servers.
+**Knowledge:** Session time is in **Session time** above. Prefer Context7 for framework APIs; websearch for news and releases (paid engines when keys are set). Kite has no other built-in MCP servers.
 
 Pass `reason` on mutating tools when the why is not obvious.
 

@@ -9,8 +9,8 @@ Use when you need fresh external info, library APIs, or docs beyond training cut
 
 ## Pipeline
 1. Prefer **Context7** for framework/library APIs: `context7_resolve` → `context7_docs` (or skip resolve if the user gave `/org/project`).
-2. Otherwise `websearch` with a precise query (include version/year when relevant).
-3. `webfetch` the best 1–2 URLs for full text.
+2. Otherwise `websearch` with a precise query (include version/year when relevant). Uses Tavily → Exa → Firecrawl when keys are set, else DuckDuckGo.
+3. `webfetch` the best 1–2 URLs for full text (Firecrawl scrape when `FIRECRAWL_API_KEY` is set).
 4. `webcrawl` only when you need several related pages on the same site (docs tree, RFC sections).
 
 ## Freshness

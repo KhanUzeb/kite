@@ -134,7 +134,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Context7 (built-in)** — The only bundled docs integration: `context7_resolve` + `context7_docs` call the Context7 HTTP API (MCP-compatible workflow). Optional `CONTEXT7_API_KEY` in `~/.kite/.env`. No other MCP servers are built in.
 
-**Web tools (built-in)** — Free stdlib research: `websearch` (DuckDuckGo HTML), `webfetch` (extracted page text), `webcrawl` (same-origin crawl). No API keys. Prefer Context7 for library APIs; web tools for news, releases, and arbitrary URLs.
+**Web tools (built-in)** — `websearch`, `webfetch`, `webcrawl`. Default backends are free (DuckDuckGo / stdlib). Optional paid keys in `~/.kite/.env` upgrade them automatically: search tries **Tavily → Exa → Firecrawl → DuckDuckGo**; `FIRECRAWL_API_KEY` also powers scrape/crawl. Set via `kite web-keys set tavily|exa|firecrawl` (or `kite keys --set …`). Prefer Context7 for library APIs; web tools for news, releases, and arbitrary URLs.
 
 **Execution cwd** — Session working directory for file tools and bash. `set_cwd` can move outside the project root when asked; the sandbox then follows that directory (protected system paths still blocked). Default is **host** mode; use `/restricted on` for a tighter sandbox.
 

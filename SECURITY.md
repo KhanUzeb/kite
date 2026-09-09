@@ -104,13 +104,22 @@ HTTP tools resolve hostnames, validate every resolved address against private/lo
 
 API keys live in `~/.kite/.env` (or the repo `.env`, which is gitignored). Never commit keys. If a key is leaked, rotate it immediately.
 
+**Optional web-tool keys** (same `.env` file; stripped from child process env like other secrets). Set with `kite web-keys set tavily|exa|firecrawl` or `kite keys --set …` — hidden prompt, owner-only file perms:
+
+| Key | Used by |
+|-----|---------|
+| `TAVILY_API_KEY` | `websearch` (first in auto order) |
+| `EXA_API_KEY` | `websearch` |
+| `FIRECRAWL_API_KEY` | `websearch`, `webfetch` (scrape), `webcrawl` |
+| `CONTEXT7_API_KEY` | Context7 docs tools (rate limits) |
+
 **BYOS (subscription) authentication** uses each provider's official runtime locally — Kite does not operate a shared provider account, credential proxy, or remote authentication server. There is no telemetry of OAuth tokens, account identifiers, or authentication events.
 
 | Provider | Mechanism | Credential store |
 |----------|-----------|------------------|
-| ChatGPT / Codex | `openai-codex` SDK (`Codex.login_chatgpt`, device code, `account`, `logout`) | `~/.codex/` (Codex runtime) |
+| ChatGPT / Codex | `openai-codex` SDK (`Codex.login_chatgpt`, device code, `account`, `logout`) | `~/.codex/` (Codex runtime). For LiteLLM `chatgpt/` calls, Kite flattens Codex nested `tokens` into `~/.kite/oauth/chatgpt/auth.json` (owner-only); it does not start a second device-code login. |
 | Claude subscription | Claude Code CLI (`claude auth login/status/logout`) | Claude Code (Keychain or platform store) |
 | Grok subscription | `grok` CLI (`grok login`, `--device-auth`, `logout`) | `~/.grok/auth.json` |
 | xAI API (BYOK) | `XAI_API_KEY` in `~/.kite/.env` | `~/.kite/.env` |
 
-Kite never copies subscription OAuth tokens into `~/.kite/.env` or logs access/refresh tokens.
+Kite never copies subscription OAuth tokens into `~/.kite/.env` or logs access/refresh tokens. The ChatGPT LiteLLM bridge file under `~/.kite/oauth/chatgpt/` is derived from the official Codex store for API compatibility only — treat it like a password.
