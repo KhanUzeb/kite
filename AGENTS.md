@@ -30,7 +30,7 @@ src/kite/
   tools/          Coding tools (read/write/edit/bash/set_cwd/…), jobs registry, metadata, web, github
   guardrails/     Path sandbox, execution mode, bash policy, secret redaction
   ui/             REPL, render, approval, complete, theme, status
-  memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic
+  memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic, working_style
   eval/           Recorded replay (ReplayBundle) without live providers
   skills/         SKILL.md loader; npm/git install; local path symlink into ~/.kite/skills
   commands/       Markdown slash prompt loader

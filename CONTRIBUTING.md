@@ -23,9 +23,10 @@ Package maintenance (not `kite` CLI subcommands):
 
 Windows: `.\scripts\pkg.ps1 update|reinstall|uninstall`
 
-Then run the suite:
+Then run the suite (or the CI-parity script):
 
 ```bash
+./scripts/lint.sh    # sync_version + ruff + pytest + kite bench --check
 pytest
 pytest -v
 ```
@@ -41,11 +42,11 @@ Workflow: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
 
 CI sets `KITE_HOME` to an isolated temp directory and `KITE_SKIP_SETUP=1` so tests never prompt for onboarding.
 
-Always run `pytest` and `kite bench --check` locally before opening a PR.
+Always run `./scripts/lint.sh` (or `pytest` + `ruff check src tests` + `kite bench --check`) locally before opening a PR.
 
 ## Ways to contribute
 
-- **Documentation** — `README.md`, `CONTEXT.md`, `AGENTS.md`, `docs/`, `kite_commands.md`, and bundled prompts (`src/kite/data/prompts/`, `data/commands/`) are the sources of truth. The design docs are generated into PDFs (`uv pip install fpdf2 && python scripts/build_design_pdf.py`) but the markdown is what we edit.
+- **Documentation** — `README.md`, `CONTEXT.md`, `AGENTS.md`, `docs/` (including [docs/memory.md](docs/memory.md)), `kite_commands.md`, and bundled prompts (`src/kite/data/prompts/`, `data/commands/`) are the sources of truth. The design docs are generated into PDFs (`uv pip install fpdf2 && python scripts/build_design_pdf.py`) but the markdown is what we edit.
 - **Skills** — drop a `SKILL.md` into `src/kite/data/skills/` or install packs via `kite skills --add <npm|npx|owner/repo>`.
 - **Tools / providers** — `tools/`, `providers/`, and `models/` are the extension points. Custom tools: `Harness.extra_tools` or `.kite/extensions/*.py` via `ExtensionAPI.register_tool`.
 - **Bug fixes** — add or extend a test in `tests/`.

@@ -300,7 +300,7 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 
 Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `websearch` → pick URL → `webfetch`.
 
-`KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable notes.
+`KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable facts; `/working` is fluid working rhythm. See [docs/memory.md](docs/memory.md).
 
 **Verification:** after edits, run the applicable check for the touched package. Monorepos may need per-service checks. Override defaults in `.kite/verification.toml` (see `src/kite/data/verification.example.toml`).
 
@@ -314,7 +314,8 @@ Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `webse
   commands/*.md        # your slash prompts
   skills/*/SKILL.md
   plugins/<id>/
-  memory/MEMORY.md     # semantic facts
+  memory/MEMORY.md     # semantic facts (opt-in in prompt)
+  memory/WORKING.md    # working rhythm — soft habits, in prompt when present
   memory/episodes.sqlite
   sessions/*.jsonl
   approvals.json
@@ -326,8 +327,8 @@ Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `webse
   commands/*.md
   skills/
   plugins/
-  memory/notes.jsonl
-  MEMORY.md
+  memory/MEMORY.md          # project semantic notes
+  memory/episodes.sqlite
 ```
 
 **System prompt overrides** (same idea as pi / Prime Agent):
@@ -408,11 +409,15 @@ Install once. Activate the venv (install script prints the path; or add `.venv/b
 
 Global: `~/.kite/` (sessions, config, user skills). Also loads skills from `~/.agents/skills` on any machine. Per-repo: `<repo>/.kite/commands`, `skills`, `plugins`, `memory`, and `<repo>/.agents/skills`.
 
-### Tests
+### Tests & lint (CI parity)
 
 ```bash
-pytest              # after install.sh or uv pip install -e ".[dev]"
+./scripts/lint.sh           # sync_version + ruff + pytest + bench --check
+pytest                      # after install.sh or uv pip install -e ".[dev]"
 pytest -v
+./scripts/lint.sh --ruff-all   # optional: lint scripts/ too
 ```
+
+Maintainers before a release tag: `./scripts/verify_release_pr.sh`
 
 See `tests/` for guardrails, approval/trust, loop guard, sessions, verification, orchestrator, caches, and UI helpers.
