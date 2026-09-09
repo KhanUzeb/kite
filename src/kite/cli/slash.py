@@ -63,7 +63,12 @@ class CommandIndex:
     def _load_uncached(cls, cwd_path: Path, extra_skill_dirs: list[str] | None = None) -> CommandIndex:
         extra = list(extra_skill_dirs or [])
         plugins = load_plugins(cwd_path)
-        skills = load_skills(cwd_path, extra_dirs=extra)
+        plugin_skill_dirs = [p.skills_dir for p in plugins if p.skills_dir.is_dir()]
+        skills = load_skills(
+            cwd_path,
+            extra_dirs=extra + [str(d) for d in plugin_skill_dirs],
+            plugin_dirs=plugin_skill_dirs,
+        )
 
         specs: dict[str, SlashSpec] = {}
         overlay: list[PromptCommand] = []
