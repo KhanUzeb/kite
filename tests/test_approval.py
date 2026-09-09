@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import StringIO
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from rich.console import Console
 
@@ -94,3 +95,19 @@ def test_plan_readonly_approver_allows_inspection_bash(workspace: Path) -> None:
     )
 
     assert approver("bash", {"command": "git status"}, {}) == "allow"
+
+
+def test_readonly_denies_durable_memory_without_prompting(workspace: Path) -> None:
+    coordinator = MagicMock()
+    coordinator.request.return_value = "allow"
+    approver = make_approver(
+        Console(file=StringIO()),
+        mode=AgentMode.BUILD,
+        approval=ApprovalMode.READONLY,
+        interactive=True,
+        workspace_cwd=str(workspace),
+        coordinator=coordinator,
+    )
+
+    assert approver("memory", {"action": "remember", "text": "secret"}, {}) == "deny"
+    coordinator.request.assert_not_called()
