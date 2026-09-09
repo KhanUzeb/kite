@@ -147,10 +147,45 @@ def test_approval_choice_and_busy_slash() -> None:
 
     assert is_busy_safe_slash("/tasks")
     assert is_busy_safe_slash("/HELP")
+    assert is_busy_safe_slash("/approve auto")
     assert not is_busy_safe_slash("/compact")
     assert parse_approval_choice("a", mandatory=False) == "allow"
     assert parse_approval_choice("s", mandatory=True) is None
     assert parse_approval_choice("n", mandatory=True) == "deny"
+
+
+def test_approval_wake_empty_does_not_deny(monkeypatch) -> None:
+    """Composer wake exits empty while awaiting — must not auto-deny."""
+    from kite.ui.complete import _prompt_once
+
+    monkeypatch.setattr(
+        "prompt_toolkit.patch_stdout.patch_stdout",
+        lambda raw=False: nullcontext(),
+    )
+    session = MagicMock()
+    session.prompt.return_value = ""
+    session.default_buffer.text = ""
+    state = SessionUiState(awaiting_approval="bash", awaiting_approval_mandatory=False)
+    result = _prompt_once(session, state, busy=True, action_slot={"kind": "submit"})
+    assert result.kind == "empty"
+    assert result.text == ""
+
+
+def test_approval_enter_empty_allows_once(monkeypatch) -> None:
+    """Empty Enter during approval allows once (not deny)."""
+    from kite.ui.complete import _prompt_once
+
+    monkeypatch.setattr(
+        "prompt_toolkit.patch_stdout.patch_stdout",
+        lambda raw=False: nullcontext(),
+    )
+    session = MagicMock()
+    session.prompt.return_value = "a"
+    session.default_buffer.text = ""
+    state = SessionUiState(awaiting_approval="bash")
+    result = _prompt_once(session, state, busy=True, action_slot={"kind": "approval"})
+    assert result.kind == "approval"
+    assert result.text == "allow"
 
 
 def test_toolbar_busy_and_approval_states() -> None:
@@ -183,7 +218,7 @@ def test_toolbar_busy_and_approval_states() -> None:
 
     approval = SessionUiState(awaiting_approval="bash", awaiting_approval_mandatory=True)
     approval_html = str(_toolbar_html(approval))
-    assert "[a] once" in approval_html
+    assert "[a]/Enter once" in approval_html
     assert "Enter queue" not in approval_html
 
     idle_html = str(_toolbar_html(SessionUiState(busy=False)))

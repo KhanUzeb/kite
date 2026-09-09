@@ -121,7 +121,8 @@ def _dark_ui(
     muted: str = "#555555",
     accent: str = "#c9a227",
     placeholder: str = "#4a4a4a",
-    toolbar_bg: str = "#050505",
+    # Empty toolbar_bg → bg:default (no painted band / shadow under composer)
+    toolbar_bg: str = "",
     toolbar_fg: str = "#5c5c5c",
     completion_bg: str = "#050505",
     completion_fg: str = "#b8b8b8",
@@ -762,9 +763,14 @@ def brand_fg(name: str | None = None) -> str:
 
 
 def _pt_bg(fg: str, bg: str, *, prefix: str = "", suffix: str = "") -> str:
-    rule = f"{prefix}{fg}{suffix}".strip()
+    """Build a prompt_toolkit style rule.
+
+    Empty ``bg`` uses ``bg:default`` so bottom-toolbar does not fall back to
+    reverse-video (reads as a subtle shadow band under the composer).
+    """
     if not bg:
-        return rule
+        base = f"{prefix}bg:default {fg}{suffix}".strip()
+        return base if fg else f"{prefix}bg:default".strip()
     return f"{prefix}bg:{bg} {fg}{suffix}".strip()
 
 

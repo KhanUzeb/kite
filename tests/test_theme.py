@@ -35,8 +35,15 @@ def test_transparent_theme_alias_and_ui() -> None:
     ui = ui_colors("transparent")
     assert ui.toolbar_bg == ""
     styles = pt_style_dict("transparent")
-    assert "bg:" not in styles["bottom-toolbar"]
+    # bg:default kills reverse-video toolbar shadow without painting a band
+    assert "bg:default" in styles["bottom-toolbar"]
+    assert "noreverse" in styles["bottom-toolbar"]
     assert rich_theme("transparent").styles["kite.brand"] is not None
+
+
+def test_bottom_toolbar_uses_default_bg_when_empty() -> None:
+    styles = pt_style_dict("transparent")
+    assert styles["bottom-toolbar"].startswith("noreverse bg:default")
 
 
 def test_theme_aliases_resolve() -> None:
