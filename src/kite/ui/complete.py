@@ -505,8 +505,8 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
 
 def _toolbar_approval_bits(state: SessionUiState) -> list[str]:
     if state.awaiting_approval_mandatory:
-        return ["[a]/Enter once", "[n] deny", "[q] stop", "mandatory"]
-    return ["[a]/Enter once", "[s] session", "[p] always", "[n] deny", "[q] stop"]
+        return ["[a] once", "[n] deny", "[q] stop", "mandatory"]
+    return ["[a] once", "[s] session", "[p] always", "[n] deny", "[q] stop"]
 
 
 def _toolbar_busy_bits(state: SessionUiState) -> list[str]:
@@ -735,13 +735,12 @@ def make_repl_key_bindings(
 
     @bindings.add("enter", eager=True, filter=awaiting)
     def _approval_enter(event) -> None:  # noqa: ANN001
-        """Empty Enter allows once; typed approval keys / other text submit."""
+        """Approval requires an explicit key; empty Enter keeps waiting."""
         buf = event.current_buffer
         buf.complete_state = None
         text = (buf.text or "").strip().lower()
         if not text:
-            slot["kind"] = "approval"
-            event.app.exit(result="a")
+            event.app.invalidate()
             return
         buf.validate_and_handle()
 
@@ -966,9 +965,9 @@ def _prompt_once(
     ui = ui_colors()
     if state.awaiting_approval:
         if state.awaiting_approval_mandatory:
-            placeholder = "[a]/Enter once · [n] deny · [q] stop — approval required"
+            placeholder = "[a] once · [n] deny · [q] stop — approval required"
         else:
-            placeholder = "[a]/Enter once · [s] session · [p] always · [n] deny · [q] stop"
+            placeholder = "[a] once · [s] session · [p] always · [n] deny · [q] stop"
     elif busy:
         placeholder = "add a follow-up while Kite works…"
     else:

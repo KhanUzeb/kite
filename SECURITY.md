@@ -25,6 +25,10 @@ Kite runs tools against your local workspace. Its guardrails protect against **m
 
 **Known limits:** Secret redaction is pattern-based (not exhaustive). `/attach` and `/clip` still read user-selected paths, but **protected** credential paths (e.g. `.env`, `~/.ssh`, `~/.kite/.env`) are refused. Global skill trees under `~/.kite/skills` are readable in restricted mode (symlink/junction targets included). Approval decisions and tool events may be retained in `~/.kite/approvals.json` and `~/.kite/audit.jsonl` until you delete them (owner-only `chmod 600`).
 
+## Approval enforcement
+
+Tool calls marked as requiring approval fail closed when no approver is available. Non-interactive and headless runs preserve the requested approval mode: `readonly` blocks mutations, `approve` denies mutations because no prompt can be shown, and `auto` permits ordinary in-workspace changes while mandatory gates and outside-workspace actions are denied. Interactive approval requires an explicit choice; pressing Enter alone does not authorize an action.
+
 ## Session persistence
 
 Session transcripts are stored under `~/.kite/sessions/` as JSONL. Configure persistence in `~/.kite/config.toml`:
