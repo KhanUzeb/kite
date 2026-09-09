@@ -489,7 +489,7 @@ class AgentRuntime:
         if self.slots.env is not None:
             env = self.slots.env(cwd=cwd, registry=registry)
         else:
-            env = LocalEnvironment(cwd=cwd, registry=registry)
+            env = LocalEnvironment(cwd=cwd, registry=registry, execution=execution)
 
         tool_executor = self.tool_executor_override
         if tool_executor is None and self.options.use_tool_executor:

@@ -462,6 +462,10 @@ def is_inspection_bash(command: str) -> bool:
         return False
     if _MUTATING_BASH.search(cmd):
         return False
+    if any(token in cmd for token in ("$(", "`", "<(", ">(")):
+        return False
+    if re.search(r"(?i)\bfind\b[^\n]*(?:-delete|-exec(?:dir)?|-ok(?:dir)?)\b", cmd):
+        return False
     if re.search(r"(?i)(^|[^<])>>?[^>]", cmd):
         return False
     segments = [s.strip() for s in _CHAIN_SPLIT.split(cmd) if s.strip()]

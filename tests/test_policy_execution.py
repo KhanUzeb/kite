@@ -40,6 +40,77 @@ def test_host_mode_allows_outside_workspace(tmp_path: Path) -> None:
     assert not blocked
 
 
+def test_relative_write_after_set_cwd_outside_requires_approval(workspace: Path) -> None:
+    from io import StringIO
+    from unittest.mock import MagicMock
+
+    from rich.console import Console
+
+    from kite.agent.loop import DefaultAgent
+    from kite.agent.mode import AgentMode, ApprovalMode
+    from kite.application.execution import build_tool_executor
+    from kite.context.workspace import ExecutionMode, ExecutionSession, WorkspaceContext
+    from kite.env.local import LocalEnvironment
+    from kite.guardrails import GuardrailConfig, GuardrailPolicy
+    from kite.tools import ToolRegistry
+    from kite.tools.coding import make_coding_tools
+    from kite.ui.approval import make_approver
+
+    outside = workspace.parent / "outside"
+    outside.mkdir()
+    context = WorkspaceContext(
+        project_root=workspace,
+        execution_cwd=workspace,
+        initial_cwd=workspace,
+        execution_mode=ExecutionMode.HOST,
+    )
+    execution = ExecutionSession(context)
+    guardrails = GuardrailPolicy(
+        GuardrailConfig(execution_mode="host"),
+        workspace,
+        execution=execution,
+    )
+    tools = make_coding_tools(
+        cwd=str(workspace),
+        enabled=["set_cwd", "write"],
+        guardrails=guardrails,
+        execution=execution,
+    )
+    environment = LocalEnvironment(cwd=str(workspace), registry=ToolRegistry(tools))
+    environment.execution = execution
+    executor = build_tool_executor(
+        workspace_root=workspace,
+        execution_mode="host",
+        no_guardrails=False,
+        runner=lambda call: environment.execute(
+            {"tool": call.name, "arguments": dict(call.arguments)}
+        ),
+    )
+    approver = make_approver(
+        Console(file=StringIO()),
+        mode=AgentMode.BUILD,
+        approval=ApprovalMode.AUTO,
+        interactive=False,
+        workspace_cwd=str(workspace),
+    )
+    agent = DefaultAgent(MagicMock(), environment, tool_executor=executor, approver=approver)
+
+    moved = agent._run_gated_via_executor(
+        "set_cwd",
+        {"path": str(outside)},
+        {"tool": "set_cwd", "arguments": {"path": str(outside)}},
+    )
+    written = agent._run_gated_via_executor(
+        "write",
+        {"path": "escape.txt", "content": "blocked"},
+        {"tool": "write", "arguments": {"path": "escape.txt", "content": "blocked"}},
+    )
+
+    assert moved.get("ok") is True
+    assert written.get("blocked") is True
+    assert not (outside / "escape.txt").exists()
+
+
 def test_change_journal_user_delete_is_conflict(workspace: Path) -> None:
     target = workspace / "src" / "app.py"
     journal = ChangeJournal(workspace)

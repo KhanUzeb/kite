@@ -15,10 +15,18 @@ from kite.tools.coding import make_coding_tools
 
 
 class LocalEnvironment:
-    def __init__(self, cwd: str | None = None, timeout: int = 30, registry: ToolRegistry | None = None):
+    def __init__(
+        self,
+        cwd: str | None = None,
+        timeout: int = 30,
+        registry: ToolRegistry | None = None,
+        *,
+        execution=None,
+    ):
         self.cwd = cwd
         self.timeout = timeout
         self.registry = registry or ToolRegistry(make_coding_tools(cwd=cwd, timeout=timeout))
+        self.execution = execution
 
     def execute(self, action: dict) -> dict[str, Any]:
         """action = {"tool": name, "arguments": {...}} or {"command": "..."} for bash-compat."""

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from kite.agent.events import Event
-from kite.agent.mode import AgentMode, ApprovalMode, default_approval, parse_approval_mode
+from kite.agent.mode import AgentMode, ApprovalMode, parse_approval_mode
 from kite.util.tty import is_interactive_tty
 
 
@@ -252,7 +252,8 @@ class HeadlessBatchResult:
 
 def resolve_headless_approval(raw: str | None, mode: AgentMode, *, headless: bool) -> ApprovalMode:
     """Pick approval for non-interactive runs without weakening user policy."""
-    approval = parse_approval_mode(raw, default=default_approval(mode))
+    default = ApprovalMode.AUTO if mode is AgentMode.BUILD else ApprovalMode.READONLY
+    approval = parse_approval_mode(raw, default=default)
     return approval
 
 
