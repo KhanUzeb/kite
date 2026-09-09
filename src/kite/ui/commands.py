@@ -73,6 +73,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("refresh", "Re-fetch live models from the API, then pick", hint="[provider]", group="model"),
     BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
     BuiltinCommand("memory", "Semantic MEMORY.md + episodic log", hint="semantic|episodic", aliases=("mem",), group="memory"),
+    BuiltinCommand("working", "Fluid working rhythm (~/.kite/memory/WORKING.md)", hint="[add text]", group="memory"),
     BuiltinCommand("remember", "Append a semantic note", hint="[user|project] text", group="memory"),
     BuiltinCommand("forget", "Drop matching notes or episodes", hint="id|substring", group="memory"),
     BuiltinCommand("skills", "List, show, or install a skill", hint="[add pkg]|name", group="extensions"),
