@@ -82,7 +82,7 @@ kite commands
 kite plugins
 kite memory [--remember text] [--forget query] [--project]
 kite runtime-config [--config name]
-kite bench [--json] [--save PATH] [--compare BASELINE.json] [--check]
+kite bench [--json] [--save PATH] [--compare BASELINE.json] [--check] [--ab] [--stress]
 kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
 ```
 
@@ -96,13 +96,18 @@ kite bench --json               # machine-readable report
 kite bench --save before.json   # baseline snapshot
 kite bench --compare before.json
 kite bench --check              # exit 1 if any case exceeds budget (CI gate)
+kite bench --ab                 # A/B task vs subagent dispatch (time + peak heap)
+kite bench --stress             # brute-force orchestrator stress (time + space)
 ```
+
+See [docs/bench-orchestrate-ab.md](docs/bench-orchestrate-ab.md) for metrics tables and interpretation.
 
 | Category | Benchmarks |
 |----------|------------|
 | **startup** | `cli_import`, `config_load`, `user_config_load`, `catalog_load`, `skills_load`, `repl_chat_init`, `model_resolve`, `slash_index`, `runtime_prepare` |
 | **context** | `repo_map`, `prompt_cache_prepare`, `context_gather`, `prompt_assembly` |
 | **tools** | `tool_registry`, `read_tool`, `grep_tool`, `bash_echo`, `subprocess_spawn` |
+| **orchestrate** | `task_dispatch`, `orchestrator_sync`, `dispatch_mode` |
 
 Budget ceilings live in `src/kite/bench/budgets.py`. `pytest tests/test_bench.py` runs the same suite in CI.
 
