@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 from rich.text import Text
 
-from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
+from kite.agent.mode import MUTATING_TOOLS, READONLY_TOOLS, AgentMode, ApprovalMode
 from kite.config import kite_home
 from kite.guardrails.sandbox import (
     check_dangerous,
@@ -611,6 +611,7 @@ def make_approver(
 
         extra = extra or {}
         cmd = str(arguments.get("command") or "")
+        effects = set(derive_effects(ToolCall("approval", tool, arguments)))
         mandatory_reason = mandatory_approval_reason(
             tool,
             command=cmd,
@@ -619,16 +620,25 @@ def make_approver(
             bash_cwd=str(arguments.get("cwd") or "") or None,
         )
         mandatory_reason = mandatory_reason or canonical_mandatory_reason(
-            derive_effects(ToolCall("approval", tool, arguments)),
+            tuple(effects),
             tool=tool,
             args=arguments,
+        )
+        mutates = bool(
+            effects & {"durable_memory", "destructive", "package_or_skill_install"}
+            or tool in MUTATING_TOOLS
+            or (
+                "workspace_write" in effects
+                and tool not in READONLY_TOOLS
+                and tool not in {"submit", "todo_write"}
+            )
         )
         if mode is AgentMode.PLAN and tool != "todo_write":
             if tool == "bash" and is_inspection_bash(cmd):
                 return "allow"
-            else:
+            if mutates:
                 return "deny"
-        if approval is ApprovalMode.READONLY and tool in MUTATING_TOOLS:
+        if approval is ApprovalMode.READONLY and mutates:
             return "deny"
         if mandatory_reason:
             return _prompt_or_coordinate(
