@@ -5,8 +5,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Prefer phrases over bare "background" to avoid false positives (e.g. "background jobs module").
 _ASYNC_PATTERNS = (
-    r"\bbackground\b",
+    r"\bin the background\b",
+    r"\bbackground=true\b",
     r"\basync(?:hronous)?\b",
     r"\bfire[- ]and[- ]forget\b",
     r"\bwithout waiting\b",
@@ -14,7 +16,6 @@ _ASYNC_PATTERNS = (
     r"\bnon[- ]blocking\b",
     r"\bwhile (?:i|we|you) continue\b",
     r"\bspawn and (?:move on|continue)\b",
-    r"\bin the background\b",
     r"\bparallel exploration\b.*\bcontinue\b",
 )
 
@@ -31,6 +32,13 @@ _SYNC_PATTERNS = (
     r"\breturn (?:a )?summary\b",
 )
 
+_REASON_HINTS = {
+    "auto-async": "dispatch: async (prompt asked for background / non-blocking work)",
+    "auto-sync": "dispatch: sync (prompt needs findings before continuing)",
+    "parallel-crew-sync": "dispatch: sync (parallel crew waits for merged report)",
+    "default-sync": "dispatch: sync (default — parent waits for worker output)",
+}
+
 
 def _collect_text(args: dict[str, Any]) -> str:
     chunks: list[str] = []
@@ -42,11 +50,15 @@ def _collect_text(args: dict[str, Any]) -> str:
         val = args.get(key)
         if isinstance(val, list):
             chunks.extend(str(x) for x in val)
-    return "\n".join(chunks).lower()
+    return "\n".join(chunks)
 
 
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(pat, text, re.IGNORECASE) for pat in patterns)
+
+
+def dispatch_hint(reason: str) -> str:
+    return _REASON_HINTS.get(reason, "")
 
 
 def resolve_dispatch_mode(args: dict[str, Any]) -> tuple[bool, str]:
@@ -60,7 +72,6 @@ def resolve_dispatch_mode(args: dict[str, Any]) -> tuple[bool, str]:
 
     prompts = args.get("prompts") or args.get("tasks")
     if isinstance(prompts, list) and len(prompts) > 1:
-        # Parallel crew merges results — stay synchronous unless caller opts out.
         return False, "parallel-crew-sync"
 
     text = _collect_text(args)

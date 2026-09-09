@@ -664,7 +664,8 @@ def make_coding_tools(
 
     def subagent_run(args: dict[str, Any]) -> dict[str, Any]:
         if orchestrator is None:
-            return {"ok": False, "error": "orchestrator not configured", "output": "orchestrator not configured"}
+            msg = "Subagent tool unavailable in this run. Use task for code search instead."
+            return {"ok": False, "error": msg, "output": msg}
         return orchestrator.dispatch(args)
 
     def web_search(args: dict[str, Any]) -> dict[str, Any]:
@@ -1038,13 +1039,13 @@ def make_coding_tools(
             Tool(
                 name="subagent",
                 description=(
-                    "Spawn nested LLM subagent(s) via the orchestrator. "
-                    "Pass `prompt` for one worker or `prompts` (list) for parallel workers. "
-                    "Dispatch is sync by default (wait for results). "
-                    "Set `background=true` or `wait=false` for async fire-and-forget; "
-                    "omit both to auto-pick from prompt wording. "
-                    "Collect async workers with `wait_for: [job_id, ...]`. "
-                    "Track live workers via `/agents` and `/kill`."
+                    "Spawn nested LLM worker(s) for independent exploration.\n"
+                    "• One worker: prompt + optional label\n"
+                    "• Crew: prompts + labels (sync by default — merged report)\n"
+                    "• Async: background=true or wait=false; returns job_id immediately\n"
+                    "• Collect: wait_for=[job_id, ...] (cannot combine with new prompts)\n"
+                    "Auto-dispatch reads prompt wording when flags omitted.\n"
+                    "Monitor: /agents · Stop: /kill"
                 ),
                 parameters={
                     "type": "object",

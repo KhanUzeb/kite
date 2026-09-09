@@ -43,3 +43,16 @@ def test_default_sync_when_ambiguous() -> None:
     bg, reason = resolve_dispatch_mode({"prompt": "Explore src/kite/agent"})
     assert bg is False
     assert reason == "default-sync"
+
+
+def test_background_word_alone_does_not_force_async() -> None:
+    bg, reason = resolve_dispatch_mode({"prompt": "Read the background jobs module under src/kite/tools"})
+    assert bg is False
+    assert reason == "default-sync"
+
+
+def test_dispatch_hint_for_auto_modes() -> None:
+    from kite.agent.dispatch_mode import dispatch_hint
+
+    assert "async" in dispatch_hint("auto-async")
+    assert "sync" in dispatch_hint("parallel-crew-sync")
