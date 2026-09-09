@@ -73,6 +73,10 @@ def load_file(path: str | Path, *, source: str = "file", cwd: str | Path | None 
     p = p.resolve()
     if not p.is_file():
         raise FileNotFoundError(f"not a file: {p}")
+    from kite.guardrails.sandbox import is_protected
+
+    if is_protected(p):
+        raise ValueError(f"protected path cannot be attached: {p}")
     size = p.stat().st_size
     mime = _mime_for(p)
     name = p.name

@@ -100,6 +100,8 @@ def url_blocked(url: str) -> str | None:
     parsed = urlparse(url.strip())
     if parsed.scheme not in {"http", "https"}:
         return "only http(s) URLs allowed"
+    if parsed.username or parsed.password:
+        return "URLs with credentials blocked"
     host = (parsed.hostname or "").lower()
     if not host:
         return "invalid URL"
