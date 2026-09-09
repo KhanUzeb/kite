@@ -21,17 +21,23 @@ from kite.memory.session_policy import (
 
 def format_meta_line(meta: SessionMeta) -> str:
     """Canonical JSONL meta row — .6f timestamps keep line length stable for in-place patches."""
+    task = prepare_persisted_value(meta.task)
+    label = prepare_persisted_value(meta.label)
+    cwd = prepare_persisted_value(meta.cwd)
+    provider = prepare_persisted_value(meta.provider)
+    model = prepare_persisted_value(meta.model)
+    exit_status = prepare_persisted_value(meta.exit_status)
     return (
         '{"type":"meta"'
         f',"id":{json.dumps(meta.id)}'
         f',"created_at":{meta.created_at:.6f}'
         f',"updated_at":{meta.updated_at:.6f}'
-        f',"cwd":{json.dumps(meta.cwd)}'
-        f',"provider":{json.dumps(meta.provider)}'
-        f',"model":{json.dumps(meta.model)}'
-        f',"task":{json.dumps(meta.task)}'
-        f',"label":{json.dumps(meta.label)}'
-        f',"exit_status":{json.dumps(meta.exit_status)}'
+        f',"cwd":{json.dumps(cwd)}'
+        f',"provider":{json.dumps(provider)}'
+        f',"model":{json.dumps(model)}'
+        f',"task":{json.dumps(task)}'
+        f',"label":{json.dumps(label)}'
+        f',"exit_status":{json.dumps(exit_status)}'
         "}"
     )
 

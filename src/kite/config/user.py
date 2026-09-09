@@ -133,6 +133,9 @@ class UserConfig:
             else:
                 existing[key] = val
         path.write_text(tomli_w.dumps(existing), encoding="utf-8")
+        from kite.memory.session_policy import secure_session_file
+
+        secure_session_file(path)
         _invalidate_user_config_cache()
         return path
 

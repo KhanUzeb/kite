@@ -23,7 +23,7 @@ If you find a security issue in Kite, please report it privately rather than ope
 
 Kite runs tools against your local workspace. Its guardrails protect against **model mistakes** (path escapes, destructive bash, secret-shaped writes), not against a hostile operator on the same machine. Do not run Kite with untrusted task text, and avoid `--no-guardrails` outside trusted, local automation.
 
-**Known limits:** Secret redaction is pattern-based (not exhaustive). `/attach` and `/clip` can read user-selected paths outside the workspace. Global skill trees under `~/.kite/skills` are readable in restricted mode (symlink/junction targets included). Approval decisions and tool events may be retained in `~/.kite/approvals.json` and `~/.kite/audit.jsonl` until you delete them.
+**Known limits:** Secret redaction is pattern-based (not exhaustive). `/attach` and `/clip` still read user-selected paths, but **protected** credential paths (e.g. `.env`, `~/.ssh`, `~/.kite/.env`) are refused. Global skill trees under `~/.kite/skills` are readable in restricted mode (symlink/junction targets included). Approval decisions and tool events may be retained in `~/.kite/approvals.json` and `~/.kite/audit.jsonl` until you delete them (owner-only `chmod 600`).
 
 ## Session persistence
 
@@ -35,7 +35,7 @@ session_persistence = "redacted"  # full | redacted | disabled (default: redacte
 
 | Mode | Behavior |
 |------|----------|
-| `redacted` (default) | Messages, tool args/results, events, and metadata are recursively sanitized before write. Session files are owner-only (`chmod 600`). |
+| `redacted` (default) | Messages, tool args/results, events, and **meta fields** (task, label, cwd) are recursively sanitized before write. Session files are owner-only (`chmod 600`). |
 | `full` | Persist raw payloads (opt-in; may retain secrets and proprietary content). |
 | `disabled` | No session file writes; in-memory session only for the current run. |
 
@@ -65,7 +65,7 @@ Foreground bash, `ProcessRunner`, and background jobs run children in isolated p
 
 ## SSRF protections
 
-HTTP tools resolve hostnames, validate every resolved address against private/loopback/link-local/metadata ranges, re-validate immediately before connect (DNS TOCTOU mitigation), and re-check redirect targets. Alternate IPv4 encodings (decimal, hex, octal) are blocked.
+HTTP tools resolve hostnames, validate every resolved address against private/loopback/link-local/metadata ranges, reject URLs with embedded credentials (`user:pass@host`), re-validate immediately before connect (DNS TOCTOU mitigation), and re-check redirect targets. Alternate IPv4 encodings (decimal, hex, octal) are blocked.
 
 **Execution mode:** default `host` keeps file and bash access outside the session cwd (protected paths like `.ssh`, system dirs, `.env` still blocked). `restricted` mode clamps paths to the session sandbox. Production tool calls also pass through **`PolicyEngine`** (path/network authorization). Toggle in the REPL with `/restricted on|off`, or set `[guardrails] execution_mode = "restricted"` in runtime config. Only use host mode when you understand the blast radius.
 

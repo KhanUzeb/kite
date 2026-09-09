@@ -415,6 +415,9 @@ class ApprovalPolicy:
             json.dumps({"always": sorted(self.always_patterns)}, indent=2),
             encoding="utf-8",
         )
+        from kite.memory.session_policy import secure_session_file
+
+        secure_session_file(path)
 
     def remembered(self, pattern: str) -> bool:
         if pattern in self.always_patterns or pattern in self.session_patterns:
