@@ -184,6 +184,9 @@ class JobRegistry:
         return job
 
     def _drain_bash(self, job: BackgroundJob, timeout_seconds: float = 3600.0) -> None:
+        from kite.env.shell import sanitize_shell_line
+        from kite.guardrails.redact import redact_string
+
         proc = job.proc
         if proc is None or proc.stdout is None:
             return
@@ -192,8 +195,9 @@ class JobRegistry:
         try:
             for line in iter(proc.stdout.readline, ""):
                 drained_bytes += len(line.encode("utf-8", errors="replace"))
-                job.append_log(line)
-                self._emit("job_output", id=job.id, line=line, kind="bash")
+                safe = redact_string(sanitize_shell_line(line))
+                job.append_log(safe)
+                self._emit("job_output", id=job.id, line=safe, kind="bash")
                 if drained_bytes >= max_bytes:
                     job.append_log("\n...[job output truncated]...\n")
                     break
@@ -237,11 +241,13 @@ class JobRegistry:
         """Track a live nested LLM worker so /jobs and /kill can reach it."""
         tid = job_id or self._new_id()
         token = cancel or CancelToken()
+        safe_prompt = (prompt or "")[:500]
+        safe_label = (label or safe_prompt[:60].replace("\n", " ") or tid)[:80]
         job = BackgroundJob(
             id=tid,
             kind="subagent",
-            command=prompt or label,
-            label=label or (prompt[:60].replace("\n", " ") if prompt else tid),
+            command=safe_prompt or safe_label,
+            label=safe_label,
             cancel=token,
             log=deque(maxlen=self._max_log),
         )

@@ -31,7 +31,7 @@ def test_working_file_append_and_render(workspace, kite_home) -> None:
     rendered = render_working_context(store)
     assert "Working rhythm" in rendered
     assert "prefers small focused diffs" in rendered
-    assert "not weighted" in rendered.lower() or "lightly" in rendered.lower()
+    assert "untrusted" in rendered.lower() or "working rhythm" in rendered.lower()
 
 
 def test_observe_session_turn_records_style(workspace, kite_home) -> None:
@@ -64,3 +64,4 @@ def test_format_working_section_is_distinct_from_memory() -> None:
     assert "Working rhythm" in section
     assert "# Memory" not in section
     assert "tends to plan first" in section
+    assert "untrusted" in section.lower()

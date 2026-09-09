@@ -32,9 +32,10 @@ def test_plan_tools_are_readonly_plus_checklist_and_bash() -> None:
 
 
 def test_nested_subagent_tools_exclude_subagent() -> None:
-    enabled = ["read", "grep", "subagent", "task", "bash", "todo_write"]
+    enabled = ["read", "grep", "subagent", "task", "bash", "todo_write", "memory"]
     nested = tools_for_nested_subagent(enabled)
     assert "subagent" not in nested
+    assert "memory" not in nested
     assert "read" in nested
     assert "grep" in nested
 

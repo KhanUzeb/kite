@@ -91,5 +91,6 @@ def tools_for_mode(mode: AgentMode, enabled: list[str]) -> list[str]:
 
 
 def tools_for_nested_subagent(enabled: list[str]) -> list[str]:
-    """Read-only nested workers — no further subagent recursion."""
-    return [name for name in tools_for_mode(AgentMode.PLAN, enabled) if name != "subagent"]
+    """Read-only nested workers — no recursion, no durable memory writes."""
+    blocked = frozenset({"subagent", "memory"})
+    return [name for name in tools_for_mode(AgentMode.PLAN, enabled) if name not in blocked]
