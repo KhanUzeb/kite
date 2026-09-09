@@ -223,8 +223,11 @@ class CodexAuthProvider:
         return _FALLBACK_MODELS
 
     def litellm_env(self) -> dict[str, str]:
-        # Delegate token storage/refresh to Codex; LiteLLM reads the same auth dir.
-        return {"CHATGPT_TOKEN_DIR": _codex_home()}
+        # Codex CLI stores nested tokens under ~/.codex/auth.json; LiteLLM needs a
+        # flat auth.json. Bridge into ~/.kite/oauth/chatgpt (see codex_litellm).
+        from kite.providers.auth.codex_litellm import litellm_chatgpt_env
+
+        return litellm_chatgpt_env()
 
     def litellm_extras(self) -> dict[str, object]:
         return {}

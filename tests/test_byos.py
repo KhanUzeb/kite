@@ -52,7 +52,7 @@ def test_logout_oauth_delegates() -> None:
 
 
 def test_missing_credentials_suggests_login(kite_home: Path) -> None:
-    with patch("kite.providers.byos.has_oauth_session", return_value=False):
+    with patch("kite.providers.resolve.has_oauth_session", return_value=False):
         with patch(
             "kite.providers.resolve.subscription_login_hint",
             side_effect=lambda spec: f"Run: kite login {spec.name}",

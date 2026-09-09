@@ -120,7 +120,14 @@ def resolve_model(
         if not has_oauth_session(oauth_id):
             api_key = None
         else:
-            ensure_oauth_env(spec)
+            try:
+                ensure_oauth_env(spec)
+            except Exception as exc:  # noqa: BLE001 — resolve must stay non-fatal
+                import logging
+
+                logging.getLogger("kite.providers.resolve").debug(
+                    "oauth env prepare failed for %s: %s", provider_name, exc
+                )
             extras = oauth_litellm_extras(spec)
             if extras.get("api_key"):
                 api_key = extras["api_key"]
@@ -171,6 +178,13 @@ def missing_credentials(resolved: ResolvedModel) -> str | None:
                 "ANTHROPIC_API_KEY. Run `claude auth login` for Claude Code, or "
                 "`kite keys --set anthropic` for Console API access."
             )
+        if oauth_id == "chatgpt":
+            try:
+                from kite.providers.auth.codex_litellm import materialize_litellm_chatgpt_auth
+
+                materialize_litellm_chatgpt_auth()
+            except Exception as exc:  # noqa: BLE001 — surface bridge errors to the user
+                return str(exc)
         return None
     if resolved.spec.api_key_env and not resolved.api_key:
         names = " or ".join(f"${n}" for n in api_key_env_names(resolved.spec))
