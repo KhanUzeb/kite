@@ -327,6 +327,8 @@ class SlashCompleter(Completer):  # type: ignore[misc]
 
             for name, display, env in loginable_providers():
                 choices.append((name, f"{env}  {display[:40]}"))
+        elif cmd == "working":
+            choices = [("add", "append a soft rhythm signal")]
         elif cmd in {"skills", "skill"}:
             bits = rest.split()
             first = bits[0].lower() if bits else ""

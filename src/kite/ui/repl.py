@@ -1198,6 +1198,7 @@ class ChatSession:
             "commands": self._handle_commands,
             "plugins": self._handle_plugins,
             "memory": self._slash_memory,
+            "working": self._show_working,
             "semantic": self._show_semantic,
             "episodic": self._show_episodic,
             "remember": self._remember,
@@ -2047,6 +2048,44 @@ class ChatSession:
         self.console.print()
         self._show_episodic()
 
+    def _show_working(self, arg: str = "") -> None:
+        from kite.memory.working_style import (
+            append_signal,
+            read_narrative,
+            read_signals,
+            render_working_context,
+            working_path,
+        )
+
+        text = arg.strip()
+        if text.lower().startswith("add "):
+            text = text[4:].strip()
+        if text:
+            try:
+                signal = append_signal(text)
+            except ValueError as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            self.console.print(f"[kite.success]signal[/]  {signal}")
+            self._harness_key = None
+            return
+
+        self.console.print(f"[kite.muted]{working_path()}[/]")
+        rendered = render_working_context(self.memory)
+        if rendered:
+            self.console.print(rendered)
+            return
+        narrative = read_narrative()
+        signals = read_signals()
+        if narrative:
+            self.console.print(narrative)
+        for signal in signals:
+            self.console.print(f"  - {signal}")
+        if not narrative and not signals:
+            self.console.print(
+                "[kite.muted]no rhythm yet  ·  /working add …  ·  kite learns gently from sessions[/]"
+            )
+
     def _show_semantic(self, _arg: str = "") -> None:
         notes = self.memory.notes()
         self.console.print(f"[kite.muted]{self.memory.user_markdown_path()}[/]")
@@ -2411,6 +2450,19 @@ class ChatSession:
                 self.state.cost = float(extra["cost"])
             except (TypeError, ValueError):
                 pass
+        try:
+            from kite.memory.working_style import observe_session_turn
+
+            observe_session_turn(
+                self.memory,
+                session_id=self._session_id or "",
+                mode=str(self.state.mode),
+                approval=str(self.state.approval),
+                extra=extra,
+                interrupted=bool(self.state.interrupted),
+            )
+        except Exception:
+            pass
         self.state.set_todos(self.todos.read())
 
     def run(self) -> int:

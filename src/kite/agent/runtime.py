@@ -217,6 +217,14 @@ class AgentRuntime:
         inject_memory = rcfg.memory.inject == "always" or self.options.memory_in_prompt
         memory_text = memory_store.render_for_prompt() if inject_memory else ""
 
+        working_style_text = ""
+        try:
+            from kite.memory.working_style import render_working_context
+
+            working_style_text = render_working_context(memory_store)
+        except Exception:
+            pass
+
         continuity_text = ""
         try:
             from kite.memory.continuity import format_continuity_section, latest_continuity_markdown
@@ -231,11 +239,14 @@ class AgentRuntime:
             pass
 
         if self.slots.assemble_system is not None:
+            slot_sections = list(extra_sections)
+            if working_style_text.strip():
+                slot_sections.append(working_style_text.strip())
             system = self.slots.assemble_system(
                 config=rcfg,
                 project_context=project_ctx,
                 skills=skills,
-                extra_sections=extra_sections,
+                extra_sections=slot_sections,
                 override_system=self.options.system_prompt_override,
                 memory=memory_text,
                 continuity=continuity_text,
@@ -249,6 +260,7 @@ class AgentRuntime:
                 extra_sections=extra_sections,
                 override_system=self.options.system_prompt_override,
                 memory=memory_text,
+                working_style=working_style_text,
                 continuity=continuity_text,
                 cwd=cwd,
             )
