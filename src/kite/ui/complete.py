@@ -231,16 +231,31 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         self._models_factory = models_factory or (lambda: ())
         self._providers_factory = providers_factory or (lambda: ())
         self._reasoning_info = reasoning_info
+        self._index_cache: CommandIndex | None = None
+        self._support_cache: ReasoningSupport | None = None
+
+    def _index(self) -> CommandIndex:
+        if self._index_cache is None:
+            self._index_cache = self._index_factory()
+        return self._index_cache
+
+    def invalidate(self) -> None:
+        self._index_cache = None
+        self._support_cache = None
 
     def _support(self) -> ReasoningSupport:
+        if self._support_cache is not None:
+            return self._support_cache
         if self._reasoning_info is not None:
             try:
                 info = self._reasoning_info()
                 if info is not None:
+                    self._support_cache = info
                     return info
             except Exception:
                 pass
-        return ReasoningSupport(False, False, False, False, source="none")
+        self._support_cache = ReasoningSupport(False, False, False, False, source="none")
+        return self._support_cache
 
     def get_completions(self, document: Any, complete_event: Any):  # noqa: ANN401
         if not _PT:
@@ -258,7 +273,7 @@ class SlashCompleter(Completer):  # type: ignore[misc]
 
         body = raw[1:]
         cmd, sep, rest = body.partition(" ")
-        index = self._index_factory()
+        index = self._index()
         support = self._support()
 
         if not sep:

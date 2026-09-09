@@ -85,6 +85,7 @@ class ChatSession:
         self._harness_key: tuple | None = None
         self._model_resolved = False
         self._prompt = None
+        self._reasoning_support = None
         self._model_cache: list[str] = []
         self._model_cache_provider: str | None = None
         self._pending_open = session_id
@@ -133,6 +134,8 @@ class ChatSession:
     def _invalidate_harness(self) -> None:
         self._harness = None
         self._harness_key = None
+        self._reasoning_support = None
+        self._invalidate_completer_cache()
 
     def _effective_model_pair(self) -> tuple[str, str]:
         provider = self.provider or self.state.provider
@@ -432,15 +435,18 @@ class ChatSession:
         return self._model_cache
 
     def _reasoning_info(self):
+        if self._reasoning_support is not None:
+            return self._reasoning_support
         from kite.models.reasoning import detect_reasoning
 
         provider, model = self._effective_model_pair()
         if not provider or not model:
             return None
         try:
-            return detect_reasoning(provider, model)
+            self._reasoning_support = detect_reasoning(provider, model)
         except Exception:
-            return None
+            self._reasoning_support = None
+        return self._reasoning_support
 
     def _set_reasoning(self, raw: str, *, command: str = "") -> None:
         from kite.models.reasoning import encode_reasoning, reasoning_badge, split_reasoning
@@ -1101,6 +1107,34 @@ class ChatSession:
 
     def _index(self) -> CommandIndex:
         return CommandIndex.load(self.cwd)
+
+    def _invalidate_completer_cache(self) -> None:
+        if self._prompt is not None:
+            completer = getattr(self._prompt, "completer", None)
+            if completer is not None and hasattr(completer, "invalidate"):
+                completer.invalidate()
+
+    def _invalidate_slash_cache(self) -> None:
+        invalidate_command_index()
+        self._invalidate_completer_cache()
+
+    def _prewarm_composer(self) -> None:
+        """Load slash index + prompt session before the first `/` menu opens."""
+        import threading
+
+        try:
+            self._index()
+            self._ensure_prompt()
+        except Exception:
+            pass
+
+        def _warm_reasoning() -> None:
+            try:
+                self._reasoning_info()
+            except Exception:
+                pass
+
+        threading.Thread(target=_warm_reasoning, name="kite-reasoning-prewarm", daemon=True).start()
 
     def _normalize_slash_cmd(self, cmd: str, arg: str) -> tuple[str, str]:
         if cmd == "mode" and arg in {"plan", "build"}:
@@ -1948,7 +1982,7 @@ class ChatSession:
                 self.console.print(f"[kite.error]{e}[/]")
                 return
             self.console.print(f"[kite.success]wrote[/] {path}  ·  edit then /{Path(path).stem}")
-            invalidate_command_index()
+            self._invalidate_slash_cache()
             return
         index = self._index()
         table = kite_table("commands")
@@ -1978,7 +2012,7 @@ class ChatSession:
             self.console.print(
                 f"[kite.success]wrote[/] {path}  ·  add commands/*.md and skills/*/SKILL.md"
             )
-            invalidate_command_index()
+            self._invalidate_slash_cache()
             return
         plugins = self._index().plugins
         if arg:
@@ -2384,6 +2418,7 @@ class ChatSession:
 
         self.state.git_branch = git_branch(self.cwd)
         self._startup_banner()
+        self._prewarm_composer()
         if self._pending_open:
             self._open_session(self._pending_open)
             self._pending_open = None

@@ -132,7 +132,12 @@ def classify_skill_dir(directory: Path, cwd: Path) -> str:
     return "plugin"
 
 
-def _iter_skill_dirs(cwd: Path, extra: list[str] | None = None) -> list[Path]:
+def _iter_skill_dirs(
+    cwd: Path,
+    extra: list[str] | None = None,
+    *,
+    plugin_dirs: list[Path] | None = None,
+) -> list[Path]:
     dirs: list[Path] = []
     try:
         bundled = resources.files("kite").joinpath("data/skills")
@@ -141,12 +146,15 @@ def _iter_skill_dirs(cwd: Path, extra: list[str] | None = None) -> list[Path]:
         pass
     dirs.append(kite_home() / "skills")
     dirs.append(agents_skills_dir())
-    try:
-        from kite.plugins.loader import plugin_skill_dirs
+    if plugin_dirs is not None:
+        dirs.extend(plugin_dirs)
+    else:
+        try:
+            from kite.plugins.loader import plugin_skill_dirs
 
-        dirs.extend(plugin_skill_dirs(cwd))
-    except Exception:
-        pass
+            dirs.extend(plugin_skill_dirs(cwd))
+        except Exception:
+            pass
     dirs.append(cwd / ".kite" / "skills")
     dirs.append(cwd / ".agents" / "skills")
     for e in extra or []:
@@ -224,16 +232,30 @@ def invalidate_skills() -> None:
     _SKILLS_CACHE.clear()
 
 
-def load_skills(cwd: str | Path = ".", extra_dirs: list[str] | None = None) -> list[Skill]:
+def load_skills(
+    cwd: str | Path = ".",
+    extra_dirs: list[str] | None = None,
+    *,
+    plugin_dirs: list[Path] | None = None,
+) -> list[Skill]:
     cwd_path = Path(cwd).expanduser().resolve()
     extra_key = tuple(sorted(extra_dirs or []))
-    key = (str(cwd_path), extra_key)
-    return _SKILLS_CACHE.get_or_set(key, lambda: _load_skills_uncached(cwd_path, extra_dirs))
+    plugin_key = tuple(sorted(str(p) for p in (plugin_dirs or [])))
+    key = (str(cwd_path), extra_key, plugin_key)
+    return _SKILLS_CACHE.get_or_set(
+        key,
+        lambda: _load_skills_uncached(cwd_path, extra_dirs, plugin_dirs=plugin_dirs),
+    )
 
 
-def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -> list[Skill]:
+def _load_skills_uncached(
+    cwd_path: Path,
+    extra_dirs: list[str] | None = None,
+    *,
+    plugin_dirs: list[Path] | None = None,
+) -> list[Skill]:
     by_name: dict[str, Skill] = {}
-    for d in _iter_skill_dirs(cwd_path, extra_dirs):
+    for d in _iter_skill_dirs(cwd_path, extra_dirs, plugin_dirs=plugin_dirs):
         if not _is_dir(d):
             continue
         source = classify_skill_dir(d, cwd_path)

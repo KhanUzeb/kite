@@ -126,3 +126,16 @@ def test_teardown_jobs_on_quit_path(session: ChatSession) -> None:
     session.jobs = reg  # type: ignore[assignment]
     session._teardown_jobs()
     assert reg.kill_all_calls == 1
+
+
+def test_prewarm_composer_primes_slash_index(tmp_path) -> None:
+    from pathlib import Path
+
+    from kite.cli.slash import _INDEX_CACHE
+
+    _INDEX_CACHE.clear()
+    session = ChatSession(cwd=str(tmp_path))
+    session._prewarm_composer()
+    key = (str(Path(tmp_path).resolve()), ())
+    assert _INDEX_CACHE.get(key) is not None
+    assert session._prompt is not None
