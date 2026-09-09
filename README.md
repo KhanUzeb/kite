@@ -53,33 +53,44 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 
 ### Quick install (global — works anywhere on your machine)
 
-Install once per user. Puts `kite` on your PATH. Then open any folder and run it — no clone, no `.venv` activate.
+Install once per user. Puts `kite` on your PATH. Then open any folder and run it — no project clone, no `.venv` activate.
 
-**macOS / Ubuntu / Linux / WSL:**
+**Recommended (works on a new machine; uses public uv installer + git):**
 
 ```bash
+# macOS / Linux / WSL
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install --python 3.12 --force "git+https://github.com/KhanUzeb/kite.git"
+uv tool update-shell
+```
+
+```powershell
+# Windows PowerShell
+irm https://astral.sh/uv/install.ps1 | iex
+uv tool install --python 3.12 --force "git+https://github.com/KhanUzeb/kite.git"
+uv tool update-shell
+```
+
+**Script one-liner** (requires the GitHub repo to be **public**, otherwise raw.githubusercontent.com returns 404):
+
+```bash
+# macOS / Ubuntu / Linux / WSL
 curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash
 ```
 
-With guided setup:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash -s -- --setup
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.ps1 | iex
+# or: irm …/scripts/install.ps1 | iex
 ```
 
-**Windows (PowerShell)**
+If ExecutionPolicy blocks PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.ps1 | iex"
 ```
 
-If ExecutionPolicy blocks you:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex"
-```
-
-Needs: `curl` + `git` (macOS: `xcode-select --install`; Ubuntu: `sudo apt-get install -y curl git`).
+Needs: `curl`/`irm` + `git` (macOS: `xcode-select --install`; Ubuntu: `sudo apt-get install -y curl git`).
 
 Then from **any** directory:
 
