@@ -111,3 +111,25 @@ def test_readonly_denies_durable_memory_without_prompting(workspace: Path) -> No
 
     assert approver("memory", {"action": "remember", "text": "secret"}, {}) == "deny"
     coordinator.request.assert_not_called()
+
+
+def test_noninteractive_auto_denies_embedded_cwd_outside_workspace(workspace: Path) -> None:
+    approver = make_approver(
+        Console(file=StringIO()),
+        mode=AgentMode.BUILD,
+        approval=ApprovalMode.AUTO,
+        interactive=False,
+        workspace_cwd=str(workspace),
+    )
+    outside = workspace.parent / "outside"
+
+    assert approver(
+        "bash",
+        {"command": f'cd "{outside}" && echo escaped > escape.txt'},
+        {},
+    ) == "deny"
+    assert approver(
+        "bash",
+        {"command": f'cd "{workspace}" && echo inspected'},
+        {},
+    ) == "allow"

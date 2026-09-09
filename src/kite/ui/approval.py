@@ -16,6 +16,7 @@ from rich.text import Text
 from kite.agent.mode import MUTATING_TOOLS, READONLY_TOOLS, AgentMode, ApprovalMode
 from kite.config import kite_home
 from kite.guardrails.sandbox import (
+    check_command_paths,
     check_dangerous,
     is_benign_cache_delete,
     is_inspection_bash,
@@ -180,6 +181,8 @@ def mandatory_approval_reason(
     blocked = check_dangerous(cmd)
     if blocked:
         return blocked.replace("bash command blocked by sandbox: ", "blocked command — ")
+    if workspace_cwd and check_command_paths(cmd, workspace_root(workspace_cwd)):
+        return "shell paths outside the project workspace always need approval"
     if is_git_write(cmd):
         return "git history changes always need approval"
     # Known relative caches (.pytest_cache, .ruff_cache, …) — auto/yolo may proceed;
