@@ -2,25 +2,28 @@
 
 from __future__ import annotations
 
-import json
+from unittest.mock import patch
 
+from kite.providers.auth.base import AuthStatus
+from kite.providers.auth.codex import CodexAuthProvider
 from kite.providers.catalog import load_catalog
 from kite.providers.credentials import provider_needs_login
 
 
 def test_provider_needs_login_oauth_unlinked(kite_home) -> None:
     spec = load_catalog().get("chatgpt")
-    assert provider_needs_login(spec) is True
+    auth = CodexAuthProvider()
+    with patch.object(auth, "status", return_value=AuthStatus(False, "not linked")):
+        with patch("kite.providers.byos.get_auth_provider", return_value=auth):
+            assert provider_needs_login(spec) is True
 
 
 def test_provider_needs_login_oauth_linked(kite_home) -> None:
-    from kite.providers.byos import oauth_auth_file
-
     spec = load_catalog().get("chatgpt")
-    auth = oauth_auth_file("chatgpt")
-    auth.parent.mkdir(parents=True, exist_ok=True)
-    auth.write_text(json.dumps({"access_token": "tok"}), encoding="utf-8")
-    assert provider_needs_login(spec) is False
+    auth = CodexAuthProvider()
+    with patch.object(auth, "status", return_value=AuthStatus(True, "linked")):
+        with patch("kite.providers.byos.get_auth_provider", return_value=auth):
+            assert provider_needs_login(spec) is False
 
 
 def test_provider_needs_login_byok_missing(monkeypatch) -> None:
@@ -34,3 +37,11 @@ def test_kite_login_parser_registered() -> None:
     args = build_parser().parse_args(["login", "chatgpt"])
     assert args.command == "login"
     assert args.provider == "chatgpt"
+
+
+def test_kite_logout_parser_registered() -> None:
+    from kite.cli.run import build_parser
+
+    args = build_parser().parse_args(["logout", "codex"])
+    assert args.command == "logout"
+    assert args.provider == "codex"

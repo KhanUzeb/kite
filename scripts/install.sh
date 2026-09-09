@@ -27,6 +27,7 @@ Options:
 
 Examples:
   git clone https://github.com/KhanUzeb/kite.git && cd kite && ./scripts/install.sh
+  curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash
   curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
   KITE_INSTALL_DIR=~/tools/kite ./scripts/install.sh
   ./scripts/install.sh --no-clone --verify
@@ -177,12 +178,16 @@ First run (recommended):
 REPL tips (after kite setup):
   /plan /build               plan vs apply mode
   /setup /login              credentials and model
+  /user /profile /working    global identity (always ~/.kite/memory/)
+  /memory                    durable facts (opt-in for prompts)
+  /agents profiles           bundled subagent personas
+  /live agents               stream crew tool + shell output
   /checkpoint /handoff       save or export session context
   /compact                   summarize older turns
   Ctrl+C                     interrupt current turn (REPL stays open)
   Ctrl+O / Ctrl+P / Ctrl+B   expand tools / plan / build
 
 Package: ./scripts/pkg.sh update | reinstall | uninstall
-Contributors: pytest  ·  optional: ./scripts/install.sh --verify
-Docs: ${INSTALL_DIR}/README.md  ·  ${INSTALL_DIR}/kite_commands.md
+Contributors: ./scripts/lint.sh  ·  optional: ./scripts/install.sh --verify
+Docs: ${INSTALL_DIR}/README.md  ·  ${INSTALL_DIR}/kite_commands.md  ·  ${INSTALL_DIR}/docs/memory.md
 EOF

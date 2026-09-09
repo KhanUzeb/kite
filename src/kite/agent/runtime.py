@@ -11,7 +11,13 @@ from kite.agent.cancel import CancelToken
 from kite.agent.events import Event
 from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
-from kite.agent.mode import AgentMode, ApprovalMode, parse_approval_mode, tools_for_mode
+from kite.agent.mode import (
+    AgentMode,
+    ApprovalMode,
+    parse_approval_mode,
+    tools_for_mode,
+    tools_for_nested_subagent,
+)
 from kite.agent.orchestrator import SubagentOrchestrator
 from kite.agent.queue import RunMessageQueue
 from kite.agent.role import AgentRole, parse_role, tools_for_role
@@ -64,6 +70,7 @@ class RuntimeOptions:
     execution_mode: str | None = None  # restricted | host — overrides runtime TOML
     use_tool_executor: bool = True
     memory_in_prompt: bool = False
+    goal_objective: str = ""
 
 
 @dataclass
@@ -206,10 +213,38 @@ class AgentRuntime:
                 extra_sections.append(load_prompt_template("mode_long"))
             except (FileNotFoundError, OSError):
                 pass
+        goal_text = (self.options.goal_objective or "").strip()
+        if goal_text and self.options.label != "subagent":
+            try:
+                extra_sections.append(load_prompt_template("mode_goal"))
+            except (FileNotFoundError, OSError):
+                pass
+            from kite.memory.goal import format_goal_section
+
+            extra_sections.append(format_goal_section(goal_text))
 
         memory_store = MemoryStore.open(cwd) if self.slots.memory is None else self.slots.memory
         inject_memory = rcfg.memory.inject == "always" or self.options.memory_in_prompt
         memory_text = memory_store.render_for_prompt() if inject_memory else ""
+
+        user_context_text = ""
+        if self.options.label != "subagent" and not self.options.no_context:
+            try:
+                from kite.memory.user_context import render_user_context
+
+                user_context_text = render_user_context(memory_store)
+            except Exception:
+                pass
+
+        if self.options.label != "subagent":
+            try:
+                from kite.agent.subagent_profiles import profiles_for_orchestrator
+
+                catalog = profiles_for_orchestrator()
+                if catalog.strip():
+                    extra_sections.append(catalog)
+            except Exception:
+                pass
 
         continuity_text = ""
         try:
@@ -225,11 +260,14 @@ class AgentRuntime:
             pass
 
         if self.slots.assemble_system is not None:
+            slot_sections = list(extra_sections)
+            if user_context_text.strip():
+                slot_sections.append(user_context_text.strip())
             system = self.slots.assemble_system(
                 config=rcfg,
                 project_context=project_ctx,
                 skills=skills,
-                extra_sections=extra_sections,
+                extra_sections=slot_sections,
                 override_system=self.options.system_prompt_override,
                 memory=memory_text,
                 continuity=continuity_text,
@@ -243,6 +281,7 @@ class AgentRuntime:
                 extra_sections=extra_sections,
                 override_system=self.options.system_prompt_override,
                 memory=memory_text,
+                working_style=user_context_text,
                 continuity=continuity_text,
                 cwd=cwd,
             )
@@ -328,6 +367,8 @@ class AgentRuntime:
         approval = parse_approval_mode(self.options.approval or "auto", default=ApprovalMode.AUTO)
 
         enabled = tools_for_mode(mode, rcfg.tools.enabled)
+        if self.options.label == "subagent":
+            enabled = tools_for_nested_subagent(rcfg.tools.enabled)
         role = parse_role(self.options.role or rcfg.role, mode=mode.value)
         enabled = tools_for_role(role, enabled)
 
@@ -336,8 +377,23 @@ class AgentRuntime:
         else:
             self.job_registry.set_on_event(self._on_event)
 
-        def _subagent_runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
-            from kite.agent.harness import Harness, HarnessConfig
+        _SUBAGENT_EVENT_KINDS = frozenset(
+            {"tool_start", "tool_end", "tool_output", "tool_progress", "job_output"}
+        )
+
+        def _subagent_runner(
+            prompt: str,
+            *,
+            cancel: CancelToken | None = None,
+            profile: str = "",
+            role: str = "auto",
+            label: str = "subagent",
+            subagent_id: str = "",
+            glyph: str = "◆",
+        ) -> dict:
+            from kite.agent.harness import Harness
+            from kite.agent.harness_build import build_harness_config
+            from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
             from kite.application.policy import child_inherits_parent_policy
 
             inherited = child_inherits_parent_policy(
@@ -345,9 +401,11 @@ class AgentRuntime:
                 parent_mode=self.options.mode or "build",
                 parent_no_guardrails=bool(self.options.no_guardrails),
                 parent_execution_mode=self.options.execution_mode,
+                child_overrides={"mode": "plan", "approval": "readonly"},
             )
+            child_role = (role or "auto").strip().lower()
             h = Harness(
-                HarnessConfig(
+                build_harness_config(
                     cwd=cwd,
                     provider=resolved.provider,
                     model_name=resolved.model,
@@ -359,13 +417,28 @@ class AgentRuntime:
                     execution_mode=str(inherited["execution_mode"]),
                     interactive=False,
                     no_context=True,
-                    label="subagent",
+                    label=label or "subagent",
+                    role=child_role,
                 ),
                 user_config=ucfg,
             )
             h.job_registry = self.job_registry
-            h.subscribe(self._on_event)
-            return h.run(prompt, cancel=cancel)
+
+            def _relay(event: Event) -> None:
+                if event.kind in _SUBAGENT_EVENT_KINDS and subagent_id:
+                    payload = dict(event.payload)
+                    payload.setdefault("subagent_id", subagent_id)
+                    payload.setdefault("subagent_label", label)
+                    payload.setdefault("subagent_glyph", glyph)
+                    if profile:
+                        payload.setdefault("subagent_profile", profile)
+                    self._on_event(Event(kind=event.kind, payload=payload))
+                else:
+                    self._on_event(event)
+
+            h.subscribe(_relay)
+            run_result = execute_harness_task(h, prompt, cancel=cancel)
+            return legacy_result_from_run(run_result)
 
         orchestrator = SubagentOrchestrator(
             runner=_subagent_runner,

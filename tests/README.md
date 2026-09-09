@@ -19,11 +19,15 @@ GitHub Actions runs `pytest` on **every push and pull request to `main`** (Pytho
 | File | Covers |
 |------|--------|
 | `test_guardrails.py` | sandbox, path escape, secret redaction |
+| `test_security_hardening_more.py` | meta redaction, SSRF userinfo, attach guard, gh env filter |
+| `test_security_context_subagents.py` | USER/PROFILE permissions, crew bounds, profile symlink, nested memory strip |
+| `test_user_context.py` | global USER/PROFILE, subagent profile loader + init |
+| `test_working_style.py` | WORKING.md rhythm, untrusted injection |
 | `test_approval.py` | trust mode, `trusted_paths` bash skip |
 | `test_loop_guard.py` | repetitive tool detection |
 | `test_session.py` | append-only JSONL, meta `updated_at` |
 | `test_verification.py` | test-command artifact detection |
-| `test_orchestrator.py` | parallel subagent dispatch |
+| `test_orchestrator.py` | parallel subagent dispatch, profile/role args |
 | `test_context_cache.py` | 30s project-context TTL |
 | `test_skills_cache.py` | 45s skills TTL |
 | `test_status.py` | context meter, footer tail |
@@ -33,6 +37,8 @@ GitHub Actions runs `pytest` on **every push and pull request to `main`** (Pytho
 | `test_preview_diff.py` | approval previews, `+125,-21` counts |
 | `test_skill_install.py` | npm/npx/git/local-path parse; global symlink/junction; project `.kite/skills` link |
 | `test_application_contracts.py` | RunSpec, EventEnvelope, ApplicationRunService |
+| `test_harness_build.py` | central `build_harness_config` for CLI/REPL/headless |
+| `test_recovery_goal.py` | /goal persistence, auto-recovery, resume --retry |
 | `test_context_assembler.py` | budgets, untrusted delimiters, inspection redaction |
 | `test_harness_universal.py` | 0.9 adapters: policy, approval, verification, replay, reducer |
 | `test_sota_harness.py` | submit tool, repomap, EvidenceVerifier, ToolExecutor loop, replay acceptance |
@@ -53,6 +59,7 @@ GitHub Actions runs `pytest` on **every push and pull request to `main`** (Pytho
 | `test_cache.py` | prompt cache stats |
 | `test_context_checkpoint_handoff.py` | checkpoints, handoff export, compaction facts |
 | `test_bench.py` | Harness timing suite + budget regression (`kite bench --check`) |
+| `test_headless_tasks.py` | JSONL task files, headless display, approval upgrade, batch runner |
 | `test_tool_result.py` | ToolResult contract, tool metadata |
 | `test_workspace.py` | execution cwd, host/restricted mode, `set_cwd` |
 | `test_cancellation_parallel.py` | bash cancel, parallel read tools |

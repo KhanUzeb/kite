@@ -56,6 +56,10 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **One-shot run** — Single task via `kite run` (or `kite exec` for CI-style quiet runs).
 
+**Headless run** — Non-interactive execution with line-oriented stderr logging (`[tool]`, `[crew]`, `[out]`). Triggered by `kite run --headless`, `-q`, non-TTY stdout, or `kite tasks run`. Approval modes that need prompts (`approve`, `readonly`) upgrade to `auto`.
+
+**Task batch** — A JSONL or plain-text file of prompts run sequentially via `kite tasks run`. Each line may be JSON (`task`, `label`, `cwd`, `mode`, …) or a raw prompt. Distinct from REPL `/tasks` (queued follow-ups during a busy turn).
+
 **Resume** — Continue a prior **session** with a follow-up message.
 
 **Slash command** — Line starting with `/` in the REPL. **Control slashes** change session state; **prompt slashes** expand into the next user message (skills, markdown commands, plugins).
@@ -66,13 +70,23 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 ## Memory & persistence
 
-**Session** — One chat’s transcript and metadata, stored as JSONL under Kite home. Identified by a session id.
+**Session** — One chat’s transcript and metadata, stored as JSONL under Kite home. Identified by a session id. **Session persistence** (`full` | `redacted` | `disabled`) controls whether and how transcripts are written — default `redacted` recursively strips secrets before disk.
+
+**Skill trust** — Bundled skills are trusted; npm, git, project, and user-local skills are untrusted. Provenance (`origin`, `trust`) is visible to the model and in `/skills` listings.
+
+**Recursive redaction** — Sanitizer that walks nested structures (dicts, lists, strings) to remove credential-shaped values from audit logs, events, sessions, and tool output.
 
 **Trajectory** — Serializable record of a run (messages, tool events) for debug, replay, or `kite apply`.
 
-**Semantic memory** — Durable markdown notes (`MEMORY.md` style) the user asks to remember across sessions. **Opt-in for prompts:** injected only when the user loaded memory this session (`/remember`, `/memory`) or config says `[memory] inject = "always"`.
+**User identity** — Global markdown at `~/.kite/memory/USER.md` (who you are: name, role, comms prefs). Injected when present; wrapped as **untrusted** user-authored content. Never per-repo.
+
+**Profile** — Global markdown at `~/.kite/memory/PROFILE.md` (stack, goals, constraints). Same injection rules as user identity. Distinct from semantic facts and working rhythm.
+
+**Semantic memory** — Durable markdown notes (`~/.kite/memory/MEMORY.md` user-global; optional `<repo>/.kite/MEMORY.md` project-scoped). **Opt-in for prompts:** injected only when the user loaded memory this session (`/remember`, `/memory`) or config says `[memory] inject = "always"`.
 
 **Episodic memory** — Short sqlite log of notable events per user/project. Same opt-in rule as semantic memory when rendered into the prompt.
+
+**Working rhythm** — Fluid long-term context about how the user tends to work (`~/.kite/memory/WORKING.md` + episodic `style` signals). Injected when present as soft **untrusted** context — not weighted policy, not opt-in like semantic memory. Distinct from concrete `/remember` facts.
 
 **Working-state continuity** — Structured mission/done/next brief written after compact or budget continue. Injected as resume context, **not** durable memory; never auto-pinned to MEMORY.md unless the user asked to remember.
 
@@ -80,7 +94,13 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Auto venv** — When `[environment] auto_venv = true` (default), bash subprocesses prepend the project `.venv`/`venv` to `PATH` if `pyvenv.cfg` exists.
 
-**Live terminal** — `/live` toggles streaming bash/job output in the REPL footer and transcript while tools run.
+**Live terminal** — `/live` toggles streaming bash output in the REPL while tools run (redacted).
+
+**Live subagents** — `/live agents` streams nested crew tool and shell output with worker prefix (`◆ Scout · …`). Redacted like live terminal.
+
+**Subagent profile** — Bundled persona (`scout`, `reviewer`, `shell`, `coder`, `context`) or custom `~/.kite/subagents/<id>.md` (user overrides bundled ids). Create with `kite subagents --init <id>` or `/agents init <id>`. Passed as `profile=` on the `subagent` tool; composes system prompt + task. Custom profiles are untrusted. Not the same as global **Profile** (`PROFILE.md` / `/profile`).
+
+**Subagent crew** — Parallel or background nested harness runs via `subagent` tool. Max 12 workers per dispatch; nested workers cannot recurse (`subagent` stripped) or write global memory (`memory` stripped). Monitor with `/agents`; stop with `/kill`.
 
 **Context checkpoint** — Named snapshot of the full model transcript (and todos) at a point in time. Distinct from git undo. Stored under `~/.kite/checkpoints/<session>/`.
 

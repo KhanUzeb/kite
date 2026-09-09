@@ -26,6 +26,7 @@ kite chat [--mode plan|build] [--approval auto|approve|trust|readonly] [--sessio
 kite run "task"              # one-shot
 kite resume <session-id>                 # open that transcript in chat
 kite resume <session-id> [follow-up]     # one-shot continue
+kite resume --last [--retry]             # newest session for cwd; --retry sends recovery follow-up
 kite resume abc12345                     # id prefix works when unique
 kite sessions                            # table: date, time, title, model, status, id
 kite sessions humanize                   # filter by title, cwd, date, or id prefix
@@ -47,11 +48,15 @@ Shared flags on `run` / `chat` / `resume`:
 | `--steps` `--cost` `--time` | Limits |
 | `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `-v` / `-q` | Verbose tool bodies / quiet |
+| `--headless` | Line-oriented stderr log (`[tool]`, `[crew]`, `[out]`), no TTY prompts — CI / cloud agents |
+| `--no-stream` | With `--headless`, hide live bash/tool output lines |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
 | `--auto-compact` | Persist auto-compaction on/off in `~/.kite/config.toml` (`kite config --auto-compact true\|false`) |
 | `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. |
 
-**Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
+`--headless` also activates when stdout is not a TTY or with `-q`. `approve` / `readonly` approval is upgraded to `auto` so runs do not block on prompts.
+
+**Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory. inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
 
 Housekeeping (no model):
 
@@ -64,22 +69,28 @@ kite sessions --delete <id> [<id> ...]
 kite sessions --delete-all     # TTY confirms; else pass -y
 kite setup [-p provider]       # first-run wizard: credentials + model
 kite login [provider]          # pick provider if omitted → BYOK key or BYOS browser → pick model
+kite logout [provider]         # unlink BYOS subscription (codex, claude, grok/xai)
 kite keys                      # TTY: status then pick a provider to link
 kite keys [--set [provider]]   # paste BYOK API keys (hidden); omit provider to pick
-kite keys --logout [provider]  # unlink BYOK/BYOS; omit provider to pick
+kite keys --logout [provider]  # unlink BYOK keys or BYOS (omit provider to pick)
 kite providers                 # status; TTY then pick to connect
 kite models [-p provider]      # TTY: pick a live model (saved). --list dumps the table
 kite models --refresh          # bypass cache; re-fetch from the provider API
 kite models --select           # same picker
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
+              [--session-persistence full|redacted|disabled]
+kite privacy [--session-persistence full|redacted|disabled]   # security policy summary
 kite context [--json]
-kite skills                    # TTY: pick a skill to show
+kite skills                    # TTY: pick a skill to show (trust/origin column)
 kite skills [--show name] [--add pkg|path]
 kite commands
 kite plugins
 kite memory [--remember text] [--forget query] [--project]
 kite runtime-config [--config name]
-kite bench [--json] [--save PATH] [--compare BASELINE.json] [--check]
+kite bench [--json] [--save PATH] [--compare BASELINE.json] [--check] [--ab] [--stress]
+kite tasks init [--force] [path]              # write example ~/.kite/tasks/example.jsonl
+kite tasks run <file.jsonl> [--stdin] [--json] [--dry-run] [--continue-on-error]
+kite subagents [--show id] [--init id] [--role architect] [--force]
 kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
 ```
 
@@ -101,7 +112,47 @@ kite bench --check              # exit 1 if any case exceeds budget (CI gate)
 | **context** | `repo_map`, `prompt_cache_prepare`, `context_gather`, `prompt_assembly` |
 | **tools** | `tool_registry`, `read_tool`, `grep_tool`, `bash_echo`, `subprocess_spawn` |
 
+Optional (not in CI pytest): `kite bench --ab` and `kite bench --stress` — see [docs/bench-orchestrate-ab.md](docs/bench-orchestrate-ab.md).
+
 Budget ceilings live in `src/kite/bench/budgets.py`. `pytest tests/test_bench.py` runs the same suite in CI.
+
+### Headless tasks (`kite tasks`)
+
+Run one or more agent tasks without a TTY — for CI, cron, or cloud agents. Uses the same harness as `kite run --headless` but reads tasks from a file or stdin.
+
+```bash
+kite tasks init                              # ~/.kite/tasks/example.jsonl
+kite tasks run ~/.kite/tasks/example.jsonl   # run batch
+echo '{"task": "pytest -q", "label": "tests"}' | kite tasks run --stdin
+kite tasks run tasks.jsonl --dry-run         # list without running
+kite tasks run tasks.jsonl --json            # machine-readable summary on stdout
+kite run --headless "fix the failing test"   # single task, stderr event log
+```
+
+**Task file format** — JSONL (one object per line) or plain text (one prompt per line). `#` lines and blanks are skipped.
+
+| Field | Meaning |
+|-------|---------|
+| `task` / `prompt` / `message` | User prompt (required) |
+| `label` / `name` | Short name in logs |
+| `cwd` / `workspace` | Per-task workspace (default: `--cwd` or `.`) |
+| `mode` | `plan` or `build` |
+| `approval` | `auto`, `yolo`, `trust`, … (`approve`/`readonly` → `auto` headless) |
+| `long` / `long_task` | Long-task limits + phased checkpoints |
+
+Stderr tags: `[kite]` lifecycle, `[tool]` tool start/end, `[out]` bash/tool lines (redacted), `[crew]` subagent workers, `[stream]` model deltas (`-v`).
+
+### Subagent personas (`kite subagents`)
+
+Bundled personas live in the package; **custom personas** override by id in `~/.kite/subagents/<id>.md` (YAML frontmatter + markdown prompt). Distinct from global `/profile` (`PROFILE.md` for the main agent).
+
+```bash
+kite subagents                              # table: id, label, role, trust
+kite subagents --show scout                 # full prompt body
+kite subagents --init auditor --role debugger --label "Auditor"
+```
+
+Dispatch at runtime: `subagent` tool with `profile=<id>` and `prompt=…`. User-authored profiles are wrapped as untrusted content.
 
 `kite dashboard` is per-user: it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
 
@@ -117,7 +168,9 @@ These never go to the model.
 | `/build` `/b` | Apply edits; continues existing plan checklist; approval leaves `readonly` → supervised |
 | `/approve yolo\|auto\|supervised` | Autonomy. Empty: numbered picker. yolo skips in-workspace prompts; high-risk still asks |
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off**). Empty: pick on/off |
-| `/theme [auto\|kite\|dark\|light\|dim\|mono]` | Color palette. Empty: pick |
+| `/privacy` | Security policy summary; `/privacy sessions` picks full/redacted/disabled |
+| `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |
+| `/theme [auto\|kite\|dark\|light\|dim\|mono\|monochrome\|catppuccin\|ember\|forest\|hues\|transparent]` | Color palette. Empty: pick |
 | `/font [unicode\|ascii]` | Glyph pack. Empty: pick |
 | `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort. Empty: pick |
 | `/model [provider/id]` | Show or set model |
@@ -139,32 +192,46 @@ These never go to the model.
 | `/stop` | Stop the current turn; session stays open |
 | `/steer text` | Stop and run `text` as the next turn |
 | `/tasks` | Show the running turn and queued follow-ups |
+| `/goal [text]` | Persistent long-horizon objective (survives provider errors) |
+| `/goal` | View current goal status |
+| `/goal pause` / `/goal resume` / `/goal clear` | Pause, reactivate, or remove goal |
+| `/goal edit …` | Revise goal text (max 4000 chars) |
 | `/jobs` | List background bash jobs and live subagents (pick to kill) |
+| `/agents` | Subagent crew board — profile, label, status, prompt; `/kill` to stop |
+| `/agents profiles` | List bundled + custom personas (`~/.kite/subagents/*.md`) with trust column |
+| `/agents show <id>` | Print one persona (path, role, prompt body) |
+| `/agents init <id>` | Scaffold `~/.kite/subagents/<id>.md` (edit, then `profile=<id>`) |
+| `/agents reload` | Reload profiles from disk (after manual edits) |
+| `/agents <id>` | Shortcut for `/agents show <id>` |
 | `/kill [id\|all]` | Kill one background job/subagent, or all. Empty: pick |
 | `/session` | Current session id |
 | `/session show [id]` | Print a transcript (current if omitted) |
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Toggle expanded tool output |
-| `/live` | Stream bash/job output in real time while tools run |
+| `/live` | Stream bash output in real time while tools run |
+| `/live agents` | Stream subagent crew tool + shell output with worker prefix |
 | `/collapse` | Collapse tool output (default) |
 | `/trace` | Last traceback |
-| `/skills [name]` | List skills, or print one. Empty: pick to show. User-home skills show `~` (`~/.kite/skills`, `~/.agents/skills`) |
-| `/skills add pkg\|path` | Install npm/npx/GitHub into `~/.kite/skills`, or **link** a local skill folder |
+| `/skills [name]` | List skills (trust/origin column), or print one. Empty: pick to show. User-home skills show `~` (`~/.kite/skills`, `~/.agents/skills`) |
+| `/skills add pkg\|path` | Install npm/npx/GitHub into `~/.kite/skills` (**untrusted** — provenance in `.kite-provenance.json`), or **link** a local skill folder |
 | `/commands` | List markdown slash prompts |
 | `/commands new name` | Write `.kite/commands/name.md` |
 | `/plugins` | List plugins |
 | `/plugins init name` | Scaffold `.kite/plugins/name` |
 | `/memory [semantic\|episodic]` | Semantic markdown + episodic sqlite |
+| `/user [add text]` | Global identity (`~/.kite/memory/USER.md`) — always in prompt when present |
+| `/profile [add text]` | Global profile (`~/.kite/memory/PROFILE.md`) — stack, goals, constraints |
+| `/working [add text]` | Fluid working rhythm (`~/.kite/memory/WORKING.md`) — soft context, always in mind when present |
 | `/semantic` | Show `MEMORY.md` notes |
 | `/episodic` | Show sqlite episode log |
 | `/remember [user\|project] text` | Append a note |
 | `/forget id\|substring` | Drop matching notes |
 | `/attach path` | Queue a file or image for the next turn (any path on disk) |
-| `/clip` `/paste` `/clipboard` | Attach clipboard text or image |
+| `/clip` `/paste` `/clipboard` | Attach clipboard text or image (**F8** or **Esc v**) |
 | `/detach [name\|all]` | Drop queued attachments |
 | `/attachments` | List queued files |
-| `/help` `/h` | This map |
+| `/help` `/h` | Command map + keyboard shortcuts |
 | `/quit` `/q` `/exit` | Leave the REPL |
 
 Ctrl+C stops the **current turn**, not the process.
@@ -174,11 +241,15 @@ Ctrl+C stops the **current turn**, not the process.
 | Shortcut | Action |
 |----------|--------|
 | `Esc` / `Ctrl+C` | Stop the running turn (session stays). Idle `Ctrl+C` clears the line; does not quit |
+| `Ctrl+D` / `/quit` | Leave the REPL |
+| `Ctrl+V` / `Shift+Insert` | Paste OS clipboard into the composer |
+| `F8` / `Esc` then `v` | Attach clipboard to the next turn (same as `/clip`) |
+| `Ctrl+Insert` | Copy composer selection to OS clipboard |
+| `Ctrl+L` | Clear screen |
 | `Ctrl+G` | Steer: stop and send the composer text as the next turn |
 | `Ctrl+U` | Dequeue: restore all queued messages into the composer for editing |
 | `Enter` | Send the line. While working, queues a chat follow-up |
-| `Ctrl+V` / `Shift+Insert` | Paste OS clipboard into the composer |
-| `Ctrl+Insert` | Copy composer selection to OS clipboard |
+| `@path` | Inline file attach in the composer (e.g. `fix @src/foo.py`) |
 | `Ctrl+O` / `F6` | Toggle expanded tool output (`/expand`) |
 | `Ctrl+P` / `F3` | Plan mode |
 | `Ctrl+B` / `F4` | Build mode |
@@ -186,7 +257,6 @@ Ctrl+C stops the **current turn**, not the process.
 | `F2` | Flash status on the footer (`Ctrl+S` is not bound; terminals use it for XOFF) |
 | `F5` | Refresh live models from the API, then pick |
 | `Tab` | Cycle slash completions (`Enter` always submits) |
-| `Ctrl+D` / `/quit` | Close the REPL |
 
 Drag-select, copy, and right-click paste stay with the terminal (mouse capture off by default). Set `KITE_MOUSE=1` for slash-menu wheel scroll (then use Shift+drag to select in most terminals).
 
@@ -211,6 +281,8 @@ These **are** the next user turn. Overlay (later wins): bundled → `~/.kite/com
 `$ARGUMENTS` (and `$1`…`$9`) in the markdown file is replaced with whatever you typed after the command.
 
 ### Bundled skills (`data/skills/`)
+
+Bundled skills are **trusted** (shipped with Kite). npm, git, project, and user-installed skills are **untrusted** — the model sees `trust` and `origin` in listings and invocations. See [SECURITY.md](SECURITY.md).
 
 | Command | Same as |
 |---------|---------|
@@ -280,13 +352,13 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 | `submit` | Structured completion — `message` with Done / Changed / Verification sections (preferred over bash echo marker) |
 | `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` |
 | `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |
-| `websearch` | DuckDuckGo search (no API key); unwraps redirect links; deduped results |
-| `webfetch` | Fetch one URL → extracted readable text + title (HTML stripped; JSON pretty-print) |
-| `webcrawl` | Same-origin multi-page crawl with depth/page limits |
+| `websearch` | DuckDuckGo search (HTML + instant API, no key); unwraps redirects; deduped results |
+| `webfetch` | Fetch one URL → title, description, readable body; optional outbound links; JSON pretty-print |
+| `webcrawl` | Same-origin crawl with depth/page/time/download limits; private URLs blocked |
 
 Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `websearch` → pick URL → `webfetch`.
 
-`KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable notes.
+`KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable facts; `/user` + `/profile` + `/working` are global identity context. See [docs/memory.md](docs/memory.md).
 
 **Verification:** after edits, run the applicable check for the touched package. Monorepos may need per-service checks. Override defaults in `.kite/verification.toml` (see `src/kite/data/verification.example.toml`).
 
@@ -300,7 +372,8 @@ Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `webse
   commands/*.md        # your slash prompts
   skills/*/SKILL.md
   plugins/<id>/
-  memory/MEMORY.md     # semantic facts
+  memory/MEMORY.md     # semantic facts (opt-in in prompt)
+  memory/WORKING.md    # working rhythm — soft habits, in prompt when present
   memory/episodes.sqlite
   sessions/*.jsonl
   approvals.json
@@ -312,8 +385,8 @@ Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `webse
   commands/*.md
   skills/
   plugins/
-  memory/notes.jsonl
-  MEMORY.md
+  memory/MEMORY.md          # project semantic notes
+  memory/episodes.sqlite
 ```
 
 **System prompt overrides** (same idea as pi / Prime Agent):
@@ -326,6 +399,22 @@ Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `webse
 Harness override (`--system-prompt` / config) still beats discovered `SYSTEM.md`.
 
 Human commits are the source of truth for the project. Checkpoint `kite:` commits exist so `/undo` can revert agent edits without touching your own history.
+
+---
+
+## Security & privacy
+
+Kite is **local-first**: credentials stay on disk under `~/.kite/` (or provider runtimes for BYOS). See [SECURITY.md](SECURITY.md) for the full policy.
+
+| Topic | Control |
+|-------|---------|
+| **Session persistence** | `session_persistence` in `~/.kite/config.toml`: `redacted` (default), `full`, or `disabled`. REPL: `/privacy sessions …`. CLI: `kite config --session-persistence …` or `kite privacy` |
+| **Secret redaction** | Recursive sanitizer for audit logs, events, session JSONL, and tool output (nested dicts/lists, Bearer tokens, sensitive keys) |
+| **Child processes** | Credential-like env vars stripped; `extra` overrides cannot re-inject `OPENAI_API_KEY`, `GITHUB_TOKEN`, etc. Process trees killed on timeout/cancel |
+| **Skills** | Bundled = trusted; npm/git/project/user = untrusted (`.kite-provenance.json` on install) |
+| **HTTP tools** | SSRF + peer IP check; redirects capped; crawl budgets |
+| **OS/hardware** | `/proc` `/sys` `/dev` protected; bash blocks sudo/docker/kubectl/mount; filtered child env on all subprocess tools |
+| **Restricted mode** | Paths clamped to workspace; **all** network tools blocked (bash curl, web*, Context7) |
 
 ---
 
@@ -350,9 +439,20 @@ Package maintenance (not `kite` CLI subcommands):
 
 One-liner (default install dir `~/kite` or `%USERPROFILE%\kite`):
 
+**macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash -s -- --setup
+```
+
+**Linux:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
 ```
+
+**Windows:**
 
 ```powershell
 irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
@@ -380,11 +480,15 @@ Install once. Activate the venv (install script prints the path; or add `.venv/b
 
 Global: `~/.kite/` (sessions, config, user skills). Also loads skills from `~/.agents/skills` on any machine. Per-repo: `<repo>/.kite/commands`, `skills`, `plugins`, `memory`, and `<repo>/.agents/skills`.
 
-### Tests
+### Tests & lint (CI parity)
 
 ```bash
-pytest              # after install.sh or uv pip install -e ".[dev]"
+./scripts/lint.sh           # sync_version + ruff + pytest + bench --check
+pytest                      # after install.sh or uv pip install -e ".[dev]"
 pytest -v
+./scripts/lint.sh --ruff-all   # optional: lint scripts/ too
 ```
+
+Maintainers before a release tag: `./scripts/verify_release_pr.sh`
 
 See `tests/` for guardrails, approval/trust, loop guard, sessions, verification, orchestrator, caches, and UI helpers.

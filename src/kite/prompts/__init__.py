@@ -61,6 +61,7 @@ def assemble_system_prompt(
     override_system: str | None = None,
     append_system: str | None = None,
     memory: str | None = None,
+    working_style: str | None = None,
     continuity: str | None = None,
     cwd: str | Path | None = None,
 ) -> str:
@@ -88,6 +89,9 @@ def assemble_system_prompt(
         rendered = project_context.render_for_prompt(max_chars=config.context.max_context_chars)
         if rendered.strip():
             parts.append("# Active project context\n" + rendered.strip())
+
+    if working_style and working_style.strip():
+        parts.append(working_style.strip())
 
     if memory and memory.strip():
         parts.append(memory.strip())
