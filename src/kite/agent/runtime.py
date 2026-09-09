@@ -218,12 +218,13 @@ class AgentRuntime:
         memory_text = memory_store.render_for_prompt() if inject_memory else ""
 
         user_context_text = ""
-        try:
-            from kite.memory.user_context import render_user_context
+        if self.options.label != "subagent" and not self.options.no_context:
+            try:
+                from kite.memory.user_context import render_user_context
 
-            user_context_text = render_user_context(memory_store)
-        except Exception:
-            pass
+                user_context_text = render_user_context(memory_store)
+            except Exception:
+                pass
 
         if self.options.label != "subagent":
             try:

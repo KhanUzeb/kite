@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 import uuid
@@ -22,11 +23,28 @@ _WORKER_GLYPHS = ("◆", "●", "◇", "▲", "▶", "★")
 _MIN_USEFUL_CHARS = 40
 _SECTION_LIMIT = 2000
 _MAX_FINISHED_TASKS = 64
+_MAX_CREW_SIZE = 12
+_MAX_PROMPT_CHARS = 8000
+_MAX_LABEL_CHARS = 80
+_MANAGER_EVENT_LIMIT = 8
 
 
 def worker_glyph(index: int) -> str:
     """Rotate glyphs so parallel workers are easy to spot in the TUI."""
     return _WORKER_GLYPHS[(max(1, index) - 1) % len(_WORKER_GLYPHS)]
+
+
+def _sanitize_label(text: str, fallback: str = "worker") -> str:
+    clean = re.sub(r"[\x00-\x1f\x7f]", "", (text or "").strip())
+    clean = clean[:_MAX_LABEL_CHARS].strip()
+    return clean or fallback
+
+
+def _clamp_prompt(text: str) -> str:
+    raw = (text or "").strip()
+    if len(raw) <= _MAX_PROMPT_CHARS:
+        return raw
+    return raw[: _MAX_PROMPT_CHARS - 3] + "..."
 
 
 def evaluate_subagent_result(result: dict[str, Any]) -> tuple[bool, str, str]:
@@ -134,6 +152,13 @@ class SubagentOrchestrator:
 
     def manager_view(self) -> list[dict[str, Any]]:
         return [t.to_dict() for t in self.tasks]
+
+    def _manager_payload(self, *, limit: int = _MANAGER_EVENT_LIMIT) -> list[dict[str, Any]]:
+        running = [t for t in self.tasks if t.status == "running"]
+        finished = [t for t in self.tasks if t.status not in {"running", "queued"}]
+        finished.sort(key=lambda t: t.started_at, reverse=True)
+        combined = running + finished
+        return [t.to_dict() for t in combined[:limit]]
 
     def _task_by_id(self, task_id: str) -> SubagentTask | None:
         for task in self.tasks:
@@ -318,7 +343,7 @@ class SubagentOrchestrator:
             worker=task.worker,
             glyph=task.glyph,
             background=task.background,
-            manager=self.manager_view(),
+            manager=self._manager_payload(),
         )
         return out
 
@@ -334,7 +359,8 @@ class SubagentOrchestrator:
         background: bool = False,
     ) -> SubagentTask:
         tid = uuid.uuid4().hex[:8]
-        title = label or prompt[:60].replace("\n", " ")
+        prompt = _clamp_prompt(prompt)
+        title = _sanitize_label(label, prompt[:60].replace("\n", " ") or "worker")
         if not worker:
             worker, glyph = self._next_worker()
         cancel = CancelToken()
@@ -360,11 +386,11 @@ class SubagentOrchestrator:
             label=title,
             profile=profile,
             role=role,
-            prompt=prompt[:300],
+            prompt=prompt[:240],
             worker=worker,
             glyph=task.glyph,
             background=background,
-            manager=self.manager_view(),
+            manager=self._manager_payload(),
         )
         return task
 
@@ -517,6 +543,9 @@ class SubagentOrchestrator:
     ) -> dict[str, Any]:
         if not prompts:
             return {"ok": False, "error": "prompts required", "output": "prompts required"}
+        if len(prompts) > _MAX_CREW_SIZE:
+            msg = f"crew too large ({len(prompts)}); max {_MAX_CREW_SIZE} workers per dispatch"
+            return {"ok": False, "error": msg, "output": msg}
         workers = min(self.max_workers, len(prompts))
         labels = labels or [f"worker-{i}" for i in range(1, len(prompts) + 1)]
         profiles = profiles or [""] * len(prompts)
@@ -594,6 +623,9 @@ class SubagentOrchestrator:
     ) -> dict[str, Any]:
         if not prompts:
             return {"ok": False, "error": "prompts required", "output": "prompts required"}
+        if len(prompts) > _MAX_CREW_SIZE:
+            msg = f"crew too large ({len(prompts)}); max {_MAX_CREW_SIZE} background workers"
+            return {"ok": False, "error": msg, "output": msg}
         labels = labels or [f"worker-{i}" for i in range(1, len(prompts) + 1)]
         profiles = profiles or [""] * len(prompts)
         roles = roles or [""] * len(prompts)
@@ -678,7 +710,7 @@ class SubagentOrchestrator:
             self._attach_dispatch_hint(out, dispatch_reason)
             return out
 
-        prompt = str(args.get("prompt") or "")
+        prompt = _clamp_prompt(str(args.get("prompt") or ""))
         if not prompt:
             msg = "subagent needs prompt (one worker) or prompts (parallel crew)"
             return {"ok": False, "error": msg, "output": msg}

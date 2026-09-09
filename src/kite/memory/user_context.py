@@ -6,6 +6,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from kite.config import ensure_home, kite_home
+from kite.memory.secure_io import (
+    MAX_USER_CONTEXT_CHARS,
+    clamp_memory_text,
+    secure_memory_write,
+    wrap_untrusted_user_content,
+)
 from kite.memory.working_style import render_working_context
 
 if TYPE_CHECKING:
@@ -58,45 +64,19 @@ def read_profile() -> str:
     return raw if raw != _DEFAULT_PROFILE.strip() else ""
 
 
-def _section(title: str, body: str, *, preamble: str = "") -> str:
-    text = (body or "").strip()
-    if not text:
-        return ""
-    head = f"# {title}\n"
-    if preamble:
-        head += preamble + "\n\n"
-    return head + text
-
-
-def render_user_context(store: MemoryStore, *, max_chars: int = 1400) -> str:
+def render_user_context(store: MemoryStore, *, max_chars: int = MAX_USER_CONTEXT_CHARS) -> str:
     """Build global identity block: USER + PROFILE + working rhythm."""
     parts: list[str] = []
 
     user = read_user()
     if user:
-        parts.append(
-            _section(
-                "User",
-                user,
-                preamble=(
-                    "Global identity — who this person is. Hold lightly; "
-                    "explicit instructions and the current task always win."
-                ),
-            )
-        )
+        wrapped = wrap_untrusted_user_content(user[:2000], source="USER.md")
+        parts.append(f"# User\n{wrapped}")
 
     profile = read_profile()
     if profile:
-        parts.append(
-            _section(
-                "Profile",
-                profile,
-                preamble=(
-                    "Longer-lived preferences and context. Not rigid policy — "
-                    "adapt to the moment."
-                ),
-            )
-        )
+        wrapped = wrap_untrusted_user_content(profile[:2000], source="PROFILE.md")
+        parts.append(f"# Profile\n{wrapped}")
 
     working = render_working_context(store, max_chars=max(400, max_chars // 2))
     if working:
@@ -116,19 +96,15 @@ def ensure_defaults() -> None:
     d.mkdir(parents=True, exist_ok=True)
     for path, default in ((user_path(), _DEFAULT_USER), (profile_path(), _DEFAULT_PROFILE)):
         if not path.is_file():
-            path.write_text(default, encoding="utf-8")
+            secure_memory_write(path, default)
 
 
 def _append_line(path: Path, text: str) -> str:
-    from kite.util.atomic import atomic_write_text
-
-    cleaned = " ".join(text.strip().split())
-    if not cleaned:
-        raise ValueError("empty text")
+    cleaned = clamp_memory_text(text)
     ensure_defaults()
     raw = _read(path)
     body = raw if raw else (path.name.replace(".md", "").title() + "\n")
-    atomic_write_text(path, body.rstrip() + f"\n- {cleaned}\n")
+    secure_memory_write(path, body.rstrip() + f"\n- {cleaned}\n")
     return cleaned
 
 

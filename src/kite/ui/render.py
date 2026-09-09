@@ -561,8 +561,9 @@ class RunDisplay:
 
     def _on_tool_output(self, p: dict[str, Any]) -> None:
         from kite.env.shell import sanitize_shell_line
+        from kite.guardrails.redact import redact_string
 
-        line = sanitize_shell_line(str(p.get("line") or ""))
+        line = redact_string(sanitize_shell_line(str(p.get("line") or "")))
         if not line:
             return
         self.state.set_activity_preview(line)
@@ -576,8 +577,9 @@ class RunDisplay:
 
     def _on_job_output(self, p: dict[str, Any]) -> None:
         from kite.env.shell import sanitize_shell_line
+        from kite.guardrails.redact import redact_string
 
-        line = sanitize_shell_line(str(p.get("line") or ""))
+        line = redact_string(sanitize_shell_line(str(p.get("line") or "")))
         if not line:
             return
         self.state.set_activity_preview(line)
@@ -1068,7 +1070,9 @@ class RunDisplay:
             Text(f"{GUTTER}{SYMBOL_COLLAPSE} {glyph}  {label}{suffix}", style="kite.plan")
         )
         if self.state.live_subagents:
-            prompt = str(p.get("prompt") or "")[:120]
+            from kite.guardrails.redact import redact_string
+
+            prompt = redact_string(str(p.get("prompt") or "")[:120])
             if prompt:
                 self.console.print(Text(f"{GUTTER}{GUTTER}{prompt}", style="kite.muted"))
         self._spin(True, f"{glyph}  {label}")
@@ -1091,7 +1095,11 @@ class RunDisplay:
         )
         preview = str(p.get("preview") or "")
         if preview:
-            self.console.print(Text(f"{GUTTER}{GUTTER}{preview[:100]}", style="kite.muted"))
+            from kite.guardrails.redact import redact_string
+
+            self.console.print(
+                Text(f"{GUTTER}{GUTTER}{redact_string(preview[:100])}", style="kite.muted")
+            )
 
     def _on_job_start(self, p: dict[str, Any]) -> None:
         try:

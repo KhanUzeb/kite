@@ -40,10 +40,10 @@ def _read(path: Path) -> str:
 
 
 def _write(path: Path, text: str) -> None:
-    from kite.util.atomic import atomic_write_text
+    from kite.memory.secure_io import secure_memory_write
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, text)
+    secure_memory_write(path, text)
 
 
 def _split_signals(raw: str) -> tuple[str, list[str]]:
@@ -87,9 +87,9 @@ def read_signals() -> list[str]:
 
 
 def append_signal(text: str) -> str:
-    cleaned = " ".join(text.strip().split())
-    if not cleaned:
-        raise ValueError("empty signal")
+    from kite.memory.secure_io import MAX_SIGNAL_CHARS, clamp_memory_text
+
+    cleaned = clamp_memory_text(text, max_chars=MAX_SIGNAL_CHARS)
     path = working_path()
     raw = _read(path)
     pin, signals = _split_signals(raw) if raw.strip() else (_DEFAULT_PIN.strip(), [])
@@ -220,16 +220,16 @@ def _recent_style_episodes(store: MemoryStore, *, limit: int = _MAX_EPISODE_SIGN
 
 
 def format_working_section(body: str) -> str:
+    from kite.memory.secure_io import wrap_untrusted_user_content
+
     text = (body or "").strip()
     if not text:
         return ""
-    return (
-        "# Working rhythm\n"
-        "Soft context about how this person tends to work. Hold it lightly — adapt to "
-        "the moment; explicit instructions and the current task always win. "
-        "This is not weighted memory or rigid policy.\n\n"
-        f"{text}"
+    wrapped = wrap_untrusted_user_content(
+        text,
+        source="WORKING.md",
     )
+    return f"# Working rhythm\n{wrapped}"
 
 
 def render_working_context(store: MemoryStore, *, max_chars: int = 900) -> str:

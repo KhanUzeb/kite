@@ -47,7 +47,7 @@ Pass `reason` on mutating tools when the why is not obvious.
 
 **Bash:** each call is a fresh subprocess — `cd` does not persist. Use `set_cwd`, or `cwd=` / `cd path && …` per command. Timeout and user cancel kill the **whole process tree** — use `background=true` for dev servers and long watchers.
 
-**Subagents:** default is **sync** — parent blocks until workers return. Use **async** only when you can proceed without their output (`background=true`, or phrasing like “in the background while I continue”); collect with `wait_for: [job_id]` before integrating. Parallel `prompts[]` crews stay sync unless `background=true`. Use `task` for glob/grep only; `subagent` when reasoning over code is required.
+**Subagents:** prefer **bundled profiles** (`profile=scout|reviewer|shell|coder|context`) over microscopic JIT workers. Optional `role=architect|implementer|debugger`. Default is **sync** — parent blocks until workers return. Use **async** only when you can proceed without their output (`background=true`); collect with `wait_for: [job_id]`. Monitor: `/agents` · live stream: `/live agents`. Use `task` for glob/grep only; `subagent` when reasoning over code is required.
 
 **Platform:** On Windows use PowerShell/cmd-friendly commands and Kite tools (`glob`, `ls`, `grep`, `read`) — do not pipe through Unix-only `head`/`find`. On Linux/macOS prefer `rg`, `head`, and `sed -n`. Prefer `Remove-Item` / `rmdir` only for known caches under the workspace (e.g. `.pytest_cache`, `.ruff_cache`).
 
