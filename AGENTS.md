@@ -39,7 +39,7 @@ src/kite/
   data/           Bundled catalog.toml, prompts, skills, commands
 tests/            pytest unit tests (no live LLM)
 docs/             RELEASE notes + kite-system-design.md
-scripts/          install.sh, install.ps1, build_design_pdf.py
+scripts/          install.sh, download-macos.sh, install.ps1, lint.sh, build_design_pdf.py
 ```
 
 **Layer rule:** CLI/UI subscribe to events; `ApplicationRunService` (0.9) or `AgentRuntime` assembles; `DefaultAgent` loops; tools/guardrails execute. Do not import UI from `agent/` or call LiteLLM from `ui/repl.py` directly.

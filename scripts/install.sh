@@ -27,6 +27,7 @@ Options:
 
 Examples:
   git clone https://github.com/KhanUzeb/kite.git && cd kite && ./scripts/install.sh
+  curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash
   curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
   KITE_INSTALL_DIR=~/tools/kite ./scripts/install.sh
   ./scripts/install.sh --no-clone --verify

@@ -62,6 +62,20 @@ cd kite
 
 Or download and install in one step (installs to `~/kite` by default):
 
+**macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash
+```
+
+With guided setup on first install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash -s -- --setup
+```
+
+**Linux:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
 ```
@@ -263,6 +277,6 @@ src/kite/
   skills/ commands/ plugins/
   eval/                    # ReplayBundle + acceptance criteria (no live LLM)
 scripts/
-  install.sh install.ps1   # clone + venv + editable install (any workstation)
+  install.sh download-macos.sh install.ps1   # clone + venv + editable install
 tests/                     # pytest suite (~440+ tests, no live LLM)
 ```
