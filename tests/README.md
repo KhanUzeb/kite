@@ -38,6 +38,7 @@ GitHub Actions runs `pytest` on **every push and pull request to `main`** (Pytho
 | `test_skill_install.py` | npm/npx/git/local-path parse; global symlink/junction; project `.kite/skills` link |
 | `test_application_contracts.py` | RunSpec, EventEnvelope, ApplicationRunService |
 | `test_harness_build.py` | central `build_harness_config` for CLI/REPL/headless |
+| `test_recovery_goal.py` | /goal persistence, auto-recovery, resume --retry |
 | `test_context_assembler.py` | budgets, untrusted delimiters, inspection redaction |
 | `test_harness_universal.py` | 0.9 adapters: policy, approval, verification, replay, reducer |
 | `test_sota_harness.py` | submit tool, repomap, EvidenceVerifier, ToolExecutor loop, replay acceptance |

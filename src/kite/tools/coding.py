@@ -688,6 +688,8 @@ def make_coding_tools(
             timeout=int(args.get("timeout") or 15),
             max_chars=int(args.get("max_chars") or 24_000),
             extract=bool(args.get("extract", True)),
+            include_links=bool(args.get("include_links", False)),
+            max_links=int(args.get("max_links") or 12),
         )
 
     def set_working_directory(args: dict[str, Any]) -> dict[str, Any]:
@@ -981,8 +983,9 @@ def make_coding_tools(
             Tool(
                 name="webfetch",
                 description=(
-                    "Fetch one http(s) URL and return extracted readable text (title + body). "
-                    "Use after websearch to read a chosen result. Set extract=false for raw bytes as text."
+                    "Fetch one http(s) URL and return extracted readable text (title, description, body). "
+                    "Use after websearch to read a chosen result. Set extract=false for raw bytes as text. "
+                    "Set include_links=true to list outbound links from the page."
                 ),
                 parameters={
                     "type": "object",
@@ -994,6 +997,14 @@ def make_coding_tools(
                             "type": "boolean",
                             "description": "Strip HTML to readable text (default true)",
                         },
+                        "include_links": {
+                            "type": "boolean",
+                            "description": "Include sample outbound links in output (default false)",
+                        },
+                        "max_links": {
+                            "type": "integer",
+                            "description": "Max links when include_links=true (default 12)",
+                        },
                     },
                     "required": ["url"],
                 },
@@ -1004,7 +1015,10 @@ def make_coding_tools(
             "websearch",
             Tool(
                 name="websearch",
-                description="Search the web (free, no API key). Returns titles, URLs, and snippets. Use before webfetch/webcrawl when you need to find sources.",
+                description=(
+                    "Search the web (free, no API key). Returns titles, URLs, and snippets "
+                    "(DuckDuckGo HTML + instant API, deduped). Use before webfetch/webcrawl when you need to find sources."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
