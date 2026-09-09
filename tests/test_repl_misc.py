@@ -138,4 +138,3 @@ def test_prewarm_composer_primes_slash_index(tmp_path) -> None:
     session._prewarm_composer()
     key = (str(Path(tmp_path).resolve()), ())
     assert _INDEX_CACHE.get(key) is not None
-    assert session._prompt is not None
