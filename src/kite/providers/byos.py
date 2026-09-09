@@ -71,6 +71,12 @@ def ensure_oauth_env(spec: ProviderSpec) -> None:
     auth = _auth(spec)
     if auth is None:
         return
+    # ChatGPT BYOS: materialize flat LiteLLM auth before exporting env — otherwise
+    # LiteLLM starts an interactive device-code login and the harness hangs.
+    if (spec.oauth_provider or spec.name) == "chatgpt":
+        from kite.providers.auth.codex_litellm import materialize_litellm_chatgpt_auth
+
+        materialize_litellm_chatgpt_auth()
     for key, val in auth.litellm_env().items():
         os.environ[key] = val
 
