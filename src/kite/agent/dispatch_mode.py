@@ -32,6 +32,9 @@ _SYNC_PATTERNS = (
     r"\breturn (?:a )?summary\b",
 )
 
+_ASYNC_RES = tuple(re.compile(p, re.IGNORECASE) for p in _ASYNC_PATTERNS)
+_SYNC_RES = tuple(re.compile(p, re.IGNORECASE) for p in _SYNC_PATTERNS)
+
 _REASON_HINTS = {
     "auto-async": "dispatch: async (prompt asked for background / non-blocking work)",
     "auto-sync": "dispatch: sync (prompt needs findings before continuing)",
@@ -53,8 +56,8 @@ def _collect_text(args: dict[str, Any]) -> str:
     return "\n".join(chunks)
 
 
-def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
-    return any(re.search(pat, text, re.IGNORECASE) for pat in patterns)
+def _matches_any(text: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
+    return any(pat.search(text) for pat in patterns)
 
 
 def dispatch_hint(reason: str) -> str:
@@ -75,8 +78,8 @@ def resolve_dispatch_mode(args: dict[str, Any]) -> tuple[bool, str]:
         return False, "parallel-crew-sync"
 
     text = _collect_text(args)
-    if _matches_any(text, _ASYNC_PATTERNS):
+    if _matches_any(text, _ASYNC_RES):
         return True, "auto-async"
-    if _matches_any(text, _SYNC_PATTERNS):
+    if _matches_any(text, _SYNC_RES):
         return False, "auto-sync"
     return False, "default-sync"

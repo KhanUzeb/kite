@@ -253,6 +253,54 @@ def _bench_skills_load() -> BenchmarkResult:
     return _sample("skills_load", "startup", sample, skill_count=count)
 
 
+def _bench_task_dispatch(cwd: Path) -> BenchmarkResult:
+    from kite.env.local import LocalEnvironment
+    from kite.tools import ToolRegistry
+    from kite.tools.coding import make_coding_tools
+
+    env = LocalEnvironment(registry=ToolRegistry(make_coding_tools(cwd=str(cwd))))
+    args = {"prompt": "find auth", "pattern": "def"}
+
+    def _run():
+        return env.execute({"tool": "task", "arguments": args})
+
+    out, sample = measure_many("task_dispatch", _run, iterations=5)
+    return _sample("task_dispatch", "orchestrate", sample, ok=bool(out.get("ok")))
+
+
+def _bench_orchestrator_sync(cwd: Path) -> BenchmarkResult:
+    from kite.agent.orchestrator import SubagentOrchestrator
+
+    def _runner(prompt: str, *, cancel=None) -> dict:
+        return {"exit_status": "Submitted", "submission": prompt[:80]}
+
+    orch = SubagentOrchestrator(runner=_runner, timeout_seconds=0)
+
+    def _run():
+        orch.tasks.clear()
+        return orch.dispatch({"prompt": "bench survey", "label": "scout"})
+
+    out, sample = measure_many("orchestrator_sync", _run, iterations=5)
+    return _sample("orchestrator_sync", "orchestrate", sample, ok=bool(out.get("ok")))
+
+
+def _bench_dispatch_mode() -> BenchmarkResult:
+    from kite.agent.dispatch_mode import resolve_dispatch_mode
+
+    prompts = (
+        "Survey in the background while I continue",
+        "Report back before continuing",
+        "Explore src/kite/agent",
+    )
+
+    def _run():
+        for p in prompts:
+            resolve_dispatch_mode({"prompt": p})
+
+    _, sample = measure_many("dispatch_mode", _run, iterations=10)
+    return _sample("dispatch_mode", "orchestrate", sample)
+
+
 def _bench_subprocess_spawn() -> BenchmarkResult:
     def _run():
         proc = subprocess.run(
@@ -345,6 +393,9 @@ def run_suite(*, cwd: str | Path | None = None) -> BenchmarkReport:
         lambda: _bench_grep_tool(root),
         lambda: _bench_bash_echo(root),
         lambda: _bench_prompt_assembly(root),
+        lambda: _bench_task_dispatch(root),
+        lambda: _bench_orchestrator_sync(root),
+        _bench_dispatch_mode,
         _bench_subprocess_spawn,
     ]
 

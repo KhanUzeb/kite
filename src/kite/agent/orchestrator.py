@@ -21,6 +21,7 @@ _FAILURE_EXIT = frozenset({"Error", "ProviderFault", "Interrupted"})
 _WORKER_GLYPHS = ("◆", "●", "◇", "▲", "▶", "★")
 _MIN_USEFUL_CHARS = 40
 _SECTION_LIMIT = 2000
+_MAX_FINISHED_TASKS = 64
 
 
 def worker_glyph(index: int) -> str:
@@ -231,6 +232,15 @@ class SubagentOrchestrator:
             quality=quality,
         )
 
+    def _prune_finished_tasks(self) -> None:
+        finished = [t for t in self.tasks if t.status not in {"running", "queued"}]
+        if len(finished) <= _MAX_FINISHED_TASKS:
+            return
+        finished.sort(key=lambda t: t.started_at)
+        drop = {t.id for t in finished[: len(finished) - _MAX_FINISHED_TASKS]}
+        if drop:
+            self.tasks = [t for t in self.tasks if t.id not in drop]
+
     def _mark_job_done(self, task: SubagentTask, out: dict[str, Any]) -> None:
         if self.jobs is None:
             return
@@ -263,6 +273,7 @@ class SubagentOrchestrator:
             out = self._finish_task(task, error=str(e))
 
         self._mark_job_done(task, out)
+        self._prune_finished_tasks()
         self._emit(
             "subagent_end",
             id=task.id,

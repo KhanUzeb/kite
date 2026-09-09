@@ -30,7 +30,7 @@ def test_report_roundtrip(workspace, tmp_path) -> None:
     assert {r.name for r in loaded.results} == {r.name for r in report.results}
 
 
-@pytest.mark.parametrize("category", ["startup", "context", "tools"])
+@pytest.mark.parametrize("category", ["startup", "context", "tools", "orchestrate"])
 def test_each_category_has_benchmarks(workspace, category: str) -> None:
     report = run_suite(cwd=workspace)
     rows = [r for r in report.results if r.category == category]
