@@ -20,9 +20,10 @@ Stack: LiteLLM, Rich, prompt_toolkit, pydantic, tomllib. Entry: `kite.cli.run:ma
 ```
 src/kite/
   application/    RunSpec, ApplicationRunService, EventEnvelope (0.9 contracts)
-  agent/          Loop, harness, runtime, compaction, cancel, tool_result, orchestrator
+  agent/          Loop, harness, harness_build, runtime, compaction, cancel, tool_result, orchestrator
   bench/          Repeatable harness benchmarks (`kite bench`)
-  cli/            argparse entry (run.py), slash index, setup, stats, bench, import/apply
+  tasks/          Headless task batches (`kite tasks`, `--headless`)
+  cli/            argparse entry (run.py), slash index, setup, stats, bench, tasks, import/apply
   config/         ~/.kite/config.toml (UserConfig), runtime TOML merge
   context/        Project discovery, workspace/execution cwd, token estimate
   providers/      Catalog, resolve model, list_models, credentials, select
@@ -30,7 +31,9 @@ src/kite/
   tools/          Coding tools (read/write/edit/bash/set_cwd/…), jobs registry, metadata, web, github
   guardrails/     Path sandbox, execution mode, bash policy, secret redaction
   ui/             REPL, render, approval, complete, theme, status
-  memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic
+  memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic, user_context, working_style, secure_io
+  data/subagents/ Bundled subagent personas (scout, reviewer, shell, coder, context)
+  cli/subagents.py  kite subagents list/show/init; REPL /agents profiles|show|init
   eval/           Recorded replay (ReplayBundle) without live providers
   skills/         SKILL.md loader; npm/git install; local path symlink into ~/.kite/skills
   commands/       Markdown slash prompt loader
@@ -39,7 +42,7 @@ src/kite/
   data/           Bundled catalog.toml, prompts, skills, commands
 tests/            pytest unit tests (no live LLM)
 docs/             RELEASE notes + kite-system-design.md
-scripts/          install.sh, install.ps1, build_design_pdf.py
+scripts/          install.sh, download-macos.sh, install.ps1, lint.sh, build_design_pdf.py
 ```
 
 **Layer rule:** CLI/UI subscribe to events; `ApplicationRunService` (0.9) or `AgentRuntime` assembles; `DefaultAgent` loops; tools/guardrails execute. Do not import UI from `agent/` or call LiteLLM from `ui/repl.py` directly.
@@ -76,7 +79,7 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 4. **New CLI subcommands** — `cli/run.py` `build_parser()` + handler module.
 5. **Provider behavior** — `providers/` + `models/reasoning.py`; don’t hardcode model id lists.
 6. **Secrets** — `providers/credentials.py` writes `~/.kite/.env` with owner-only perms; never log key values.
-7. **Docs** — User-facing behavior changes need `kite_commands.md`. Glossary changes → `CONTEXT.md`. Layer/architecture changes → `architecture.md` or `docs/kite-system-design.md`. Prompt changes → `data/prompts/system.md`. Project/user overrides: `.kite/SYSTEM.md` / `APPEND_SYSTEM.md` (same idea as pi / Prime Agent).
+7. **Docs** — User-facing behavior changes need `kite_commands.md`. Glossary changes → `CONTEXT.md`. Memory layers → `docs/memory.md`. Layer/architecture changes → `architecture.md` or `docs/kite-system-design.md`. Prompt changes → `data/prompts/system.md`. Security behavior → `SECURITY.md`. Project/user overrides: `.kite/SYSTEM.md` / `APPEND_SYSTEM.md` (same idea as pi / Prime Agent).
 
 ---
 
@@ -86,6 +89,7 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 |-------------|------------|
 | `kite` REPL | `ui/repl.py` → `agent/harness.py` |
 | `kite run "…"` | `cli/run.py` `cmd_run` |
+| `kite run --headless` / `kite tasks run` | `tasks/headless.py` + `cli/tasks.py` |
 | `/login groq` | `providers/credentials.py` → `ui/repl.py` |
 | Model resolution | `providers/resolve.py` |
 | Tool execution | `env/local.py` + `tools/coding.py` + `tools/jobs.py` + `guardrails/` |
@@ -95,6 +99,10 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 | Verification / submit gate | `agent/verification.py` + `application/verification/` |
 | Replay / eval | `eval/replay.py` (`ReplayBundle` + acceptance) |
 | Checkpoints / handoff | `memory/context_checkpoint.py` + `memory/handoff.py` + `ui/repl.py` |
+| User identity memory | `memory/user_context.py` — global `USER.md` / `PROFILE.md` |
+| Subagent personas | `agent/subagent_profiles.py` + `data/subagents/*.md` + `~/.kite/subagents/` |
+| `kite subagents` / `/agents init` | `cli/subagents.py` + `ui/repl.py` `_slash_agents` |
+| Orchestrator / crew | `agent/orchestrator.py` + `tools/jobs.py` + `/agents` `/live agents` |
 | Benchmarks | `bench/` + `cli/bench.py` |
 | Streaming UI | `ui/render.py` `RunDisplay` ← `agent/events.py` |
 | Slash expansion | `cli/slash.py` `CommandIndex` |
@@ -109,6 +117,8 @@ kite keys --set groq            # save API key (hidden)
 kite models -p groq --select    # pick default model
 kite chat                       # REPL
 kite bench                      # harness timing baseline
+kite tasks run tasks.jsonl      # headless batch (JSONL or plain text)
+kite run --headless "task"      # single headless run with stderr event log
 pytest -q                       # verify changes
 pytest tests/test_bench.py -q   # harness timing budgets
 kite bench --check              # same budgets from CLI

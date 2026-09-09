@@ -11,21 +11,33 @@ from pathlib import Path
 from typing import Any
 
 from kite.config import ensure_home, kite_home
+from kite.memory.session_policy import (
+    persistence_enabled,
+    prepare_persisted_row,
+    prepare_persisted_value,
+    secure_session_file,
+)
 
 
 def format_meta_line(meta: SessionMeta) -> str:
     """Canonical JSONL meta row — .6f timestamps keep line length stable for in-place patches."""
+    task = prepare_persisted_value(meta.task)
+    label = prepare_persisted_value(meta.label)
+    cwd = prepare_persisted_value(meta.cwd)
+    provider = prepare_persisted_value(meta.provider)
+    model = prepare_persisted_value(meta.model)
+    exit_status = prepare_persisted_value(meta.exit_status)
     return (
         '{"type":"meta"'
         f',"id":{json.dumps(meta.id)}'
         f',"created_at":{meta.created_at:.6f}'
         f',"updated_at":{meta.updated_at:.6f}'
-        f',"cwd":{json.dumps(meta.cwd)}'
-        f',"provider":{json.dumps(meta.provider)}'
-        f',"model":{json.dumps(meta.model)}'
-        f',"task":{json.dumps(meta.task)}'
-        f',"label":{json.dumps(meta.label)}'
-        f',"exit_status":{json.dumps(meta.exit_status)}'
+        f',"cwd":{json.dumps(cwd)}'
+        f',"provider":{json.dumps(provider)}'
+        f',"model":{json.dumps(model)}'
+        f',"task":{json.dumps(task)}'
+        f',"label":{json.dumps(label)}'
+        f',"exit_status":{json.dumps(exit_status)}'
         "}"
     )
 
@@ -154,17 +166,20 @@ class Session:
     def append(self, *messages: dict) -> None:
         self.messages.extend(messages)
         self.meta.updated_at = time.time()
-        self._persist_tail(messages)
+        if persistence_enabled():
+            self._persist_tail(messages)
 
     def replace_messages(self, messages: list[dict]) -> None:
         self.messages = list(messages)
         self.meta.updated_at = time.time()
-        self._persist_compact_snapshot(messages)
+        if persistence_enabled():
+            self._persist_compact_snapshot(messages)
 
     def set_exit(self, status: str) -> None:
         self.meta.exit_status = status
         self.meta.updated_at = time.time()
-        self._write_meta()
+        if persistence_enabled():
+            self._write_meta()
 
     def _session_path(self) -> Path:
         if self.path is None:
@@ -177,7 +192,9 @@ class Session:
         with path.open("w", encoding="utf-8") as f:
             f.write(format_meta_line(self.meta) + "\n")
             for m in self.messages:
-                f.write(json.dumps({"type": "message", "message": m}, ensure_ascii=False) + "\n")
+                row = {"type": "message", "message": prepare_persisted_value(m)}
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        secure_session_file(path)
         self._write_meta_sidecar(path)
 
     def _persist_tail(self, messages: tuple[dict, ...] | list[dict]) -> None:
@@ -188,9 +205,9 @@ class Session:
             return
         with path.open("a", encoding="utf-8") as f:
             for m in messages:
-                f.write(
-                    json.dumps({"type": "message", "message": m}, ensure_ascii=False) + "\n"
-                )
+                row = {"type": "message", "message": prepare_persisted_value(m)}
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        secure_session_file(path)
         self._touch_meta_timestamp(path)
 
     def _persist_compact_snapshot(self, messages: list[dict]) -> None:
@@ -199,38 +216,47 @@ class Session:
 
     def record_context_checkpoint(self, checkpoint_id: str, *, label: str = "", reason: str = "manual") -> None:
         """Append checkpoint metadata to the session audit trail."""
-        path = self._session_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.is_file() or path.stat().st_size == 0:
-            self._write_meta()
-        row = {
-            "type": "context_checkpoint",
-            "checkpoint_id": checkpoint_id,
-            "label": label,
-            "reason": reason,
-            "updated_at": time.time(),
-        }
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        self.meta.updated_at = time.time()
-        self._touch_meta_timestamp(path)
-
-    def record_event(self, kind: str, payload: dict[str, Any] | None = None) -> None:
-        """Append a durable rollout event — survives crashes between model turns."""
-        if kind not in DURABLE_EVENT_KINDS:
+        if not persistence_enabled():
+            self.meta.updated_at = time.time()
             return
         path = self._session_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.is_file() or path.stat().st_size == 0:
             self._write_meta()
-        row = {
-            "type": "event",
-            "kind": kind,
-            "ts": time.time(),
-            "payload": payload or {},
-        }
+        row = prepare_persisted_row(
+            {
+                "type": "context_checkpoint",
+                "checkpoint_id": checkpoint_id,
+                "label": label,
+                "reason": reason,
+                "updated_at": time.time(),
+            }
+        )
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        secure_session_file(path)
+        self.meta.updated_at = time.time()
+        self._touch_meta_timestamp(path)
+
+    def record_event(self, kind: str, payload: dict[str, Any] | None = None) -> None:
+        """Append a durable rollout event — survives crashes between model turns."""
+        if kind not in DURABLE_EVENT_KINDS or not persistence_enabled():
+            return
+        path = self._session_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.is_file() or path.stat().st_size == 0:
+            self._write_meta()
+        row = prepare_persisted_row(
+            {
+                "type": "event",
+                "kind": kind,
+                "ts": time.time(),
+                "payload": payload or {},
+            }
+        )
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        secure_session_file(path)
         self.meta.updated_at = time.time()
         self._touch_meta_timestamp(path)
 
@@ -266,7 +292,8 @@ class Session:
             pass
 
     def save(self) -> Path:
-        self._write_meta()
+        if persistence_enabled():
+            self._write_meta()
         return self._session_path()
 
 
@@ -336,6 +363,55 @@ def load_session(session_id: str) -> Session:
     if meta is None:
         raise ValueError(f"Session file missing meta: {path}")
     return Session(meta=meta, messages=messages, path=path)
+
+
+def load_session_todos(session_id: str) -> list[dict[str, Any]]:
+    """Latest todo snapshot from durable session events."""
+    path = resolve_session_path(session_id)
+    latest: list[dict[str, Any]] = []
+    try:
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row.get("type") != "event" or row.get("kind") != "todo":
+                    continue
+                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+                items = payload.get("items")
+                if isinstance(items, list) and items:
+                    latest = [x for x in items if isinstance(x, dict)]
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return []
+    return latest
+
+
+def persist_session_todos(session_id: str, items: list[dict[str, Any]]) -> None:
+    """Append a durable todo snapshot for resume after restart."""
+    if not session_id or not items:
+        return
+    try:
+        session = load_session(session_id)
+    except (OSError, ValueError, FileNotFoundError):
+        return
+    session.record_event("todo", {"items": items})
+
+
+def latest_session_for_cwd(cwd: str, *, limit: int = 50) -> SessionMeta | None:
+    """Most recently updated session for this workspace, or newest overall."""
+    try:
+        target = str(Path(cwd or ".").expanduser().resolve())
+    except OSError:
+        target = cwd or ""
+    rows = list_sessions(limit=limit)
+    for meta in rows:
+        try:
+            if str(Path(meta.cwd or ".").expanduser().resolve()) == target:
+                return meta
+        except OSError:
+            if meta.cwd == cwd:
+                return meta
+    return rows[0] if rows else None
 
 
 def list_sessions(*, limit: int = 30, query: str = "") -> list[SessionMeta]:

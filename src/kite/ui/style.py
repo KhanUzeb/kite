@@ -113,6 +113,12 @@ DIFF_PREVIEW_LINES = 40
 PREVIEW_FILE_MAX_BYTES = 64_000
 PREVIEW_CHUNK_BYTES = 65_536
 GUTTER = "  "
+PANEL_BAR = "┊ "
+
+
+def cell_continuation_indent(first_line_prefix: str) -> str:
+    """Spaces so wrapped cell lines align under the first line body."""
+    return " " * len(first_line_prefix or "")
 
 
 def make_console(*, stderr: bool = False, quiet: bool = False) -> Console:

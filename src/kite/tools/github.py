@@ -22,6 +22,8 @@ def _run_gh(args: list[str], *, timeout: int = 30) -> dict[str, Any]:
         }
     cmd = ["gh", *args]
     try:
+        from kite.guardrails.env_filter import filtered_child_env
+
         proc = subprocess.run(
             cmd,
             capture_output=True,
@@ -29,6 +31,7 @@ def _run_gh(args: list[str], *, timeout: int = 30) -> dict[str, Any]:
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            env=filtered_child_env(),
         )
         output = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
         return {

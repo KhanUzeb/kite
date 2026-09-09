@@ -368,6 +368,9 @@ def make_coding_tools(
                 "errors": "replace",
                 "env": _child_env(workdir),
             }
+            from kite.guardrails.process import popen_process_group_kwargs, terminate_process_tree
+
+            popen_kw.update(popen_process_group_kwargs())
             if argv is not None:
                 proc = subprocess.Popen(argv, shell=False, **popen_kw)
             else:
@@ -415,7 +418,7 @@ def make_coding_tools(
             try:
                 while rc is None:
                     if cancel is not None and cancel.is_set():
-                        proc.kill()
+                        terminate_process_tree(proc)
                         reader.join(timeout=1.0)
                         partial = "".join(output_parts)
                         return {
@@ -429,7 +432,7 @@ def make_coding_tools(
                         rc = proc.wait(timeout=0.15)
                     except subprocess.TimeoutExpired:
                         if time.monotonic() >= deadline:
-                            proc.kill()
+                            terminate_process_tree(proc)
                             reader.join(timeout=1.0)
                             partial = "".join(output_parts)
                             return {
@@ -440,7 +443,7 @@ def make_coding_tools(
                             }
             except OSError as e:
                 try:
-                    proc.kill()
+                    terminate_process_tree(proc)
                 except OSError:
                     pass
                 reader.join(timeout=1.0)
@@ -488,6 +491,7 @@ def make_coding_tools(
                     errors="replace",
                     timeout=20,
                     cwd=_root(),
+                    env=_child_env(_root()),
                 )
             except (OSError, subprocess.TimeoutExpired) as e:
                 return {"ok": False, "error": str(e), "output": str(e)}
@@ -650,7 +654,7 @@ def make_coding_tools(
                     except Exception as e:
                         results[idx] = f"task {idx} error: {e}"
             for i in sorted(results):
-                sections.append(f"\n--- subagent {i} ---\n{results[i]}")
+                sections.append(f"\n--- task {i} ---\n{results[i]}")
             text = "\n".join(sections)
         else:
             prompt = str(args.get("prompt") or "")
@@ -661,7 +665,8 @@ def make_coding_tools(
 
     def subagent_run(args: dict[str, Any]) -> dict[str, Any]:
         if orchestrator is None:
-            return {"ok": False, "error": "orchestrator not configured", "output": "orchestrator not configured"}
+            msg = "Subagent tool unavailable in this run. Use task for code search instead."
+            return {"ok": False, "error": msg, "output": msg}
         return orchestrator.dispatch(args)
 
     def web_search(args: dict[str, Any]) -> dict[str, Any]:
@@ -684,6 +689,8 @@ def make_coding_tools(
             timeout=int(args.get("timeout") or 15),
             max_chars=int(args.get("max_chars") or 24_000),
             extract=bool(args.get("extract", True)),
+            include_links=bool(args.get("include_links", False)),
+            max_links=int(args.get("max_links") or 12),
         )
 
     def set_working_directory(args: dict[str, Any]) -> dict[str, Any]:
@@ -977,8 +984,9 @@ def make_coding_tools(
             Tool(
                 name="webfetch",
                 description=(
-                    "Fetch one http(s) URL and return extracted readable text (title + body). "
-                    "Use after websearch to read a chosen result. Set extract=false for raw bytes as text."
+                    "Fetch one http(s) URL and return extracted readable text (title, description, body). "
+                    "Use after websearch to read a chosen result. Set extract=false for raw bytes as text. "
+                    "Set include_links=true to list outbound links from the page."
                 ),
                 parameters={
                     "type": "object",
@@ -990,6 +998,14 @@ def make_coding_tools(
                             "type": "boolean",
                             "description": "Strip HTML to readable text (default true)",
                         },
+                        "include_links": {
+                            "type": "boolean",
+                            "description": "Include sample outbound links in output (default false)",
+                        },
+                        "max_links": {
+                            "type": "integer",
+                            "description": "Max links when include_links=true (default 12)",
+                        },
                     },
                     "required": ["url"],
                 },
@@ -1000,7 +1016,10 @@ def make_coding_tools(
             "websearch",
             Tool(
                 name="websearch",
-                description="Search the web (free, no API key). Returns titles, URLs, and snippets. Use before webfetch/webcrawl when you need to find sources.",
+                description=(
+                    "Search the web (free, no API key). Returns titles, URLs, and snippets "
+                    "(DuckDuckGo HTML + instant API, deduped). Use before webfetch/webcrawl when you need to find sources."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
@@ -1035,9 +1054,15 @@ def make_coding_tools(
             Tool(
                 name="subagent",
                 description=(
-                    "Spawn nested LLM subagent(s) via the orchestrator. "
-                    "Pass `prompt` for one worker or `prompts` (list) for parallel workers against the current plan. "
-                    "Each subagent has a bounded step budget — use for independent plan items."
+                    "Spawn nested LLM worker(s) for independent exploration.\n"
+                    "• Base personas: profile=scout|reviewer|shell|coder|context (+ prompt task)\n"
+                    "• Custom role: role=architect|implementer|debugger\n"
+                    "• One worker: prompt + optional label/profile/role\n"
+                    "• Crew: prompts + labels/profiles/roles (sync by default)\n"
+                    "• Async: background=true or wait=false; returns job_id immediately\n"
+                    "• Collect: wait_for=[job_id, ...] (cannot combine with new prompts)\n"
+                    "Prefer bundled profiles over microscopic JIT workers.\n"
+                    "Monitor: /agents · /live agents · Stop: /kill"
                 ),
                 parameters={
                     "type": "object",
@@ -1046,6 +1071,46 @@ def make_coding_tools(
                         "prompts": {"type": "array", "items": {"type": "string"}},
                         "label": {"type": "string"},
                         "labels": {"type": "array", "items": {"type": "string"}},
+                        "profile": {
+                            "type": "string",
+                            "description": "Base persona id (scout, reviewer, shell, coder, context)",
+                        },
+                        "profiles": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Per-worker profile ids for parallel crews",
+                        },
+                        "role": {
+                            "type": "string",
+                            "description": "Role override: architect, implementer, debugger",
+                        },
+                        "roles": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Per-worker roles for parallel crews",
+                        },
+                        "background": {
+                            "type": "boolean",
+                            "description": "Async: return job_id immediately (auto-inferred when omitted)",
+                        },
+                        "wait": {
+                            "type": "boolean",
+                            "description": "Sync: block for results (default true)",
+                        },
+                        "wait_for": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Collect results from background job_ids",
+                        },
+                        "job_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Alias for wait_for",
+                        },
+                        "timeout_seconds": {
+                            "type": "integer",
+                            "description": "Max seconds when waiting for background workers",
+                        },
                     },
                 },
                 execute_fn=lambda a: gated("subagent", a, subagent_run),

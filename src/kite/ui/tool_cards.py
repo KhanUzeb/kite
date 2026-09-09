@@ -9,7 +9,7 @@ from typing import Any
 from rich.text import Text
 
 from kite.ui.diff import render_diff_stat
-from kite.ui.style import GUTTER
+from kite.ui.style import GUTTER, PANEL_BAR
 from kite.ui.theme import glyph
 
 
@@ -27,7 +27,58 @@ class ToolCard:
     parallel_index: int = 1
 
 
-TOOL_BAR = "│ "
+TOOL_BAR = PANEL_BAR
+
+
+def render_code_edit_preview(
+    tool: str,
+    args: dict[str, Any],
+    *,
+    max_lines: int = 12,
+) -> Text | None:
+    """Preview write/edit patches at tool start."""
+    path = str(args.get("path") or args.get("file_path") or "")
+    if not path:
+        return None
+    block = Text()
+    block.append(f"{GUTTER}{TOOL_BAR}", style="kite.muted")
+    block.append(path, style="kite.tool bold")
+    block.append("\n", style="")
+    if tool == "write":
+        content = str(args.get("content") or "")
+        lines = content.splitlines() or [""]
+        for line in lines[:max_lines]:
+            block.append(f"{GUTTER}{TOOL_BAR}+ ", style="kite.diff.add")
+            block.append(line + "\n", style="kite.diff.add")
+        if len(lines) > max_lines:
+            block.append(
+                f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines\n",
+                style="kite.muted",
+            )
+        return block
+    if tool == "edit":
+        old = str(args.get("old_string") or args.get("old") or "")
+        new = str(args.get("new_string") or args.get("new") or "")
+        old_lines = old.splitlines() or [""]
+        new_lines = new.splitlines() or [""]
+        shown = 0
+        for line in old_lines:
+            if shown >= max_lines:
+                break
+            block.append(f"{GUTTER}{TOOL_BAR}- ", style="kite.diff.del")
+            block.append(line + "\n", style="kite.diff.del")
+            shown += 1
+        for line in new_lines:
+            if shown >= max_lines:
+                break
+            block.append(f"{GUTTER}{TOOL_BAR}+ ", style="kite.diff.add")
+            block.append(line + "\n", style="kite.diff.add")
+            shown += 1
+        total = len(old_lines) + len(new_lines)
+        if total > max_lines:
+            block.append(f"{GUTTER}{TOOL_BAR}… +{total - max_lines} lines\n", style="kite.muted")
+        return block
+    return None
 
 
 def render_bash_command_block(command: str, *, max_lines: int = 8) -> Text:
@@ -38,7 +89,7 @@ def render_bash_command_block(command: str, *, max_lines: int = 8) -> Text:
     for cmd_line in shown:
         block.append(f"{GUTTER}{TOOL_BAR}", style="kite.muted")
         block.append("$ ", style="kite.tool bold")
-        block.append(cmd_line + "\n", style="")
+        block.append(cmd_line + "\n", style="kite.terminal")
     if len(lines) > max_lines:
         block.append(f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines\n", style="kite.muted")
     return block

@@ -4,7 +4,7 @@
 **Stack:** Python 3.12 · LiteLLM · Rich · uv
 **Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)
 **Companion command reference:** [kite_commands.md](../kite_commands.md)
-**Install:** [README.md](../README.md#setup) · `scripts/install.sh` / `scripts/install.ps1`
+**Install:** [README.md](../README.md#setup) · `scripts/download-macos.sh` / `scripts/install.sh` / `scripts/install.ps1`
 **Generated for:** a weekend hybrid slim coding-agent harness
 
 ---
@@ -160,8 +160,12 @@ build_tool_executor(policy, runner=env.execute) → DefaultAgent
   commands/*.md        # user slash prompts (`/name`)
   skills/*/SKILL.md    # user skills (`/name` or skill tool)
   plugins/<id>/        # plugin.toml + commands/ + skills/
-  memory/notes.jsonl   # durable user notes (`/remember`)
-  memory/MEMORY.md     # optional pinned user memory
+  memory/USER.md       # global identity (name, role, comms) — /user
+  memory/PROFILE.md    # global profile (stack, goals) — /profile
+  memory/WORKING.md    # fluid working rhythm — /working
+  memory/MEMORY.md     # semantic facts — /remember (opt-in inject)
+  memory/episodes.sqlite
+  subagents/*.md       # custom subagent personas (override bundled)
   sessions/*.jsonl     # append-style session transcript
   trajectories/*.json  # full run dumps
   approvals.json       # always-allow tool patterns
@@ -277,7 +281,18 @@ A plugin is a folder with `plugin.toml` (or `plugin.json`) plus optional `comman
 
 ### 4.14 `memory/`
 **Sessions:** JSONL transcript (`session.py`); first line `type=meta`, then `type=message`.
-**Notes:** `store.py` JSONL + optional `MEMORY.md`. `/remember` / `/forget` / `memory` tool. Injected into the system prompt each run. Distinct from `KITE.md` (repo instructions).
+**User identity:** `user_context.py` — global `USER.md` + `PROFILE.md`; untrusted wrappers; owner-only writes (`secure_io.py`).
+**Semantic:** `MEMORY.md` bullets + pin header (`semantic.py`); opt-in prompt injection via `/memory` or `[memory] inject = always`.
+**Episodic:** sqlite event log (`episodic.py`); kinds include `remember`, `continuity`, `style`.
+**Working rhythm:** `WORKING.md` + `working_style.py` — fluid habits, injected when present (untrusted, not opt-in).
+**Continuity:** mission/done/next briefs after compact (`continuity.py`); task resume, not user identity.
+Full reference: [docs/memory.md](memory.md).
+
+### 4.14b Subagent personas (`agent/subagent_profiles.py`)
+**Bundled:** `data/subagents/*.md` — scout, reviewer, shell, coder, context (trusted).
+**Custom:** `~/.kite/subagents/*.md` — path-confined, size-capped, untrusted in composed prompt.
+**Dispatch:** `subagent` tool `profile` / `profiles[]` + optional `role`; orchestrator max 12 workers; nested strip `subagent` + `memory`.
+**UI:** `/agents`, `/agents profiles`, `/live agents` (redacted stream).
 
 ### 4.15 `config/` — UserConfig + runtime TOML
 **Job:** `~/.kite/config.toml` prefs (default provider/model, api_bases, auto_compact, …). Distinct from **runtime** agent config.
@@ -461,7 +476,7 @@ kite resume <session-id> "also write tests"
 kite sessions --show <id>
 ```
 
-REPL slash commands: builtins (`/plan` `/build` `/select` `/thinking` `/fast` `/undo` `/memory` `/remember` `/commands` `/plugins` `/skills` …) plus `/commit`-style skills and markdown commands. Composer shortcuts: Ctrl+O expand tools, Ctrl+P plan, Ctrl+B build. Ctrl+C stops the current turn.
+REPL slash commands: builtins (`/plan` `/build` `/user` `/profile` `/working` `/agents` `/live` `/live agents` `/memory` `/remember` `/commands` `/plugins` `/skills` …) plus `/commit`-style skills and markdown commands. Composer shortcuts: Ctrl+O expand tools, Ctrl+P plan, Ctrl+B build. Ctrl+C stops the current turn.
 
 ---
 
@@ -489,7 +504,8 @@ REPL slash commands: builtins (`/plan` `/build` `/select` `/thinking` `/fast` `/
 ### Running tests
 
 ```bash
-./scripts/install.sh          # macOS/Linux — or .\scripts\install.ps1 on Windows
+curl -fsSL …/download-macos.sh | bash   # macOS one-liner
+./scripts/install.sh          # macOS/Linux from clone — or .\scripts\install.ps1 on Windows
 pytest
 ```
 

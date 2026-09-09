@@ -41,26 +41,49 @@ def _load_attachments(paths: list[str], task: str, cwd: str):
     return leftover, bundled
 
 
+def _is_headless(args: argparse.Namespace) -> bool:
+    from kite.tasks.headless import is_headless_run
+
+    return is_headless_run(
+        headless_flag=bool(getattr(args, "headless", False)),
+        quiet=bool(getattr(args, "quiet", False)),
+    )
+
+
 def _wire_display(harness, console, args: argparse.Namespace):
     from kite.agent.mode import ApprovalMode
     from kite.ui.git import GitCheckpoints, git_branch
-    from kite.ui.render import make_run_display
     from kite.ui.state import SessionUiState
 
     mode = _parse_mode(getattr(args, "mode", None))
     approval = _parse_approval(getattr(args, "approval", None), mode)
-    state = SessionUiState(
-        mode=mode,
-        approval=approval,
-        git_branch=git_branch(getattr(args, "cwd", os.getcwd())),
-    )
-    display = make_run_display(
-        console,
-        quiet=getattr(args, "quiet", False),
-        verbose=getattr(args, "verbose", False),
-        state=state,
-    )
-    harness.subscribe(display)
+    headless = _is_headless(args)
+    quiet = bool(getattr(args, "quiet", False))
+
+    if headless and not quiet:
+        from kite.tasks.headless import HeadlessRunDisplay
+
+        harness.subscribe(
+            HeadlessRunDisplay(
+                stream_tools=not getattr(args, "no_stream", False),
+                verbose=bool(getattr(args, "verbose", False)),
+            )
+        )
+    elif not quiet:
+        from kite.ui.render import make_run_display
+
+        state = SessionUiState(
+            mode=mode,
+            approval=approval,
+            git_branch=git_branch(getattr(args, "cwd", os.getcwd())),
+        )
+        display = make_run_display(
+            console,
+            quiet=False,
+            verbose=getattr(args, "verbose", False),
+            state=state,
+        )
+        harness.subscribe(display)
     if approval is not ApprovalMode.AUTO or mode is AgentMode.PLAN:
         from kite.config import load_runtime_config
         from kite.ui.approval import make_approver
@@ -70,17 +93,20 @@ def _wire_display(harness, console, args: argparse.Namespace):
             console,
             mode=mode,
             approval=approval,
-            interactive=sys.stdin.isatty() and not getattr(args, "quiet", False),
+            interactive=sys.stdin.isatty()
+            and not getattr(args, "quiet", False)
+            and not getattr(args, "headless", False),
             trusted_paths=rcfg.guardrails.trusted_paths,
             workspace_cwd=getattr(args, "cwd", os.getcwd()),
         )
-    if mode is AgentMode.BUILD:
+    if mode is AgentMode.BUILD and not headless:
         harness.checkpoints = GitCheckpoints.open(getattr(args, "cwd", os.getcwd()))
-    return state
+    return None
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from kite.agent.harness import Harness, HarnessConfig
+    from kite.agent.harness import Harness
+    from kite.agent.harness_build import build_harness_config
     from kite.config import ensure_home
 
     console = _console()
@@ -100,6 +126,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         task = "".join(chunks).strip()
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
+    if _is_headless(args):
+        from kite.tasks.headless import resolve_headless_approval
+
+        if args.approval in {"approve", "supervised", "readonly"}:
+            console.print(
+                "[kite.muted]headless: approval upgraded to auto (no TTY prompts)[/]"
+            )
+        approval = resolve_headless_approval(args.approval, mode, headless=True)
     try:
         task, attachments = _load_attachments(
             getattr(args, "attach", None) or [],
@@ -114,7 +148,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not task.strip():
         from kite.ui.pick import can_prompt
 
-        if can_prompt() and not args.stdin:
+        if can_prompt() and not args.stdin and not getattr(args, "headless", False):
             try:
                 task = console.input("[kite.brand]Task[/]: ").strip()
             except (EOFError, KeyboardInterrupt):
@@ -124,7 +158,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         console.print("[red]Provide a task, --stdin, or --attach[/]")
         return 2
     harness = Harness(
-        HarnessConfig(
+        build_harness_config(
             provider=args.provider,
             model_name=args.model,
             cwd=args.cwd,
@@ -242,14 +276,25 @@ def _pick_session_id(console, *, title: str = "Pick a session") -> str | None:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    from kite.agent.harness import Harness, HarnessConfig
+    from kite.agent.harness import Harness
+    from kite.agent.harness_build import build_harness_config
     from kite.memory.session import load_session
     from kite.memory.session_format import format_session_resume_hint, suggest_sessions
+
+    console = _console()
+    if getattr(args, "last", False) and not getattr(args, "session", None):
+        from kite.memory.session import latest_session_for_cwd
+
+        meta = latest_session_for_cwd(args.cwd)
+        if meta is None:
+            console.print("[red]no sessions to resume[/]")
+            return 2
+        args.session = meta.id
+        console.print(f"[dim]last session[/]  {meta.id}  ({meta.label or meta.task[:48]})")
 
     if not getattr(args, "session", None):
         from kite.ui.pick import can_prompt
 
-        console = _console()
         if not can_prompt():
             console.print("[red]session id required[/]  —  kite resume <id>  or  kite sessions")
             return 2
@@ -257,8 +302,6 @@ def cmd_resume(args: argparse.Namespace) -> int:
         if not picked:
             return 130
         args.session = picked
-
-    console = _console()
     try:
         session = load_session(args.session)
     except FileNotFoundError:
@@ -278,10 +321,19 @@ def cmd_resume(args: argparse.Namespace) -> int:
     console.print(f"[dim]resuming[/]  {format_session_resume_hint(session.meta)}")
 
     follow = args.message or args.task
+    if getattr(args, "retry", False) and not follow:
+        follow = (
+            "Continue the unfinished work from where we left off. "
+            "The previous run stopped due to a provider, network, or budget interruption."
+        )
     if not follow:
         return cmd_chat(args)
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
+    if _is_headless(args):
+        from kite.tasks.headless import resolve_headless_approval
+
+        approval = resolve_headless_approval(args.approval, mode, headless=True)
     try:
         follow, attachments = _load_attachments(
             getattr(args, "attach", None) or [],
@@ -292,7 +344,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         console.print(f"[red]{e}[/]")
         return 2
     harness = Harness(
-        HarnessConfig(
+        build_harness_config(
             provider=args.provider,
             model_name=args.model,
             cwd=args.cwd,
@@ -324,7 +376,23 @@ def cmd_resume(args: argparse.Namespace) -> int:
     finally:
         harness.teardown_jobs()
     console.print(f"[bold]exit[/]={result.get('exit_status')}  session={args.session}")
-    return 0 if result.get("exit_status") == "Submitted" else 1
+    exit_status = str(result.get("exit_status") or "")
+    if exit_status == "ProviderFault":
+        console.print(
+            "[kite.pending]provider fault[/] — session saved. "
+            f"[kite.muted]retry: kite resume {args.session} --retry[/]"
+        )
+    elif exit_status in {"LimitsExceeded", "TimeExceeded"}:
+        console.print(
+            f"[kite.pending]budget pause[/] — "
+            f"[kite.muted]continue: kite resume {args.session} --retry[/]"
+        )
+    elif exit_status == "Interrupted":
+        console.print(
+            "[kite.muted]interrupted — session kept. "
+            f"kite resume {args.session}  or  kite resume {args.session} --retry[/]"
+        )
+    return 0 if exit_status == "Submitted" else 1
 
 
 def cmd_sessions(args: argparse.Namespace) -> int:
@@ -616,9 +684,25 @@ def cmd_config(args: argparse.Namespace) -> int:
         cfg.api_bases[args.set_provider or cfg.default_provider] = args.set_api_base
     if args.auto_compact is not None:
         cfg.auto_compact = args.auto_compact
-    if any([args.set_provider, args.set_model, args.set_api_base, args.auto_compact is not None]):
+    persistence_set = False
+    if getattr(args, "session_persistence", None):
+        from kite.memory.session_policy import set_persistence_mode
+
+        try:
+            set_persistence_mode(args.session_persistence)
+            persistence_set = True
+            cfg = UserConfig.load()
+        except ValueError as e:
+            console.print(f"[red]{e}[/]")
+            return 2
+    config_changed = any(
+        [args.set_provider, args.set_model, args.set_api_base, args.auto_compact is not None]
+    )
+    if config_changed:
         path = cfg.save()
         console.print(f"[green]Saved[/] {path}")
+    elif persistence_set:
+        console.print(f"[green]Saved[/] session_persistence={cfg.session_persistence} → {cfg.path}")
 
     resolved = resolve_model(config=cfg)
     console.print(
@@ -640,12 +724,37 @@ def cmd_config(args: argparse.Namespace) -> int:
                     "step_limit": cfg.step_limit,
                     "cost_limit": cfg.cost_limit,
                     "auto_compact": cfg.auto_compact,
+                    "session_persistence": cfg.session_persistence,
                     "api_bases": cfg.api_bases,
                     "provider_defaults": cfg.provider_defaults,
                 },
                 indent=2,
             ),
             title="kite config",
+        )
+    )
+    return 0
+
+
+def cmd_privacy(args: argparse.Namespace) -> int:
+    from rich.panel import Panel
+
+    from kite.memory.session_policy import persistence_summary, set_persistence_mode
+
+    console = _console()
+    if getattr(args, "session_persistence", None):
+        try:
+            mode = set_persistence_mode(args.session_persistence)
+        except ValueError as e:
+            console.print(f"[red]{e}[/]")
+            return 2
+        console.print(f"[green]session_persistence[/] = {mode}")
+    summary = persistence_summary()
+    console.print(
+        Panel(
+            json.dumps(summary, indent=2),
+            title="kite privacy",
+            subtitle="See SECURITY.md for full policy",
         )
     )
     return 0
@@ -712,9 +821,9 @@ def cmd_skills(args: argparse.Namespace) -> int:
         except (ValueError, RuntimeError, OSError) as e:
             console.print(f"[red]{e}[/]")
             return 1
-        console.print(f"installed {', '.join(names)} → ~/.kite/skills")
+        console.print(f"installed {', '.join(names)} → ~/.kite/skills (untrusted — see SECURITY.md)")
         return 0
-    from kite.skills.loader import load_skills
+    from kite.skills.loader import format_skill_trust_badge, load_skills
 
     skills = load_skills(args.cwd)
     if args.show:
@@ -722,15 +831,21 @@ def cmd_skills(args: argparse.Namespace) -> int:
         if not match:
             console.print(f"[red]Unknown skill {args.show}[/]")
             return 1
-        console.print(Panel(match.content, title=f"{match.name} — {match.path}"))
+        console.print(
+            Panel(
+                match.content,
+                title=f"{match.name} — {format_skill_trust_badge(match)} — {match.path}",
+            )
+        )
         return 0
     table = Table(title="Skills")
     table.add_column("name")
+    table.add_column("trust")
     table.add_column("description")
     table.add_column("path")
     for s in skills:
         label = f"{s.name} ~" if s.source == "user" else s.name
-        table.add_row(label, (s.description or "")[:60], str(s.path))
+        table.add_row(label, format_skill_trust_badge(s), (s.description or "")[:50], str(s.path))
     console.print(table)
     from kite.ui.pick import can_prompt, numbered_pick
 
@@ -956,6 +1071,16 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
         help="Attach a file or image to the task (repeatable)",
     )
     p.add_argument("-q", "--quiet", action="store_true")
+    p.add_argument(
+        "--headless",
+        action="store_true",
+        help="Line-oriented stderr log, no TTY prompts (CI / cloud agents)",
+    )
+    p.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="With --headless, hide live bash/tool output lines",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument(
         "--mode",
@@ -1020,6 +1145,16 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("session", nargs="?", help="Session id or unique prefix (omit to pick)")
     resume.add_argument("message", nargs="?", help="Optional one-shot follow-up message")
     resume.add_argument("--task", help="Alias for follow-up message")
+    resume.add_argument(
+        "--last",
+        action="store_true",
+        help="Resume the most recent session for --cwd (or newest overall)",
+    )
+    resume.add_argument(
+        "--retry",
+        action="store_true",
+        help="Send a recovery follow-up (provider/network/budget interruption)",
+    )
     _add_run_flags(resume)
     resume.set_defaults(func=cmd_resume)
 
@@ -1048,7 +1183,7 @@ def build_parser() -> argparse.ArgumentParser:
     providers.set_defaults(func=cmd_providers)
 
     from kite.cli.dashboard import cmd_dashboard
-    from kite.cli.setup import cmd_keys, cmd_login, cmd_setup
+    from kite.cli.setup import cmd_keys, cmd_login, cmd_logout, cmd_setup
     from kite.cli.stats import cmd_maintainer_dashboard
 
     setup = sub.add_parser("setup", help="First-run wizard — credentials, provider, model")
@@ -1067,6 +1202,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not set this provider as default in ~/.kite/config.toml",
     )
     login.set_defaults(func=cmd_login, set_default=True)
+
+    logout = sub.add_parser(
+        "logout",
+        help="Unlink a BYOS subscription (chatgpt/codex, claude, grok/xai)",
+    )
+    logout.add_argument("provider", nargs="?", help="Provider name (codex, claude, grok, xai, …)")
+    logout.set_defaults(func=cmd_logout)
 
     keys = sub.add_parser("keys", help="Show credential status or set a BYOK API key")
     keys.add_argument(
@@ -1120,7 +1262,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     config.add_argument("--set-api-base", help="Override provider base URL")
     config.add_argument("--auto-compact", type=lambda s: s.lower() in {"1", "true", "yes"}, default=None)
+    config.add_argument(
+        "--session-persistence",
+        choices=["full", "redacted", "disabled"],
+        help="Session JSONL policy: full, redacted (default), or disabled",
+    )
     config.set_defaults(func=cmd_config)
+
+    privacy = sub.add_parser("privacy", help="Security/privacy policy and session persistence")
+    privacy.add_argument(
+        "--session-persistence",
+        choices=["full", "redacted", "disabled"],
+        help="Set session JSONL persistence mode",
+    )
+    privacy.set_defaults(func=cmd_privacy)
 
     context = sub.add_parser("context", help="Preview discovered project context")
     context.add_argument("--cwd", default=os.getcwd())
@@ -1184,6 +1339,12 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--watch", type=int, default=0, metavar="SEC", help="Refresh every N seconds")
     dashboard.add_argument("--json", action="store_true")
     dashboard.set_defaults(func=cmd_dashboard)
+
+    from kite.cli.subagents import add_subagents_parser
+    from kite.cli.tasks import add_tasks_parser
+
+    add_subagents_parser(sub)
+    add_tasks_parser(sub)
 
     cloud = sub.add_parser("cloud", help="Cloud/local task parity — list and apply saved outputs")
     cloud.add_argument("action", choices=["list", "apply"], nargs="?", default="list")

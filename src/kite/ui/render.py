@@ -10,12 +10,12 @@ from rich.console import Console
 from rich.text import Text
 
 from kite.agent.events import Event
-from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name
+from kite.agent.mode import AgentMode, ApprovalMode
 from kite.ui.chips import render_plan_tasks
 from kite.ui.diff import count_diff_lines, render_diff
 from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState
-from kite.ui.status import approval_style, mode_style, status_context_parts
+from kite.ui.status import render_status
 from kite.ui.stream_buffer import StreamCoalescer
 from kite.ui.style import (
     CHANNEL_PREFIX,
@@ -30,6 +30,7 @@ from kite.ui.style import (
     SYMBOL_SEP,
     SYMBOL_USER,
     SYMBOL_WARN,
+    cell_continuation_indent,
     make_console,
 )
 from kite.ui.tool_cards import (
@@ -37,12 +38,27 @@ from kite.ui.tool_cards import (
     detail_from_args,
     line_count_from_output,
     render_bash_command_block,
+    render_code_edit_preview,
     render_parallel_batch_header,
     render_stream_tool_preview,
     render_tool_card_done,
     render_tool_card_start,
     render_tool_summary,
 )
+
+
+def _subagent_prefix(p: dict[str, Any]) -> str:
+    glyph = str(p.get("subagent_glyph") or "")
+    label = str(p.get("subagent_label") or p.get("subagent_id") or "")
+    if not label and not glyph:
+        return ""
+    return f"{glyph} {label}  ·  " if glyph else f"{label}  ·  "
+
+
+def _live_stream_enabled(state: SessionUiState, p: dict[str, Any]) -> bool:
+    if p.get("subagent_id") or p.get("subagent_label"):
+        return state.live_subagents or state.live_terminal
+    return state.live_terminal
 
 
 def _format_duration(ms: int | None) -> str:
@@ -122,19 +138,6 @@ def render_compact_boundary(
     t.append("\n")
     return t
 
-def render_status(state: SessionUiState) -> Text:
-    t = Text()
-    t.append("kite", style="kite.brand")
-    t.append(f" {SYMBOL_SEP} ", style="kite.muted")
-    t.append(state.mode.value, style=mode_style(state))
-    t.append(f" {SYMBOL_SEP} ", style="kite.muted")
-    t.append(approval_display_name(state.approval), style=approval_style(state))
-    ctx = status_context_parts(state)
-    if ctx:
-        t.append(f" {SYMBOL_SEP} ", style="kite.muted")
-        t.append(f" {SYMBOL_SEP} ".join(ctx), style="kite.muted")
-    return t
-
 def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: str = "") -> Text:
     t = Text()
     t.append(f"{SYMBOL_FAIL} ", style="kite.error")
@@ -155,8 +158,9 @@ def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: 
 def render_user_cell(task: str) -> Text:
     t = Text()
     lines = task.splitlines() or [task]
+    user_prefix = f"{SYMBOL_USER} "
     for i, line in enumerate(lines):
-        t.append(f"{SYMBOL_USER} " if i == 0 else "  ", style="kite.muted")
+        t.append(user_prefix if i == 0 else cell_continuation_indent(user_prefix), style="kite.muted")
         t.append(line + "\n", style="kite.user")
     return t
 
@@ -203,6 +207,8 @@ _RENDER_EVENT_KINDS = (
     "cache_hit",
     "subagent_start",
     "subagent_end",
+    "orchestrator_start",
+    "orchestrator_end",
     "job_start",
     "job_end",
     "tool_output",
@@ -285,7 +291,7 @@ class RunDisplay:
                 block.append("\n")
                 self._need_prefix = True
             if self._need_prefix and part:
-                indent = prefix if not self._did_first_line else "  "
+                indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
                 block.append(indent, style=style)
                 self._need_prefix = False
                 self._did_first_line = True
@@ -391,6 +397,7 @@ class RunDisplay:
         if key == self._last_todo_key:
             return
         self._last_todo_key = key
+        self.console.print()
         self.console.print(render_plan_tasks(self.state.todos, tick=self._anim_tick))
 
     def print_banner(self, task: str = "") -> None:
@@ -514,11 +521,20 @@ class RunDisplay:
             detail = tool
         self.state.set_running(label=detail, kind=tool)
         self.state.touch(force=True)
+        sub_prefix = _subagent_prefix(p)
+        if sub_prefix and self.state.live_subagents:
+            self.console.print(
+                Text(f"{GUTTER}{sub_prefix}{tool}", style="kite.plan")
+            )
         self.console.print(render_tool_card_start(card))
         if reason:
             self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted italic"))
         if tool == "bash" and args.get("command"):
             self.console.print(render_bash_command_block(str(args["command"])))
+        elif tool in {"write", "edit"}:
+            preview = render_code_edit_preview(tool, args)
+            if preview is not None:
+                self.console.print(preview)
         self._spin(True, f"working  {tool}")
 
     def _on_tool_progress(self, p: dict[str, Any]) -> None:
@@ -535,26 +551,32 @@ class RunDisplay:
 
     def _on_tool_output(self, p: dict[str, Any]) -> None:
         from kite.env.shell import sanitize_shell_line
+        from kite.guardrails.redact import redact_string
 
-        line = sanitize_shell_line(str(p.get("line") or ""))
+        line = redact_string(sanitize_shell_line(str(p.get("line") or "")))
         if not line:
             return
         self.state.set_activity_preview(line)
-        if not self.state.live_terminal:
+        if not _live_stream_enabled(self.state, p):
             return
-        self.console.print(Text(f"{GUTTER}{GUTTER}{line}", style="kite.terminal"), highlight=False)
+        prefix = _subagent_prefix(p)
+        self.console.print(
+            Text(f"{GUTTER}{GUTTER}{prefix}{line}", style="kite.terminal"),
+            highlight=False,
+        )
 
     def _on_job_output(self, p: dict[str, Any]) -> None:
         from kite.env.shell import sanitize_shell_line
+        from kite.guardrails.redact import redact_string
 
-        line = sanitize_shell_line(str(p.get("line") or ""))
+        line = redact_string(sanitize_shell_line(str(p.get("line") or "")))
         if not line:
             return
         self.state.set_activity_preview(line)
-        if not self.state.live_terminal:
+        if not _live_stream_enabled(self.state, p):
             return
         job_id = str(p.get("id") or "")
-        prefix = f"[{job_id}] " if job_id else ""
+        prefix = _subagent_prefix(p) or (f"[{job_id}] " if job_id else "")
         self.console.print(
             Text(f"{GUTTER}{GUTTER}{prefix}{line}", style="kite.terminal"),
             highlight=False,
@@ -640,12 +662,12 @@ class RunDisplay:
         self.console.print(line)
         for art in (p.get("artifacts") or [])[-5:]:
             if isinstance(art, dict):
-                mark = "✓" if art.get("ok", True) else "✗"
+                mark = SYMBOL_OK if art.get("ok", True) else SYMBOL_FAIL
                 self.console.print(
                     Text(f"{GUTTER}{mark} [{art.get('kind', '?')}] {art.get('summary', '')}", style="kite.muted")
                 )
         for gap in p.get("gaps") or []:
-            self.console.print(Text(f"{GUTTER}⚠ {gap}", style="kite.pending"))
+            self.console.print(Text(f"{GUTTER}{SYMBOL_WARN} {gap}", style="kite.pending"))
 
     def _on_cost_estimate(self, p: dict[str, Any]) -> None:
         try:
@@ -682,7 +704,9 @@ class RunDisplay:
             try:
                 pct = max(0.0, min(1.0, float(ratio)))
                 filled = int(round(pct * 10))
-                bar = "█" * filled + "░" * (10 - filled)
+                from kite.ui.theme import glyph
+
+                bar = glyph("bar_fill") * filled + glyph("bar_empty") * (10 - filled)
                 line.append(f"  {bar} {pct:.0%}", style="kite.muted")
             except (TypeError, ValueError):
                 pass
@@ -772,10 +796,13 @@ class RunDisplay:
 
     def _on_checkpoint(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
-        self.console.print(
-            f"[kite.muted]◇ checkpoint[/]  {p.get('label', '')}  "
-            f"[dim]{p.get('id', '')}[/]  ({p.get('tokens', '?')} tok)"
-        )
+        line = Text()
+        line.append(f"{GUTTER}◇ checkpoint  ", style="kite.muted")
+        line.append(str(p.get("label", "")), style="kite.muted")
+        line.append(f"  {p.get('id', '')}  ", style="kite.terminal")
+        line.append(f"({p.get('tokens', '?')} tok)", style="kite.muted")
+        line.append("\n")
+        self.console.print(line)
 
     def _on_commit(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -975,26 +1002,99 @@ class RunDisplay:
                     f"[kite.muted]{GUTTER}cache hit  {hits} tokens ({self.state.cache_hit_ratio:.0%})[/]"
                 )
 
+    def _on_orchestrator_start(self, p: dict[str, Any]) -> None:
+        total = int(p.get("total") or 0)
+        workers = int(p.get("workers") or total)
+        if total <= 1:
+            return
+        self._end_stream_line()
+        at_once = f" · {workers} at a time" if workers < total else ""
+        self.console.print(
+            Text(
+                f"{GUTTER}{SYMBOL_COLLAPSE} crew  {total} workers{at_once}",
+                style="kite.plan bold",
+            )
+        )
+
+    def _on_orchestrator_end(self, p: dict[str, Any]) -> None:
+        total = int(p.get("total") or 0)
+        succeeded = int(p.get("succeeded") or p.get("delivered") or 0)
+        if total <= 1:
+            return
+        ok = bool(p.get("ok"))
+        mark = SYMBOL_OK if ok else SYMBOL_WARN
+        style = "kite.success" if ok else "kite.muted"
+        self.console.print(
+            Text(
+                f"{GUTTER}{mark} crew  {succeeded}/{total} succeeded",
+                style=style,
+            )
+        )
+        self._render_subagent_board(p.get("manager"))
+
+    def _render_subagent_board(self, manager: Any) -> None:
+        if not isinstance(manager, list) or not manager:
+            return
+        from kite.ui.tables import kite_table
+
+        table = kite_table()
+        table.add_column("", width=2)
+        table.add_column("worker", style="kite.plan")
+        table.add_column("status")
+        table.add_column("ms", justify="right")
+        for row in manager[-6:]:
+            if not isinstance(row, dict):
+                continue
+            glyph = str(row.get("glyph") or "◆")
+            label = str(row.get("label") or row.get("id") or "worker")
+            quality = str(row.get("quality") or row.get("status") or "")
+            elapsed = row.get("elapsed_ms")
+            timing = str(elapsed) if elapsed else "—"
+            table.add_row(glyph, label[:28], quality, timing)
+        self.console.print(table)
+
     def _on_subagent_start(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         label = str(p.get("label") or p.get("id") or "subagent")
+        glyph = str(p.get("glyph") or "◆")
+        profile = str(p.get("profile") or "")
         self.state.active_subagents += 1
         self._touch_state()
-        self.console.print(Text(f"{GUTTER}{SYMBOL_COLLAPSE} subagent  {label}", style="kite.plan"))
-        self._spin(True, f"subagent  {label}")
+        suffix = f"  ·  {profile}" if profile else ""
+        self.console.print(
+            Text(f"{GUTTER}{SYMBOL_COLLAPSE} {glyph}  {label}{suffix}", style="kite.plan")
+        )
+        if self.state.live_subagents:
+            from kite.guardrails.redact import redact_string
+
+            prompt = redact_string(str(p.get("prompt") or "")[:120])
+            if prompt:
+                self.console.print(Text(f"{GUTTER}{GUTTER}{prompt}", style="kite.muted"))
+        self._spin(True, f"{glyph}  {label}")
 
     def _on_subagent_end(self, p: dict[str, Any]) -> None:
         self._spin(False)
         label = str(p.get("label") or p.get("id") or "subagent")
+        glyph = str(p.get("glyph") or "◆")
         ok = p.get("ok", True)
+        quality = str(p.get("quality") or ("done" if ok else "failed"))
         mark = SYMBOL_OK if ok else SYMBOL_FAIL
-        style = "kite.success" if ok else "kite.error"
+        style = "kite.success" if ok else ("kite.muted" if quality == "partial" else "kite.error")
         self.state.active_subagents = max(0, self.state.active_subagents - 1)
         self._touch_state()
-        self.console.print(Text(f"{GUTTER}{mark} subagent  {label}", style=style))
+        elapsed = p.get("elapsed_ms")
+        timing = f"  ·  {elapsed}ms" if elapsed else ""
+        detail = f"  ·  {quality}" if quality not in {"done", "failed"} else ""
+        self.console.print(
+            Text(f"{GUTTER}{mark} {glyph}  {label}{detail}{timing}", style=style)
+        )
         preview = str(p.get("preview") or "")
         if preview:
-            self.console.print(Text(f"{GUTTER}{GUTTER}{preview[:100]}", style="kite.muted"))
+            from kite.guardrails.redact import redact_string
+
+            self.console.print(
+                Text(f"{GUTTER}{GUTTER}{redact_string(preview[:100])}", style="kite.muted")
+            )
 
     def _on_job_start(self, p: dict[str, Any]) -> None:
         try:
@@ -1004,8 +1104,10 @@ class RunDisplay:
             self.state.active_jobs += 1
         self._touch_state()
         kind = str(p.get("kind") or "job")
+        if kind == "subagent":
+            return
+        label = str(p.get("label") or p.get("command") or p.get("id") or "job")
         if kind == "bash":
-            label = str(p.get("label") or p.get("command") or p.get("id") or "job")
             self.console.print(
                 Text(f"{GUTTER}{SYMBOL_COLLAPSE} job  {kind}  {label}", style="kite.muted")
             )
@@ -1020,12 +1122,14 @@ class RunDisplay:
             self.state.active_jobs = max(0, self.state.active_jobs - 1)
         self._touch_state()
         kind = str(p.get("kind") or "")
+        if kind == "subagent":
+            return
+        ok = p.get("ok", True)
+        mark = SYMBOL_OK if ok else SYMBOL_FAIL
+        style = "kite.success" if ok else "kite.muted"
+        label = str(p.get("label") or p.get("id") or "job")
+        status = str(p.get("status") or ("done" if ok else "ended"))
         if kind == "bash":
-            ok = p.get("ok", True)
-            mark = SYMBOL_OK if ok else SYMBOL_FAIL
-            style = "kite.success" if ok else "kite.muted"
-            label = str(p.get("label") or p.get("id") or "job")
-            status = str(p.get("status") or ("done" if ok else "ended"))
             self.console.print(Text(f"{GUTTER}{mark} job  {kind}  {label}  {status}", style=style))
 
     def _on_warning(self, p: dict[str, Any]) -> None:

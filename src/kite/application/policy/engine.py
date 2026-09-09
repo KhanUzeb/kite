@@ -99,10 +99,19 @@ class PolicyEngine:
             )
 
         if self.execution_mode == "restricted" and "network" in intent.side_effects:
-            if intent.tool == "bash":
+            if intent.tool in {
+                "bash",
+                "webfetch",
+                "websearch",
+                "webcrawl",
+                "web_fetch",
+                "web_search",
+                "context7_resolve",
+                "context7_docs",
+            }:
                 return PolicyDecision(
                     allowed=False,
-                    reason="network command blocked in restricted mode",
+                    reason="network access blocked in restricted mode",
                     policy_version=self.policy_version,
                 )
 

@@ -39,9 +39,14 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 - **Execution context** — separate project root vs session cwd; `restricted` or `host` execution mode; parallel safe read-only tools.
 - **Context lifecycle** — preserved-fact compaction, auto-checkpoints at ~72% context, `/checkpoint` restore, `/handoff` export; **repo map** symbols for faster orientation in large trees.
 - **Harness benchmarks** — `kite bench` for repeatable startup/context/tool timing (no live LLM).
+- **Headless tasks** — `kite tasks run` for JSONL/plain-text batches; `kite run --headless` for CI/cloud agents with structured stderr logging.
 - **Skills & plugins** — `SKILL.md` packs (npm, npx, GitHub, or a **local path symlink** into `~/.kite/skills`), prompt commands, plugins, and `.kite/extensions/` for custom tools.
-- **Guardrails** — path sandboxing, bash danger checks, secret redaction, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
-- **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, git-stat diffs, theme/font switching, and a context-usage meter.
+- **Guardrails** — path sandboxing, bash danger checks, recursive secret redaction, process-tree teardown on timeout, SSRF-safe HTTP tools, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
+- **Session privacy** — `session_persistence = "redacted"` (default) sanitizes transcripts before write; `full` or `disabled` via `kite config` or `/privacy sessions`.
+- **Skill trust** — bundled skills are trusted; npm/git/project skills are labeled untrusted with provenance metadata.
+- **Global identity memory** — `~/.kite/memory/USER.md`, `PROFILE.md`, `WORKING.md` (always global, never per-repo); injected as soft untrusted context when present.
+- **Subagent orchestration** — bundled personas + custom `~/.kite/subagents/*.md` (`kite subagents --init`, `/agents init`), `profile`/`role` dispatch, `/agents` crew board, `/live agents` streaming.
+- **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, write/edit diff previews, git-stat diffs, theme/font switching, and a context-usage meter.
 - **Portable** — install once, then run `kite` from any project directory via `--cwd`.
 
 ## Setup
@@ -59,6 +64,20 @@ cd kite
 ```
 
 Or download and install in one step (installs to `~/kite` by default):
+
+**macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash
+```
+
+With guided setup on first install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash -s -- --setup
+```
+
+**Linux:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
@@ -103,6 +122,10 @@ Or edit keys manually:
 # Copy .env.example to .env (or ~/.kite/.env) and set your key(s)
 kite keys                     # show which keys are set
 kite keys --set groq          # paste a key into ~/.kite/.env
+kite login codex              # BYOS: ChatGPT/Codex via openai-codex SDK
+kite login claude             # BYOS: Claude Code CLI (claude auth login)
+kite login grok               # BYOS: Grok CLI (or kite login xai)
+kite logout codex             # unlink BYOS subscription
 kite models -p groq --select
 kite models -p zen --select          # OpenCode Zen (OPENCODE_API_KEY)
 kite models -p go --select           # OpenCode Go
@@ -134,7 +157,7 @@ kite chat --cwd C:\dev\other-repo
 kite context --cwd .
 ```
 
-Global config and sessions live in `~/.kite/`. Per-project overlays (optional) go in the target repo: `.kite/commands`, `.kite/plugins`, `.kite/memory`.
+Global config, sessions, and identity memory live in `~/.kite/` (`USER.md`, `PROFILE.md`, `WORKING.md`, `MEMORY.md` under `memory/`). Per-project overlays (optional): `.kite/commands`, `.kite/plugins`, `.kite/MEMORY.md` for project-scoped facts only.
 
 ## Tests
 
@@ -143,7 +166,12 @@ pytest                    # guardrails, agent, sessions, git-stat diffs, skills,
 pytest -v                 # verbose
 ```
 
-Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, orchestrator dispatch, 0.9 application adapters (`PolicyEngine`, `ToolExecutor`, replay acceptance), reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
+Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, orchestrator dispatch, user context + subagent security (`test_security_*`), 0.9 application adapters (`PolicyEngine`, `ToolExecutor`, replay acceptance), reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
+
+```bash
+./scripts/lint.sh              # CI parity: sync_version + ruff + pytest + kite bench --check
+pytest tests/test_security_context_subagents.py -q   # memory/profile/subagent hardening only
+```
 
 **CI:** GitHub Actions runs `pytest` on every push and pull request to `main` (Python 3.11 + 3.12). Details in [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
 
@@ -170,7 +198,7 @@ kite resume <session-id>
 kite resume <session-id> "also update the README"
 ```
 
-In the REPL: `/help` for commands · `/plan` `/build` `/model select` `/checkpoint` `/handoff` · Ctrl+C interrupts the turn. Shortcuts: Ctrl+O expand · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
+In the REPL: `/help` for commands · `/user` `/profile` `/working` · `/agents profiles` · `/live` and `/live agents` · `/plan` `/build` · Ctrl+C interrupts the turn. Shortcuts: Ctrl+O expand · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
 
 Approval modes: `auto` · `approve` · `trust` · `readonly`. Set `KITE_LOADER=grid|dots|orbit|wave|spin` for terminal loader style.
 
@@ -193,14 +221,19 @@ kite memory --remember "prefer ruff"
 kite context
 kite runtime-config
 kite setup                    # first-run: key + model wizard
+kite login [provider]         # BYOK key or BYOS subscription
+kite logout [provider]        # unlink BYOS subscription
 kite keys [--set provider]    # show or paste API keys (hidden)
-kite keys --logout provider   # remove a stored key
+kite keys --logout provider   # remove a stored BYOK key or BYOS session
 kite providers
 kite models -p groq
 kite models --select
 kite config
 kite config --select-model
 kite bench [--json] [--save PATH] [--compare BASELINE.json]   # harness timing (no LLM)
+kite tasks init | kite tasks run <file.jsonl>                 # headless task batches
+kite run --headless "task"                                    # non-TTY stderr event log
+kite subagents [--show id] [--init id]                        # subagent personas
 ```
 
 Command map: [kite_commands.md](kite_commands.md)
@@ -255,6 +288,6 @@ src/kite/
   skills/ commands/ plugins/
   eval/                    # ReplayBundle + acceptance criteria (no live LLM)
 scripts/
-  install.sh install.ps1   # clone + venv + editable install (any workstation)
+  install.sh download-macos.sh install.ps1   # clone + venv + editable install
 tests/                     # pytest suite (~440+ tests, no live LLM)
 ```

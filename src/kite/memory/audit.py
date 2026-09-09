@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import json
+import stat
 import time
 from pathlib import Path
 from typing import Any
 
 from kite.config import kite_home
-from kite.guardrails import redact_secrets
+from kite.guardrails.redact import sanitize_payload
+
+
+def _secure_audit_file(path: Path) -> None:
+    try:
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        pass
 
 
 class AuditLog:
@@ -19,14 +27,10 @@ class AuditLog:
 
     def append(self, kind: str, **payload: Any) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        row: dict[str, Any] = {"ts": time.time(), "kind": kind}
-        for key, val in payload.items():
-            if isinstance(val, str):
-                row[key], _ = redact_secrets(val)
-            else:
-                row[key] = val
+        row = sanitize_payload({"ts": time.time(), "kind": kind, **payload})
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, default=str) + "\n")
+        _secure_audit_file(self.path)
 
     def log_approval(self, tool: str, pattern: str, decision: str, **extra: Any) -> None:
         self.append("approval", tool=tool, pattern=pattern, decision=decision, **extra)

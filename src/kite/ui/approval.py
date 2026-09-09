@@ -23,7 +23,8 @@ from kite.guardrails.sandbox import (
     workspace_root,
 )
 from kite.ui.diff import count_diff_lines, diff_path, render_diff_stat
-from kite.ui.style import GUTTER
+from kite.ui.style import GUTTER, PANEL_BAR
+from kite.ui.tool_cards import render_bash_command_block
 
 Decision = Literal["allow", "session", "always", "deny", "stop"]
 
@@ -415,6 +416,9 @@ class ApprovalPolicy:
             json.dumps({"always": sorted(self.always_patterns)}, indent=2),
             encoding="utf-8",
         )
+        from kite.memory.session_policy import secure_session_file
+
+        secure_session_file(path)
 
     def remembered(self, pattern: str) -> bool:
         if pattern in self.always_patterns or pattern in self.session_patterns:
@@ -435,7 +439,7 @@ class ApprovalPolicy:
             self.session_patterns.add(pattern)
 
 
-APPROVAL_BAR = "┊ "
+APPROVAL_BAR = PANEL_BAR
 
 
 def render_approval_panel(
@@ -450,7 +454,9 @@ def render_approval_panel(
     body = Text()
     body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.pending")
     body.append("approve ", style="kite.pending")
-    body.append(tool, style="bold")
+    body.append(tool, style="kite.tool bold")
+    if mandatory:
+        body.append("  mandatory", style="kite.error")
     body.append("\n")
 
     if reason:
@@ -461,20 +467,16 @@ def render_approval_panel(
     if tool == "bash":
         cmd = str(arguments.get("command") or "").strip()
         cwd = arguments.get("cwd")
-        for cmd_line in (cmd.splitlines() or [""])[:6]:
-            body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
-            body.append("$ ", style="kite.tool bold")
-            body.append(cmd_line + "\n", style="")
-        if cmd.count("\n") > 5:
-            body.append(f"{GUTTER}{APPROVAL_BAR}…\n", style="kite.muted")
+        body.append_text(render_bash_command_block(cmd, max_lines=6))
         if cwd:
             body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
-            body.append(f"cwd  {cwd}\n", style="kite.muted")
+            body.append(f"cwd  {cwd}\n", style="kite.terminal")
     else:
         for key in ("path", "root", "pattern", "query"):
             if arguments.get(key):
                 body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
-                body.append(f"{key}  {arguments[key]}\n", style="")
+                body.append(f"{key}  ", style="kite.muted")
+                body.append(f"{arguments[key]}\n", style="kite.terminal")
         if diff:
             added, deleted = count_diff_lines(diff)
             if added or deleted:

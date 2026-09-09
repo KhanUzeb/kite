@@ -18,10 +18,16 @@ from kite.ui.complete import (
     apply_busy_composer_result,
     make_repl_key_bindings,
 )
-from kite.ui.render import RunDisplay, render_status
+from kite.ui.render import RunDisplay
 from kite.ui.spinner import WaitSpinner, stop_all_spinners
 from kite.ui.state import SessionUiState, TodoItem
-from kite.ui.status import cache_meter, context_meter, format_metrics_tail, format_status_tail
+from kite.ui.status import (
+    cache_meter,
+    context_meter,
+    format_metrics_tail,
+    format_status_tail,
+    render_status,
+)
 from kite.ui.style import KITE_THEME
 from tests.conftest import strip_ansi
 
@@ -102,6 +108,8 @@ def test_repl_key_bindings_include_paste_copy_not_scroll_by_default(monkeypatch)
     for binding in bindings.bindings:
         keys.update(binding.keys)
     assert "c-v" in keys
+    assert "f8" in keys
+    assert "c-l" in keys
     assert "escape" in keys
     assert "c-g" in keys
     assert "<scroll-up>" not in keys
