@@ -1056,7 +1056,10 @@ class DefaultAgent:
         from kite.application.tools.effects import tool_requires_approval_gate
 
         needs_gate = tool in MUTATING_TOOLS or tool_requires_approval_gate(tool, args)
-        if self.approver and needs_gate:
+        inspection_bash = tool == "bash" and is_inspection_bash(str(args.get("command") or ""))
+        if needs_gate and not inspection_bash and self.approver is None:
+            return _blocked("approval required but no approver is available")
+        if needs_gate and not inspection_bash:
             extra = {"reason": args.get("reason") or "", "diff": ""}
             if tool in {"write", "edit"}:
                 extra["diff"] = self._preview_diff(tool, args)
@@ -1101,7 +1104,10 @@ class DefaultAgent:
         if not decision.allowed:
             return _blocked(decision.reason or "denied by policy")
 
-        if decision.requires_approval and self.approver:
+        if decision.requires_approval and self.approver is None:
+            return _blocked("approval required but no approver is available")
+
+        if decision.requires_approval:
             extra = {"reason": str(args.get("reason") or decision.reason or ""), "diff": ""}
             if tool in {"write", "edit"}:
                 extra["diff"] = self._preview_diff(tool, args)

@@ -80,7 +80,13 @@ def _vc_with_edit_and_test(passed: bool = True) -> VerificationCollector:
 
 
 def test_agent_submit_blocked_without_tests_after_edit() -> None:
-    agent = DefaultAgent(_EditThenSubmitModel(), _StubEnv(), verify_before_submit=True, step_limit=3)
+    agent = DefaultAgent(
+        _EditThenSubmitModel(),
+        _StubEnv(),
+        verify_before_submit=True,
+        step_limit=3,
+        approver=lambda *_args, **_kwargs: "allow",
+    )
     agent.run("fix a.py")
     blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
     assert "Submit blocked" in blob

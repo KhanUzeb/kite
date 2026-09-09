@@ -605,6 +605,10 @@ def make_approver(
         )
 
     def approve(tool: str, arguments: dict[str, Any], extra: dict[str, Any] | None = None) -> Decision:
+        from kite.application.tools.contracts import ToolCall
+        from kite.application.tools.effects import derive_effects
+        from kite.application.tools.effects import mandatory_reason as canonical_mandatory_reason
+
         extra = extra or {}
         cmd = str(arguments.get("command") or "")
         mandatory_reason = mandatory_approval_reason(
@@ -614,9 +618,14 @@ def make_approver(
             workspace_cwd=workspace_cwd,
             bash_cwd=str(arguments.get("cwd") or "") or None,
         )
+        mandatory_reason = mandatory_reason or canonical_mandatory_reason(
+            derive_effects(ToolCall("approval", tool, arguments)),
+            tool=tool,
+            args=arguments,
+        )
         if mode is AgentMode.PLAN and tool != "todo_write":
             if tool == "bash" and is_inspection_bash(cmd):
-                pass
+                return "allow"
             else:
                 return "deny"
         if approval is ApprovalMode.READONLY and tool in MUTATING_TOOLS:

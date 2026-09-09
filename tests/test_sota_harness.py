@@ -108,3 +108,41 @@ def test_loop_uses_tool_executor_policy_block(workspace: Path) -> None:
     )
     assert out.get("blocked") or not out.get("ok")
     assert "outside" in str(out.get("error") or out.get("output") or "").lower()
+
+
+def test_loop_denies_required_approval_without_approver(workspace: Path) -> None:
+    calls: list[str] = []
+    executor = build_tool_executor(
+        workspace_root=workspace,
+        execution_mode="host",
+        no_guardrails=False,
+        runner=lambda call: calls.append(call.name) or {"ok": True, "output": "executed"},
+    )
+    agent = DefaultAgent(MagicMock(), MagicMock(), tool_executor=executor)
+    target = workspace.parent / "outside.txt"
+
+    out = agent._run_gated_via_executor(
+        "write",
+        {"path": str(target), "content": "blocked"},
+        {"tool": "write", "arguments": {"path": str(target), "content": "blocked"}},
+    )
+
+    assert out.get("blocked") is True
+    assert "approval required" in str(out.get("error") or out.get("output") or "")
+    assert calls == []
+
+
+def test_legacy_tool_path_denies_mutation_without_approver() -> None:
+    environment = MagicMock()
+    environment.execute.return_value = {"ok": True, "output": "executed"}
+    agent = DefaultAgent(MagicMock(), environment, tool_executor=None)
+
+    out = agent._run_gated(
+        "write",
+        {"path": "outside.txt", "content": "blocked"},
+        {"tool": "write", "arguments": {"path": "outside.txt", "content": "blocked"}},
+    )
+
+    assert out.get("blocked") is True
+    assert "approval required" in str(out.get("error") or out.get("output") or "")
+    environment.execute.assert_not_called()

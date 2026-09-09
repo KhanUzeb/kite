@@ -171,21 +171,28 @@ def test_approval_wake_empty_does_not_deny(monkeypatch) -> None:
     assert result.text == ""
 
 
-def test_approval_enter_empty_allows_once(monkeypatch) -> None:
-    """Empty Enter during approval allows once (not deny)."""
-    from kite.ui.complete import _prompt_once
+def test_approval_enter_empty_requires_explicit_key() -> None:
+    from prompt_toolkit.keys import Keys
 
-    monkeypatch.setattr(
-        "prompt_toolkit.patch_stdout.patch_stdout",
-        lambda raw=False: nullcontext(),
+    from kite.ui.complete import make_repl_key_bindings
+
+    action_slot = {"kind": "submit"}
+    bindings = make_repl_key_bindings(
+        is_awaiting_approval=lambda: True,
+        action_slot=action_slot,
     )
-    session = MagicMock()
-    session.prompt.return_value = "a"
-    session.default_buffer.text = ""
-    state = SessionUiState(awaiting_approval="bash")
-    result = _prompt_once(session, state, busy=True, action_slot={"kind": "approval"})
-    assert result.kind == "approval"
-    assert result.text == "allow"
+    enter = next(
+        binding
+        for binding in bindings.get_bindings_for_keys((Keys.ControlM,))
+        if binding.handler.__name__ == "_approval_enter"
+    )
+    event = MagicMock()
+    event.current_buffer.text = ""
+
+    enter.handler(event)
+
+    assert action_slot == {"kind": "submit"}
+    event.app.exit.assert_not_called()
 
 
 def test_toolbar_busy_and_approval_states() -> None:
@@ -218,7 +225,8 @@ def test_toolbar_busy_and_approval_states() -> None:
 
     approval = SessionUiState(awaiting_approval="bash", awaiting_approval_mandatory=True)
     approval_html = str(_toolbar_html(approval))
-    assert "[a]/Enter once" in approval_html
+    assert "[a] once" in approval_html
+    assert "/Enter" not in approval_html
     assert "Enter queue" not in approval_html
 
     idle_html = str(_toolbar_html(SessionUiState(busy=False)))

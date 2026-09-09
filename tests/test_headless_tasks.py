@@ -14,6 +14,7 @@ from kite.tasks.headless import (
     parse_task_line,
     resolve_headless_approval,
     run_headless_batch,
+    run_headless_task,
 )
 
 
@@ -40,9 +41,12 @@ def test_load_tasks_skips_comments_and_blanks() -> None:
     assert tasks[1].label == "lint"
 
 
-def test_resolve_headless_approval_upgrades_supervised() -> None:
-    out = resolve_headless_approval("approve", AgentMode.BUILD, headless=True)
-    assert out is ApprovalMode.AUTO
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("approve", ApprovalMode.APPROVE), ("readonly", ApprovalMode.READONLY)],
+)
+def test_resolve_headless_approval_preserves_user_mode(raw: str, expected: ApprovalMode) -> None:
+    assert resolve_headless_approval(raw, AgentMode.BUILD, headless=True) is expected
 
 
 def test_is_headless_run_flag() -> None:
@@ -94,6 +98,37 @@ def test_run_headless_batch_dry_integration(monkeypatch, workspace, kite_home) -
     batch = run_headless_batch(tasks, continue_on_error=True)
     assert batch.ok
     assert calls == ["one", "two"]
+
+
+@pytest.mark.parametrize(
+    ("approval", "expected"),
+    [("auto", "allow"), ("readonly", "deny"), ("approve", "deny")],
+)
+def test_headless_task_wires_noninteractive_approval(
+    monkeypatch, workspace, kite_home, approval: str, expected: str
+) -> None:
+    from kite.application.contracts import RunResult
+
+    observed: list[str] = []
+
+    def fake_execute(harness, task):  # noqa: ANN001, ANN202
+        observed.append(
+            harness.approver("write", {"path": str(workspace / "generated.txt")}, {})
+        )
+        return RunResult(
+            status="completed",
+            stop_reason="submitted",
+            final_message="done",
+            legacy={"exit_status": "Submitted", "submission": "done"},
+        )
+
+    monkeypatch.setattr("kite.application.cli.runner.execute_harness_task", fake_execute)
+    result = run_headless_task(
+        HeadlessTask(task="generate a file", cwd=str(workspace), approval=approval)
+    )
+
+    assert result.ok is True
+    assert observed == [expected]
 
 
 def test_invalid_json_task_line_raises() -> None:
