@@ -64,7 +64,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("home", "Show ~/.kite paths", group="session"),
     BuiltinCommand("help", "This map", aliases=("h",), group="session"),
     BuiltinCommand("quit", "Leave the REPL", aliases=("q", "exit"), group="session"),
-    BuiltinCommand("theme", "Color palette", hint="auto|kite|dark|light|dim|mono", group="session"),
+    BuiltinCommand("theme", "Color palette", hint="auto|kite|dark|light|dim|mono|monochrome|catppuccin|ember|forest|hues|transparent", group="session"),
     BuiltinCommand("font", "Glyphs for this terminal", hint="unicode|ascii", group="session"),
     BuiltinCommand("setup", "First-run wizard (BYOK key or BYOS OAuth + model)", group="model"),
     BuiltinCommand(
@@ -171,6 +171,12 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("light", "blue brand on light terminals"),
         ("dim", "low-contrast"),
         ("mono", "no color, bold errors only"),
+        ("monochrome", "grayscale with subtle contrast"),
+        ("catppuccin", "pastel mocha — lavender brand, pink accent"),
+        ("ember", "warm charcoal — amber brand, ember glow"),
+        ("forest", "deep green — moss brand, leaf accent"),
+        ("hues", "vivid accents — purple brand, rainbow tools"),
+        ("transparent", "ghost UI — terminal background shows through"),
     ],
     "font": [
         ("unicode", "✓ ⚠ › — default"),

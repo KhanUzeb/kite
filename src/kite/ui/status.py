@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+
+from rich.text import Text
+
 from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name
 from kite.models.reasoning import reasoning_badge
 from kite.ui.state import SessionUiState
@@ -9,6 +13,14 @@ from kite.ui.style import SYMBOL_SEP
 from kite.ui.theme import glyph
 
 _CONTEXT_BAR_WIDTH = 8
+
+
+def _terminal_compact() -> bool:
+    try:
+        width = shutil.get_terminal_size(fallback=(120, 24)).columns
+    except OSError:
+        width = 120
+    return width < 100
 
 
 def cache_meter(ratio: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
@@ -151,35 +163,57 @@ def status_context_parts(state: SessionUiState) -> list[str]:
     return parts
 
 
-def format_status_tail(state: SessionUiState) -> str:
-    import shutil
+def _segment_style(text: str) -> str:
+    if text.startswith("approve "):
+        return "kite.pending"
+    if text == "working":
+        return "kite.highlight"
+    if text.startswith("verify ") or text in _VERIFY_LABELS.values():
+        return "kite.pending"
+    return "kite.muted"
 
-    try:
-        width = shutil.get_terminal_size(fallback=(120, 24)).columns
-    except OSError:
-        width = 120
-    compact = width < 100
+
+def status_segments(state: SessionUiState) -> list[tuple[str, str]]:
+    """Ordered (text, rich_style) segments shown after the kite brand."""
+    compact = _terminal_compact()
     mode_label = "plan" if state.mode is AgentMode.PLAN else state.mode.value
-    mode_bits = [mode_label, approval_display_name(state.approval)]
+    segments: list[tuple[str, str]] = [
+        (mode_label, mode_style(state)),
+        (approval_display_name(state.approval), approval_style(state)),
+    ]
     if not compact and state.mode is AgentMode.PLAN and state.todos:
-        done = sum(1 for t in state.todos if t.status == "completed")
-        mode_bits.append(f"list {done}/{len(state.todos)}")
+        done = sum(1 for item in state.todos if item.status == "completed")
+        segments.append((f"list {done}/{len(state.todos)}", "kite.task"))
     if state.sandbox_restricted:
-        mode_bits.append("restricted")
-    parts = [*mode_bits]
+        segments.append(("restricted", "kite.pending"))
     ctx = status_context_parts(state)
     if compact:
-        for bit in ctx:
-            if bit.startswith("approve "):
-                parts.insert(0, bit)
-                break
+        approve = next((bit for bit in ctx if bit.startswith("approve ")), None)
+        if approve:
+            segments.insert(0, (approve, "kite.pending"))
         if state.busy:
-            parts.append("working")
+            segments.append(("working", "kite.highlight"))
         elif state.queued:
-            parts.append(f"q{state.queued}")
-    else:
-        parts.extend(ctx)
+            segments.append((f"q{state.queued}", "kite.muted"))
+        return segments
+    for bit in ctx:
+        segments.append((bit, _segment_style(bit)))
+    return segments
+
+
+def format_status_tail(state: SessionUiState) -> str:
+    parts = [text for text, _ in status_segments(state)]
     return f" {SYMBOL_SEP} ".join(parts)
+
+
+def render_status(state: SessionUiState) -> Text:
+    """Rich status line — matches toolbar fields with semantic colors."""
+    line = Text()
+    line.append("kite", style="kite.brand")
+    for text, style in status_segments(state):
+        line.append(f" {SYMBOL_SEP} ", style="kite.muted")
+        line.append(text, style=style)
+    return line
 
 
 def approval_style(state: SessionUiState) -> str:
