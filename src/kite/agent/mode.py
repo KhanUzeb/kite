@@ -88,3 +88,8 @@ def filter_enabled(enabled: list[str], allowed: frozenset[str]) -> list[str]:
 def tools_for_mode(mode: AgentMode, enabled: list[str]) -> list[str]:
     allow = PLAN_TOOLS if mode is AgentMode.PLAN else BUILD_TOOLS
     return filter_enabled(enabled, allow)
+
+
+def tools_for_nested_subagent(enabled: list[str]) -> list[str]:
+    """Read-only nested workers — no further subagent recursion."""
+    return [name for name in tools_for_mode(AgentMode.PLAN, enabled) if name != "subagent"]

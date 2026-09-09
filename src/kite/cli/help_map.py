@@ -54,7 +54,7 @@ REPL essentials (type /help in chat)
   /status                       mode, model, cost, session persistence
   /privacy                      security policy; /privacy sessions …
   /stop /steer                  stop turn or redirect (session stays)
-  /jobs /kill [id|all]          background bash + live subagents
+  /jobs /agents /kill [id|all]  background bash + live subagent crew
 
 Flags on run/chat/resume: -p provider  -m model  --cwd PATH  --mode plan|build
   --approval auto|approve|supervised|yolo|trust|readonly  --auto-compact  -v  -q  --attach PATH
