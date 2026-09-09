@@ -25,9 +25,18 @@ def _pin_prefs() -> None:
 
 
 def test_new_themes_are_registered() -> None:
-    for name in ("monochrome", "catppuccin", "ember", "forest", "hues"):
+    for name in ("monochrome", "catppuccin", "ember", "forest", "hues", "transparent"):
         assert name in THEME_NAMES
         assert "kite.brand" in palette(name)["styles"]
+
+
+def test_transparent_theme_alias_and_ui() -> None:
+    assert set_theme("glass") == "transparent"
+    ui = ui_colors("transparent")
+    assert ui.toolbar_bg == ""
+    styles = pt_style_dict("transparent")
+    assert "bg:" not in styles["bottom-toolbar"]
+    assert rich_theme("transparent").styles["kite.brand"] is not None
 
 
 def test_theme_aliases_resolve() -> None:

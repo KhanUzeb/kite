@@ -24,6 +24,7 @@ THEME_NAMES = (
     "ember",
     "forest",
     "hues",
+    "transparent",
 )
 
 FONT_NAMES = ("unicode", "ascii")
@@ -40,6 +41,7 @@ THEME_HELP = {
     "ember": "warm charcoal — amber brand, ember glow",
     "forest": "deep green — moss brand, leaf accent",
     "hues": "vivid accents — purple brand, rainbow tools",
+    "transparent": "ghost UI — terminal background shows through",
 }
 
 FONT_HELP = {
@@ -52,6 +54,7 @@ _THEME_ALIASES = {
     "green-forest": "forest",
     "greenforest": "forest",
     "green_forest": "forest",
+    "glass": "transparent",
 }
 
 _KITE_STYLES = {
@@ -184,6 +187,27 @@ def _light_ui(
         scrollbar_btn=scrollbar_btn,
         autosuggest=autosuggest,
         prompt=prompt,
+    )
+
+
+def _transparent_ui() -> PaletteUi:
+    """No painted backgrounds — composer chrome floats on the terminal."""
+    return PaletteUi(
+        muted="#707070",
+        accent="#909090",
+        placeholder="#606060",
+        toolbar_bg="",
+        toolbar_fg="#707070",
+        completion_bg="",
+        completion_fg="default",
+        completion_current_bg="",
+        completion_current_fg="default bold",
+        completion_meta="#606060",
+        completion_meta_current="#808080",
+        scrollbar_bg="",
+        scrollbar_btn="",
+        autosuggest="#505050",
+        prompt="default",
     )
 
 
@@ -572,6 +596,44 @@ _PALETTES: dict[str, dict[str, Any]] = {
             prompt="#a78bfa bold",
         ),
     ),
+    "transparent": _entry(
+        styles=_styles(
+            **{
+                "kite.brand": "default",
+                "kite.thinking": "italic dim",
+                "kite.reasoning": "italic dim",
+                "kite.muted": "dim",
+                "kite.terminal": "dim",
+                "kite.tool": "default",
+                "kite.success": "green",
+                "kite.pending": "yellow",
+                "kite.error": "bold red",
+                "kite.diff.add": "green",
+                "kite.diff.del": "red",
+                "kite.diff.hunk": "dim",
+                "kite.diff.meta": "dim",
+                "kite.diff.ctx": "dim",
+                "kite.plan": "yellow",
+                "kite.build": "green",
+                "kite.accent": "default",
+                "kite.highlight": "default",
+                "kite.task": "default",
+                "kite.task.done": "dim",
+                "kite.task.active": "default",
+                "kite.task.pending": "dim",
+                "kite.task.bar": "dim",
+                "kite.task.bar_empty": "dim",
+                "kite.pick": "default",
+                "kite.pick.current": "bold",
+                "kite.flash": "bold",
+            }
+        ),
+        dark=True,
+        syntax="ansi_dark",
+        brand_ansi="ansiwhite",
+        brand_fg="#a0a0a0",
+        ui=_transparent_ui(),
+    ),
 }
 
 _UNICODE = {
@@ -699,22 +761,29 @@ def brand_fg(name: str | None = None) -> str:
     return str(palette(name)["brand_fg"])
 
 
+def _pt_bg(fg: str, bg: str, *, prefix: str = "", suffix: str = "") -> str:
+    rule = f"{prefix}{fg}{suffix}".strip()
+    if not bg:
+        return rule
+    return f"{prefix}bg:{bg} {fg}{suffix}".strip()
+
+
 def pt_style_dict(name: str | None = None) -> dict[str, str]:
     ui = ui_colors(name)
     return {
         "prompt": ui.prompt,
         "placeholder": ui.placeholder,
-        "bottom-toolbar": f"noreverse {ui.toolbar_fg} bg:{ui.toolbar_bg}",
-        "completion-menu": f"bg:{ui.completion_bg} {ui.completion_fg}",
-        "completion-menu.completion": f"bg:{ui.completion_bg} {ui.completion_fg}",
-        "completion-menu.completion.current": (
-            f"bg:{ui.completion_current_bg} {ui.completion_current_fg} bold"
+        "bottom-toolbar": _pt_bg(ui.toolbar_fg, ui.toolbar_bg, prefix="noreverse "),
+        "completion-menu": _pt_bg(ui.completion_fg, ui.completion_bg),
+        "completion-menu.completion": _pt_bg(ui.completion_fg, ui.completion_bg),
+        "completion-menu.completion.current": _pt_bg(
+            ui.completion_current_fg, ui.completion_current_bg, suffix=" bold"
         ),
         "completion-menu.meta.completion": ui.completion_meta,
         "completion-menu.meta.completion.current": ui.completion_meta_current,
-        "completion-menu.multi-column-meta": f"bg:{ui.scrollbar_bg} {ui.completion_meta}",
-        "scrollbar.background": f"bg:{ui.scrollbar_bg}",
-        "scrollbar.button": f"bg:{ui.scrollbar_btn}",
+        "completion-menu.multi-column-meta": _pt_bg(ui.completion_meta, ui.scrollbar_bg),
+        "scrollbar.background": _pt_bg("", ui.scrollbar_bg) if ui.scrollbar_bg else "",
+        "scrollbar.button": _pt_bg("", ui.scrollbar_btn) if ui.scrollbar_btn else "",
         "auto-suggestion": ui.autosuggest,
     }
 
