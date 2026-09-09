@@ -354,7 +354,7 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 | `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |
 | `websearch` | DuckDuckGo search (HTML + instant API, no key); unwraps redirects; deduped results |
 | `webfetch` | Fetch one URL → title, description, readable body; optional outbound links; JSON pretty-print |
-| `webcrawl` | Same-origin multi-page crawl with depth/page limits |
+| `webcrawl` | Same-origin crawl with depth/page/time/download limits; private URLs blocked |
 
 Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `websearch` → pick URL → `webfetch`.
 
@@ -412,7 +412,7 @@ Kite is **local-first**: credentials stay on disk under `~/.kite/` (or provider 
 | **Secret redaction** | Recursive sanitizer for audit logs, events, session JSONL, and tool output (nested dicts/lists, Bearer tokens, sensitive keys) |
 | **Child processes** | Credential-like env vars stripped; `extra` overrides cannot re-inject `OPENAI_API_KEY`, `GITHUB_TOKEN`, etc. Process trees killed on timeout/cancel |
 | **Skills** | Bundled = trusted; npm/git/project/user = untrusted (`.kite-provenance.json` on install) |
-| **HTTP tools** | SSRF checks: resolve host → validate all IPs → connect; redirects re-validated |
+| **HTTP tools** | SSRF: resolve host → validate IPs → connect-time peer check; redirects capped; crawl budgets |
 
 ---
 

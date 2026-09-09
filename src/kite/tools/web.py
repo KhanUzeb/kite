@@ -15,12 +15,10 @@ from html.parser import HTMLParser
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
-from urllib.request import OpenerDirector, Request, build_opener, urlopen
+from urllib.request import Request, urlopen
 
 from kite.guardrails.ssrf import (
-    SafeRedirectHandler as _SafeRedirectHandler,
-)
-from kite.guardrails.ssrf import (
+    build_safe_opener,
     guarded_request,
     validate_request_url,
 )
@@ -36,12 +34,19 @@ except Exception:  # pragma: no cover
 _USER_AGENT = f"kite-agent/{__version__} (+https://github.com/KhanUzeb/kite)"
 _MAX_BODY = 120_000
 _FETCH_TIMEOUT = 20
+_MAX_FETCH_TIMEOUT = 45
 _DEFAULT_FETCH_CHARS = 24_000
 _MAX_REDIRECTS = 5
+_CRAWL_MAX_SECONDS = 90
+_CRAWL_MAX_TOTAL_BYTES = 500_000
 
 
-def _safe_opener() -> OpenerDirector:
-    return build_opener(_SafeRedirectHandler())
+def _safe_opener():
+    return build_safe_opener(max_redirects=_MAX_REDIRECTS)
+
+
+def _url_allowed(url: str) -> bool:
+    return _url_blocked(url) is None
 
 
 def _urlencode(text: str) -> str:
@@ -60,11 +65,15 @@ def unwrap_tracking_url(url: str) -> str:
     if "duckduckgo.com" in host and parsed.path.startswith("/l/"):
         target = parse_qs(parsed.query).get("uddg", [None])[0]
         if target:
-            return unquote(target)
+            candidate = unquote(target)
+            if _url_allowed(candidate):
+                return candidate
     if host.endswith("google.com") and parsed.path == "/url":
         target = parse_qs(parsed.query).get("q", [None])[0]
         if target:
-            return unquote(target)
+            candidate = unquote(target)
+            if _url_allowed(candidate):
+                return candidate
     return text
 
 
@@ -95,6 +104,7 @@ def _fetch_url(
     if err:
         return b"", "", url, err
 
+    timeout = min(max(1, int(timeout)), _MAX_FETCH_TIMEOUT)
     last_err: str | None = None
     attempts = max(0, int(retries)) + 1
     for attempt in range(attempts):
@@ -112,6 +122,9 @@ def _fetch_url(
             with _safe_opener().open(req, timeout=timeout) as resp:  # noqa: S310
                 ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
                 final_url = getattr(resp, "url", None) or url
+                post_err = validate_request_url(final_url)
+                if post_err:
+                    return b"", "", final_url, post_err
                 return resp.read(max_bytes), ctype, final_url, None
         except (URLError, OSError, TimeoutError, ValueError) as e:
             last_err = str(e)
@@ -643,7 +656,9 @@ def websearch(query: str, *, max_results: int = 8) -> dict[str, Any]:
         return {"ok": False, "error": err, "output": err, "engine": "duckduckgo"}
 
     html_hits = _parse_ddg_html(body or "", max_results) if body else []
-    results = _merge_search_results(instant_hits, html_hits, max_results=max_results)
+    safe_instant = [hit for hit in instant_hits if not hit.get("url") or _url_allowed(hit["url"])]
+    safe_html = [hit for hit in html_hits if not hit.get("url") or _url_allowed(hit["url"])]
+    results = _merge_search_results(safe_instant, safe_html, max_results=max_results)
 
     if not results:
         hint = (
@@ -706,11 +721,19 @@ def webcrawl(
     queue: list[tuple[str, int]] = [(start, 0)]
     pages: list[dict[str, Any]] = []
     t0 = time.monotonic()
+    total_bytes = 0
+    budget_exceeded = False
 
     while queue and len(pages) < max_pages:
+        if time.monotonic() - t0 > _CRAWL_MAX_SECONDS:
+            budget_exceeded = True
+            break
         current, depth = queue.pop(0)
         key = urlparse(current)._replace(fragment="").geturl()
         if key in visited:
+            continue
+        if not _url_allowed(current):
+            pages.append({"url": current, "error": "private network URLs blocked", "depth": depth})
             continue
         visited.add(key)
 
@@ -718,6 +741,10 @@ def webcrawl(
         if fetch_err:
             pages.append({"url": current, "error": fetch_err, "depth": depth})
             continue
+        total_bytes += len(raw)
+        if total_bytes > _CRAWL_MAX_TOTAL_BYTES:
+            budget_exceeded = True
+            break
 
         body = _decode_body(raw, ctype)
         title, _description, text, links = _extract_page(body, final_url)
@@ -741,11 +768,14 @@ def webcrawl(
             if same_origin and not link.startswith(origin_key):
                 continue
             lk = urlparse(link)._replace(fragment="").geturl()
-            if lk not in visited:
+            if lk not in visited and _url_allowed(lk):
                 queue.append((lk, depth + 1))
 
     elapsed = time.monotonic() - t0
-    lines = [f"seed: {start}", f"pages: {len(pages)}  depth≤{max_depth}  {elapsed:.1f}s", ""]
+    lines = [f"seed: {start}", f"pages: {len(pages)}  depth≤{max_depth}  {elapsed:.1f}s"]
+    if budget_exceeded:
+        lines.append("budget: time or download limit reached")
+    lines.append("")
     for i, p in enumerate(pages, 1):
         if p.get("error"):
             lines.append(f"{i}. [error] {p['url']} — {p['error']}")
