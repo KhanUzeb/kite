@@ -31,6 +31,7 @@ def test_harness_config_roundtrip(workspace: Path) -> None:
         mode="build",
         approval="manual",
         execution_mode="restricted",
+        memory_in_prompt=True,
     )
     spec = run_spec_from_harness_config(original, task="fix tests", workspace=workspace)
     assert spec.task == "fix tests"
@@ -39,6 +40,7 @@ def test_harness_config_roundtrip(workspace: Path) -> None:
     assert spec.limits.step_limit == 10
     assert spec.approval_mode == "manual"
     assert spec.execution_mode == "restricted"
+    assert spec.memory_in_prompt is True
 
     restored = harness_config_from_run_spec(spec)
     assert restored.provider == original.provider
@@ -46,6 +48,30 @@ def test_harness_config_roundtrip(workspace: Path) -> None:
     assert restored.step_limit == original.step_limit
     assert restored.approval == original.approval
     assert restored.execution_mode == original.execution_mode
+    assert restored.memory_in_prompt is True
+
+
+def test_application_run_service_preserves_wired_harness_config(workspace: Path) -> None:
+    sink = InMemoryEventSink()
+    deps = HarnessDependencies(event_sink=sink)
+    service = ApplicationRunService()
+    wired = Harness(
+        config=HarnessConfig(cwd=str(workspace), memory_in_prompt=True, role="debugger"),
+    )
+    spec = wired.to_run_spec("keep memory flag")
+    assert spec.memory_in_prompt is True
+    fake = _FakeHarness({"exit_status": "Submitted", "submission": "ok"})
+    fake.config = wired.config
+    service.run(spec, deps=deps, harness=fake)  # type: ignore[arg-type]
+    assert fake.config.memory_in_prompt is True
+    assert fake.config.role == "debugger"
+
+
+def test_build_harness_config_rejects_unknown_fields() -> None:
+    from kite.agent.harness_build import build_harness_config
+
+    with pytest.raises(TypeError, match="unknown harness config"):
+        build_harness_config(provider="groq", not_a_field=True)
 
 
 def test_harness_to_run_spec_helper(workspace: Path) -> None:

@@ -30,6 +30,7 @@ from kite.ui.style import (
     SYMBOL_SEP,
     SYMBOL_USER,
     SYMBOL_WARN,
+    cell_continuation_indent,
     make_console,
 )
 from kite.ui.tool_cards import (
@@ -170,8 +171,9 @@ def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: 
 def render_user_cell(task: str) -> Text:
     t = Text()
     lines = task.splitlines() or [task]
+    user_prefix = f"{SYMBOL_USER} "
     for i, line in enumerate(lines):
-        t.append(f"{SYMBOL_USER} " if i == 0 else "  ", style="kite.muted")
+        t.append(user_prefix if i == 0 else cell_continuation_indent(user_prefix), style="kite.muted")
         t.append(line + "\n", style="kite.user")
     return t
 
@@ -302,7 +304,7 @@ class RunDisplay:
                 block.append("\n")
                 self._need_prefix = True
             if self._need_prefix and part:
-                indent = prefix if not self._did_first_line else "  "
+                indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
                 block.append(indent, style=style)
                 self._need_prefix = False
                 self._did_first_line = True

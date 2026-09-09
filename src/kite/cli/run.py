@@ -105,7 +105,8 @@ def _wire_display(harness, console, args: argparse.Namespace):
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from kite.agent.harness import Harness, HarnessConfig
+    from kite.agent.harness import Harness
+    from kite.agent.harness_build import build_harness_config
     from kite.config import ensure_home
 
     console = _console()
@@ -157,7 +158,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         console.print("[red]Provide a task, --stdin, or --attach[/]")
         return 2
     harness = Harness(
-        HarnessConfig(
+        build_harness_config(
             provider=args.provider,
             model_name=args.model,
             cwd=args.cwd,
@@ -275,7 +276,8 @@ def _pick_session_id(console, *, title: str = "Pick a session") -> str | None:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    from kite.agent.harness import Harness, HarnessConfig
+    from kite.agent.harness import Harness
+    from kite.agent.harness_build import build_harness_config
     from kite.memory.session import load_session
     from kite.memory.session_format import format_session_resume_hint, suggest_sessions
 
@@ -329,7 +331,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         console.print(f"[red]{e}[/]")
         return 2
     harness = Harness(
-        HarnessConfig(
+        build_harness_config(
             provider=args.provider,
             model_name=args.model,
             cwd=args.cwd,

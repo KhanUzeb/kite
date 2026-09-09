@@ -373,7 +373,8 @@ class ChatSession:
         return "restricted" if self.state.sandbox_restricted else "host"
 
     def _make_harness(self, *, resume: bool = False, follow_up: str | None = None):
-        from kite.agent.harness import Harness, HarnessConfig
+        from kite.agent.harness import Harness
+        from kite.agent.harness_build import build_harness_config
 
         key = self._harness_cache_key()
         if self._harness is not None and self._harness_key == key:
@@ -388,7 +389,7 @@ class ChatSession:
             return h
 
         h = Harness(
-            HarnessConfig(
+            build_harness_config(
                 provider=self.provider,
                 model_name=self.model,
                 cwd=self.cwd,
