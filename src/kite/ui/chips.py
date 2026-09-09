@@ -33,8 +33,7 @@ def render_task_row(item: TodoItem, *, tick: int = 0) -> Text:
         mark, mark_style = glyph("ok"), "kite.task.done"
         text_style = "kite.task.done"
     elif item.status == "in_progress":
-        mark = glyph("spin") if tick % 2 == 0 else "◆"
-        mark_style = "kite.task.active"
+        mark, mark_style = glyph("spin"), "kite.task.active"
         text_style = "kite.task.active"
     else:
         mark, mark_style = glyph("todo"), "kite.task.pending"
