@@ -10,7 +10,7 @@ Use when a task has several independent workstreams or a long checklist.
 ## When to use what
 - `todo_write`: always for multi-step work. Keep exactly one item `in_progress`; update as you go.
 - `task`: cheap parallel *code search* (glob/grep summaries). Prefer for locate/investigate, not for edits.
-- `subagent`: nested LLM workers via the orchestrator. Pass `prompts` (and optional `labels`) for independent plan items. Each worker runs read-only plan mode with a bounded step budget. Tracked in `/agents` and `/jobs`; kill with `/kill`.
+- `subagent`: nested LLM workers via the orchestrator. Pass `prompts` (and optional `labels`) for independent plan items. **Sync by default** — parent waits for merged findings. Use `background=true` (or async phrasing in the prompt) when the parent should keep working; collect later with `wait_for: [job_id, ...]`. Tracked in `/agents` and `/jobs`; kill with `/kill`.
 
 ## Split rules
 1. Write the plan with `todo_write` before spawning workers.
@@ -19,6 +19,13 @@ Use when a task has several independent workstreams or a long checklist.
 4. Parallelize only independent items (e.g. explore A vs B). Serialize anything that shares files or ordering.
 5. Cap fan-out (≈2–3 workers). Subagents cannot spawn further subagents.
 6. Integrate results yourself: merge findings, then edit; don't ask workers to "also commit/PR".
+
+## Sync vs async dispatch
+| Need | Dispatch |
+|------|----------|
+| Merge findings before next edit | **sync** (default) — `prompts` + `labels`, wait for crew report |
+| Explore while parent continues | **async** — `background=true` or “survey in the background while I …” |
+| Collect async workers | `subagent` with `wait_for: ["abc12345", ...]` |
 
 ## Good labels + prompts
 ```

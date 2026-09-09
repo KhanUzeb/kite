@@ -1039,8 +1039,12 @@ def make_coding_tools(
                 name="subagent",
                 description=(
                     "Spawn nested LLM subagent(s) via the orchestrator. "
-                    "Pass `prompt` for one worker or `prompts` (list) for parallel workers against the current plan. "
-                    "Each subagent has a bounded step budget — use for independent plan items."
+                    "Pass `prompt` for one worker or `prompts` (list) for parallel workers. "
+                    "Dispatch is sync by default (wait for results). "
+                    "Set `background=true` or `wait=false` for async fire-and-forget; "
+                    "omit both to auto-pick from prompt wording. "
+                    "Collect async workers with `wait_for: [job_id, ...]`. "
+                    "Track live workers via `/agents` and `/kill`."
                 ),
                 parameters={
                     "type": "object",
@@ -1049,6 +1053,28 @@ def make_coding_tools(
                         "prompts": {"type": "array", "items": {"type": "string"}},
                         "label": {"type": "string"},
                         "labels": {"type": "array", "items": {"type": "string"}},
+                        "background": {
+                            "type": "boolean",
+                            "description": "Async: return job_id immediately (auto-inferred when omitted)",
+                        },
+                        "wait": {
+                            "type": "boolean",
+                            "description": "Sync: block for results (default true)",
+                        },
+                        "wait_for": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Collect results from background job_ids",
+                        },
+                        "job_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Alias for wait_for",
+                        },
+                        "timeout_seconds": {
+                            "type": "integer",
+                            "description": "Max seconds when waiting for background workers",
+                        },
                     },
                 },
                 execute_fn=lambda a: gated("subagent", a, subagent_run),

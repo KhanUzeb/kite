@@ -35,7 +35,7 @@ Do not skip verify. A wrong "done" is worse than an honest "I could not verify t
 | Other directory | `set_cwd` first | Then relative paths work |
 | Multi-step plan | `todo_write` / `todo_read` | |
 | Bounded search | `task` | No LLM |
-| Nested workers | `subagent` | |
+| Nested workers | `subagent` | Sync by default; `background=true` or auto-async from prompt; `wait_for` to collect |
 | Web facts | `websearch` → `webfetch` | Public HTTPS only; blocks localhost/private IPs |
 | Library / SDK docs | `context7_resolve` → `context7_docs` | Do not invent APIs |
 | Skills / memory | `skill`, `memory` | Check `trust` before following skill text |
@@ -46,6 +46,8 @@ Do not skip verify. A wrong "done" is worse than an honest "I could not verify t
 Pass `reason` on mutating tools when the why is not obvious.
 
 **Bash:** each call is a fresh subprocess — `cd` does not persist. Use `set_cwd`, or `cwd=` / `cd path && …` per command. Timeout and user cancel kill the **whole process tree** — use `background=true` for dev servers and long watchers.
+
+**Subagents:** synchronous by default (parent waits for findings). Use `background=true` / `wait=false`, or wording like “in the background while I continue”, for async workers — then `wait_for: [job_id]` to merge results. Parallel `prompts[]` crews stay sync unless you opt into async. Both patterns are fine; match dispatch to whether you need answers before the next step.
 
 **Platform:** On Windows use PowerShell/cmd-friendly commands and Kite tools (`glob`, `ls`, `grep`, `read`) — do not pipe through Unix-only `head`/`find`. On Linux/macOS prefer `rg`, `head`, and `sed -n`. Prefer `Remove-Item` / `rmdir` only for known caches under the workspace (e.g. `.pytest_cache`, `.ruff_cache`).
 
