@@ -22,7 +22,8 @@ src/kite/
   application/    RunSpec, ApplicationRunService, EventEnvelope (0.9 contracts)
   agent/          Loop, harness, runtime, compaction, cancel, tool_result, orchestrator
   bench/          Repeatable harness benchmarks (`kite bench`)
-  cli/            argparse entry (run.py), slash index, setup, stats, bench, import/apply
+  tasks/          Headless task batches (`kite tasks`, `--headless`)
+  cli/            argparse entry (run.py), slash index, setup, stats, bench, tasks, import/apply
   config/         ~/.kite/config.toml (UserConfig), runtime TOML merge
   context/        Project discovery, workspace/execution cwd, token estimate
   providers/      Catalog, resolve model, list_models, credentials, select
@@ -87,6 +88,7 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 |-------------|------------|
 | `kite` REPL | `ui/repl.py` → `agent/harness.py` |
 | `kite run "…"` | `cli/run.py` `cmd_run` |
+| `kite run --headless` / `kite tasks run` | `tasks/headless.py` + `cli/tasks.py` |
 | `/login groq` | `providers/credentials.py` → `ui/repl.py` |
 | Model resolution | `providers/resolve.py` |
 | Tool execution | `env/local.py` + `tools/coding.py` + `tools/jobs.py` + `guardrails/` |
@@ -113,6 +115,8 @@ kite keys --set groq            # save API key (hidden)
 kite models -p groq --select    # pick default model
 kite chat                       # REPL
 kite bench                      # harness timing baseline
+kite tasks run tasks.jsonl      # headless batch (JSONL or plain text)
+kite run --headless "task"      # single headless run with stderr event log
 pytest -q                       # verify changes
 pytest tests/test_bench.py -q   # harness timing budgets
 kite bench --check              # same budgets from CLI

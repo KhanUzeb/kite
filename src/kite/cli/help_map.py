@@ -12,6 +12,7 @@ common:
   kite resume [id]        continue a session (omit id to pick)
   kite models [-p groq]   pick a live model (--list to dump)
   kite bench              harness timing (no LLM)
+  kite tasks run FILE     headless task batch (JSONL or plain text)
 
 run `kite help` for the full map  ·  in REPL type /help
 """
@@ -43,6 +44,7 @@ Project
 Advanced
   kite runtime-config           merged agent TOML
   kite bench [--json] [--compare file]
+  kite tasks init | kite tasks run <file>   headless batches (CI / cloud)
   kite apply | kite import | kite exec | kite audit | kite cloud
 
 REPL essentials (type /help in chat)
@@ -57,7 +59,8 @@ REPL essentials (type /help in chat)
   /jobs /agents /kill [id|all]  background bash + live subagent crew
 
 Flags on run/chat/resume: -p provider  -m model  --cwd PATH  --mode plan|build
-  --approval auto|approve|supervised|yolo|trust|readonly  --auto-compact  -v  -q  --attach PATH
+  --approval auto|approve|supervised|yolo|trust|readonly  --headless  --no-stream
+  --auto-compact  -v  -q  --attach PATH
 
 Docs: kite_commands.md
 """

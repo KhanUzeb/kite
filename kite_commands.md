@@ -47,9 +47,13 @@ Shared flags on `run` / `chat` / `resume`:
 | `--steps` `--cost` `--time` | Limits |
 | `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `-v` / `-q` | Verbose tool bodies / quiet |
+| `--headless` | Line-oriented stderr log (`[tool]`, `[crew]`, `[out]`), no TTY prompts — CI / cloud agents |
+| `--no-stream` | With `--headless`, hide live bash/tool output lines |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
 | `--auto-compact` | Persist auto-compaction on/off in `~/.kite/config.toml` (`kite config --auto-compact true\|false`) |
 | `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. |
+
+`--headless` also activates when stdout is not a TTY or with `-q`. `approve` / `readonly` approval is upgraded to `auto` so runs do not block on prompts.
 
 **Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory. inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
 
@@ -83,6 +87,8 @@ kite plugins
 kite memory [--remember text] [--forget query] [--project]
 kite runtime-config [--config name]
 kite bench [--json] [--save PATH] [--compare BASELINE.json] [--check] [--ab] [--stress]
+kite tasks init [--force] [path]              # write example ~/.kite/tasks/example.jsonl
+kite tasks run <file.jsonl> [--stdin] [--json] [--dry-run] [--continue-on-error]
 kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
 ```
 
@@ -107,6 +113,32 @@ kite bench --check              # exit 1 if any case exceeds budget (CI gate)
 Optional (not in CI pytest): `kite bench --ab` and `kite bench --stress` — see [docs/bench-orchestrate-ab.md](docs/bench-orchestrate-ab.md).
 
 Budget ceilings live in `src/kite/bench/budgets.py`. `pytest tests/test_bench.py` runs the same suite in CI.
+
+### Headless tasks (`kite tasks`)
+
+Run one or more agent tasks without a TTY — for CI, cron, or cloud agents. Uses the same harness as `kite run --headless` but reads tasks from a file or stdin.
+
+```bash
+kite tasks init                              # ~/.kite/tasks/example.jsonl
+kite tasks run ~/.kite/tasks/example.jsonl   # run batch
+echo '{"task": "pytest -q", "label": "tests"}' | kite tasks run --stdin
+kite tasks run tasks.jsonl --dry-run         # list without running
+kite tasks run tasks.jsonl --json            # machine-readable summary on stdout
+kite run --headless "fix the failing test"   # single task, stderr event log
+```
+
+**Task file format** — JSONL (one object per line) or plain text (one prompt per line). `#` lines and blanks are skipped.
+
+| Field | Meaning |
+|-------|---------|
+| `task` / `prompt` / `message` | User prompt (required) |
+| `label` / `name` | Short name in logs |
+| `cwd` / `workspace` | Per-task workspace (default: `--cwd` or `.`) |
+| `mode` | `plan` or `build` |
+| `approval` | `auto`, `yolo`, `trust`, … (`approve`/`readonly` → `auto` headless) |
+| `long` / `long_task` | Long-task limits + phased checkpoints |
+
+Stderr tags: `[kite]` lifecycle, `[tool]` tool start/end, `[out]` bash/tool lines (redacted), `[crew]` subagent workers, `[stream]` model deltas (`-v`).
 
 `kite dashboard` is per-user: it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
 

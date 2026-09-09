@@ -41,26 +41,49 @@ def _load_attachments(paths: list[str], task: str, cwd: str):
     return leftover, bundled
 
 
+def _is_headless(args: argparse.Namespace) -> bool:
+    from kite.tasks.headless import is_headless_run
+
+    return is_headless_run(
+        headless_flag=bool(getattr(args, "headless", False)),
+        quiet=bool(getattr(args, "quiet", False)),
+    )
+
+
 def _wire_display(harness, console, args: argparse.Namespace):
     from kite.agent.mode import ApprovalMode
     from kite.ui.git import GitCheckpoints, git_branch
-    from kite.ui.render import make_run_display
     from kite.ui.state import SessionUiState
 
     mode = _parse_mode(getattr(args, "mode", None))
     approval = _parse_approval(getattr(args, "approval", None), mode)
-    state = SessionUiState(
-        mode=mode,
-        approval=approval,
-        git_branch=git_branch(getattr(args, "cwd", os.getcwd())),
-    )
-    display = make_run_display(
-        console,
-        quiet=getattr(args, "quiet", False),
-        verbose=getattr(args, "verbose", False),
-        state=state,
-    )
-    harness.subscribe(display)
+    headless = _is_headless(args)
+    quiet = bool(getattr(args, "quiet", False))
+
+    if headless and not quiet:
+        from kite.tasks.headless import HeadlessRunDisplay
+
+        harness.subscribe(
+            HeadlessRunDisplay(
+                stream_tools=not getattr(args, "no_stream", False),
+                verbose=bool(getattr(args, "verbose", False)),
+            )
+        )
+    elif not quiet:
+        from kite.ui.render import make_run_display
+
+        state = SessionUiState(
+            mode=mode,
+            approval=approval,
+            git_branch=git_branch(getattr(args, "cwd", os.getcwd())),
+        )
+        display = make_run_display(
+            console,
+            quiet=False,
+            verbose=getattr(args, "verbose", False),
+            state=state,
+        )
+        harness.subscribe(display)
     if approval is not ApprovalMode.AUTO or mode is AgentMode.PLAN:
         from kite.config import load_runtime_config
         from kite.ui.approval import make_approver
@@ -70,13 +93,15 @@ def _wire_display(harness, console, args: argparse.Namespace):
             console,
             mode=mode,
             approval=approval,
-            interactive=sys.stdin.isatty() and not getattr(args, "quiet", False),
+            interactive=sys.stdin.isatty()
+            and not getattr(args, "quiet", False)
+            and not getattr(args, "headless", False),
             trusted_paths=rcfg.guardrails.trusted_paths,
             workspace_cwd=getattr(args, "cwd", os.getcwd()),
         )
-    if mode is AgentMode.BUILD:
+    if mode is AgentMode.BUILD and not headless:
         harness.checkpoints = GitCheckpoints.open(getattr(args, "cwd", os.getcwd()))
-    return state
+    return None
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -100,6 +125,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         task = "".join(chunks).strip()
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
+    if _is_headless(args):
+        from kite.tasks.headless import resolve_headless_approval
+
+        if args.approval in {"approve", "supervised", "readonly"}:
+            console.print(
+                "[kite.muted]headless: approval upgraded to auto (no TTY prompts)[/]"
+            )
+        approval = resolve_headless_approval(args.approval, mode, headless=True)
     try:
         task, attachments = _load_attachments(
             getattr(args, "attach", None) or [],
@@ -114,7 +147,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not task.strip():
         from kite.ui.pick import can_prompt
 
-        if can_prompt() and not args.stdin:
+        if can_prompt() and not args.stdin and not getattr(args, "headless", False):
             try:
                 task = console.input("[kite.brand]Task[/]: ").strip()
             except (EOFError, KeyboardInterrupt):
@@ -282,6 +315,10 @@ def cmd_resume(args: argparse.Namespace) -> int:
         return cmd_chat(args)
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
+    if _is_headless(args):
+        from kite.tasks.headless import resolve_headless_approval
+
+        approval = resolve_headless_approval(args.approval, mode, headless=True)
     try:
         follow, attachments = _load_attachments(
             getattr(args, "attach", None) or [],
@@ -1003,6 +1040,16 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
         help="Attach a file or image to the task (repeatable)",
     )
     p.add_argument("-q", "--quiet", action="store_true")
+    p.add_argument(
+        "--headless",
+        action="store_true",
+        help="Line-oriented stderr log, no TTY prompts (CI / cloud agents)",
+    )
+    p.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="With --headless, hide live bash/tool output lines",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument(
         "--mode",
@@ -1251,6 +1298,10 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--watch", type=int, default=0, metavar="SEC", help="Refresh every N seconds")
     dashboard.add_argument("--json", action="store_true")
     dashboard.set_defaults(func=cmd_dashboard)
+
+    from kite.cli.tasks import add_tasks_parser
+
+    add_tasks_parser(sub)
 
     cloud = sub.add_parser("cloud", help="Cloud/local task parity — list and apply saved outputs")
     cloud.add_argument("action", choices=["list", "apply"], nargs="?", default="list")
