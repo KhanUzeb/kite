@@ -379,7 +379,13 @@ class SubagentOrchestrator:
         )
         self.tasks.append(task)
         if self.jobs is not None:
-            self.jobs.register_subagent(job_id=tid, label=title, prompt=prompt, cancel=cancel)
+            self.jobs.register_subagent(
+                job_id=tid,
+                label=title,
+                prompt=prompt,
+                profile=profile,
+                cancel=cancel,
+            )
         self._emit(
             "subagent_start",
             id=tid,

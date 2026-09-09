@@ -33,6 +33,7 @@ class BackgroundJob:
     status: JobStatus = "running"
     pid: int | None = None
     label: str = ""
+    profile: str = ""
     proc: subprocess.Popen[str] | None = field(default=None, repr=False)
     cancel: CancelToken | None = field(default=None, repr=False)
     log: deque[str] = field(default_factory=lambda: deque(maxlen=_LOG_RING), repr=False)
@@ -236,6 +237,7 @@ class JobRegistry:
         job_id: str | None = None,
         label: str,
         prompt: str = "",
+        profile: str = "",
         cancel: CancelToken | None = None,
     ) -> BackgroundJob:
         """Track a live nested LLM worker so /jobs and /kill can reach it."""
@@ -248,6 +250,7 @@ class JobRegistry:
             kind="subagent",
             command=safe_prompt or safe_label,
             label=safe_label,
+            profile=(profile or "")[:32],
             cancel=token,
             log=deque(maxlen=self._max_log),
         )

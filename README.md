@@ -45,7 +45,7 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 - **Session privacy** — `session_persistence = "redacted"` (default) sanitizes transcripts before write; `full` or `disabled` via `kite config` or `/privacy sessions`.
 - **Skill trust** — bundled skills are trusted; npm/git/project skills are labeled untrusted with provenance metadata.
 - **Global identity memory** — `~/.kite/memory/USER.md`, `PROFILE.md`, `WORKING.md` (always global, never per-repo); injected as soft untrusted context when present.
-- **Subagent orchestration** — bundled personas (`scout`, `reviewer`, `shell`, `coder`, `context`), `profile`/`role` dispatch, `/agents` crew board, `/live agents` streaming.
+- **Subagent orchestration** — bundled personas + custom `~/.kite/subagents/*.md` (`kite subagents --init`, `/agents init`), `profile`/`role` dispatch, `/agents` crew board, `/live agents` streaming.
 - **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, write/edit diff previews, git-stat diffs, theme/font switching, and a context-usage meter.
 - **Portable** — install once, then run `kite` from any project directory via `--cwd`.
 
@@ -233,6 +233,7 @@ kite config --select-model
 kite bench [--json] [--save PATH] [--compare BASELINE.json]   # harness timing (no LLM)
 kite tasks init | kite tasks run <file.jsonl>                 # headless task batches
 kite run --headless "task"                                    # non-TTY stderr event log
+kite subagents [--show id] [--init id]                        # subagent personas
 ```
 
 Command map: [kite_commands.md](kite_commands.md)

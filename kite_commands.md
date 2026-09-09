@@ -89,6 +89,7 @@ kite runtime-config [--config name]
 kite bench [--json] [--save PATH] [--compare BASELINE.json] [--check] [--ab] [--stress]
 kite tasks init [--force] [path]              # write example ~/.kite/tasks/example.jsonl
 kite tasks run <file.jsonl> [--stdin] [--json] [--dry-run] [--continue-on-error]
+kite subagents [--show id] [--init id] [--role architect] [--force]
 kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
 ```
 
@@ -140,6 +141,18 @@ kite run --headless "fix the failing test"   # single task, stderr event log
 
 Stderr tags: `[kite]` lifecycle, `[tool]` tool start/end, `[out]` bash/tool lines (redacted), `[crew]` subagent workers, `[stream]` model deltas (`-v`).
 
+### Subagent personas (`kite subagents`)
+
+Bundled personas live in the package; **custom personas** override by id in `~/.kite/subagents/<id>.md` (YAML frontmatter + markdown prompt). Distinct from global `/profile` (`PROFILE.md` for the main agent).
+
+```bash
+kite subagents                              # table: id, label, role, trust
+kite subagents --show scout                 # full prompt body
+kite subagents --init auditor --role debugger --label "Auditor"
+```
+
+Dispatch at runtime: `subagent` tool with `profile=<id>` and `prompt=…`. User-authored profiles are wrapped as untrusted content.
+
 `kite dashboard` is per-user: it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
 
 ---
@@ -179,8 +192,12 @@ These never go to the model.
 | `/steer text` | Stop and run `text` as the next turn |
 | `/tasks` | Show the running turn and queued follow-ups |
 | `/jobs` | List background bash jobs and live subagents (pick to kill) |
-| `/agents` | Subagent crew board — labels, status, prompts; `/kill` to stop |
-| `/agents profiles` | List bundled base personas (scout, reviewer, shell, coder, context) |
+| `/agents` | Subagent crew board — profile, label, status, prompt; `/kill` to stop |
+| `/agents profiles` | List bundled + custom personas (`~/.kite/subagents/*.md`) with trust column |
+| `/agents show <id>` | Print one persona (path, role, prompt body) |
+| `/agents init <id>` | Scaffold `~/.kite/subagents/<id>.md` (edit, then `profile=<id>`) |
+| `/agents reload` | Reload profiles from disk (after manual edits) |
+| `/agents <id>` | Shortcut for `/agents show <id>` |
 | `/kill [id\|all]` | Kill one background job/subagent, or all. Empty: pick |
 | `/session` | Current session id |
 | `/session show [id]` | Print a transcript (current if omitted) |
