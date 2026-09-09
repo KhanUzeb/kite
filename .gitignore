@@ -1,18 +1,54 @@
+# Secrets / local env (keep .env.example)
 .env
+.env.*
+!.env.example
+
+# Python
 .venv/
 venv/
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
+.eggs/
 dist/
 build/
-trajectory.json
-.trajectories/
-.DS_Store
+*.egg
+.mypy_cache/
+.ruff_cache/
 .pytest_cache/
 .pytest-tmp/
 .pytest-tmp-*/
-.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.cache/
+
+# Agent / session dumps (never commit)
+trajectory.json
+.trajectories/
+**/auth.json
+**/*credentials*.json
+**/*secrets*.json
+
+# Project-local Kite runtime (created when dogfooding this repo).
+# Keep overlays trackable: .kite/commands/, skills/, plugins/, verification.toml, SYSTEM.md
+.kite/memory/
+.kite/sessions/
+.kite/goals/
+.kite/**/*.sqlite
+.kite/**/*.sqlite-*
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
 
 # Generated design docs (source markdown is kept)
 *.pdf
