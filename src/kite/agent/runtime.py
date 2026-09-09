@@ -217,13 +217,23 @@ class AgentRuntime:
         inject_memory = rcfg.memory.inject == "always" or self.options.memory_in_prompt
         memory_text = memory_store.render_for_prompt() if inject_memory else ""
 
-        working_style_text = ""
+        user_context_text = ""
         try:
-            from kite.memory.working_style import render_working_context
+            from kite.memory.user_context import render_user_context
 
-            working_style_text = render_working_context(memory_store)
+            user_context_text = render_user_context(memory_store)
         except Exception:
             pass
+
+        if self.options.label != "subagent":
+            try:
+                from kite.agent.subagent_profiles import profiles_for_orchestrator
+
+                catalog = profiles_for_orchestrator()
+                if catalog.strip():
+                    extra_sections.append(catalog)
+            except Exception:
+                pass
 
         continuity_text = ""
         try:
@@ -240,8 +250,8 @@ class AgentRuntime:
 
         if self.slots.assemble_system is not None:
             slot_sections = list(extra_sections)
-            if working_style_text.strip():
-                slot_sections.append(working_style_text.strip())
+            if user_context_text.strip():
+                slot_sections.append(user_context_text.strip())
             system = self.slots.assemble_system(
                 config=rcfg,
                 project_context=project_ctx,
@@ -260,7 +270,7 @@ class AgentRuntime:
                 extra_sections=extra_sections,
                 override_system=self.options.system_prompt_override,
                 memory=memory_text,
-                working_style=working_style_text,
+                working_style=user_context_text,
                 continuity=continuity_text,
                 cwd=cwd,
             )
@@ -356,7 +366,20 @@ class AgentRuntime:
         else:
             self.job_registry.set_on_event(self._on_event)
 
-        def _subagent_runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
+        _SUBAGENT_EVENT_KINDS = frozenset(
+            {"tool_start", "tool_end", "tool_output", "tool_progress", "job_output"}
+        )
+
+        def _subagent_runner(
+            prompt: str,
+            *,
+            cancel: CancelToken | None = None,
+            profile: str = "",
+            role: str = "auto",
+            label: str = "subagent",
+            subagent_id: str = "",
+            glyph: str = "◆",
+        ) -> dict:
             from kite.agent.harness import Harness, HarnessConfig
             from kite.application.policy import child_inherits_parent_policy
 
@@ -367,6 +390,7 @@ class AgentRuntime:
                 parent_execution_mode=self.options.execution_mode,
                 child_overrides={"mode": "plan", "approval": "readonly"},
             )
+            child_role = (role or "auto").strip().lower()
             h = Harness(
                 HarnessConfig(
                     cwd=cwd,
@@ -381,11 +405,25 @@ class AgentRuntime:
                     interactive=False,
                     no_context=True,
                     label="subagent",
+                    role=child_role,
                 ),
                 user_config=ucfg,
             )
             h.job_registry = self.job_registry
-            h.subscribe(self._on_event)
+
+            def _relay(event: Event) -> None:
+                if event.kind in _SUBAGENT_EVENT_KINDS and subagent_id:
+                    payload = dict(event.payload)
+                    payload.setdefault("subagent_id", subagent_id)
+                    payload.setdefault("subagent_label", label)
+                    payload.setdefault("subagent_glyph", glyph)
+                    if profile:
+                        payload.setdefault("subagent_profile", profile)
+                    self._on_event(Event(kind=event.kind, payload=payload))
+                else:
+                    self._on_event(event)
+
+            h.subscribe(_relay)
             return h.run(prompt, cancel=cancel)
 
         orchestrator = SubagentOrchestrator(

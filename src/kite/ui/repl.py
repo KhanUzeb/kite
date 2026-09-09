@@ -1198,6 +1198,8 @@ class ChatSession:
             "commands": self._handle_commands,
             "plugins": self._handle_plugins,
             "memory": self._slash_memory,
+            "user": self._show_user,
+            "profile": self._show_profile,
             "working": self._show_working,
             "semantic": self._show_semantic,
             "episodic": self._show_episodic,
@@ -1309,12 +1311,20 @@ class ChatSession:
         mode = "expanded" if self.state.expanded_all else "collapsed"
         self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
 
-    def _slash_live(self, _arg: str) -> None:
-        self.state.live_terminal = not self.state.live_terminal
-        mode = "on" if self.state.live_terminal else "off"
-        self.console.print(
-            f"[kite.muted]live terminal {mode}[/]  — bash output streams as it runs  (/live to toggle)"
-        )
+    def _slash_live(self, arg: str) -> None:
+        token = (arg or "").strip().lower()
+        if token in {"agents", "crew", "subagents"}:
+            self.state.live_subagents = not self.state.live_subagents
+            mode = "on" if self.state.live_subagents else "off"
+            self.console.print(
+                f"[kite.muted]live subagents {mode}[/]  — crew tools + shell stream with worker prefix"
+            )
+        else:
+            self.state.live_terminal = not self.state.live_terminal
+            mode = "on" if self.state.live_terminal else "off"
+            self.console.print(
+                f"[kite.muted]live terminal {mode}[/]  — bash output streams  (/live agents for crew)"
+            )
         self.state.touch()
 
     def _slash_expand_thinking(self, arg: str) -> None:
@@ -1597,7 +1607,21 @@ class ChatSession:
             label = "steer" if is_steer else "follow-up"
             self.console.print(f"  {i}. [{label}] {preview}")
 
-    def _slash_agents(self, _arg: str) -> None:
+    def _slash_agents(self, arg: str) -> None:
+        token = (arg or "").strip().lower()
+        if token in {"profiles", "personas", "list"}:
+            from kite.agent.subagent_profiles import list_profiles
+
+            profiles = list_profiles()
+            if not profiles:
+                self.console.print("[kite.muted]no bundled profiles[/]")
+                return
+            self.console.print("[kite.muted]base profiles[/]  · subagent tool profile=<id>")
+            for p in profiles:
+                desc = p.description or p.prompt.split("\n", 1)[0][:80]
+                self.console.print(f"  [kite.plan]{p.id}[/]  {p.label}  role={p.role}  — {desc}")
+            self.console.print("[kite.muted]custom[/]  ~/.kite/subagents/*.md")
+            return
         rows = [job for job in self.jobs.list(active_only=False) if job.kind == "subagent"]
         active = [job for job in rows if job.status == "running"]
         if not rows and not self.state.active_subagents:
@@ -2047,6 +2071,50 @@ class ChatSession:
         self._show_semantic()
         self.console.print()
         self._show_episodic()
+
+    def _show_user(self, arg: str = "") -> None:
+        from kite.memory.user_context import append_user_note, read_user, user_path
+
+        text = arg.strip()
+        if text.lower().startswith("add "):
+            text = text[4:].strip()
+        if text:
+            try:
+                note = append_user_note(text)
+            except ValueError as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            self.console.print(f"[kite.success]user[/]  {note}")
+            self._harness_key = None
+            return
+        self.console.print(f"[kite.muted]{user_path()}[/]")
+        body = read_user()
+        if body:
+            self.console.print(body)
+        else:
+            self.console.print("[kite.muted]empty  ·  /user add …  ·  edit USER.md directly[/]")
+
+    def _show_profile(self, arg: str = "") -> None:
+        from kite.memory.user_context import append_profile_note, profile_path, read_profile
+
+        text = arg.strip()
+        if text.lower().startswith("add "):
+            text = text[4:].strip()
+        if text:
+            try:
+                note = append_profile_note(text)
+            except ValueError as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            self.console.print(f"[kite.success]profile[/]  {note}")
+            self._harness_key = None
+            return
+        self.console.print(f"[kite.muted]{profile_path()}[/]")
+        body = read_profile()
+        if body:
+            self.console.print(body)
+        else:
+            self.console.print("[kite.muted]empty  ·  /profile add …  ·  edit PROFILE.md directly[/]")
 
     def _show_working(self, arg: str = "") -> None:
         from kite.memory.working_style import (

@@ -1040,12 +1040,14 @@ def make_coding_tools(
                 name="subagent",
                 description=(
                     "Spawn nested LLM worker(s) for independent exploration.\n"
-                    "• One worker: prompt + optional label\n"
-                    "• Crew: prompts + labels (sync by default — merged report)\n"
+                    "• Base personas: profile=scout|reviewer|shell|coder|context (+ prompt task)\n"
+                    "• Custom role: role=architect|implementer|debugger\n"
+                    "• One worker: prompt + optional label/profile/role\n"
+                    "• Crew: prompts + labels/profiles/roles (sync by default)\n"
                     "• Async: background=true or wait=false; returns job_id immediately\n"
                     "• Collect: wait_for=[job_id, ...] (cannot combine with new prompts)\n"
-                    "Auto-dispatch reads prompt wording when flags omitted.\n"
-                    "Monitor: /agents · Stop: /kill"
+                    "Prefer bundled profiles over microscopic JIT workers.\n"
+                    "Monitor: /agents · /live agents · Stop: /kill"
                 ),
                 parameters={
                     "type": "object",
@@ -1054,6 +1056,24 @@ def make_coding_tools(
                         "prompts": {"type": "array", "items": {"type": "string"}},
                         "label": {"type": "string"},
                         "labels": {"type": "array", "items": {"type": "string"}},
+                        "profile": {
+                            "type": "string",
+                            "description": "Base persona id (scout, reviewer, shell, coder, context)",
+                        },
+                        "profiles": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Per-worker profile ids for parallel crews",
+                        },
+                        "role": {
+                            "type": "string",
+                            "description": "Role override: architect, implementer, debugger",
+                        },
+                        "roles": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Per-worker roles for parallel crews",
+                        },
                         "background": {
                             "type": "boolean",
                             "description": "Async: return job_id immediately (auto-inferred when omitted)",

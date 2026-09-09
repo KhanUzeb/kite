@@ -148,13 +148,15 @@ These never go to the model.
 | `/tasks` | Show the running turn and queued follow-ups |
 | `/jobs` | List background bash jobs and live subagents (pick to kill) |
 | `/agents` | Subagent crew board — labels, status, prompts; `/kill` to stop |
+| `/agents profiles` | List bundled base personas (scout, reviewer, shell, coder, context) |
 | `/kill [id\|all]` | Kill one background job/subagent, or all. Empty: pick |
 | `/session` | Current session id |
 | `/session show [id]` | Print a transcript (current if omitted) |
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Toggle expanded tool output |
-| `/live` | Stream bash/job output in real time while tools run |
+| `/live` | Stream bash output in real time while tools run |
+| `/live agents` | Stream subagent crew tool + shell output with worker prefix |
 | `/collapse` | Collapse tool output (default) |
 | `/trace` | Last traceback |
 | `/skills [name]` | List skills (trust/origin column), or print one. Empty: pick to show. User-home skills show `~` (`~/.kite/skills`, `~/.agents/skills`) |
@@ -164,6 +166,8 @@ These never go to the model.
 | `/plugins` | List plugins |
 | `/plugins init name` | Scaffold `.kite/plugins/name` |
 | `/memory [semantic\|episodic]` | Semantic markdown + episodic sqlite |
+| `/user [add text]` | Global identity (`~/.kite/memory/USER.md`) — always in prompt when present |
+| `/profile [add text]` | Global profile (`~/.kite/memory/PROFILE.md`) — stack, goals, constraints |
 | `/working [add text]` | Fluid working rhythm (`~/.kite/memory/WORKING.md`) — soft context, always in mind when present |
 | `/semantic` | Show `MEMORY.md` notes |
 | `/episodic` | Show sqlite episode log |
@@ -300,7 +304,7 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 
 Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `websearch` → pick URL → `webfetch`.
 
-`KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable facts; `/working` is fluid working rhythm. See [docs/memory.md](docs/memory.md).
+`KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable facts; `/user` + `/profile` + `/working` are global identity context. See [docs/memory.md](docs/memory.md).
 
 **Verification:** after edits, run the applicable check for the touched package. Monorepos may need per-service checks. Override defaults in `.kite/verification.toml` (see `src/kite/data/verification.example.toml`).
 

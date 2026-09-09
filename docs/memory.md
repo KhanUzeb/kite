@@ -5,10 +5,25 @@ Kite keeps several kinds of context. They differ by **lifetime**, **who writes t
 | Layer | Storage | Who writes | In prompt by default? | Purpose |
 |-------|---------|------------|------------------------|---------|
 | **Session** | `~/.kite/sessions/*.jsonl` | Harness (every turn) | Yes (as chat history) | Full transcript for resume |
+| **User** | `~/.kite/memory/USER.md` | You (`/user`) | **Yes**, when content exists | Global identity — name, role, comms prefs |
+| **Profile** | `~/.kite/memory/PROFILE.md` | You (`/profile`) | **Yes**, when content exists | Stack, goals, constraints — global only |
 | **Working rhythm** | `~/.kite/memory/WORKING.md` + episodic `style` rows | You (`/working`) + gentle session observation | **Yes**, when content exists | Soft “how you tend to work” — not rules |
-| **Semantic memory** | `MEMORY.md` (user + project) | You (`/remember`, `memory` tool) | **Opt-in** (`/memory`, `[memory] inject = always`) | Durable facts and preferences |
+| **Semantic memory** | `~/.kite/memory/MEMORY.md` (+ optional project) | You (`/remember`, `memory` tool) | **Opt-in** (`/memory`, `[memory] inject = always`) | Durable facts and preferences |
 | **Episodic memory** | `episodes.sqlite` | Events (`remember`, continuity, style, …) | **Opt-in** (with semantic) | Short log of what happened |
 | **Working continuity** | episodic `continuity` rows | Compaction / budget continue | Yes, when resuming a thread | Mission / done / next — task state, not identity |
+
+---
+
+## User & profile (global identity)
+
+**Files (always under `~/.kite/memory/`, never per-repo):**
+
+- `USER.md` — who you are (name, role, timezone, how you like to communicate)
+- `PROFILE.md` — longer-lived context (stack, goals, pet peeves)
+
+**REPL:** `/user` · `/user add …` · `/profile` · `/profile add …`
+
+Injected with working rhythm when non-empty. Edit the markdown files directly anytime.
 
 ---
 
@@ -98,7 +113,9 @@ kite sessions                        # list transcripts
 kite sessions --show <id>            # inspect one session
 ```
 
-REPL: `/memory` · `/working` · `/remember` · `/forget` · `/compact` · `/checkpoint` · `/handoff`
+REPL: `/memory` · `/user` · `/profile` · `/working` · `/remember` · `/forget` · `/compact` · `/checkpoint` · `/handoff`
+
+**Subagents:** bundled personas in `src/kite/data/subagents/` (scout, reviewer, shell, coder, context). Custom: `~/.kite/subagents/*.md`. REPL: `/agents profiles` · live crew: `/live agents`
 
 ---
 
