@@ -96,9 +96,14 @@ Exit paths: **`submit`** tool or bash submit marker, step/cost/time limits, user
 | `context/window.py` | Token estimate, `compact_messages`, deterministic summary |
 | `context/discovery.py` | Workspace tree, git status, agent instruction files |
 | `memory/session.py` | JSONL sessions + `compact_snapshot` + `context_checkpoint` audit rows |
+| `memory/user_context.py` | Global `USER.md` / `PROFILE.md` injection |
+| `memory/working_style.py` | `WORKING.md` + episodic `style` signals |
+| `memory/secure_io.py` | Owner-only memory writes, length caps, untrusted wrappers |
 | `memory/context_checkpoint.py` | Named transcript snapshots |
 | `memory/handoff.py` | Handoff markdown + JSON export |
 | `memory/compaction_ops.py` | Shared compaction + auto-checkpoint |
+| `agent/subagent_profiles.py` | Bundled + `~/.kite/subagents/` persona loader |
+| `data/subagents/*.md` | Base personas (scout, reviewer, shell, coder, context) |
 | `bench/` | `kite bench` timing suite |
 | `application/` | 0.9 contracts: RunSpec, EventEnvelope, PolicyEngine, SQLite store, replay |
 | `eval/` | Recorded `ReplayBundle` (no live providers) |
@@ -155,7 +160,9 @@ Tools implement a common `Tool.run(args) → {ok, output, …}` contract. Produc
 - **Approval** — `auto` / `approve` / `trust` / `readonly`; preview diffs for write/edit
 - **Guardrails** — bash deny patterns, env-dump block, secret write blocking, output redaction (inside tools)
 
-**Subagent** — `subagent` tool spawns a bounded nested harness run; `task` is a lighter glob+grep fan-out.
+**Subagent** — `subagent` tool spawns a bounded nested harness run (max 12 per dispatch, no recursion, no nested `memory`). Prefer bundled `profile=` personas over JIT microscopic workers. `task` is a lighter glob+grep fan-out.
+
+**User context** — `USER.md` + `PROFILE.md` + `WORKING.md` under `~/.kite/memory/` only; injected as untrusted soft context on the main agent, skipped for nested subagents.
 
 ---
 
@@ -166,7 +173,9 @@ The agent emits events; the UI never polls internal state.
 | Event | UI effect |
 |-------|-----------|
 | `stream_delta` / `stream_reasoning` | Live assistant text |
-| `tool_start` / `tool_progress` / `tool_end` | Tool chips, spinner, collapsed output |
+| `tool_start` / `tool_progress` / `tool_end` | Tool chips, spinner, write/edit diff preview, collapsed output |
+| `subagent_start` / `subagent_end` | Crew board rows; `/live agents` streams nested activity |
+| `job_output` | Background bash/subagent line streaming (redacted) |
 | `context` | Footer token meter |
 | `compact` | Compaction notice (`↻ before → after`) |
 | `checkpoint` | Context snapshot saved (`◇ checkpoint`) |

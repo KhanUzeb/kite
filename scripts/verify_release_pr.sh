@@ -35,6 +35,9 @@ ok "CI workflow runs on push/PR"
 grep -q "bench --check" .github/workflows/tests.yml || fail "CI missing kite bench --check gate"
 ok "CI workflow runs bench budget check"
 
+grep -q "ruff check src tests" .github/workflows/tests.yml || fail "CI missing ruff gate"
+ok "CI workflow runs ruff"
+
 # Tests
 export KITE_HOME="${KITE_HOME:-${TMPDIR:-/tmp}/kite-verify-$$}"
 export KITE_SKIP_SETUP=1

@@ -38,7 +38,7 @@ Workflow: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
 
 | Trigger | Checks |
 |---------|--------|
-| **Push** or **pull request** to `main` | pytest on **Linux and Windows** × Python 3.11 and 3.12; `ruff check src tests`; `python scripts/sync_version.py --check`; `kite bench --check` |
+| **Push** or **pull request** to `main` | pytest on **Linux and Windows** × Python 3.11 and 3.12 (includes `test_security_*`, `test_guardrails.py`); `ruff check src tests`; `python scripts/sync_version.py --check`; `kite bench --check` |
 | **Actions → Tests → Run workflow** | manual re-run anytime |
 
 CI sets `KITE_HOME` to an isolated temp directory and `KITE_SKIP_SETUP=1` so tests never prompt for onboarding.
@@ -57,7 +57,7 @@ Always run `./scripts/lint.sh` (or `pytest` + `ruff check src tests` + `kite ben
 1. Run `pytest` and make sure it's green.
 2. Keep the architecture boundaries: CLI/UI subscribe to events; `ApplicationRunService` (0.9) or `AgentRuntime` assembles; the agent loops. Don't reach across layers.
 3. Prefer data-driven changes (TOML/Markdown) over new Python constants.
-4. Update the relevant doc if behavior changes — especially `kite_commands.md`, `CONTEXT.md` (new terms), `architecture.md` (layer changes), `docs/kite-system-design.md`, or `src/kite/data/prompts/system.md` (agent instructions).
+4. Update the relevant doc if behavior changes — especially `kite_commands.md`, `CONTEXT.md` (new terms), `docs/memory.md`, `SECURITY.md` (trust boundaries), `architecture.md` (layer changes), `docs/kite-system-design.md`, or `src/kite/data/prompts/system.md` (agent instructions).
 
 ## Commit style
 

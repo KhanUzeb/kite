@@ -30,7 +30,8 @@ src/kite/
   tools/          Coding tools (read/write/edit/bash/set_cwd/…), jobs registry, metadata, web, github
   guardrails/     Path sandbox, execution mode, bash policy, secret redaction
   ui/             REPL, render, approval, complete, theme, status
-  memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic, working_style
+  memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic, user_context, working_style, secure_io
+  data/subagents/ Bundled subagent personas (scout, reviewer, shell, coder, context)
   eval/           Recorded replay (ReplayBundle) without live providers
   skills/         SKILL.md loader; npm/git install; local path symlink into ~/.kite/skills
   commands/       Markdown slash prompt loader
@@ -76,7 +77,7 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 4. **New CLI subcommands** — `cli/run.py` `build_parser()` + handler module.
 5. **Provider behavior** — `providers/` + `models/reasoning.py`; don’t hardcode model id lists.
 6. **Secrets** — `providers/credentials.py` writes `~/.kite/.env` with owner-only perms; never log key values.
-7. **Docs** — User-facing behavior changes need `kite_commands.md`. Glossary changes → `CONTEXT.md`. Layer/architecture changes → `architecture.md` or `docs/kite-system-design.md`. Prompt changes → `data/prompts/system.md`. Project/user overrides: `.kite/SYSTEM.md` / `APPEND_SYSTEM.md` (same idea as pi / Prime Agent).
+7. **Docs** — User-facing behavior changes need `kite_commands.md`. Glossary changes → `CONTEXT.md`. Memory layers → `docs/memory.md`. Layer/architecture changes → `architecture.md` or `docs/kite-system-design.md`. Prompt changes → `data/prompts/system.md`. Security behavior → `SECURITY.md`. Project/user overrides: `.kite/SYSTEM.md` / `APPEND_SYSTEM.md` (same idea as pi / Prime Agent).
 
 ---
 
@@ -95,6 +96,9 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 | Verification / submit gate | `agent/verification.py` + `application/verification/` |
 | Replay / eval | `eval/replay.py` (`ReplayBundle` + acceptance) |
 | Checkpoints / handoff | `memory/context_checkpoint.py` + `memory/handoff.py` + `ui/repl.py` |
+| User identity memory | `memory/user_context.py` — global `USER.md` / `PROFILE.md` |
+| Subagent personas | `agent/subagent_profiles.py` + `data/subagents/*.md` |
+| Orchestrator / crew | `agent/orchestrator.py` + `tools/jobs.py` + `/agents` `/live agents` |
 | Benchmarks | `bench/` + `cli/bench.py` |
 | Streaming UI | `ui/render.py` `RunDisplay` ← `agent/events.py` |
 | Slash expansion | `cli/slash.py` `CommandIndex` |
