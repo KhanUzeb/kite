@@ -40,9 +40,12 @@ export KITE_HOME="${KITE_HOME:-${TMPDIR:-/tmp}/kite-verify-$$}"
 export KITE_SKIP_SETUP=1
 mkdir -p "$KITE_HOME"
 command -v pytest >/dev/null 2>&1 || fail "pytest not installed (run: uv pip install -e '.[dev]')"
+command -v ruff >/dev/null 2>&1 || fail "ruff not installed (run: uv pip install -e '.[dev]')"
+ruff check src tests
+ok "ruff passed"
 pytest -q
 python -m kite.cli.run bench --check
-ok "pytest passed"
+ok "pytest + bench passed"
 
 # Optional GitHub PR check
 if [[ "$PR" -gt 0 ]]; then

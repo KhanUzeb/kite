@@ -78,6 +78,8 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Episodic memory** — Short sqlite log of notable events per user/project. Same opt-in rule as semantic memory when rendered into the prompt.
 
+**Working rhythm** — Fluid long-term context about how the user tends to work (`~/.kite/memory/WORKING.md` + episodic `style` signals). Injected when present as soft context — not weighted policy, not opt-in like semantic memory. Distinct from concrete `/remember` facts.
+
 **Working-state continuity** — Structured mission/done/next brief written after compact or budget continue. Injected as resume context, **not** durable memory; never auto-pinned to MEMORY.md unless the user asked to remember.
 
 **Compaction** — Summarizing older turns to free context window space while keeping recent messages and **preserved facts** (constraints, errors, paths, bash commands, edited paths from verification). Defaults (override in `data/configs/default.toml`): ~12k chars project context, 12k-token recent tail (scaled down on smaller model windows), 5k-char tool observations. At **55% context**, old tool outputs are soft-trimmed; at **75%**, full compaction runs with merged summary blocks.

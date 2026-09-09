@@ -277,7 +277,11 @@ A plugin is a folder with `plugin.toml` (or `plugin.json`) plus optional `comman
 
 ### 4.14 `memory/`
 **Sessions:** JSONL transcript (`session.py`); first line `type=meta`, then `type=message`.
-**Notes:** `store.py` JSONL + optional `MEMORY.md`. `/remember` / `/forget` / `memory` tool. Injected into the system prompt each run. Distinct from `KITE.md` (repo instructions).
+**Semantic:** `MEMORY.md` bullets + pin header (`semantic.py`); opt-in prompt injection via `/memory` or `[memory] inject = always`.
+**Episodic:** sqlite event log (`episodic.py`); kinds include `remember`, `continuity`, `style`.
+**Working rhythm:** `WORKING.md` + `working_style.py` — fluid habits, injected when present (not opt-in). See [docs/memory.md](memory.md).
+**Continuity:** mission/done/next briefs after compact (`continuity.py`); task resume, not user identity.
+Full reference: [docs/memory.md](memory.md).
 
 ### 4.15 `config/` — UserConfig + runtime TOML
 **Job:** `~/.kite/config.toml` prefs (default provider/model, api_bases, auto_compact, …). Distinct from **runtime** agent config.
