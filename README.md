@@ -39,6 +39,7 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 - **Execution context** — separate project root vs session cwd; `restricted` or `host` execution mode; parallel safe read-only tools.
 - **Context lifecycle** — preserved-fact compaction, auto-checkpoints at ~72% context, `/checkpoint` restore, `/handoff` export; **repo map** symbols for faster orientation in large trees.
 - **Harness benchmarks** — `kite bench` for repeatable startup/context/tool timing (no live LLM).
+- **Headless tasks** — `kite tasks run` for JSONL/plain-text batches; `kite run --headless` for CI/cloud agents with structured stderr logging.
 - **Skills & plugins** — `SKILL.md` packs (npm, npx, GitHub, or a **local path symlink** into `~/.kite/skills`), prompt commands, plugins, and `.kite/extensions/` for custom tools.
 - **Guardrails** — path sandboxing, bash danger checks, recursive secret redaction, process-tree teardown on timeout, SSRF-safe HTTP tools, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
 - **Session privacy** — `session_persistence = "redacted"` (default) sanitizes transcripts before write; `full` or `disabled` via `kite config` or `/privacy sessions`.
@@ -230,6 +231,8 @@ kite models --select
 kite config
 kite config --select-model
 kite bench [--json] [--save PATH] [--compare BASELINE.json]   # harness timing (no LLM)
+kite tasks init | kite tasks run <file.jsonl>                 # headless task batches
+kite run --headless "task"                                    # non-TTY stderr event log
 ```
 
 Command map: [kite_commands.md](kite_commands.md)

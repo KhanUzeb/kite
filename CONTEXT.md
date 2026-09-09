@@ -56,6 +56,10 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **One-shot run** — Single task via `kite run` (or `kite exec` for CI-style quiet runs).
 
+**Headless run** — Non-interactive execution with line-oriented stderr logging (`[tool]`, `[crew]`, `[out]`). Triggered by `kite run --headless`, `-q`, non-TTY stdout, or `kite tasks run`. Approval modes that need prompts (`approve`, `readonly`) upgrade to `auto`.
+
+**Task batch** — A JSONL or plain-text file of prompts run sequentially via `kite tasks run`. Each line may be JSON (`task`, `label`, `cwd`, `mode`, …) or a raw prompt. Distinct from REPL `/tasks` (queued follow-ups during a busy turn).
+
 **Resume** — Continue a prior **session** with a follow-up message.
 
 **Slash command** — Line starting with `/` in the REPL. **Control slashes** change session state; **prompt slashes** expand into the next user message (skills, markdown commands, plugins).
