@@ -4,6 +4,23 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+### Changed
+- **BYOS authentication** — production-grade, provider-delegated auth for ChatGPT/Codex (`openai-codex` SDK), Claude Code (`claude auth` CLI), and Grok (`grok` CLI). Removed LiteLLM private OAuth internals (`Authenticator`, `XAIOAuthAuthenticator`), undocumented `/backend-api` model fetches, and Claude credential-file scraping.
+- **`kite logout`** — unlink BYOS subscriptions (`kite logout codex|claude|grok|xai`).
+- Claude subscription and Anthropic API key (BYOK) are kept separate; subscription tokens are never copied into `~/.kite/.env`.
+
+### Security
+- Auth errors sanitize token-shaped strings; OAuth secrets are not logged or written to project `.env` files.
+- **Recursive secret redaction** — nested audit/event/session/tool payloads sanitized before persistence or display.
+- **Session persistence policy** — `full` | `redacted` (default) | `disabled`; owner-only session files when enabled.
+- **Process-tree teardown** — timeout/cancel kills child process groups (Unix `killpg`, Windows `taskkill /T`).
+- **Environment isolation** — sensitive env keys stripped from child processes; `extra` overrides cannot re-inject credentials.
+- **Skill trust model** — bundled trusted; npm/git/project/user untrusted with provenance metadata.
+- **SSRF hardening** — resolve → validate all IPs → connect; redirect and DNS TOCTOU re-checks.
+- REPL `/privacy` and CLI `kite privacy` / `kite config --session-persistence` for user-facing controls.
+- System prompt documents harness limits, attachment handling, and user interrupt behavior for agents.
+- REPL **F8** / **Esc v** clipboard attach, **Ctrl+L** clear screen; shortcuts documented in `/help` (no separate slash command). Improved clipboard image support (pngpaste/wl-paste/xclip).
+
 ## [0.9.5] - 2026-09-07
 
 ### Added

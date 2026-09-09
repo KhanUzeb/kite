@@ -12,6 +12,8 @@ common:
   kite resume [id]        continue a session (omit id to pick)
   kite models [-p groq]   pick a live model (--list to dump)
   kite bench              harness timing (no LLM)
+  kite subagents          list/show/init subagent personas
+  kite tasks run FILE     headless task batch (JSONL or plain text)
 
 run `kite help` for the full map  ·  in REPL type /help
 """
@@ -31,17 +33,20 @@ Setup & model
   kite keys [--set [provider]]  API keys - TTY pick to link
   kite providers                status, then pick to connect
   kite models [-p groq]         pick a model (--list to dump)
-  kite config [--select-model]
+  kite config [--select-model] [--session-persistence full|redacted|disabled]
+  kite privacy                  security policy summary
 
 Project
   kite context                  preview workspace discovery
   kite skills [--show name] [--add pkg|path]
+  kite subagents [--show id] [--init id]   bundled + ~/.kite/subagents/
   kite commands | kite plugins
   kite memory [--remember text]
 
 Advanced
   kite runtime-config           merged agent TOML
   kite bench [--json] [--compare file]
+  kite tasks init | kite tasks run <file>   headless batches (CI / cloud)
   kite apply | kite import | kite exec | kite audit | kite cloud
 
 REPL essentials (type /help in chat)
@@ -50,12 +55,15 @@ REPL essentials (type /help in chat)
   /login /keys /select          credentials
   /checkpoint /handoff /compact session continuity
   /session list | /resume <id>  transcripts
-  /status                       mode, model, cost
+  /status                       mode, model, cost, session persistence
+  /privacy                      security policy; /privacy sessions …
   /stop /steer                  stop turn or redirect (session stays)
-  /jobs /kill [id|all]          background bash + live subagents
+  /goal [text]            persistent objective; /goal pause|resume|clear
+  /jobs /agents /kill [id|all]  crew board; /agents profiles|init|show
 
 Flags on run/chat/resume: -p provider  -m model  --cwd PATH  --mode plan|build
-  --approval auto|approve|supervised|yolo|trust|readonly  --auto-compact  -v  -q  --attach PATH
+  --approval auto|approve|supervised|yolo|trust|readonly  --headless  --no-stream
+  --auto-compact  -v  -q  --attach PATH
 
 Docs: kite_commands.md
 """

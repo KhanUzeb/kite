@@ -69,6 +69,8 @@ class RunSpec:
     interactive: bool = False
     role: str = "auto"
     long_task: bool = False
+    memory_in_prompt: bool = False
+    goal_objective: str = ""
     system_prompt: str | None = None
     config_name: str | Path | None = None
     output_path: Path | None = None

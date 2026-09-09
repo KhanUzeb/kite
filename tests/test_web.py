@@ -17,10 +17,24 @@ DDG_FIXTURE = """
 </div>
 """
 
+DDG_LITE_FIXTURE = """
+<table>
+<tr><td><a class="result-link" href="https://lite.example.com/a">Lite Result A</a></td></tr>
+<tr><td class="result-snippet">Snippet for result A.</td></tr>
+<tr><td><a class="result-link" href="https://lite.example.com/b">Lite Result B</a></td></tr>
+<tr><td class="result-snippet">Snippet for result B.</td></tr>
+</table>
+"""
+
 HTML_PAGE = """
 <!DOCTYPE html>
 <html>
-<head><title>Test Page Title</title></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="description" content="A test page for extraction.">
+  <meta property="og:title" content="OG Title Override">
+  <title>Test Page Title</title>
+</head>
 <body>
 <script>ignore me</script>
 <main>
@@ -52,19 +66,42 @@ def test_parse_ddg_html_regex():
     assert results[1]["url"] == "https://github.com/foo"
 
 
+def test_parse_ddg_lite_html():
+    results = web._parse_ddg_html(DDG_LITE_FIXTURE, max_results=5)
+    assert len(results) == 2
+    assert results[0]["title"] == "Lite Result A"
+    assert results[0]["url"] == "https://lite.example.com/a"
+    assert "Snippet for result A" in results[0]["snippet"]
+
+
 def test_parse_ddg_dedupes_urls():
     dup = DDG_FIXTURE + DDG_FIXTURE
     results = web._parse_ddg_html(dup, max_results=10)
     assert len(results) == 2
 
 
-def test_extract_page_strips_scripts():
-    title, text, links = web._extract_page(HTML_PAGE, "https://example.com/page")
+def test_merge_search_results_dedupes():
+    instant = [{"title": "Example", "url": "https://example.com", "snippet": "instant"}]
+    html = [{"title": "Example Docs", "url": "https://example.com", "snippet": "html"}]
+    merged = web._merge_search_results(instant, html, max_results=5)
+    assert len(merged) == 1
+    assert merged[0]["snippet"] == "instant"
+
+
+def test_extract_page_strips_scripts_and_preserves_blocks():
+    title, description, text, links = web._extract_page(HTML_PAGE, "https://example.com/page")
     assert title == "Test Page Title"
+    assert description == "A test page for extraction."
     assert "ignore me" not in text
     assert "Hello World" in text
     assert "First paragraph" in text
+    assert "\n" in text
     assert "https://example.com/relative" in links
+
+
+def test_meta_charset_sniff():
+    raw = b'<html><head><meta charset="iso-8859-1"></head><body>ok</body></html>'
+    assert web._meta_charset_sniff(raw) == "iso-8859-1"
 
 
 def test_url_blocked_localhost():
@@ -76,19 +113,29 @@ def test_url_blocked_localhost():
 
 @patch("kite.tools.web._fetch_url")
 def test_webfetch_extracts_html(mock_fetch):
-    mock_fetch.return_value = (HTML_PAGE.encode(), "text/html", None)
+    mock_fetch.return_value = (HTML_PAGE.encode(), "text/html", "https://example.com/page", None)
     out = web.webfetch("https://example.com/page", max_chars=10_000)
     assert out["ok"] is True
     assert out["title"] == "Test Page Title"
+    assert out["description"] == "A test page for extraction."
     assert "Hello World" in out["output"]
     assert "url: https://example.com/page" in out["output"]
     assert "<html" not in out["output"]
 
 
 @patch("kite.tools.web._fetch_url")
+def test_webfetch_include_links(mock_fetch):
+    mock_fetch.return_value = (HTML_PAGE.encode(), "text/html", "https://example.com/page", None)
+    out = web.webfetch("https://example.com/page", include_links=True)
+    assert out["ok"] is True
+    assert "https://example.com/relative" in out["output"]
+    assert out["links"]
+
+
+@patch("kite.tools.web._fetch_url")
 def test_webfetch_json(mock_fetch):
     payload = b'{"name": "kite", "version": 1}'
-    mock_fetch.return_value = (payload, "application/json", None)
+    mock_fetch.return_value = (payload, "application/json", "https://example.com/data.json", None)
     out = web.webfetch("https://example.com/data.json")
     assert out["ok"] is True
     assert '"name": "kite"' in out["output"]
@@ -101,11 +148,68 @@ def test_webfetch_blocks_private(mock_fetch):
     mock_fetch.assert_not_called()
 
 
+@patch("kite.tools.web._ddg_instant")
 @patch("kite.tools.web._ddg_html_search")
-def test_websearch_formats_output(mock_search):
-    mock_search.return_value = (DDG_FIXTURE, None)
+def test_websearch_formats_output(mock_search, mock_instant):
+    mock_instant.return_value = []
+    mock_search.return_value = (DDG_FIXTURE, "html", None)
     out = web.websearch("example docs")
     assert out["ok"] is True
     assert out["count"] == 2
     assert "Example Docs" in out["output"]
     assert "https://example.com/docs" in out["output"]
+    assert out["source"] == "html"
+
+
+@patch("kite.tools.web._ddg_instant")
+@patch("kite.tools.web._ddg_html_search")
+def test_websearch_merges_instant_and_html(mock_search, mock_instant):
+    mock_instant.return_value = [
+        {"title": "Instant", "url": "https://instant.example", "snippet": "from api"},
+    ]
+    mock_search.return_value = (DDG_FIXTURE, "html", None)
+    out = web.websearch("example docs", max_results=5)
+    assert out["ok"] is True
+    assert out["count"] == 3
+    assert "Instant" in out["output"]
+    assert "Example Docs" in out["output"]
+
+
+@patch("kite.tools.web._ddg_instant")
+@patch("kite.tools.web._ddg_html_search")
+def test_websearch_empty_hint(mock_search, mock_instant):
+    mock_instant.return_value = []
+    mock_search.return_value = ("<html></html>", "html", None)
+    out = web.websearch("obscure query xyz")
+    assert out["ok"] is True
+    assert out["count"] == 0
+    assert "No results found" in out["output"]
+
+
+@patch("kite.tools.web._ddg_instant")
+@patch("kite.tools.web._ddg_html_search")
+def test_websearch_filters_private_urls(mock_search, mock_instant):
+    mock_instant.return_value = [
+        {"title": "Local", "url": "http://127.0.0.1/admin", "snippet": "blocked"},
+    ]
+    mock_search.return_value = (DDG_FIXTURE, "html", None)
+    out = web.websearch("example docs")
+    assert out["ok"] is True
+    assert out["count"] == 2
+    assert "127.0.0.1" not in out["output"]
+
+
+@patch("kite.tools.web._fetch_url")
+def test_webcrawl_skips_private_links(mock_fetch):
+    page_with_private = """
+    <html><body>
+      <a href="https://example.com/public">Public</a>
+      <a href="http://127.0.0.1/secret">Private</a>
+    </body></html>
+    """
+    mock_fetch.return_value = (page_with_private.encode(), "text/html", "https://example.com/", None)
+    out = web.webcrawl("https://example.com/", max_pages=3, max_depth=1)
+    assert out["ok"] is True
+    fetched = [call.args[0] for call in mock_fetch.call_args_list]
+    assert "http://127.0.0.1/secret" not in fetched
+    assert "https://example.com/public" in fetched

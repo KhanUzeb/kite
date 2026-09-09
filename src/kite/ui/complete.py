@@ -43,7 +43,7 @@ class ComposerResult:
 
 
 # Slash commands safe to run while a turn is in flight (read-only / status).
-BUSY_SAFE_SLASHES = frozenset({"tasks", "task", "status", "help", "jobs", "h", "?"})
+BUSY_SAFE_SLASHES = frozenset({"tasks", "task", "status", "help", "jobs", "agents", "h", "?"})
 
 _APPROVAL_CHOICES = {
     "a": "allow",
@@ -231,16 +231,31 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         self._models_factory = models_factory or (lambda: ())
         self._providers_factory = providers_factory or (lambda: ())
         self._reasoning_info = reasoning_info
+        self._index_cache: CommandIndex | None = None
+        self._support_cache: ReasoningSupport | None = None
+
+    def _index(self) -> CommandIndex:
+        if self._index_cache is None:
+            self._index_cache = self._index_factory()
+        return self._index_cache
+
+    def invalidate(self) -> None:
+        self._index_cache = None
+        self._support_cache = None
 
     def _support(self) -> ReasoningSupport:
+        if self._support_cache is not None:
+            return self._support_cache
         if self._reasoning_info is not None:
             try:
                 info = self._reasoning_info()
                 if info is not None:
+                    self._support_cache = info
                     return info
             except Exception:
                 pass
-        return ReasoningSupport(False, False, False, False, source="none")
+        self._support_cache = ReasoningSupport(False, False, False, False, source="none")
+        return self._support_cache
 
     def get_completions(self, document: Any, complete_event: Any):  # noqa: ANN401
         if not _PT:
@@ -258,7 +273,7 @@ class SlashCompleter(Completer):  # type: ignore[misc]
 
         body = raw[1:]
         cmd, sep, rest = body.partition(" ")
-        index = self._index_factory()
+        index = self._index()
         support = self._support()
 
         if not sep:
@@ -312,6 +327,8 @@ class SlashCompleter(Completer):  # type: ignore[misc]
 
             for name, display, env in loginable_providers():
                 choices.append((name, f"{env}  {display[:40]}"))
+        elif cmd == "working":
+            choices = [("add", "append a soft rhythm signal")]
         elif cmd in {"skills", "skill"}:
             bits = rest.split()
             first = bits[0].lower() if bits else ""
@@ -324,6 +341,19 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             choices.append(("init", "scaffold .kite/plugins/name"))
             for plugin in index.plugins:
                 choices.append((plugin.name, (plugin.description or plugin.source)[:60]))
+        elif cmd == "goal":
+            choices = list(ARG_CHOICES.get("goal", []))
+        elif cmd == "agents":
+            from kite.agent.subagent_profiles import list_profiles
+
+            bits = rest.split()
+            first = bits[0].lower() if bits else ""
+            if first in {"", "profiles", "personas", "list", "show", "init", "reload"} or not bits:
+                choices.extend(ARG_CHOICES.get("agents", []))
+            if first in {"show", "init"} or (first and first not in {"profiles", "personas", "list", "reload"}):
+                for prof in list_profiles():
+                    mark = f"{glyph('home')}  " if not prof.bundled else ""
+                    choices.append((prof.id, f"{mark}{prof.label}  role={prof.role}"[:60]))
         elif cmd == "commands":
             choices.append(("new", "write .kite/commands/name.md"))
         elif cmd == "memory":
@@ -524,7 +554,7 @@ def _toolbar_html(state: SessionUiState) -> Any:
             bits = ["[a] once", "[s] session", "[p] always", "[n] deny", "[q] stop"]
         hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
     elif state.busy:
-        bits = ["Esc stop", "Enter queue", "Ctrl+G steer", "Ctrl+U dequeue"]
+        bits = ["Esc/Ctrl+C stop", "Enter queue", "Ctrl+G steer", "Ctrl+U dequeue", "F8 attach clip"]
         if state.queue_steer:
             bits.append(f"steer {state.queue_steer}")
         if state.queue_follow:
@@ -543,6 +573,8 @@ def _toolbar_html(state: SessionUiState) -> Any:
             bits.append(f"budget ≤${state.budget_limit:.2f}")
         if state.live_terminal:
             bits.append("live")
+        if state.live_subagents:
+            bits.append("live-agents")
         bits.append("/tasks")
         hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
     main = (
@@ -617,6 +649,8 @@ def make_repl_key_bindings(
     on_plan: Callable[[], str] | None = None,
     on_build: Callable[[], str] | None = None,
     on_status: Callable[[], str] | None = None,
+    on_attach_clipboard: Callable[[], str] | None = None,
+    on_clear_screen: Callable[[], None] | None = None,
     is_busy: Callable[[], bool] | None = None,
     is_awaiting_approval: Callable[[], bool] | None = None,
     can_remember_approval: Callable[[], bool] | None = None,
@@ -741,9 +775,22 @@ def make_repl_key_bindings(
         if text.startswith("/") or _at_attach_prefix(buf.document.text_before_cursor) is not None:
             buf.start_completion(select_first=False)
 
+    @bindings.add("c-l", eager=True)
+    def _clear_screen(event) -> None:  # noqa: ANN001
+        if on_clear_screen:
+            on_clear_screen()
+        else:
+            try:
+                event.app.renderer.clear()
+            except Exception:
+                pass
+        event.app.invalidate()
+
     def _paste_system_clipboard(event) -> None:  # noqa: ANN001
         """Ctrl+V / Shift+Insert — paste OS clipboard into the composer."""
-        text = _read_os_clipboard()
+        from kite.ui.attach import read_os_clipboard
+
+        text = read_os_clipboard()
         if not text:
             return
         buf = event.current_buffer
@@ -752,13 +799,25 @@ def make_repl_key_bindings(
 
     def _copy_selection(event) -> None:  # noqa: ANN001
         """Ctrl+Insert — copy composer selection to OS clipboard."""
+        from kite.ui.attach import write_os_clipboard
+
         buf = event.current_buffer
         data = buf.copy_selection()
         if data is None:
             return
         text = data.text if hasattr(data, "text") else str(data)
         if text:
-            _write_os_clipboard(text)
+            write_os_clipboard(text)
+
+    @bindings.add("f8", eager=True)
+    @bindings.add("escape", "v", eager=True)
+    def _attach_clipboard(event) -> None:  # noqa: ANN001
+        """F8 or Esc v — attach clipboard to the next turn (/clip)."""
+        if on_attach_clipboard:
+            note = on_attach_clipboard()
+            if note:
+                slot["kind"] = "note"
+        event.app.invalidate()
 
     @bindings.add("c-v", eager=True)
     @bindings.add("s-insert", eager=True)
@@ -861,95 +920,6 @@ def make_repl_key_bindings(
     return bindings
 
 
-def _read_os_clipboard() -> str:
-    try:
-        import sys
-
-        if sys.platform == "win32":
-            import ctypes
-
-            CF_UNICODETEXT = 13
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            user32.OpenClipboard(0)
-            try:
-                handle = user32.GetClipboardData(CF_UNICODETEXT)
-                if not handle:
-                    return ""
-                ptr = kernel32.GlobalLock(handle)
-                try:
-                    return ctypes.wstring_at(ptr) if ptr else ""
-                finally:
-                    kernel32.GlobalUnlock(handle)
-            finally:
-                user32.CloseClipboard()
-    except Exception:
-        pass
-    try:
-        import subprocess
-
-        for cmd in (
-            ["pbpaste"],
-            ["xclip", "-selection", "clipboard", "-o"],
-            ["wl-paste", "-n"],
-        ):
-            try:
-                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=2)
-                return out.decode("utf-8", errors="replace")
-            except (FileNotFoundError, subprocess.SubprocessError, OSError):
-                continue
-    except Exception:
-        pass
-    return ""
-
-
-def _write_os_clipboard(text: str) -> None:
-    try:
-        import sys
-
-        if sys.platform == "win32":
-            import ctypes
-            from ctypes import wintypes
-
-            CF_UNICODETEXT = 13
-            GMEM_MOVEABLE = 0x0002
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-            kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-            kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
-            kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
-            kernel32.GlobalLock.restype = ctypes.c_void_p
-            encoded = text.encode("utf-16-le") + b"\x00\x00"
-            user32.OpenClipboard(0)
-            try:
-                user32.EmptyClipboard()
-                handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(encoded))
-                ptr = kernel32.GlobalLock(handle)
-                ctypes.memmove(ptr, encoded, len(encoded))
-                kernel32.GlobalUnlock(handle)
-                user32.SetClipboardData(CF_UNICODETEXT, handle)
-            finally:
-                user32.CloseClipboard()
-            return
-    except Exception:
-        pass
-    try:
-        import subprocess
-
-        for cmd in (
-            ["pbcopy"],
-            ["xclip", "-selection", "clipboard"],
-            ["wl-copy"],
-        ):
-            try:
-                subprocess.run(cmd, input=text.encode("utf-8"), check=True, timeout=2)
-                return
-            except (FileNotFoundError, subprocess.SubprocessError, OSError):
-                continue
-    except Exception:
-        pass
-
-
 def read_repl_line(
     *,
     session: Any,
@@ -1011,7 +981,7 @@ def _prompt_once(
     elif busy:
         placeholder = "add a follow-up while Kite works…"
     else:
-        placeholder = "/ commands · @file attach · Ctrl+D quit"
+        placeholder = "/ · @file · Ctrl+V paste · F8 attach clip · Ctrl+D quit · /help"
 
     def _toolbar() -> Any:
         if on_poll is not None:

@@ -115,6 +115,11 @@ PREVIEW_CHUNK_BYTES = 65_536
 GUTTER = "  "
 
 
+def cell_continuation_indent(first_line_prefix: str) -> str:
+    """Spaces so wrapped cell lines align under the first line body."""
+    return " " * len(first_line_prefix or "")
+
+
 def make_console(*, stderr: bool = False, quiet: bool = False) -> Console:
     from kite.ui.theme import ensure_prefs
 

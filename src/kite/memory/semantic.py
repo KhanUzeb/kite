@@ -74,9 +74,9 @@ def _read(path: Path) -> str:
 
 
 def _write(path: Path, text: str) -> None:
-    from kite.util.atomic import atomic_write_text
+    from kite.memory.secure_io import secure_memory_write
 
-    atomic_write_text(path, text)
+    secure_memory_write(path, text)
 
 
 def render_file(pin: str, notes: list[Note]) -> str:
@@ -129,9 +129,9 @@ class SemanticStore:
         return rows
 
     def remember(self, text: str, *, scope: MemoryScope = "user") -> Note:
-        cleaned = " ".join(text.strip().split())
-        if not cleaned:
-            raise ValueError("empty memory")
+        from kite.memory.secure_io import clamp_memory_text
+
+        cleaned = clamp_memory_text(text)
         note = Note(id=uuid.uuid4().hex[:8], text=cleaned, created=time.time(), scope=scope)
         path = self.path_for(scope)
         raw = _read(path)

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "litellm>=1.60.0",
+  "openai-codex>=0.144.4,<0.148",
   "tenacity>=8.0",
   "pydantic>=2.0",
   "python-dotenv>=1.0",

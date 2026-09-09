@@ -38,6 +38,11 @@ _ENV_DUMP_PATTERNS = (
 
 _CHAIN_SPLIT = re.compile(r"\s*&&\s*|\s*;\s*|\s*\|\s*")
 
+_OS_INTERFACE_READ = re.compile(
+    r"(?i)\b(cat|type|head|tail|less|more|Get-Content|dd|cp|tee)\s+[^\n]*"
+    r"(/proc/|/sys/|/dev/|\\\\\.\\|\\\\\?\\)"
+)
+
 
 def redact_secrets(text: str) -> tuple[str, int]:
     """Return (redacted_text, count_of_redactions). Usable without a policy instance."""
@@ -127,6 +132,8 @@ class GuardrailPolicy:
         blocked = env_dump_blocked(command)
         if blocked:
             return GuardrailVerdict(False, blocked)
+        if _OS_INTERFACE_READ.search(command):
+            return GuardrailVerdict(False, "refusing to read OS interface paths via bash")
         if self.config.sandbox_to_cwd and not self.config.host_access():
             escaped = check_command_paths(command, self.workspace)
             if escaped:
@@ -196,59 +203,30 @@ class GuardrailPolicy:
                 if rx.search(content):
                     return GuardrailVerdict(False, "refusing to write content that looks like a secret")
 
+        if tool in {"webfetch", "webcrawl"}:
+            from kite.guardrails.ssrf import url_blocked
+
+            target = str(args.get("url") or "").strip()
+            if target:
+                err = url_blocked(target)
+                if err:
+                    return GuardrailVerdict(False, err)
+
         return GuardrailVerdict(True, rewritten_args=args)
 
     def clamp_output(self, tool: str, result: dict[str, Any]) -> dict[str, Any]:
         if not self.config.enabled:
             return result
-        out = dict(result)
+        from kite.guardrails.redact import sanitize_value
+
+        out = sanitize_value(dict(result))
+        if not isinstance(out, dict):
+            return {"output": out}
         text = out.get("output")
         if isinstance(text, str):
-            text, redacted = self.redact_secrets(text)
-            if redacted:
-                out["secrets_redacted"] = redacted
             limit = self.config.max_bash_output_chars if tool == "bash" else self.config.max_read_chars
             if len(text) > limit:
                 text = text[: limit // 2] + "\n...<guardrail truncated>...\n" + text[-(limit // 2) :]
                 out["truncated"] = True
             out["output"] = text
-        for key in ("error", "diff", "path", "directory", "summary"):
-            val = out.get(key)
-            if isinstance(val, str):
-                redacted_text, n = self.redact_secrets(val)
-                out[key] = redacted_text
-                if n:
-                    out["secrets_redacted"] = int(out.get("secrets_redacted") or 0) + n
-        items = out.get("items")
-        if isinstance(items, list):
-            safe_items: list[Any] = []
-            total_redacted = int(out.get("secrets_redacted") or 0)
-            for item in items:
-                if isinstance(item, str):
-                    safe, n = self.redact_secrets(item)
-                    total_redacted += n
-                    safe_items.append(safe)
-                elif isinstance(item, dict):
-                    safe_item = dict(item)
-                    for ik, iv in list(safe_item.items()):
-                        if isinstance(iv, str):
-                            safe_item[ik], n = self.redact_secrets(iv)
-                            total_redacted += n
-                    safe_items.append(safe_item)
-                else:
-                    safe_items.append(item)
-            out["items"] = safe_items
-            if total_redacted:
-                out["secrets_redacted"] = total_redacted
-        metadata = out.get("metadata")
-        if isinstance(metadata, dict):
-            safe_meta = dict(metadata)
-            total_redacted = int(out.get("secrets_redacted") or 0)
-            for mk, mv in list(safe_meta.items()):
-                if isinstance(mv, str):
-                    safe_meta[mk], n = self.redact_secrets(mv)
-                    total_redacted += n
-            out["metadata"] = safe_meta
-            if total_redacted:
-                out["secrets_redacted"] = total_redacted
         return out
