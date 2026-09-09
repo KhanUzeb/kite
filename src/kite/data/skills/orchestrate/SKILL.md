@@ -8,36 +8,54 @@ description: Split multi-step work across todo_write, task, and parallel subagen
 Use when a task has several independent workstreams or a long checklist.
 
 ## When to use what
-- `todo_write`: always for multi-step work. Keep exactly one item `in_progress`; update as you go.
-- `task`: cheap parallel *code search* (glob/grep summaries). Prefer for locate/investigate, not for edits.
-- `subagent`: nested LLM workers via the orchestrator. Pass `prompts` (and optional `labels`) for independent plan items. **Sync by default** — parent waits for merged findings. Use `background=true` (or async phrasing in the prompt) when the parent should keep working; collect later with `wait_for: [job_id, ...]`. Tracked in `/agents` and `/jobs`; kill with `/kill`.
 
-## Split rules
-1. Write the plan with `todo_write` before spawning workers.
-2. Each subagent prompt must be self-contained: goal, paths/constraints, success check. No shared mutable assumptions.
-3. Give workers fun, memorable `labels` (`scout-routes`, `audit-deps`, `map-tests`) — they show in the TUI crew board.
-4. Parallelize only independent items (e.g. explore A vs B). Serialize anything that shares files or ordering.
-5. Cap fan-out (≈2–3 workers). Subagents cannot spawn further subagents.
-6. Integrate results yourself: merge findings, then edit; don't ask workers to "also commit/PR".
+| Need | Tool |
+|------|------|
+| Find files/symbols, no reasoning | `task` |
+| Read code and summarize tradeoffs | `subagent` |
+| Multi-step checklist | `todo_write` / `todo_read` |
+
+- `subagent`: nested LLM workers. **Sync by default** — parent waits for merged findings. `background=true` when the parent should keep working; collect with `wait_for: [job_id, ...]`. Tracked in `/agents` and `/jobs`; stop with `/kill`.
 
 ## Sync vs async dispatch
-| Need | Dispatch |
-|------|----------|
-| Merge findings before next edit | **sync** (default) — `prompts` + `labels`, wait for crew report |
-| Explore while parent continues | **async** — `background=true` or “survey in the background while I …” |
+
+| Situation | Dispatch |
+|-----------|----------|
+| Need findings before next edit | **sync** (default) |
+| Explore while parent continues | **async** — `background=true` or “in the background while I …” |
+| Parallel `prompts[]` crew | **sync** unless `background=true` |
 | Collect async workers | `subagent` with `wait_for: ["abc12345", ...]` |
 
-## Good labels + prompts
+## Split rules
+
+1. Write the plan with `todo_write` before spawning workers.
+2. Each subagent prompt must be self-contained: goal, paths/constraints, success check.
+3. Use short, distinctive `labels` (`scout-auth`, `map-tests`) — they appear in `/agents` and the crew board.
+4. Parallelize only independent items. Cap fan-out at ≈2–3 workers.
+5. Subagents cannot spawn further subagents.
+6. Integrate results yourself — merge findings, then edit.
+
+## Example crew (sync)
+
 ```
 labels: ["scout-auth", "scout-db"]
 prompts: [
-  "Read-only survey: how does auth middleware work? List entrypoints under src/auth. Summarize findings.",
-  "Read-only survey: where is the DB layer configured? List files and connection flow."
+  "Read-only: how does auth middleware work? List entrypoints under src/auth.",
+  "Read-only: where is the DB layer configured? List files and connection flow."
 ]
 ```
 
+## Example async + collect
+
+```
+subagent prompt="Survey auth routes in the background while I refactor CLI" label="scout-auth"
+# ... parent continues ...
+subagent wait_for=["a1b2c3d4"] timeout_seconds=120
+```
+
 ## Avoid
-- Spawning subagents for tiny lookups (`grep`/`task` is enough)
+
+- Subagents for tiny lookups (`task` is enough)
 - Duplicate prompts that thrash the same files
-- Leaving todos stale after workers finish
-- Expecting `submit` from explorers — useful text counts as success
+- Stale todos after workers finish
+- Combining `wait_for` with new `prompt` / `prompts` in one call

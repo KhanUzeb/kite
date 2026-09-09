@@ -983,16 +983,17 @@ class RunDisplay:
         if total <= 1:
             return
         self._end_stream_line()
+        at_once = f" · {workers} at a time" if workers < total else ""
         self.console.print(
             Text(
-                f"{GUTTER}{SYMBOL_COLLAPSE} crew  {total} workers · pool {workers}",
+                f"{GUTTER}{SYMBOL_COLLAPSE} crew  {total} workers{at_once}",
                 style="kite.plan bold",
             )
         )
 
     def _on_orchestrator_end(self, p: dict[str, Any]) -> None:
         total = int(p.get("total") or 0)
-        delivered = int(p.get("delivered") or 0)
+        succeeded = int(p.get("succeeded") or p.get("delivered") or 0)
         if total <= 1:
             return
         ok = bool(p.get("ok"))
@@ -1000,7 +1001,7 @@ class RunDisplay:
         style = "kite.success" if ok else "kite.muted"
         self.console.print(
             Text(
-                f"{GUTTER}{mark} crew  {delivered}/{total} delivered",
+                f"{GUTTER}{mark} crew  {succeeded}/{total} succeeded",
                 style=style,
             )
         )
@@ -1066,13 +1067,13 @@ class RunDisplay:
             self.state.active_jobs += 1
         self._touch_state()
         kind = str(p.get("kind") or "job")
+        if kind == "subagent":
+            return
         label = str(p.get("label") or p.get("command") or p.get("id") or "job")
         if kind == "bash":
             self.console.print(
                 Text(f"{GUTTER}{SYMBOL_COLLAPSE} job  {kind}  {label}", style="kite.muted")
             )
-        elif kind == "subagent":
-            self.console.print(Text(f"{GUTTER}{SYMBOL_COLLAPSE} ◆  {label}", style="kite.plan"))
 
     def _on_job_end(self, p: dict[str, Any]) -> None:
         try:
@@ -1084,6 +1085,8 @@ class RunDisplay:
             self.state.active_jobs = max(0, self.state.active_jobs - 1)
         self._touch_state()
         kind = str(p.get("kind") or "")
+        if kind == "subagent":
+            return
         ok = p.get("ok", True)
         mark = SYMBOL_OK if ok else SYMBOL_FAIL
         style = "kite.success" if ok else "kite.muted"
@@ -1091,8 +1094,6 @@ class RunDisplay:
         status = str(p.get("status") or ("done" if ok else "ended"))
         if kind == "bash":
             self.console.print(Text(f"{GUTTER}{mark} job  {kind}  {label}  {status}", style=style))
-        elif kind == "subagent":
-            self.console.print(Text(f"{GUTTER}{mark} ◆  {label}  {status}", style=style))
 
     def _on_warning(self, p: dict[str, Any]) -> None:
         msg = str(p.get("message") or "").strip()

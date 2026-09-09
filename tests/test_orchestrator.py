@@ -79,9 +79,10 @@ def test_run_parallel_orders_sections_and_counts_delivered() -> None:
         ["scan a", "scan fail", "scan b"],
         labels=["alpha", "broken", "beta"],
     )
-    assert out["delivered"] == 2
+    assert out["succeeded"] == 2
     assert out["ok"] is False
     assert "crew report" in out["output"]
+    assert "succeeded" in out["output"]
     assert "alpha" in out["output"]
     assert "orchestrator_start" in events
     assert "orchestrator_end" in events
@@ -144,3 +145,29 @@ def test_dispatch_auto_async_from_prompt() -> None:
     )
     assert out.get("background") is True
     assert out.get("dispatch_reason") == "auto-async"
+    assert "dispatch_hint" in out
+
+
+def test_kill_all_updates_running_tasks() -> None:
+    from kite.agent.orchestrator import SubagentTask
+
+    token_a = CancelToken()
+    token_b = CancelToken()
+    orch = SubagentOrchestrator(runner=MagicMock(), timeout_seconds=0)
+    orch.tasks.extend(
+        [
+            SubagentTask(id="a1", prompt="p", label="w1", status="running", cancel=token_a),
+            SubagentTask(id="b2", prompt="p", label="w2", status="running", cancel=token_b),
+            SubagentTask(id="c3", prompt="p", label="w3", status="finished", cancel=CancelToken()),
+        ]
+    )
+    assert orch.kill_all() == 2
+    assert token_a.is_set()
+    assert token_b.is_set()
+
+
+def test_wait_for_rejects_prompt_combo() -> None:
+    orch = SubagentOrchestrator(runner=MagicMock(), timeout_seconds=0)
+    out = orch.dispatch({"wait_for": ["abc"], "prompt": "also run this"})
+    assert out["ok"] is False
+    assert "cannot be combined" in out["output"]

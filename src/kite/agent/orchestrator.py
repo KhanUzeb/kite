@@ -6,19 +6,21 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from typing import Any
 
 from kite.agent.cancel import CancelToken
-from kite.agent.dispatch_mode import resolve_dispatch_mode
+from kite.agent.dispatch_mode import dispatch_hint, resolve_dispatch_mode
 from kite.agent.events import Event
 
 _SUCCESS_EXIT = frozenset({"Submitted"})
 _USEFUL_EXIT = frozenset({"LimitsExceeded", "Stalled"})
 _FAILURE_EXIT = frozenset({"Error", "ProviderFault", "Interrupted"})
 _WORKER_GLYPHS = ("◆", "●", "◇", "▲", "▶", "★")
+_MIN_USEFUL_CHARS = 40
+_SECTION_LIMIT = 2000
 
 
 def worker_glyph(index: int) -> str:
@@ -33,15 +35,29 @@ def evaluate_subagent_result(result: dict[str, Any]) -> tuple[bool, str, str]:
     submission = str(result.get("submission") or result.get("content") or "").strip()
     status = str(result.get("exit_status") or "done")
     if status in _SUCCESS_EXIT:
-        return True, "done", submission or f"exit={status}"
+        return True, "done", submission or f"finished ({status})"
     if status in _FAILURE_EXIT:
-        return False, "failed", submission or str(result.get("error") or f"exit={status}")
-    if len(submission) >= 40:
+        return False, "failed", submission or str(result.get("error") or f"failed ({status})")
+    if len(submission) >= _MIN_USEFUL_CHARS:
         quality = "done" if status in _USEFUL_EXIT else "partial"
         return True, quality, submission
     if status in _USEFUL_EXIT and submission:
         return True, "partial", submission
-    return False, "failed", submission or f"exit={status}"
+    empty = f"finished with {status} (no summary text)" if not submission else submission
+    return False, "failed", empty
+
+
+def _format_sections(
+    header: str,
+    rows: list[tuple[str, bool, str, str, int | None]],
+) -> str:
+    lines = [header]
+    for label, ok, quality, body, elapsed_ms in rows:
+        mark = "✓" if ok else "✗"
+        timing = f" · {elapsed_ms}ms" if elapsed_ms else ""
+        detail = f" ({quality})" if quality not in {"done", "failed"} else ""
+        lines.append(f"\n--- {mark} {label}{detail}{timing} ---\n{body[:_SECTION_LIMIT]}")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -49,7 +65,7 @@ class SubagentTask:
     id: str
     prompt: str
     label: str
-    status: str = "queued"  # queued | running | done | partial | failed | killed
+    status: str = "queued"  # queued | running | finished | failed | killed
     exit_status: str = ""
     summary: str = ""
     ok: bool = False
@@ -100,10 +116,16 @@ class SubagentOrchestrator:
     jobs: Any | None = None  # JobRegistry | None
     _worker_seq: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _runner_pool: ThreadPoolExecutor | None = field(default=None, repr=False)
 
     def _emit(self, kind: str, **payload: Any) -> None:
         if self.on_event:
             self.on_event(Event(kind=kind, payload=payload))  # type: ignore[arg-type]
+
+    def _runner_executor(self) -> ThreadPoolExecutor:
+        if self._runner_pool is None:
+            self._runner_pool = ThreadPoolExecutor(max_workers=max(1, self.max_workers))
+        return self._runner_pool
 
     def manager_view(self) -> list[dict[str, Any]]:
         return [t.to_dict() for t in self.tasks]
@@ -125,6 +147,22 @@ class SubagentOrchestrator:
         except TypeError:
             return self.runner(prompt)
 
+    def _run_with_timeout(self, prompt: str, cancel: CancelToken) -> dict[str, Any]:
+        if self.timeout_seconds <= 0:
+            return self._call_runner(prompt, cancel)
+        pool = self._runner_executor()
+        fut: Future[dict[str, Any]] = pool.submit(self._call_runner, prompt, cancel)
+        return fut.result(timeout=self.timeout_seconds)
+
+    def _result_payload(self, task: SubagentTask, **fields: Any) -> dict[str, Any]:
+        return {
+            "subagent_id": task.id,
+            "elapsed_ms": task.elapsed_ms,
+            "background": task.background,
+            "manager": self.manager_view(),
+            **fields,
+        }
+
     def _finish_task(
         self,
         task: SubagentTask,
@@ -142,80 +180,78 @@ class SubagentOrchestrator:
             task.quality = "killed"
             task.summary = "cancelled"
             task.ok = False
-            out = {
-                "ok": False,
-                "output": "cancelled",
-                "subagent_id": task.id,
-                "error": "cancelled",
-                "cancelled": True,
-                "quality": "killed",
-                "elapsed_ms": task.elapsed_ms,
-                "background": task.background,
-                "manager": self.manager_view(),
-            }
-        elif timed_out:
+            return self._result_payload(
+                task,
+                ok=False,
+                output="cancelled",
+                error="cancelled",
+                cancelled=True,
+                quality="killed",
+            )
+
+        if timed_out:
             task.status = "failed"
             task.quality = "failed"
-            task.summary = f"subagent timed out after {self.timeout_seconds}s"
+            task.summary = f'"{task.label}" timed out after {self.timeout_seconds}s'
             task.ok = False
-            out = {
-                "ok": False,
-                "output": task.summary,
-                "subagent_id": task.id,
-                "error": "timeout",
-                "quality": "failed",
-                "elapsed_ms": task.elapsed_ms,
-                "background": task.background,
-                "manager": self.manager_view(),
-            }
-        elif error:
+            return self._result_payload(
+                task,
+                ok=False,
+                output=task.summary,
+                error="timeout",
+                quality="failed",
+            )
+
+        if error:
             task.status = "failed"
             task.quality = "failed"
             task.summary = error
             task.ok = False
-            out = {
-                "ok": False,
-                "output": error,
-                "subagent_id": task.id,
-                "error": error,
-                "quality": "failed",
-                "elapsed_ms": task.elapsed_ms,
-                "background": task.background,
-                "manager": self.manager_view(),
-            }
+            return self._result_payload(
+                task,
+                ok=False,
+                output=error,
+                error=error,
+                quality="failed",
+            )
+
+        result = runner_result or {}
+        ok, quality, summary = evaluate_subagent_result(result)
+        status = str(result.get("exit_status") or "done")
+        task.exit_status = status
+        task.summary = summary[:4000] if summary else f"finished ({status})"
+        task.quality = quality
+        task.ok = ok
+        task.status = "finished" if ok else "failed"
+        return self._result_payload(
+            task,
+            ok=ok,
+            output=task.summary,
+            exit_status=status,
+            quality=quality,
+        )
+
+    def _mark_job_done(self, task: SubagentTask, out: dict[str, Any]) -> None:
+        if self.jobs is None:
+            return
+        existing = self.jobs.get(task.id)
+        if existing is None:
+            return
+        if existing.status == "running":
+            self.jobs.mark_done(
+                task.id,
+                ok=bool(out.get("ok")),
+                status="killed" if out.get("cancelled") else None,
+                result_payload=out,
+            )
         else:
-            result = runner_result or {}
-            ok, quality, summary = evaluate_subagent_result(result)
-            status = str(result.get("exit_status") or "done")
-            task.exit_status = status
-            task.summary = summary[:4000] if summary else f"exit={status}"
-            task.quality = quality
-            task.ok = ok
-            task.status = quality if ok else "failed"
-            out = {
-                "ok": ok,
-                "output": task.summary,
-                "subagent_id": task.id,
-                "exit_status": status,
-                "quality": quality,
-                "elapsed_ms": task.elapsed_ms,
-                "background": task.background,
-                "manager": self.manager_view(),
-            }
-        return out
+            self.jobs.set_subagent_result(task.id, out)
 
     def _execute_task(self, task: SubagentTask, prompt: str) -> dict[str, Any]:
         cancel = task.cancel
         assert cancel is not None
         try:
-            if self.timeout_seconds > 0:
-                from concurrent.futures import Future
-
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    fut: Future[dict[str, Any]] = pool.submit(self._call_runner, prompt, cancel)
-                    result = fut.result(timeout=self.timeout_seconds)
-            else:
-                result = self._call_runner(prompt, cancel)
+            result = self._run_with_timeout(prompt, cancel)
             if cancel.is_set():
                 out = self._finish_task(task, cancelled=True)
             else:
@@ -226,18 +262,7 @@ class SubagentOrchestrator:
         except Exception as e:
             out = self._finish_task(task, error=str(e))
 
-        if self.jobs is not None:
-            existing = self.jobs.get(task.id)
-            if existing is not None and existing.status == "running":
-                self.jobs.mark_done(
-                    task.id,
-                    ok=bool(out.get("ok")),
-                    status="killed" if cancel.is_set() else None,
-                    result_payload=out,
-                )
-            elif existing is not None:
-                self.jobs.set_subagent_result(task.id, out)
-
+        self._mark_job_done(task, out)
         self._emit(
             "subagent_end",
             id=task.id,
@@ -293,6 +318,16 @@ class SubagentOrchestrator:
         )
         return task
 
+    def _run_worker(self, prompt: str, *, label: str, worker: int, glyph: str) -> dict[str, Any]:
+        task = self._begin_task(
+            prompt,
+            label=label,
+            worker=worker,
+            glyph=glyph,
+            background=False,
+        )
+        return self._execute_task(task, prompt)
+
     def run_one(
         self,
         prompt: str,
@@ -301,8 +336,9 @@ class SubagentOrchestrator:
         worker: int = 0,
         glyph: str = "",
     ) -> dict[str, Any]:
-        task = self._begin_task(prompt, label=label, worker=worker, glyph=glyph, background=False)
-        return self._execute_task(task, prompt)
+        if not worker:
+            worker, glyph = self._next_worker()
+        return self._run_worker(prompt, label=label or prompt[:60].replace("\n", " "), worker=worker, glyph=glyph)
 
     def run_one_background(self, prompt: str, *, label: str = "") -> dict[str, Any]:
         task = self._begin_task(prompt, label=label, background=True)
@@ -318,14 +354,18 @@ class SubagentOrchestrator:
             "job_id": task.id,
             "subagent_id": task.id,
             "label": task.label,
-            "output": f"background subagent {task.id} · {task.label}",
+            "output": (
+                f"background worker {task.id} · {task.label}\n"
+                f'Collect with wait_for: ["{task.id}"] or check /agents'
+            ),
             "manager": self.manager_view(),
         }
 
     def wait_for(self, job_ids: list[str], *, timeout_seconds: float = 300.0) -> dict[str, Any]:
         ids = [str(x).strip() for x in job_ids if str(x).strip()]
         if not ids:
-            return {"ok": False, "error": "wait_for requires job_ids", "output": "wait_for requires job_ids"}
+            msg = "wait_for needs at least one job_id from a background worker"
+            return {"ok": False, "error": msg, "output": msg}
 
         deadline = time.monotonic() + max(1.0, timeout_seconds)
         collected: dict[str, dict[str, Any]] = {}
@@ -344,31 +384,44 @@ class SubagentOrchestrator:
                         collected[jid] = dict(job.result_payload)
                         pending.discard(jid)
                     elif job is not None and job.status != "running" and job.kind == "subagent":
+                        payload = job.result_payload or {}
                         collected[jid] = {
-                            "ok": job.status == "done",
-                            "output": job.log_text()[:2000] or f"exit={job.status}",
+                            "ok": bool(payload.get("ok", job.status == "done")),
+                            "output": str(payload.get("output") or job.log_text()[:_SECTION_LIMIT] or f"exit={job.status}"),
                             "subagent_id": jid,
-                            "quality": job.status,
+                            "quality": str(payload.get("quality") or job.status),
                         }
                         pending.discard(jid)
             if pending:
                 time.sleep(0.1)
 
-        sections = [f"wait_for · {len(collected)}/{len(ids)} ready"]
+        rows: list[tuple[str, bool, str, str, int | None]] = []
         for jid in ids:
             if jid in collected:
                 r = collected[jid]
-                mark = "✓" if r.get("ok") else "✗"
-                sections.append(f"\n--- {mark} {jid} ---\n{str(r.get('output') or '')[:2000]}")
+                rows.append(
+                    (
+                        jid,
+                        bool(r.get("ok")),
+                        str(r.get("quality") or ("done" if r.get("ok") else "failed")),
+                        str(r.get("output") or ""),
+                        int(r.get("elapsed_ms") or 0) or None,
+                    )
+                )
             else:
-                sections.append(f"\n--- … {jid} (pending) ---")
+                rows.append((jid, False, "pending", "(still running or unknown id)", None))
+
         ok = not pending and all(r.get("ok") for r in collected.values())
+        header = f"collected · {len(collected)}/{len(ids)} ready"
+        if pending:
+            header += f" · timed out waiting for: {', '.join(sorted(pending))}"
         return {
             "ok": ok,
-            "output": "\n".join(sections),
+            "output": _format_sections(header, rows),
             "pending": sorted(pending),
+            "timed_out": sorted(pending),
             "results": collected,
-            "dispatch": "sync",
+            "dispatch": "collect",
         }
 
     def run_parallel(self, prompts: list[str], *, labels: list[str] | None = None) -> dict[str, Any]:
@@ -389,7 +442,7 @@ class SubagentOrchestrator:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
                 pool.submit(
-                    self.run_one,
+                    self._run_worker,
                     str(p),
                     label=str(labels[i - 1]),
                     worker=worker_slots[i - 1][0],
@@ -404,23 +457,27 @@ class SubagentOrchestrator:
                 except Exception as e:
                     results[idx] = {"ok": False, "output": str(e), "quality": "failed"}
 
-        ok_count = sum(1 for r in results.values() if r.get("ok"))
-        ok = ok_count == len(prompts)
-        sections = [f"crew report · {ok_count}/{len(prompts)} workers delivered"]
+        succeeded = sum(1 for r in results.values() if r.get("ok"))
+        ok = succeeded == len(prompts)
+        rows = []
         for i in sorted(results):
             r = results[i]
-            quality = str(r.get("quality") or ("done" if r.get("ok") else "failed"))
-            mark = "✓" if r.get("ok") else "✗"
             label = labels[i - 1] if i - 1 < len(labels) else f"worker-{i}"
-            elapsed = r.get("elapsed_ms")
-            timing = f" · {elapsed}ms" if elapsed else ""
-            sections.append(f"\n--- {mark} {label} ({quality}){timing} ---\n{str(r.get('output') or '')[:2000]}")
-        text = "\n".join(sections)
+            rows.append(
+                (
+                    label,
+                    bool(r.get("ok")),
+                    str(r.get("quality") or ("done" if r.get("ok") else "failed")),
+                    str(r.get("output") or ""),
+                    int(r.get("elapsed_ms") or 0) or None,
+                )
+            )
+        text = _format_sections(f"crew report · {succeeded}/{len(prompts)} succeeded", rows)
         self._emit(
             "orchestrator_end",
             ok=ok,
             total=len(prompts),
-            delivered=ok_count,
+            succeeded=succeeded,
             dispatch="sync",
             manager=self.manager_view(),
         )
@@ -428,7 +485,7 @@ class SubagentOrchestrator:
             "ok": ok,
             "output": text,
             "subagents": len(prompts),
-            "delivered": ok_count,
+            "succeeded": succeeded,
             "dispatch": "sync",
             "manager": self.manager_view(),
         }
@@ -444,7 +501,7 @@ class SubagentOrchestrator:
         lines = [f"crew spawned · {len(job_ids)} background workers"]
         for s in spawned:
             lines.append(f"  · {s['job_id']}  {s.get('label', '')}")
-        lines.append("collect with subagent wait_for=[...] or /agents")
+        lines.append('When ready: subagent with wait_for: ["id1", "id2", ...] · /agents to monitor')
         return {
             "ok": True,
             "background": True,
@@ -454,10 +511,19 @@ class SubagentOrchestrator:
             "manager": self.manager_view(),
         }
 
+    def _attach_dispatch_hint(self, out: dict[str, Any], reason: str) -> None:
+        hint = dispatch_hint(reason)
+        if hint:
+            out["dispatch_hint"] = hint
+            out["output"] = f"{hint}\n{out.get('output', '')}"
+
     def dispatch(self, args: dict[str, Any]) -> dict[str, Any]:
         """Tool entrypoint: prompt(s), optional labels, wait_for, background/wait."""
         wait_for = args.get("wait_for") or args.get("job_ids")
         if isinstance(wait_for, list) and wait_for:
+            if args.get("prompt") or args.get("prompts"):
+                msg = "wait_for cannot be combined with prompt/prompts — collect existing workers only"
+                return {"ok": False, "error": msg, "output": msg}
             timeout = float(args.get("timeout_seconds") or args.get("timeout") or self.timeout_seconds)
             return self.wait_for([str(x) for x in wait_for], timeout_seconds=timeout)
 
@@ -474,11 +540,13 @@ class SubagentOrchestrator:
             else:
                 out = self.run_parallel([str(p) for p in prompts], labels=labels)
             out["dispatch_reason"] = dispatch_reason
+            self._attach_dispatch_hint(out, dispatch_reason)
             return out
 
         prompt = str(args.get("prompt") or "")
         if not prompt:
-            return {"ok": False, "error": "prompt or prompts required", "output": "prompt or prompts required"}
+            msg = "subagent needs prompt (one worker) or prompts (parallel crew)"
+            return {"ok": False, "error": msg, "output": msg}
 
         if background:
             out = self.run_one_background(prompt, label=str(args.get("label") or ""))
@@ -486,6 +554,7 @@ class SubagentOrchestrator:
             out = self.run_one(prompt, label=str(args.get("label") or ""))
         out["dispatch"] = "async" if background else "sync"
         out["dispatch_reason"] = dispatch_reason
+        self._attach_dispatch_hint(out, dispatch_reason)
         return out
 
     def kill(self, task_id: str) -> bool:
@@ -493,16 +562,16 @@ class SubagentOrchestrator:
             if task.id == task_id and task.status == "running" and task.cancel is not None:
                 task.cancel.request()
                 task.status = "killed"
+                task.quality = "killed"
                 if self.jobs is not None:
                     self.jobs.mark_done(task_id, ok=False, status="killed")
                 return True
         return False
 
     def kill_all(self) -> int:
+        running = [t.id for t in self.tasks if t.status == "running" and t.cancel is not None]
         n = 0
-        for task in self.tasks:
-            if task.status == "running" and task.cancel is not None:
-                task.cancel.request()
-                task.status = "killed"
+        for task_id in running:
+            if self.kill(task_id):
                 n += 1
         return n
