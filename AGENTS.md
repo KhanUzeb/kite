@@ -20,7 +20,7 @@ Stack: LiteLLM, Rich, prompt_toolkit, pydantic, tomllib. Entry: `kite.cli.run:ma
 ```
 src/kite/
   application/    RunSpec, ApplicationRunService, EventEnvelope (0.9 contracts)
-  agent/          Loop, harness, runtime, compaction, cancel, tool_result, orchestrator
+  agent/          Loop, harness, harness_build, runtime, compaction, cancel, tool_result, orchestrator
   bench/          Repeatable harness benchmarks (`kite bench`)
   tasks/          Headless task batches (`kite tasks`, `--headless`)
   cli/            argparse entry (run.py), slash index, setup, stats, bench, tasks, import/apply

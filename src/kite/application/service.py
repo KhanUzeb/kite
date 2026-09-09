@@ -76,10 +76,12 @@ class ApplicationRunService:
         state.transition("prepared")
 
         bridge = LegacyEventBridge(run_id=run_id, sink=deps.event_sink)
-        config = harness_config_from_run_spec(spec)
-        h = harness or Harness(config=config)
         if harness is not None:
-            h.config = config
+            # Spec was built from this harness in execute_harness_task — keep wired
+            # fields (memory_in_prompt, session wiring) instead of replacing config.
+            h = harness
+        else:
+            h = Harness(config=harness_config_from_run_spec(spec))
         if deps.tool_executor is not None:
             h.tool_executor = deps.tool_executor
         if deps.policy_engine is not None:

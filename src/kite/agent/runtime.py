@@ -381,7 +381,9 @@ class AgentRuntime:
             subagent_id: str = "",
             glyph: str = "◆",
         ) -> dict:
-            from kite.agent.harness import Harness, HarnessConfig
+            from kite.agent.harness import Harness
+            from kite.agent.harness_build import build_harness_config
+            from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
             from kite.application.policy import child_inherits_parent_policy
 
             inherited = child_inherits_parent_policy(
@@ -393,7 +395,7 @@ class AgentRuntime:
             )
             child_role = (role or "auto").strip().lower()
             h = Harness(
-                HarnessConfig(
+                build_harness_config(
                     cwd=cwd,
                     provider=resolved.provider,
                     model_name=resolved.model,
@@ -405,7 +407,7 @@ class AgentRuntime:
                     execution_mode=str(inherited["execution_mode"]),
                     interactive=False,
                     no_context=True,
-                    label="subagent",
+                    label=label or "subagent",
                     role=child_role,
                 ),
                 user_config=ucfg,
@@ -425,7 +427,8 @@ class AgentRuntime:
                     self._on_event(event)
 
             h.subscribe(_relay)
-            return h.run(prompt, cancel=cancel)
+            run_result = execute_harness_task(h, prompt, cancel=cancel)
+            return legacy_result_from_run(run_result)
 
         orchestrator = SubagentOrchestrator(
             runner=_subagent_runner,

@@ -272,7 +272,8 @@ def run_headless_task(
     no_compact: bool = False,
     no_guardrails: bool = False,
 ) -> HeadlessTaskResult:
-    from kite.agent.harness import Harness, HarnessConfig
+    from kite.agent.harness import Harness
+    from kite.agent.harness_build import build_harness_config
     from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
 
     cwd = str(Path(task.cwd or ".").expanduser().resolve())
@@ -282,7 +283,7 @@ def run_headless_task(
         mode = AgentMode.BUILD
     approval = resolve_headless_approval(task.approval, mode, headless=True)
     harness = Harness(
-        HarnessConfig(
+        build_harness_config(
             provider=provider,
             model_name=model,
             cwd=cwd,
