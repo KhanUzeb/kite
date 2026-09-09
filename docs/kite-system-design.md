@@ -1,6 +1,6 @@
 # Kite — System design, code atlas & engineering notes
 
-**Version:** 0.9.5
+**Version:** 0.9.6
 **Stack:** Python 3.12 · LiteLLM · Rich · uv
 **Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)
 **Companion command reference:** [kite_commands.md](../kite_commands.md)

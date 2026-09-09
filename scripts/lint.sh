@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 0.9.5
+# kite-release-version: 0.9.6
 # Local pre-PR checks — mirrors .github/workflows/tests.yml (minus matrix).
 set -euo pipefail
 

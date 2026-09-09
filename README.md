@@ -5,9 +5,9 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
-[![Version](https://img.shields.io/badge/version-0.9.5-cyan.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.6-cyan.svg)](CHANGELOG.md)
 
-**Version:** 0.9.5
+**Version:** 0.9.6
 
 **Keywords:** coding agent, AI code assistant, terminal coding assistant, agent CLI, SWE-agent style loop, repository automation, code review automation
 
@@ -264,7 +264,7 @@ Canonical markdown:
 - `CONTEXT.md`: domain glossary (terms agents and humans share)
 - `AGENTS.md`: how to hack on this repo (map, conventions, tests)
 - `docs/kite-system-design.md`: architecture atlas and tradeoffs
-- [`docs/RELEASE-0.9.5.md`](docs/RELEASE-0.9.5.md): latest release notes
+- [`docs/RELEASE-0.9.6.md`](docs/RELEASE-0.9.6.md): latest release notes
 - [`docs/RELEASE-0.9.0.md`](docs/RELEASE-0.9.0.md): 0.9 release notes
 
 Generated PDFs (gitignored): `docs/kite-system-design.pdf`, `docs/kite_commands.pdf`

@@ -4,10 +4,24 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-09-09
+
+### Added
+- **Themes** — palettes (`kite`, `dark`, `light`, `dim`, `mono`, `catppuccin`, `ember`, `forest`, `hues`, `transparent`) wired through TUI chrome; `/theme` and `/font`.
+- **Subagent orchestration** — auto sync/async dispatch, `wait_for`, crew TUI, `/agents` board, `/live agents`.
+- **Personas** — bundled scout/coder/reviewer/context/shell profiles; `kite subagents` CLI; `~/.kite/subagents/<id>.md` overrides.
+- **Global user context** — `USER.md` / `PROFILE.md` (`/user`, `/profile`) plus fluid working rhythm (`WORKING.md`, `/working`).
+- **Goal + recovery** — `/goal` persistent objective; resume/retry after provider errors (`kite resume --retry`).
+- **Headless tasks** — `kite tasks` JSONL batches and `kite run --headless`.
+- **Web tools** — webfetch readable extraction, websearch ranking/dedupe, DuckDuckGo unwrap, crawl budgets.
+- **`docs/RELEASE-0.9.6.md`** — release notes for this version.
+- **`scripts/download-macos.sh`** and **`scripts/lint.sh`** — macOS bootstrap and contributor lint.
+
 ### Changed
-- **BYOS authentication** — production-grade, provider-delegated auth for ChatGPT/Codex (`openai-codex` SDK), Claude Code (`claude auth` CLI), and Grok (`grok` CLI). Removed LiteLLM private OAuth internals (`Authenticator`, `XAIOAuthAuthenticator`), undocumented `/backend-api` model fetches, and Claude credential-file scraping.
-- **`kite logout`** — unlink BYOS subscriptions (`kite logout codex|claude|grok|xai`).
-- Claude subscription and Anthropic API key (BYOK) are kept separate; subscription tokens are never copied into `~/.kite/.env`.
+- **BYOS authentication** — provider-delegated auth for ChatGPT/Codex (`openai-codex` SDK), Claude Code (`claude auth` CLI), and Grok (`grok` CLI). Removed LiteLLM private OAuth internals.
+- **`kite logout`** — unlink BYOS subscriptions (`kite logout codex|claude|grok|xai`). Claude subscription stays separate from Anthropic BYOK; tokens are never copied into `~/.kite/.env`.
+- **Slash startup** — first `/` completion prewarms so the REPL menu opens faster.
+- **CI** — pytest runs on all pull requests, not only those targeting `main`.
 
 ### Security
 - Auth errors sanitize token-shaped strings; OAuth secrets are not logged or written to project `.env` files.
@@ -16,10 +30,15 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - **Process-tree teardown** — timeout/cancel kills child process groups (Unix `killpg`, Windows `taskkill /T`).
 - **Environment isolation** — sensitive env keys stripped from child processes; `extra` overrides cannot re-inject credentials.
 - **Skill trust model** — bundled trusted; npm/git/project/user untrusted with provenance metadata.
-- **SSRF hardening** — resolve → validate all IPs → connect; redirect and DNS TOCTOU re-checks.
-- REPL `/privacy` and CLI `kite privacy` / `kite config --session-persistence` for user-facing controls.
-- System prompt documents harness limits, attachment handling, and user interrupt behavior for agents.
-- REPL **F8** / **Esc v** clipboard attach, **Ctrl+L** clear screen; shortcuts documented in `/help` (no separate slash command). Improved clipboard image support (pngpaste/wl-paste/xclip).
+- **SSRF hardening** — resolve → validate all IPs → connect-time peer check; redirect and DNS TOCTOU re-checks.
+- **Harness OS protection** — `/proc` `/sys` `/dev` blocked for read/write/bash; restricted mode blocks all network tools (bash, webfetch/websearch/webcrawl, Context7).
+- REPL `/privacy` and CLI `kite privacy` / `kite config --session-persistence`.
+- System prompt documents harness limits, attachment handling, and user interrupt behavior.
+- REPL **F8** / **Esc v** clipboard attach, **Ctrl+L** clear screen; shortcuts in `/help`.
+
+### Fixed
+- Windows permission / process-group tests skip Unix-only assertions; bash cancel tests use `sleep`.
+- Ruff unused-import failures in BYOS tests; duplicate dict keys in `build_design_pdf.py`.
 
 ## [0.9.5] - 2026-09-07
 
