@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import socket
 from urllib.error import URLError
 from urllib.parse import urlparse
-from urllib.request import HTTPRedirectHandler, Request
+from urllib.request import HTTPHandler, HTTPRedirectHandler, HTTPSHandler, OpenerDirector, Request, build_opener
 
 _BLOCKED_HOSTS = frozenset(
     {
@@ -14,7 +15,23 @@ _BLOCKED_HOSTS = frozenset(
         "0.0.0.0",
         "metadata.google.internal",
         "metadata.google",
+        "metadata.azure.com",
+        "management.azure.com",
+        "host.docker.internal",
+        "gateway.docker.internal",
+        "kubernetes.docker.internal",
+        "kubernetes.default.svc",
     }
+)
+_BLOCKED_HOST_SUFFIXES = (
+    ".local",
+    ".internal",
+    ".localhost",
+    ".lan",
+    ".home",
+    ".corp",
+    ".svc.cluster.local",
+    ".pod.cluster.local",
 )
 _BLOCKED_IPS = frozenset(
     {
@@ -24,6 +41,7 @@ _BLOCKED_IPS = frozenset(
         "0.0.0.0",
     }
 )
+_DEFAULT_MAX_REDIRECTS = 5
 
 
 def parse_host_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -56,6 +74,20 @@ def parse_host_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | 
             return ipaddress.ip_address(token[1:-1])
         except ValueError:
             return None
+    return None
+
+
+def host_blocked(host: str) -> str | None:
+    """Return an error when the hostname must not be contacted."""
+    token = (host or "").strip().lower().rstrip(".")
+    if not token:
+        return "invalid URL"
+    if token in _BLOCKED_HOSTS:
+        return "local URLs blocked"
+    for suffix in _BLOCKED_HOST_SUFFIXES:
+        bare = suffix.lstrip(".")
+        if token == bare or token.endswith(suffix):
+            return "local URLs blocked"
     return None
 
 
@@ -105,8 +137,9 @@ def url_blocked(url: str) -> str | None:
     host = (parsed.hostname or "").lower()
     if not host:
         return "invalid URL"
-    if host in _BLOCKED_HOSTS or host.endswith(".local"):
-        return "local URLs blocked"
+    host_err = host_blocked(host)
+    if host_err:
+        return host_err
     literal = parse_host_ip(host)
     if literal is not None and ip_blocked(literal):
         return "private network URLs blocked"
@@ -116,10 +149,56 @@ def url_blocked(url: str) -> str | None:
     return None
 
 
+def _validate_peer_ip(peer_ip: str) -> None:
+    try:
+        ip = ipaddress.ip_address(peer_ip)
+    except ValueError as exc:
+        raise OSError("invalid peer address") from exc
+    if ip_blocked(ip):
+        raise OSError("private network URLs blocked")
+
+
+class ValidatedHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection that rejects private/loopback peers after connect."""
+
+    def connect(self) -> None:
+        super().connect()
+        if self.sock is not None:
+            _validate_peer_ip(self.sock.getpeername()[0])
+
+
+class ValidatedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection that rejects private/loopback peers after connect."""
+
+    def connect(self) -> None:
+        super().connect()
+        if self.sock is not None:
+            _validate_peer_ip(self.sock.getpeername()[0])
+
+
+class _ValidatedHTTPHandler(HTTPHandler):
+    def http_open(self, req):  # noqa: ANN001
+        return self.do_open(ValidatedHTTPConnection, req)
+
+
+class _ValidatedHTTPSHandler(HTTPSHandler):
+    def https_open(self, req):  # noqa: ANN001
+        return self.do_open(ValidatedHTTPSConnection, req)
+
+
 class SafeRedirectHandler(HTTPRedirectHandler):
-    """Re-validate every redirect destination."""
+    """Re-validate every redirect destination and cap redirect hops."""
+
+    max_redirects: int = _DEFAULT_MAX_REDIRECTS
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.redirect_count = 0
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        self.redirect_count += 1
+        if self.redirect_count > self.max_redirects:
+            raise URLError("too many redirects")
         err = url_blocked(newurl)
         if err:
             raise URLError(err)
@@ -130,6 +209,13 @@ class SafeRedirectHandler(HTTPRedirectHandler):
         if old.scheme == "https" and new.scheme == "http":
             raise URLError("https→http downgrade redirect blocked")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def build_safe_opener(max_redirects: int = _DEFAULT_MAX_REDIRECTS) -> OpenerDirector:
+    """Opener with connect-time peer validation and redirect limits."""
+    redirect_handler = SafeRedirectHandler()
+    redirect_handler.max_redirects = max(0, int(max_redirects))
+    return build_opener(_ValidatedHTTPHandler(), _ValidatedHTTPSHandler(), redirect_handler)
 
 
 def validate_request_url(url: str) -> str | None:

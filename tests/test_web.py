@@ -184,3 +184,32 @@ def test_websearch_empty_hint(mock_search, mock_instant):
     assert out["ok"] is True
     assert out["count"] == 0
     assert "No results found" in out["output"]
+
+
+@patch("kite.tools.web._ddg_instant")
+@patch("kite.tools.web._ddg_html_search")
+def test_websearch_filters_private_urls(mock_search, mock_instant):
+    mock_instant.return_value = [
+        {"title": "Local", "url": "http://127.0.0.1/admin", "snippet": "blocked"},
+    ]
+    mock_search.return_value = (DDG_FIXTURE, "html", None)
+    out = web.websearch("example docs")
+    assert out["ok"] is True
+    assert out["count"] == 2
+    assert "127.0.0.1" not in out["output"]
+
+
+@patch("kite.tools.web._fetch_url")
+def test_webcrawl_skips_private_links(mock_fetch):
+    page_with_private = """
+    <html><body>
+      <a href="https://example.com/public">Public</a>
+      <a href="http://127.0.0.1/secret">Private</a>
+    </body></html>
+    """
+    mock_fetch.return_value = (page_with_private.encode(), "text/html", "https://example.com/", None)
+    out = web.webcrawl("https://example.com/", max_pages=3, max_depth=1)
+    assert out["ok"] is True
+    fetched = [call.args[0] for call in mock_fetch.call_args_list]
+    assert "http://127.0.0.1/secret" not in fetched
+    assert "https://example.com/public" in fetched
