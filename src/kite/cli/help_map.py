@@ -58,6 +58,7 @@ REPL essentials (type /help in chat)
   /status                       mode, model, cost, session persistence
   /privacy                      security policy; /privacy sessions …
   /stop /steer                  stop turn or redirect (session stays)
+  /goal [text]            persistent objective; /goal pause|resume|clear
   /jobs /agents /kill [id|all]  crew board; /agents profiles|init|show
 
 Flags on run/chat/resume: -p provider  -m model  --cwd PATH  --mode plan|build

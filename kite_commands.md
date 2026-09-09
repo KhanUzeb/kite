@@ -192,6 +192,10 @@ These never go to the model.
 | `/stop` | Stop the current turn; session stays open |
 | `/steer text` | Stop and run `text` as the next turn |
 | `/tasks` | Show the running turn and queued follow-ups |
+| `/goal [text]` | Persistent long-horizon objective (survives provider errors) |
+| `/goal` | View current goal status |
+| `/goal pause` / `/goal resume` / `/goal clear` | Pause, reactivate, or remove goal |
+| `/goal edit …` | Revise goal text (max 4000 chars) |
 | `/jobs` | List background bash jobs and live subagents (pick to kill) |
 | `/agents` | Subagent crew board — profile, label, status, prompt; `/kill` to stop |
 | `/agents profiles` | List bundled + custom personas (`~/.kite/subagents/*.md`) with trust column |
@@ -348,8 +352,8 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 | `submit` | Structured completion — `message` with Done / Changed / Verification sections (preferred over bash echo marker) |
 | `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` |
 | `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |
-| `websearch` | DuckDuckGo search (no API key); unwraps redirect links; deduped results |
-| `webfetch` | Fetch one URL → extracted readable text + title (HTML stripped; JSON pretty-print) |
+| `websearch` | DuckDuckGo search (HTML + instant API, no key); unwraps redirects; deduped results |
+| `webfetch` | Fetch one URL → title, description, readable body; optional outbound links; JSON pretty-print |
 | `webcrawl` | Same-origin multi-page crawl with depth/page limits |
 
 Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `websearch` → pick URL → `webfetch`.
