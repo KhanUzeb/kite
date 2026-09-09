@@ -7,8 +7,9 @@ Thanks for considering a contribution. Kite is a slim, hackable coding-agent har
 ```bash
 git clone https://github.com/KhanUzeb/kite.git
 cd kite
-./scripts/install.sh          # macOS/Linux
-# .\scripts\install.ps1         # Windows PowerShell
+./scripts/install.sh            # macOS/Linux (from a clone)
+./scripts/download-macos.sh     # macOS curl one-liner entry (see README)
+# .\scripts\install.ps1           # Windows PowerShell
 ```
 
 This creates a venv, installs Kite in editable mode, seeds `~/.kite/.env` from `.env.example` when missing, and bootstraps `~/.kite/` (sessions, checkpoints, skills, config). Use `./scripts/install.sh --verify` to run pytest after install.

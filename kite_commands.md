@@ -379,9 +379,20 @@ Package maintenance (not `kite` CLI subcommands):
 
 One-liner (default install dir `~/kite` or `%USERPROFILE%\kite`):
 
+**macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash -s -- --setup
+```
+
+**Linux:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
 ```
+
+**Windows:**
 
 ```powershell
 irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
