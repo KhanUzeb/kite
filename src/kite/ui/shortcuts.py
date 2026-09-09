@@ -36,12 +36,12 @@ while a turn is running
 
 APPROVAL_SHORTCUTS = """\
 approval prompt
-  a               allow once
+  a / Enter       allow once (hotkeys only when composer is empty)
   s               allow this session
   p               allow always (when offered)
   n               deny
   q               stop run
-  Enter (empty)   deny
+  /approve …      change approval mode while a turn runs
 """
 
 

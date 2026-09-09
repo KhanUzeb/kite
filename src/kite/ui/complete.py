@@ -42,8 +42,10 @@ class ComposerResult:
     text: str = ""
 
 
-# Slash commands safe to run while a turn is in flight (read-only / status).
-BUSY_SAFE_SLASHES = frozenset({"tasks", "task", "status", "help", "jobs", "agents", "h", "?"})
+# Slash commands safe to run while a turn is in flight (read-only / status / mode).
+BUSY_SAFE_SLASHES = frozenset(
+    {"tasks", "task", "status", "help", "jobs", "agents", "h", "?", "approve"}
+)
 
 _APPROVAL_CHOICES = {
     "a": "allow",
@@ -503,8 +505,8 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
 
 def _toolbar_approval_bits(state: SessionUiState) -> list[str]:
     if state.awaiting_approval_mandatory:
-        return ["[a] once", "[n] deny", "[q] stop", "mandatory"]
-    return ["[a] once", "[s] session", "[p] always", "[n] deny", "[q] stop"]
+        return ["[a]/Enter once", "[n] deny", "[q] stop", "mandatory"]
+    return ["[a]/Enter once", "[s] session", "[p] always", "[n] deny", "[q] stop"]
 
 
 def _toolbar_busy_bits(state: SessionUiState) -> list[str]:
@@ -652,7 +654,21 @@ def make_repl_key_bindings(
 
     busy = Condition(_busy)
     awaiting = Condition(_awaiting_approval)
-    remember = Condition(_can_remember)
+
+    def _approval_hotkeys_ready() -> bool:
+        """Single-letter a/n/q/s/p only when composer is empty (else type normally)."""
+        if not _awaiting_approval():
+            return False
+        try:
+            from prompt_toolkit.application.current import get_app
+
+            text = get_app().current_buffer.text or ""
+            return not text.strip()
+        except Exception:
+            return True
+
+    approval_hotkey = Condition(_approval_hotkeys_ready)
+    remember_hotkey = Condition(lambda: _can_remember() and _approval_hotkeys_ready())
 
     def _fire(cb: Callable[[], str] | None, event) -> None:  # noqa: ANN001
         if cb:
@@ -706,26 +722,26 @@ def make_repl_key_bindings(
         event.app.exit(result="")
 
     for key in ("a", "n", "q"):
-        @bindings.add(key, eager=True, filter=awaiting)
+        @bindings.add(key, eager=True, filter=approval_hotkey)
         def _approval_key(event, *, _key=key) -> None:  # noqa: ANN001
             slot["kind"] = "approval"
             event.app.exit(result=_key)
 
     for key in ("s", "p"):
-        @bindings.add(key, eager=True, filter=remember)
+        @bindings.add(key, eager=True, filter=remember_hotkey)
         def _approval_remember(event, *, _key=key) -> None:  # noqa: ANN001
             slot["kind"] = "approval"
             event.app.exit(result=_key)
 
     @bindings.add("enter", eager=True, filter=awaiting)
     def _approval_enter(event) -> None:  # noqa: ANN001
-        """Enter with empty input denies; typed approval keys submit."""
+        """Empty Enter allows once; typed approval keys / other text submit."""
         buf = event.current_buffer
         buf.complete_state = None
         text = (buf.text or "").strip().lower()
         if not text:
             slot["kind"] = "approval"
-            event.app.exit(result="n")
+            event.app.exit(result="a")
             return
         buf.validate_and_handle()
 
@@ -950,9 +966,9 @@ def _prompt_once(
     ui = ui_colors()
     if state.awaiting_approval:
         if state.awaiting_approval_mandatory:
-            placeholder = "[a] once · [n] deny · [q] stop — approval required"
+            placeholder = "[a]/Enter once · [n] deny · [q] stop — approval required"
         else:
-            placeholder = "[a] once · [s] session · [p] always · [n] deny · [q] stop"
+            placeholder = "[a]/Enter once · [s] session · [p] always · [n] deny · [q] stop"
     elif busy:
         placeholder = "add a follow-up while Kite works…"
     else:
@@ -1001,8 +1017,10 @@ def _prompt_once(
         decision = parse_approval_choice(text, mandatory=state.awaiting_approval_mandatory)
         if decision:
             return ComposerResult("approval", decision)
+        # Wake/poll exits the composer with empty text while awaiting — must
+        # not treat that as deny (users never pressed n).
         if not text:
-            return ComposerResult("approval", "deny")
+            return ComposerResult("empty")
     if not text:
         return ComposerResult("empty")
     if busy and is_busy_safe_slash(text):

@@ -277,9 +277,9 @@ class ChatSession:
         cmd, arg = parsed.command, parsed.arg
         cmd, arg = self._apply_legacy_slash(cmd, arg, parsed.legacy)
         cmd, arg = self._normalize_slash_cmd(cmd, arg)
-        safe = {"tasks", "task", "status", "help", "jobs"}
+        safe = {"tasks", "task", "status", "help", "jobs", "approve"}
         if cmd not in safe:
-            self._flash_note("still working — /tasks · /status · /help · /jobs")
+            self._flash_note("still working — /tasks · /status · /help · /jobs · /approve")
             return
         self._handle_slash(raw, parsed)
 
