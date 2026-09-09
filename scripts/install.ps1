@@ -1,4 +1,4 @@
-# kite-release-version: 0.9.5
+# kite-release-version: 0.9.6
 # Install Kite on Windows: clone (optional), venv, editable install, env bootstrap.
 param(
     [string]$Dir = "",

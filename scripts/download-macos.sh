@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 0.9.5
+# kite-release-version: 0.9.6
 # Download and install Kite on macOS — curl one-liner entry point.
 #
 #   curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash
