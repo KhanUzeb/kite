@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # kite-release-version: 0.9.6
 # Kite package maintenance (not part of `kite` CLI): update, reinstall, uninstall.
+# Supports global `uv tool` installs and contributor editable .venv checkouts.
 set -euo pipefail
 
 ACTION=""
@@ -8,26 +9,29 @@ INSTALL_DIR=""
 DEV_EXTRAS=1
 REMOVE_VENV=0
 NO_PULL=0
+GLOBAL=0
 
 usage() {
   cat <<'EOF'
 Usage: ./scripts/pkg.sh <update|reinstall|uninstall> [options]
 
 Actions:
-  update      git pull (if repo) + editable pip install
-  reinstall   force reinstall kite in .venv
-  uninstall   pip uninstall kite; optional --remove-venv
+  update      Upgrade global kite tool, or git pull + editable reinstall
+  reinstall   Force reinstall (tool or .venv)
+  uninstall   Remove kite (uv tool uninstall, or pip uninstall)
 
 Options:
-  --dir PATH       Repo root (default: parent of scripts/)
-  --no-dev         Runtime deps only (omit pytest dev extra)
-  --remove-venv    With uninstall: delete .venv after removing package
-  --no-pull        With update: skip git pull
+  --global         Operate on uv tool install (default when kite is a uv tool)
+  --dir PATH       Repo root for editable mode (default: parent of scripts/)
+  --no-dev         Runtime deps only (omit pytest dev extra; editable only)
+  --remove-venv    With uninstall (editable): delete .venv after removing package
+  --no-pull        With update (editable): skip git pull
   -h, --help       Show this help
 
 Examples:
   ./scripts/pkg.sh update
-  ./scripts/pkg.sh reinstall
+  ./scripts/pkg.sh update --global
+  ./scripts/pkg.sh uninstall --global
   ./scripts/pkg.sh uninstall --remove-venv
 EOF
 }
@@ -46,10 +50,14 @@ ensure_uv() {
   exit 1
 }
 
+is_uv_tool_kite() {
+  uv tool list 2>/dev/null | grep -qiE '^kite([[:space:]]|$)' || return 1
+}
+
 activate_venv() {
   local root="$1"
   if [[ ! -f "${root}/.venv/bin/activate" ]]; then
-    echo "No .venv at ${root}. Run ./scripts/install.sh first." >&2
+    echo "No .venv at ${root}. Run ./scripts/install.sh --dev first." >&2
     exit 1
   fi
   # shellcheck disable=SC1091
@@ -79,6 +87,7 @@ esac
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --global) GLOBAL=1; shift ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --no-dev) DEV_EXTRAS=0; shift ;;
     --remove-venv) REMOVE_VENV=1; shift ;;
@@ -88,16 +97,43 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+ensure_uv
+
+if [[ "${GLOBAL}" -eq 0 ]] && [[ -z "${INSTALL_DIR}" ]]; then
+  if is_uv_tool_kite; then
+    GLOBAL=1
+  fi
+fi
+
+if [[ "${GLOBAL}" -eq 1 ]]; then
+  case "${ACTION}" in
+    update)
+      echo "Upgrading kite (uv tool)..."
+      uv tool upgrade kite || uv tool install --force "git+https://github.com/KhanUzeb/kite.git"
+      kite --version 2>/dev/null || true
+      ;;
+    reinstall)
+      echo "Reinstalling kite (uv tool)..."
+      uv tool install --force "git+https://github.com/KhanUzeb/kite.git"
+      kite --version 2>/dev/null || true
+      ;;
+    uninstall)
+      echo "Uninstalling kite (uv tool)..."
+      uv tool uninstall kite
+      echo "Done. ~/.kite/ config and sessions were not removed."
+      ;;
+  esac
+  exit 0
+fi
+
 if [[ -z "${INSTALL_DIR}" ]]; then
   INSTALL_DIR="$(repo_root_from_script)"
 fi
 
 if [[ ! -f "${INSTALL_DIR}/pyproject.toml" ]]; then
-  echo "No pyproject.toml in ${INSTALL_DIR}. Use --dir or run from a kite checkout." >&2
+  echo "No pyproject.toml in ${INSTALL_DIR}. Use --dir, --global, or run from a kite checkout." >&2
   exit 1
 fi
-
-ensure_uv
 
 case "${ACTION}" in
   update)

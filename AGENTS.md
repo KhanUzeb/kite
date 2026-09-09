@@ -52,13 +52,14 @@ scripts/          install.sh, download-macos.sh, install.ps1, lint.sh, build_des
 ## Dev setup
 
 ```bash
-./scripts/install.sh          # macOS/Linux
-# .\scripts\install.ps1       # Windows
+./scripts/install.sh --dev    # macOS/Linux editable checkout
+# .\scripts\install.ps1 -Dev  # Windows
+# curl …/install.sh | bash    # end-user: global CLI via uv tool (any dir)
 pytest                        # always run before PRs
 pytest -v tests/test_foo.py   # single file
 ```
 
-Editable install: `uv pip install -e ".[dev]"`. Config and keys live in **`~/.kite/`** (not this repo). Never commit `.env` or real API keys.
+Editable install: `uv pip install -e ".[dev]"` (or `./scripts/install.sh --dev`). End-user global CLI: `uv tool install "git+…"`. Config and keys live in **`~/.kite/`** (not this repo). Never commit `.env` or real API keys.
 
 ---
 

@@ -1,11 +1,13 @@
 # kite-release-version: 0.9.6
 # Kite package maintenance (not part of `kite` CLI): update, reinstall, uninstall.
+# Supports global `uv tool` installs and contributor editable .venv checkouts.
 param(
     [Parameter(Position = 0, Mandatory = $true)]
     [ValidateSet("update", "reinstall", "uninstall")]
     [string]$Action,
 
     [string]$Dir = "",
+    [switch]$Global,
     [switch]$NoDev,
     [switch]$RemoveVenv,
     [switch]$NoPull
@@ -13,34 +15,24 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Show-Usage {
-    Write-Host @'
-Usage: .\scripts\pkg.ps1 <update|reinstall|uninstall> [options]
-
-Actions:
-  update      git pull (if repo) + editable pip install
-  reinstall   force reinstall kite in .venv
-  uninstall   pip uninstall kite; optional -RemoveVenv
-
-Options:
-  -Dir PATH       Repo root (default: parent of scripts/)
-  -NoDev          Runtime deps only (omit pytest dev extra)
-  -RemoveVenv     With uninstall: delete .venv after removing package
-  -NoPull         With update: skip git pull
-
-Examples:
-  .\scripts\pkg.ps1 update
-  .\scripts\pkg.ps1 reinstall
-  .\scripts\pkg.ps1 uninstall -RemoveVenv
-'@
-}
-
 function Ensure-Uv {
     if (Get-Command uv -ErrorAction SilentlyContinue) { return }
     throw "uv not found. Run .\scripts\install.ps1 first or install uv: https://docs.astral.sh/uv/"
 }
 
-$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+function Test-UvToolKite {
+    try {
+        $list = uv tool list 2>$null | Out-String
+        return ($list -match '(?m)^kite(\s|$)')
+    } catch {
+        return $false
+    }
+}
+
+$scriptRoot = Split-Path -Parent $PSCommandPath
+if (-not $scriptRoot) {
+    $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
 
 function Get-InstallRoot {
     param([string]$Override)
@@ -52,7 +44,7 @@ function Activate-Venv {
     param([string]$Root)
     $activate = Join-Path $Root ".venv\Scripts\Activate.ps1"
     if (-not (Test-Path $activate)) {
-        throw "No .venv at $Root. Run .\scripts\install.ps1 first."
+        throw "No .venv at $Root. Run .\scripts\install.ps1 -Dev first."
     }
     . $activate
 }
@@ -67,12 +59,42 @@ function Install-Editable {
     }
 }
 
-$installRoot = Get-InstallRoot -Override $Dir
-if (-not (Test-Path (Join-Path $installRoot "pyproject.toml"))) {
-    throw "No pyproject.toml in $installRoot. Use -Dir or run from a kite checkout."
+Ensure-Uv
+$useGlobal = $Global
+if (-not $useGlobal -and -not $Dir -and (Test-UvToolKite)) {
+    $useGlobal = $true
 }
 
-Ensure-Uv
+if ($useGlobal) {
+    switch ($Action) {
+        "update" {
+            Write-Host "Upgrading kite (uv tool)..."
+            try {
+                uv tool upgrade kite
+            } catch {
+                uv tool install --force "git+https://github.com/KhanUzeb/kite.git"
+            }
+            try { kite --version } catch { }
+        }
+        "reinstall" {
+            Write-Host "Reinstalling kite (uv tool)..."
+            uv tool install --force "git+https://github.com/KhanUzeb/kite.git"
+            try { kite --version } catch { }
+        }
+        "uninstall" {
+            Write-Host "Uninstalling kite (uv tool)..."
+            uv tool uninstall kite
+            Write-Host "Done. ~/.kite/ config and sessions were not removed."
+        }
+    }
+    exit 0
+}
+
+$installRoot = Get-InstallRoot -Override $Dir
+if (-not (Test-Path (Join-Path $installRoot "pyproject.toml"))) {
+    throw "No pyproject.toml in $installRoot. Use -Dir, -Global, or run from a kite checkout."
+}
+
 $useDev = -not $NoDev
 
 switch ($Action) {
