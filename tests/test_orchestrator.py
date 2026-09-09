@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock
 
 from kite.agent.cancel import CancelToken
@@ -102,3 +103,44 @@ def test_kill_requests_cancel_on_running_task() -> None:
     )
     assert orch.kill("abc12345") is True
     assert token.is_set()
+
+
+def test_run_one_background_returns_immediately() -> None:
+    def slow_runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
+        time.sleep(0.3)
+        return {"exit_status": "Submitted", "submission": "late"}
+
+    orch = SubagentOrchestrator(runner=slow_runner, timeout_seconds=0)
+    started = time.monotonic()
+    out = orch.run_one_background("explore", label="scout")
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.15
+    assert out["background"] is True
+    assert out["job_id"]
+    assert out["dispatch"] == "async"
+
+
+def test_wait_for_collects_background_result() -> None:
+    def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
+        time.sleep(0.05)
+        return {"exit_status": "Submitted", "submission": f"findings: {prompt}"}
+
+    orch = SubagentOrchestrator(runner=runner, timeout_seconds=0)
+    spawned = orch.run_one_background("auth paths", label="scout")
+    job_id = str(spawned["job_id"])
+    out = orch.wait_for([job_id], timeout_seconds=5)
+    assert job_id not in out.get("pending", [])
+    assert "findings" in out["output"]
+    assert out["results"][job_id]["ok"] is True
+
+
+def test_dispatch_auto_async_from_prompt() -> None:
+    def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
+        return {"exit_status": "Submitted", "submission": "ok"}
+
+    orch = SubagentOrchestrator(runner=runner, timeout_seconds=0)
+    out = orch.dispatch(
+        {"prompt": "Run a read-only survey in the background while I continue refactoring."}
+    )
+    assert out.get("background") is True
+    assert out.get("dispatch_reason") == "auto-async"

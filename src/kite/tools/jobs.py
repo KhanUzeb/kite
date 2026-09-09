@@ -36,6 +36,7 @@ class BackgroundJob:
     proc: subprocess.Popen[str] | None = field(default=None, repr=False)
     cancel: CancelToken | None = field(default=None, repr=False)
     log: deque[str] = field(default_factory=lambda: deque(maxlen=_LOG_RING), repr=False)
+    result_payload: dict[str, Any] | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def display_label(self, *, width: int = 48) -> str:
@@ -256,18 +257,28 @@ class JobRegistry:
         )
         return job
 
+    def set_subagent_result(self, job_id: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.result_payload = dict(payload)
+
     def mark_done(
         self,
         job_id: str,
         *,
         ok: bool = True,
         status: JobStatus | None = None,
+        result_payload: dict[str, Any] | None = None,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None or job.status != "running":
                 return
             job.status = status or ("done" if ok else "failed")
+            if result_payload is not None:
+                job.result_payload = dict(result_payload)
             kind = job.kind
             label = job.display_label()
         self._emit(
