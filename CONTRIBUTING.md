@@ -7,19 +7,20 @@ Thanks for considering a contribution. Kite is a slim, hackable coding-agent har
 ```bash
 git clone https://github.com/KhanUzeb/kite.git
 cd kite
-./scripts/install.sh            # macOS/Linux (from a clone)
-./scripts/download-macos.sh     # macOS curl one-liner entry (see README)
-# .\scripts\install.ps1           # Windows PowerShell
+./scripts/install.sh --dev      # editable .venv (or plain ./scripts/install.sh in a checkout)
+# .\scripts\install.ps1 -Dev    # Windows PowerShell
 ```
 
-This creates a venv, installs Kite in editable mode, seeds `~/.kite/.env` from `.env.example` when missing, and bootstraps `~/.kite/` (sessions, checkpoints, skills, config). Use `./scripts/install.sh --verify` to run pytest after install.
+End users (global CLI, any project dir): `curl …/install.sh | bash` or `irm …/install.ps1 | iex` — see README. That path uses `uv tool install`, not a local clone.
+
+`--dev` creates a venv, installs Kite in editable mode, seeds `~/.kite/.env` from `.env.example` when missing, and bootstraps `~/.kite/`. Use `./scripts/install.sh --dev --verify` to run pytest after install.
 
 Package maintenance (not `kite` CLI subcommands):
 
 ```bash
-./scripts/pkg.sh update       # git pull + editable reinstall
-./scripts/pkg.sh reinstall    # force reinstall in .venv
-./scripts/pkg.sh uninstall    # pip uninstall (--remove-venv optional)
+./scripts/pkg.sh update       # uv tool upgrade, or git pull + editable reinstall
+./scripts/pkg.sh reinstall
+./scripts/pkg.sh uninstall    # --global or --remove-venv as needed
 ```
 
 Windows: `.\scripts\pkg.ps1 update|reinstall|uninstall`

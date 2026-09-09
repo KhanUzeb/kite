@@ -51,61 +51,60 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 
 ## Setup
 
-### Quick install (any workstation)
+### Quick install (global — works anywhere on your machine)
 
-Clone and run the install script once. It creates a venv, installs Kite in editable mode, and seeds `~/.kite/.env` from `.env.example` if needed.
+Install once per user. Puts `kite` on your PATH. Then open any folder and run it — no clone, no `.venv` activate.
 
-**macOS / Linux**
+**macOS / Ubuntu / Linux / WSL:**
 
 ```bash
-git clone https://github.com/KhanUzeb/kite.git
-cd kite
-./scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash
 ```
 
-Or download and install in one step (installs to `~/kite` by default):
-
-**macOS:**
+With guided setup:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash
-```
-
-With guided setup on first install:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash -s -- --setup
-```
-
-**Linux:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash -s -- --setup
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-git clone https://github.com/KhanUzeb/kite.git
-cd kite
-.\scripts\install.ps1
-```
-
-Or:
-
-```powershell
 irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
 ```
 
-Custom location: `KITE_INSTALL_DIR=~/tools/kite ./scripts/install.sh` or `.\scripts\install.ps1 -Dir C:\tools\kite`.
+If ExecutionPolicy blocks you:
 
-### Manual install
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex"
+```
+
+Needs: `curl` + `git` (macOS: `xcode-select --install`; Ubuntu: `sudo apt-get install -y curl git`).
+
+Then from **any** directory:
 
 ```bash
-uv venv --python 3.12
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # macOS/Linux
-uv pip install -e ".[dev]"
+cd ~/projects/my-app    # or C:\dev\my-app
+kite
+```
+
+Update: `uv tool upgrade kite` · Uninstall: `uv tool uninstall kite`
+
+### Contributor install (optional)
+
+Only if you are developing kite itself:
+
+```bash
+git clone https://github.com/KhanUzeb/kite.git && cd kite
+./scripts/install.sh --dev          # still puts kite on PATH (editable)
+# .\scripts\install.ps1 -Dev
+```
+
+### Manual global install
+
+```bash
+uv tool install "git+https://github.com/KhanUzeb/kite.git"
+uv tool update-shell
 ```
 
 ### First run
@@ -139,17 +138,18 @@ kite runtime-config
 
 ### Use Kite on any project 
 
-Install Kite once (script or manual install above). After that you do **not** need to be inside the kite checkout.
+Install once (global). After that `kite` is a normal system command for your user — any drive, any folder.
 
-1. **Activate the venv** (or add its `bin` / `Scripts` folder to your `PATH` — the install script prints the exact path).
-2. **`cd` into the project you want to work on.** Kite uses your current directory as the workspace (tools, git status, `.kite/` overlays, `AGENTS.md`, etc.).
-3. Run `kite`, `kite chat`, or `kite run "…"` from there.
+1. **`cd` into the project.** Workspace = that directory.
+2. Run `kite` / `kite chat` / `kite run "…"`.
 
 ```bash
 cd ~/projects/my-app
-kite                          # REPL in my-app
+kite
 kite run "add error handling"
 ```
+
+If `kite` is missing after install, open a **new** terminal (PATH was updated). Or: `uv tool update-shell`.
 
 To work on a directory **without** changing shell cwd, pass `--cwd`:
 
@@ -241,7 +241,7 @@ kite subagents [--show id] [--init id]                        # subagent persona
 
 Command map: [kite_commands.md](kite_commands.md)
 
-Install on a new machine: `scripts/install.sh` (macOS/Linux) or `scripts/install.ps1` (Windows). See [Setup](#setup).
+Install on a new machine: curl/irm one-liner (global CLI) or `scripts/install.sh --dev` for contributors. See [Setup](#setup).
 
 Home: `~/.kite/` (`sessions/`, `trajectories/`, `configs/`, `commands/`, `skills/`, `plugins/`, `memory/`, `catalog.toml`, `config.toml`, `.env`). Project overlays: `.kite/commands`, `.kite/plugins`, `.kite/memory`.
 
@@ -291,6 +291,6 @@ src/kite/
   skills/ commands/ plugins/
   eval/                    # ReplayBundle + acceptance criteria (no live LLM)
 scripts/
-  install.sh download-macos.sh install.ps1   # clone + venv + editable install
+  install.sh download.sh download-macos.sh install.ps1   # global uv tool CLI (mac/linux/win)
 tests/                     # pytest suite (~440+ tests, no live LLM)
 ```

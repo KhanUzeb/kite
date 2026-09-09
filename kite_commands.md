@@ -425,47 +425,35 @@ Kite is **local-first**: credentials stay on disk under `~/.kite/` (or provider 
 
 ## 6. Install & development
 
-### Install (any workstation)
+### Install (global — any workstation)
+
+Install once per user. `kite` is then available from any directory.
+
+**macOS / Ubuntu / Linux / WSL:**
 
 ```bash
-git clone https://github.com/KhanUzeb/kite.git && cd kite
-./scripts/install.sh                    # macOS/Linux
-# .\scripts\install.ps1                 # Windows PowerShell
-```
-
-Package maintenance (not `kite` CLI subcommands):
-
-```bash
-./scripts/pkg.sh update       # git pull + editable reinstall
-./scripts/pkg.sh reinstall
-./scripts/pkg.sh uninstall    # optional --remove-venv
-# Windows: .\scripts\pkg.ps1 update|reinstall|uninstall
-```
-
-One-liner (default install dir `~/kite` or `%USERPROFILE%\kite`):
-
-**macOS:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash
-curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download-macos.sh | bash -s -- --setup
-```
-
-**Linux:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash -s -- --setup
 ```
 
 **Windows:**
 
 ```powershell
 irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
+# If blocked: powershell -NoProfile -ExecutionPolicy Bypass -Command "irm …/install.ps1 | iex"
 ```
 
-Custom dir: `KITE_INSTALL_DIR=~/tools/kite ./scripts/install.sh` or `.\scripts\install.ps1 -Dir C:\tools\kite`.
+Needs `curl` + `git`. Update / uninstall: `uv tool upgrade kite` · `uv tool uninstall kite`
 
-Manual: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"`. Then `kite setup` (or `kite providers` + `kite models --select`).
+Contributor (optional): `./scripts/install.sh --dev` still puts `kite` on PATH (editable).
+
+```bash
+./scripts/pkg.sh update       # uv tool upgrade (or editable reinstall)
+./scripts/pkg.sh uninstall
+# Windows: .\scripts\pkg.ps1 update|reinstall|uninstall
+```
+
+Manual: `uv tool install "git+https://github.com/KhanUzeb/kite.git"` then `uv tool update-shell`. Then `kite setup`.
 
 ### CI
 
@@ -473,7 +461,7 @@ GitHub Actions (`.github/workflows/tests.yml`) runs `pytest` on every push and p
 
 ### Use on any project (not the kite checkout)
 
-Install once. Activate the venv (install script prints the path; or add `.venv/bin` / `.venv\Scripts` to `PATH`).
+Install once (one-liner). After that, `kite` is on PATH — no need to activate a venv or sit inside the kite repo.
 
 | What you do | Effect |
 |-------------|--------|
