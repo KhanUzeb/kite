@@ -59,6 +59,78 @@ def context7_api_key() -> str | None:
     return key or None
 
 
+def web_tool_api_key(name: str) -> str | None:
+    """Optional Tavily / Exa / Firecrawl key from ~/.kite/.env."""
+    from kite.tools.web_providers import resolve_web_tool_env
+
+    env = resolve_web_tool_env(name)
+    if not env:
+        return None
+    load_kite_env()
+    key = (os.getenv(env) or "").strip()
+    return key or None
+
+
+def login_web_tool_key(
+    name: str,
+    *,
+    console: Console | None = None,
+) -> tuple[int, str, str | None]:
+    """Prompt and save a web-tool API key (tavily / exa / firecrawl)."""
+    from kite.tools.web_providers import WEB_TOOL_ENVS, resolve_web_tool_env
+
+    key_name = (name or "").strip().lower()
+    env_var = resolve_web_tool_env(key_name)
+    if not env_var:
+        known = ", ".join(sorted(WEB_TOOL_ENVS))
+        return 2, f"unknown web tool key '{name}' — try: {known}", None
+
+    path = env_file_path()
+    replacing = bool(web_tool_api_key(key_name))
+    if console is not None:
+        console.print(
+            f"[kite.brand]{key_name}[/] → save [cyan]{env_var}[/] to [dim]{path}[/]"
+            + (" (replace)" if replacing else "")
+        )
+    secret, err = prompt_api_key(env_var, replacing=replacing, console=console)
+    if secret is None and err is None:
+        return 130, "cancelled", None
+    if err:
+        return 2, err, None
+    saved = write_api_key(env_var, secret)
+    msg = f"saved {env_var} → {saved}  ({mask_api_key_fingerprint(secret)})"
+    return 0, msg, key_name
+
+
+def logout_web_tool_key(name: str) -> tuple[int, str]:
+    """Remove a web-tool API key from ~/.kite/.env."""
+    from kite.tools.web_providers import WEB_TOOL_ENVS, resolve_web_tool_env
+
+    key_name = (name or "").strip().lower()
+    env_var = resolve_web_tool_env(key_name)
+    if not env_var:
+        known = ", ".join(sorted(WEB_TOOL_ENVS))
+        return 2, f"unknown web tool key '{name}' — try: {known}"
+    if remove_api_key(env_var):
+        return 0, f"removed {env_var} from {env_file_path()}"
+    return 0, f"no key on file for {key_name} ({env_var})"
+
+
+def configured_web_tool_keys() -> list[tuple[str, bool, str]]:
+    """(name, set?, env_var) rows for Tavily / Exa / Firecrawl."""
+    from kite.tools.web_providers import WEB_TOOL_ENVS
+
+    rows: list[tuple[str, bool, str]] = []
+    for name, env_var in WEB_TOOL_ENVS.items():
+        rows.append((name, bool(web_tool_api_key(name)), env_var))
+    return rows
+
+
+def web_tool_key_fingerprint(name: str) -> str:
+    key = web_tool_api_key(name)
+    return mask_api_key_fingerprint(key) if key else ""
+
+
 def provider_credential_status(*, ok: bool, env_col: str) -> str:
     """Human-readable credential status for CLI/REPL tables."""
     if env_col == "local":
@@ -338,6 +410,12 @@ def login_provider(
     console: Console | None = None,
 ) -> tuple[int, str, str | None]:
     """Prompt for a key and save to ~/.kite/.env. Returns (exit_code, message, provider_name)."""
+    from kite.tools.web_providers import resolve_web_tool_env
+
+    raw = (provider or "").strip().lower()
+    if resolve_web_tool_env(raw):
+        return login_web_tool_key(raw, console=console)
+
     catalog = load_catalog()
     try:
         resolved = resolve_byos_provider_name(provider)
@@ -395,6 +473,12 @@ def login_provider(
 
 
 def logout_provider(provider: str, *, byos_aliases: bool = False) -> tuple[int, str]:
+    from kite.tools.web_providers import resolve_web_tool_env
+
+    raw = (provider or "").strip().lower()
+    if resolve_web_tool_env(raw):
+        return logout_web_tool_key(raw)
+
     try:
         resolver = resolve_byos_provider_name if byos_aliases else resolve_provider_name
         resolved = resolver(provider)

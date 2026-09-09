@@ -1,8 +1,8 @@
-"""Free web search and fetch — no API keys required (stdlib urllib).
+"""Free web search and fetch — DuckDuckGo by default; paid APIs when keyed.
 
-websearch: DuckDuckGo HTML results (+ instant API fallback).
-webfetch:  fetch one URL and return extracted readable text (not raw HTML soup).
-webcrawl:  same-origin crawl with depth/page limits.
+websearch: Tavily → Exa → Firecrawl Search → DuckDuckGo (auto).
+webfetch:  Firecrawl scrape when FIRECRAWL_API_KEY set, else stdlib extract.
+webcrawl:  Firecrawl crawl when keyed, else same-origin stdlib crawl.
 """
 
 from __future__ import annotations
@@ -326,6 +326,33 @@ def webfetch(
     if err:
         return {"ok": False, "error": err, "output": err, "url": target}
 
+    if extract:
+        try:
+            from kite.tools.web_providers import firecrawl_api_key, firecrawl_scrape
+
+            key = firecrawl_api_key()
+            if key:
+                scraped = firecrawl_scrape(target, api_key=key, timeout=max(1, int(timeout)))
+                if scraped:
+                    text = scraped.get("output") or ""
+                    # Re-apply max_chars on markdown body after the header lines.
+                    body = text
+                    if "\n\n" in text:
+                        head, md = text.split("\n\n", 1)
+                        md, truncated = _truncate_middle(md, max(500, min(int(max_chars), 80_000)))
+                        scraped["output"] = head + "\n\n" + md
+                        scraped["truncated"] = truncated
+                        scraped["chars"] = len(md)
+                    if include_links and scraped.get("links"):
+                        pass
+                    elif not include_links:
+                        scraped["links"] = []
+                    return scraped
+        except Exception as exc:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("kite.tools.web").debug("firecrawl webfetch failed: %s", exc)
+
     raw, content_type, final_url, fetch_err = _fetch_url(target, timeout=max(1, int(timeout)))
     if fetch_err:
         return {"ok": False, "error": fetch_err, "output": fetch_err, "url": target}
@@ -644,12 +671,24 @@ def _ddg_html_search(query: str) -> tuple[str | None, str, str | None]:
 
 
 def websearch(query: str, *, max_results: int = 8) -> dict[str, Any]:
-    """Search the web via DuckDuckGo (no API key)."""
+    """Search the web — paid providers when keyed, else DuckDuckGo."""
     query = query.strip()
     if not query:
         return {"ok": False, "error": "query required", "output": "query required"}
 
     max_results = max(1, min(int(max_results), 15))
+
+    try:
+        from kite.tools.web_providers import paid_websearch
+
+        paid = paid_websearch(query, max_results=max_results, preference="auto")
+        if paid:
+            return paid
+    except Exception as exc:  # noqa: BLE001 — never block free search
+        import logging
+
+        logging.getLogger("kite.tools.web").debug("paid websearch failed: %s", exc)
+
     instant_hits = _ddg_instant(query)
     body, source, err = _ddg_html_search(query)
     if err and not instant_hits:
@@ -706,7 +745,7 @@ def webcrawl(
     max_depth: int = 1,
     same_origin: bool = True,
 ) -> dict[str, Any]:
-    """Crawl starting URL — fetch pages and extract text + links (free, stdlib)."""
+    """Crawl starting URL — Firecrawl when keyed, else stdlib fetch."""
     start = unwrap_tracking_url(url.strip())
     blocked = _url_blocked(start)
     if blocked:
@@ -714,6 +753,20 @@ def webcrawl(
 
     max_pages = max(1, min(int(max_pages), 12))
     max_depth = max(0, min(int(max_depth), 3))
+
+    try:
+        from kite.tools.web_providers import firecrawl_api_key, firecrawl_crawl
+
+        key = firecrawl_api_key()
+        if key:
+            crawled = firecrawl_crawl(start, api_key=key, max_pages=max_pages)
+            if crawled and crawled.get("ok"):
+                return crawled
+    except Exception as exc:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("kite.tools.web").debug("firecrawl webcrawl failed: %s", exc)
+
     origin = urlparse(start)
     origin_key = f"{origin.scheme}://{origin.netloc}"
 
