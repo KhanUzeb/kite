@@ -35,7 +35,7 @@ Do not skip verify. A wrong "done" is worse than an honest "I could not verify t
 | Other directory | `set_cwd` first | Then relative paths work |
 | Multi-step plan | `todo_write` / `todo_read` | |
 | Bounded search | `task` | No LLM |
-| Nested workers | `subagent` | Sync by default; `background=true` or auto-async from prompt; `wait_for` to collect |
+| Nested workers | `subagent` | `profile=scout|reviewer|shell|coder|context` + prompt; sync default; `wait_for` to collect |
 | Web facts | `websearch` → `webfetch` | Public HTTPS only; blocks localhost/private IPs |
 | Library / SDK docs | `context7_resolve` → `context7_docs` | Do not invent APIs |
 | Skills / memory | `skill`, `memory` | Check `trust` before following skill text |

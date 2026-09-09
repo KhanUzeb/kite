@@ -66,6 +66,8 @@ class SubagentTask:
     id: str
     prompt: str
     label: str
+    profile: str = ""
+    role: str = ""
     status: str = "queued"  # queued | running | finished | failed | killed
     exit_status: str = ""
     summary: str = ""
@@ -82,6 +84,8 @@ class SubagentTask:
         return {
             "id": self.id,
             "label": self.label,
+            "profile": self.profile,
+            "role": self.role,
             "status": self.status,
             "exit_status": self.exit_status,
             "ok": self.ok,
@@ -142,17 +146,44 @@ class SubagentOrchestrator:
             self._worker_seq += 1
             return self._worker_seq, worker_glyph(self._worker_seq)
 
-    def _call_runner(self, prompt: str, cancel: CancelToken) -> dict[str, Any]:
-        try:
-            return self.runner(prompt, cancel=cancel)
-        except TypeError:
-            return self.runner(prompt)
+    def _call_runner(self, task: SubagentTask) -> dict[str, Any]:
+        from kite.agent.subagent_profiles import resolve_subagent_task
 
-    def _run_with_timeout(self, prompt: str, cancel: CancelToken) -> dict[str, Any]:
+        cancel = task.cancel
+        assert cancel is not None
+        composed, resolved_role, resolved_label = resolve_subagent_task(
+            prompt=task.prompt,
+            profile=task.profile,
+            role=task.role,
+            label=task.label,
+        )
+        if resolved_label:
+            task.label = resolved_label
+        if resolved_role:
+            task.role = resolved_role
+        kwargs = {
+            "cancel": cancel,
+            "profile": task.profile,
+            "role": resolved_role,
+            "label": task.label,
+            "subagent_id": task.id,
+            "glyph": task.glyph,
+        }
+        try:
+            return self.runner(composed, **kwargs)
+        except TypeError:
+            try:
+                return self.runner(composed, cancel=cancel)
+            except TypeError:
+                return self.runner(composed)
+
+    def _run_with_timeout(self, task: SubagentTask) -> dict[str, Any]:
         if self.timeout_seconds <= 0:
-            return self._call_runner(prompt, cancel)
+            return self._call_runner(task)
         pool = self._runner_executor()
-        fut: Future[dict[str, Any]] = pool.submit(self._call_runner, prompt, cancel)
+        fut: Future[dict[str, Any]] = pool.submit(self._call_runner, task)
+        cancel = task.cancel
+        assert cancel is not None
         return fut.result(timeout=self.timeout_seconds)
 
     def _result_payload(self, task: SubagentTask, **fields: Any) -> dict[str, Any]:
@@ -257,11 +288,11 @@ class SubagentOrchestrator:
         else:
             self.jobs.set_subagent_result(task.id, out)
 
-    def _execute_task(self, task: SubagentTask, prompt: str) -> dict[str, Any]:
+    def _execute_task(self, task: SubagentTask) -> dict[str, Any]:
         cancel = task.cancel
         assert cancel is not None
         try:
-            result = self._run_with_timeout(prompt, cancel)
+            result = self._run_with_timeout(task)
             if cancel.is_set():
                 out = self._finish_task(task, cancelled=True)
             else:
@@ -278,6 +309,8 @@ class SubagentOrchestrator:
             "subagent_end",
             id=task.id,
             label=task.label,
+            profile=task.profile,
+            role=task.role,
             ok=out.get("ok", False),
             quality=out.get("quality", ""),
             preview=str(out.get("output") or "")[:120],
@@ -294,6 +327,8 @@ class SubagentOrchestrator:
         prompt: str,
         *,
         label: str = "",
+        profile: str = "",
+        role: str = "",
         worker: int = 0,
         glyph: str = "",
         background: bool = False,
@@ -307,6 +342,8 @@ class SubagentOrchestrator:
             id=tid,
             prompt=prompt,
             label=title,
+            profile=profile,
+            role=role,
             status="running",
             cancel=cancel,
             worker=worker,
@@ -321,6 +358,8 @@ class SubagentOrchestrator:
             "subagent_start",
             id=tid,
             label=title,
+            profile=profile,
+            role=role,
             prompt=prompt[:300],
             worker=worker,
             glyph=task.glyph,
@@ -329,33 +368,66 @@ class SubagentOrchestrator:
         )
         return task
 
-    def _run_worker(self, prompt: str, *, label: str, worker: int, glyph: str) -> dict[str, Any]:
+    def _run_worker(
+        self,
+        prompt: str,
+        *,
+        label: str,
+        profile: str = "",
+        role: str = "",
+        worker: int,
+        glyph: str,
+    ) -> dict[str, Any]:
         task = self._begin_task(
             prompt,
             label=label,
+            profile=profile,
+            role=role,
             worker=worker,
             glyph=glyph,
             background=False,
         )
-        return self._execute_task(task, prompt)
+        return self._execute_task(task)
 
     def run_one(
         self,
         prompt: str,
         *,
         label: str = "",
+        profile: str = "",
+        role: str = "",
         worker: int = 0,
         glyph: str = "",
     ) -> dict[str, Any]:
         if not worker:
             worker, glyph = self._next_worker()
-        return self._run_worker(prompt, label=label or prompt[:60].replace("\n", " "), worker=worker, glyph=glyph)
+        return self._run_worker(
+            prompt,
+            label=label or prompt[:60].replace("\n", " "),
+            profile=profile,
+            role=role,
+            worker=worker,
+            glyph=glyph,
+        )
 
-    def run_one_background(self, prompt: str, *, label: str = "") -> dict[str, Any]:
-        task = self._begin_task(prompt, label=label, background=True)
+    def run_one_background(
+        self,
+        prompt: str,
+        *,
+        label: str = "",
+        profile: str = "",
+        role: str = "",
+    ) -> dict[str, Any]:
+        task = self._begin_task(
+            prompt,
+            label=label,
+            profile=profile,
+            role=role,
+            background=True,
+        )
 
         def _work() -> None:
-            self._execute_task(task, prompt)
+            self._execute_task(task)
 
         threading.Thread(target=_work, daemon=True, name=f"kite-subagent-{task.id}").start()
         return {
@@ -435,11 +507,20 @@ class SubagentOrchestrator:
             "dispatch": "collect",
         }
 
-    def run_parallel(self, prompts: list[str], *, labels: list[str] | None = None) -> dict[str, Any]:
+    def run_parallel(
+        self,
+        prompts: list[str],
+        *,
+        labels: list[str] | None = None,
+        profiles: list[str] | None = None,
+        roles: list[str] | None = None,
+    ) -> dict[str, Any]:
         if not prompts:
             return {"ok": False, "error": "prompts required", "output": "prompts required"}
         workers = min(self.max_workers, len(prompts))
         labels = labels or [f"worker-{i}" for i in range(1, len(prompts) + 1)]
+        profiles = profiles or [""] * len(prompts)
+        roles = roles or [""] * len(prompts)
         self._emit(
             "orchestrator_start",
             total=len(prompts),
@@ -456,6 +537,8 @@ class SubagentOrchestrator:
                     self._run_worker,
                     str(p),
                     label=str(labels[i - 1]),
+                    profile=str(profiles[i - 1]) if i - 1 < len(profiles) else "",
+                    role=str(roles[i - 1]) if i - 1 < len(roles) else "",
                     worker=worker_slots[i - 1][0],
                     glyph=worker_slots[i - 1][1],
                 ): i
@@ -501,13 +584,29 @@ class SubagentOrchestrator:
             "manager": self.manager_view(),
         }
 
-    def run_parallel_background(self, prompts: list[str], *, labels: list[str] | None = None) -> dict[str, Any]:
+    def run_parallel_background(
+        self,
+        prompts: list[str],
+        *,
+        labels: list[str] | None = None,
+        profiles: list[str] | None = None,
+        roles: list[str] | None = None,
+    ) -> dict[str, Any]:
         if not prompts:
             return {"ok": False, "error": "prompts required", "output": "prompts required"}
         labels = labels or [f"worker-{i}" for i in range(1, len(prompts) + 1)]
+        profiles = profiles or [""] * len(prompts)
+        roles = roles or [""] * len(prompts)
         spawned: list[dict[str, Any]] = []
         for i, prompt in enumerate(prompts, 1):
-            spawned.append(self.run_one_background(str(prompt), label=str(labels[i - 1])))
+            spawned.append(
+                self.run_one_background(
+                    str(prompt),
+                    label=str(labels[i - 1]),
+                    profile=str(profiles[i - 1]) if i - 1 < len(profiles) else "",
+                    role=str(roles[i - 1]) if i - 1 < len(roles) else "",
+                )
+            )
         job_ids = [str(s["job_id"]) for s in spawned]
         lines = [f"crew spawned · {len(job_ids)} background workers"]
         for s in spawned:
@@ -539,6 +638,19 @@ class SubagentOrchestrator:
             return self.wait_for([str(x) for x in wait_for], timeout_seconds=timeout)
 
         background, dispatch_reason = resolve_dispatch_mode(args)
+        profile = str(args.get("profile") or "")
+        role = str(args.get("role") or "")
+        profiles = args.get("profiles")
+        roles = args.get("roles")
+        if isinstance(profiles, list):
+            profiles = [str(x) for x in profiles]
+        else:
+            profiles = None
+        if isinstance(roles, list):
+            roles = [str(x) for x in roles]
+        else:
+            roles = None
+
         prompts = args.get("prompts") or args.get("tasks")
         if isinstance(prompts, list) and prompts:
             labels = args.get("labels")
@@ -546,10 +658,22 @@ class SubagentOrchestrator:
                 labels = [str(x) for x in labels]
             else:
                 labels = None
+            crew_profiles = profiles or ([profile] * len(prompts) if profile else None)
+            crew_roles = roles or ([role] * len(prompts) if role else None)
             if background:
-                out = self.run_parallel_background([str(p) for p in prompts], labels=labels)
+                out = self.run_parallel_background(
+                    [str(p) for p in prompts],
+                    labels=labels,
+                    profiles=crew_profiles,
+                    roles=crew_roles,
+                )
             else:
-                out = self.run_parallel([str(p) for p in prompts], labels=labels)
+                out = self.run_parallel(
+                    [str(p) for p in prompts],
+                    labels=labels,
+                    profiles=crew_profiles,
+                    roles=crew_roles,
+                )
             out["dispatch_reason"] = dispatch_reason
             self._attach_dispatch_hint(out, dispatch_reason)
             return out
@@ -560,9 +684,19 @@ class SubagentOrchestrator:
             return {"ok": False, "error": msg, "output": msg}
 
         if background:
-            out = self.run_one_background(prompt, label=str(args.get("label") or ""))
+            out = self.run_one_background(
+                prompt,
+                label=str(args.get("label") or ""),
+                profile=profile,
+                role=role,
+            )
         else:
-            out = self.run_one(prompt, label=str(args.get("label") or ""))
+            out = self.run_one(
+                prompt,
+                label=str(args.get("label") or ""),
+                profile=profile,
+                role=role,
+            )
         out["dispatch"] = "async" if background else "sync"
         out["dispatch_reason"] = dispatch_reason
         self._attach_dispatch_hint(out, dispatch_reason)

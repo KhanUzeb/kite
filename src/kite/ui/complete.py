@@ -560,6 +560,8 @@ def _toolbar_html(state: SessionUiState) -> Any:
             bits.append(f"budget ≤${state.budget_limit:.2f}")
         if state.live_terminal:
             bits.append("live")
+        if state.live_subagents:
+            bits.append("live-agents")
         bits.append("/tasks")
         hints = f"  {glyph('sep')} " + f"  {glyph('sep')} ".join(bits)
     main = (

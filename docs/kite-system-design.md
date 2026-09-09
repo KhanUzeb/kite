@@ -4,7 +4,7 @@
 **Stack:** Python 3.12 · LiteLLM · Rich · uv
 **Lineage:** mini-swe-agent (loop) × tau / Hugging Face (tools, events, catalog, skills, sessions)
 **Companion command reference:** [kite_commands.md](../kite_commands.md)
-**Install:** [README.md](../README.md#setup) · `scripts/install.sh` / `scripts/install.ps1`
+**Install:** [README.md](../README.md#setup) · `scripts/download-macos.sh` / `scripts/install.sh` / `scripts/install.ps1`
 **Generated for:** a weekend hybrid slim coding-agent harness
 
 ---
@@ -493,7 +493,8 @@ REPL slash commands: builtins (`/plan` `/build` `/select` `/thinking` `/fast` `/
 ### Running tests
 
 ```bash
-./scripts/install.sh          # macOS/Linux — or .\scripts\install.ps1 on Windows
+curl -fsSL …/download-macos.sh | bash   # macOS one-liner
+./scripts/install.sh          # macOS/Linux from clone — or .\scripts\install.ps1 on Windows
 pytest
 ```
 

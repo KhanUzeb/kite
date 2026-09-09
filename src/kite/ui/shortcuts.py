@@ -30,7 +30,8 @@ while a turn is running
   Ctrl+U          dequeue queued messages into composer
   F8 / Esc v      attach clipboard to next queued turn
   /tasks          running work + queue
-  /live           stream bash/job output
+  /live           stream bash output
+  /live agents    stream subagent crew activity
 """
 
 APPROVAL_SHORTCUTS = """\

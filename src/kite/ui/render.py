@@ -37,12 +37,27 @@ from kite.ui.tool_cards import (
     detail_from_args,
     line_count_from_output,
     render_bash_command_block,
+    render_code_edit_preview,
     render_parallel_batch_header,
     render_stream_tool_preview,
     render_tool_card_done,
     render_tool_card_start,
     render_tool_summary,
 )
+
+
+def _subagent_prefix(p: dict[str, Any]) -> str:
+    glyph = str(p.get("subagent_glyph") or "")
+    label = str(p.get("subagent_label") or p.get("subagent_id") or "")
+    if not label and not glyph:
+        return ""
+    return f"{glyph} {label}  ·  " if glyph else f"{label}  ·  "
+
+
+def _live_stream_enabled(state: SessionUiState, p: dict[str, Any]) -> bool:
+    if p.get("subagent_id") or p.get("subagent_label"):
+        return state.live_subagents or state.live_terminal
+    return state.live_terminal
 
 
 def _format_duration(ms: int | None) -> str:
@@ -516,11 +531,20 @@ class RunDisplay:
             detail = tool
         self.state.set_running(label=detail, kind=tool)
         self.state.touch(force=True)
+        sub_prefix = _subagent_prefix(p)
+        if sub_prefix and self.state.live_subagents:
+            self.console.print(
+                Text(f"{GUTTER}{sub_prefix}{tool}", style="kite.plan")
+            )
         self.console.print(render_tool_card_start(card))
         if reason:
             self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted italic"))
         if tool == "bash" and args.get("command"):
             self.console.print(render_bash_command_block(str(args["command"])))
+        elif tool in {"write", "edit"}:
+            preview = render_code_edit_preview(tool, args)
+            if preview is not None:
+                self.console.print(preview)
         self._spin(True, f"working  {tool}")
 
     def _on_tool_progress(self, p: dict[str, Any]) -> None:
@@ -542,9 +566,13 @@ class RunDisplay:
         if not line:
             return
         self.state.set_activity_preview(line)
-        if not self.state.live_terminal:
+        if not _live_stream_enabled(self.state, p):
             return
-        self.console.print(Text(f"{GUTTER}{GUTTER}{line}", style="kite.terminal"), highlight=False)
+        prefix = _subagent_prefix(p)
+        self.console.print(
+            Text(f"{GUTTER}{GUTTER}{prefix}{line}", style="kite.terminal"),
+            highlight=False,
+        )
 
     def _on_job_output(self, p: dict[str, Any]) -> None:
         from kite.env.shell import sanitize_shell_line
@@ -553,10 +581,10 @@ class RunDisplay:
         if not line:
             return
         self.state.set_activity_preview(line)
-        if not self.state.live_terminal:
+        if not _live_stream_enabled(self.state, p):
             return
         job_id = str(p.get("id") or "")
-        prefix = f"[{job_id}] " if job_id else ""
+        prefix = _subagent_prefix(p) or (f"[{job_id}] " if job_id else "")
         self.console.print(
             Text(f"{GUTTER}{GUTTER}{prefix}{line}", style="kite.terminal"),
             highlight=False,
@@ -1032,11 +1060,17 @@ class RunDisplay:
         self._end_stream_line()
         label = str(p.get("label") or p.get("id") or "subagent")
         glyph = str(p.get("glyph") or "◆")
+        profile = str(p.get("profile") or "")
         self.state.active_subagents += 1
         self._touch_state()
+        suffix = f"  ·  {profile}" if profile else ""
         self.console.print(
-            Text(f"{GUTTER}{SYMBOL_COLLAPSE} {glyph}  {label}", style="kite.plan")
+            Text(f"{GUTTER}{SYMBOL_COLLAPSE} {glyph}  {label}{suffix}", style="kite.plan")
         )
+        if self.state.live_subagents:
+            prompt = str(p.get("prompt") or "")[:120]
+            if prompt:
+                self.console.print(Text(f"{GUTTER}{GUTTER}{prompt}", style="kite.muted"))
         self._spin(True, f"{glyph}  {label}")
 
     def _on_subagent_end(self, p: dict[str, Any]) -> None:
