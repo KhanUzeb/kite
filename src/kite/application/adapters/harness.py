@@ -39,6 +39,8 @@ def run_spec_from_harness_config(config: HarnessConfig, task: str, *, workspace:
         interactive=config.interactive,
         role=config.role,
         long_task=config.long_task,
+        memory_in_prompt=config.memory_in_prompt,
+        goal_objective=config.goal_objective,
         system_prompt=config.system_prompt,
         config_name=config.config_name,
         output_path=config.output_path,
@@ -74,4 +76,6 @@ def harness_config_from_run_spec(spec: RunSpec) -> HarnessConfig:
         attachments=spec.attachments,
         execution_mode=spec.execution_mode,
         long_task=spec.long_task,
+        memory_in_prompt=spec.memory_in_prompt,
+        goal_objective=spec.goal_objective,
     )

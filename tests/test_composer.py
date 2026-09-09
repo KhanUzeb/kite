@@ -174,7 +174,7 @@ def test_toolbar_busy_and_approval_states() -> None:
         tps=42.0,
     )
     busy_html = str(_toolbar_html(busy))
-    assert "Esc stop" in busy_html
+    assert "Esc/Ctrl+C stop" in busy_html
     assert "steer 1" in busy_html
     assert "follow-up 1" in busy_html
     assert "next steer: fix the flaky test" in busy_html

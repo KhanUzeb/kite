@@ -77,6 +77,7 @@ class ChatSession:
         self.policy = None
         self.git = GitCheckpoints.open(cwd)
         self.todos = TodoStore()
+        self._goal = None
         self._memory = None
         self._memory_in_prompt = False
         self.attachments: list = []
@@ -85,6 +86,7 @@ class ChatSession:
         self._harness_key: tuple | None = None
         self._model_resolved = False
         self._prompt = None
+        self._reasoning_support = None
         self._model_cache: list[str] = []
         self._model_cache_provider: str | None = None
         self._pending_open = session_id
@@ -133,6 +135,8 @@ class ChatSession:
     def _invalidate_harness(self) -> None:
         self._harness = None
         self._harness_key = None
+        self._reasoning_support = None
+        self._invalidate_completer_cache()
 
     def _effective_model_pair(self) -> tuple[str, str]:
         provider = self.provider or self.state.provider
@@ -364,13 +368,28 @@ class ChatSession:
             self.config_name,
             self.state.reasoning or "auto",
             self._memory_in_prompt,
+            (self._goal.objective if self._goal and self._goal.active else ""),
+            (self._goal.status if self._goal else ""),
         )
+
+    def _goal_objective_for_harness(self) -> str:
+        if self._goal and self._goal.active:
+            return self._goal.objective
+        return ""
+
+    def _sync_goal_to_session(self) -> None:
+        if not self._session_id:
+            return
+        from kite.memory.goal import save_session_goal
+
+        save_session_goal(self._session_id, self._goal)
 
     def _execution_mode(self) -> str:
         return "restricted" if self.state.sandbox_restricted else "host"
 
     def _make_harness(self, *, resume: bool = False, follow_up: str | None = None):
-        from kite.agent.harness import Harness, HarnessConfig
+        from kite.agent.harness import Harness
+        from kite.agent.harness_build import build_harness_config
 
         key = self._harness_cache_key()
         if self._harness is not None and self._harness_key == key:
@@ -385,7 +404,7 @@ class ChatSession:
             return h
 
         h = Harness(
-            HarnessConfig(
+            build_harness_config(
                 provider=self.provider,
                 model_name=self.model,
                 cwd=self.cwd,
@@ -400,6 +419,7 @@ class ChatSession:
                 attachments=list(self.attachments),
                 execution_mode=self._execution_mode(),
                 memory_in_prompt=self._memory_in_prompt,
+                goal_objective=self._goal_objective_for_harness(),
             )
         )
         h.job_registry = self.jobs
@@ -432,15 +452,18 @@ class ChatSession:
         return self._model_cache
 
     def _reasoning_info(self):
+        if self._reasoning_support is not None:
+            return self._reasoning_support
         from kite.models.reasoning import detect_reasoning
 
         provider, model = self._effective_model_pair()
         if not provider or not model:
             return None
         try:
-            return detect_reasoning(provider, model)
+            self._reasoning_support = detect_reasoning(provider, model)
         except Exception:
-            return None
+            self._reasoning_support = None
+        return self._reasoning_support
 
     def _set_reasoning(self, raw: str, *, command: str = "") -> None:
         from kite.models.reasoning import encode_reasoning, reasoning_badge, split_reasoning
@@ -769,6 +792,16 @@ class ChatSession:
         except (OSError, ValueError) as e:
             self.console.print(f"[kite.error]{e}[/]")
 
+    def _attach_clipboard_shortcut(self) -> str:
+        from kite.ui.attach import load_clipboard
+
+        try:
+            att = load_clipboard()
+            self._queue_attachment(att)
+        except (OSError, ValueError) as e:
+            return str(e)
+        return f"attached {att.name} ({att.kind})"
+
     def _attach_clipboard(self, _arg: str = "") -> None:
         from kite.ui.attach import load_clipboard
 
@@ -963,6 +996,8 @@ class ChatSession:
             on_plan=lambda: self._flash_note(_plan()),
             on_build=lambda: self._flash_note(_build()),
             on_status=lambda: self._flash_note(_status()),
+            on_attach_clipboard=lambda: self._flash_note(self._attach_clipboard_shortcut()),
+            on_clear_screen=lambda: self.console.clear(),
             is_busy=lambda: self._busy,
             is_awaiting_approval=lambda: bool(self.state.awaiting_approval),
             can_remember_approval=lambda: bool(
@@ -1024,7 +1059,7 @@ class ChatSession:
         )
         self.console.print(
             f"[kite.muted]BYOK[/]  {env_file_path()}  "
-            f"[kite.muted]BYOS[/]  ~/.kite/oauth/  "
+            f"[kite.muted]BYOS[/]  Codex / Claude Code / Grok CLI  "
             f"[kite.muted]·[/]  /login provider  ·  /logout provider"
         )
 
@@ -1090,6 +1125,34 @@ class ChatSession:
     def _index(self) -> CommandIndex:
         return CommandIndex.load(self.cwd)
 
+    def _invalidate_completer_cache(self) -> None:
+        if self._prompt is not None:
+            completer = getattr(self._prompt, "completer", None)
+            if completer is not None and hasattr(completer, "invalidate"):
+                completer.invalidate()
+
+    def _invalidate_slash_cache(self) -> None:
+        invalidate_command_index()
+        self._invalidate_completer_cache()
+
+    def _prewarm_composer(self) -> None:
+        """Load slash index + prompt session before the first `/` menu opens."""
+        import threading
+
+        try:
+            self._index()
+            self._ensure_prompt()
+        except Exception:
+            pass
+
+        def _warm_reasoning() -> None:
+            try:
+                self._reasoning_info()
+            except Exception:
+                pass
+
+        threading.Thread(target=_warm_reasoning, name="kite-reasoning-prewarm", daemon=True).start()
+
     def _normalize_slash_cmd(self, cmd: str, arg: str) -> tuple[str, str]:
         if cmd == "mode" and arg in {"plan", "build"}:
             return arg, ""
@@ -1152,17 +1215,23 @@ class ChatSession:
             "commands": self._handle_commands,
             "plugins": self._handle_plugins,
             "memory": self._slash_memory,
+            "user": self._show_user,
+            "profile": self._show_profile,
+            "working": self._show_working,
             "semantic": self._show_semantic,
             "episodic": self._show_episodic,
             "remember": self._remember,
             "forget": self._slash_forget,
             "status": self._slash_status,
+            "privacy": self._slash_privacy,
             "stop": self._slash_stop,
             "steer": self._slash_steer,
             "tasks": self._slash_tasks,
             "jobs": self._slash_jobs,
+            "agents": self._slash_agents,
             "kill": self._slash_kill,
             "resume": self._slash_resume,
+            "goal": self._slash_goal,
             "session": self._handle_session,
             "home": self._slash_home,
             "theme": self._set_theme,
@@ -1260,12 +1329,20 @@ class ChatSession:
         mode = "expanded" if self.state.expanded_all else "collapsed"
         self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
 
-    def _slash_live(self, _arg: str) -> None:
-        self.state.live_terminal = not self.state.live_terminal
-        mode = "on" if self.state.live_terminal else "off"
-        self.console.print(
-            f"[kite.muted]live terminal {mode}[/]  — bash output streams as it runs  (/live to toggle)"
-        )
+    def _slash_live(self, arg: str) -> None:
+        token = (arg or "").strip().lower()
+        if token in {"agents", "crew", "subagents"}:
+            self.state.live_subagents = not self.state.live_subagents
+            mode = "on" if self.state.live_subagents else "off"
+            self.console.print(
+                f"[kite.muted]live subagents {mode}[/]  — crew tools + shell stream with worker prefix"
+            )
+        else:
+            self.state.live_terminal = not self.state.live_terminal
+            mode = "on" if self.state.live_terminal else "off"
+            self.console.print(
+                f"[kite.muted]live terminal {mode}[/]  — bash output streams  (/live agents for crew)"
+            )
         self.state.touch()
 
     def _slash_expand_thinking(self, arg: str) -> None:
@@ -1448,6 +1525,7 @@ class ChatSession:
             self.console.print(f"[kite.success]forgot episode[/] {ep.id}  {ep.summary}")
 
     def _slash_status(self, _arg: str) -> None:
+        from kite.memory.session_policy import persistence_mode
         from kite.ui.theme import current_font, theme_label
 
         sid = self._session_id or "—"
@@ -1457,9 +1535,53 @@ class ChatSession:
             f"{self.state.provider or '—'}/{self.state.model or '—'} · "
             f"effort {self.state.reasoning} · "
             f"theme {theme_label()} · font {current_font()} · "
+            f"sessions {persistence_mode()} · "
             f"${self.state.cost:.4f} · session {sid}"
             + (f" · queued {len(self._inbox)}" if self._inbox else "")
         )
+
+    def _slash_privacy(self, arg: str) -> None:
+        from kite.memory.session_policy import (
+            persistence_summary,
+            set_persistence_mode,
+            valid_persistence_modes,
+        )
+
+        text = (arg or "").strip()
+        if not text or text.lower() in {"show", "status"}:
+            summary = persistence_summary()
+            self.console.print("[kite.muted]privacy & security[/]")
+            for key, value in summary.items():
+                label = key.replace("_", " ")
+                self.console.print(f"  [cyan]{label}[/]  {value}")
+            self.console.print("  [kite.muted]change sessions:[/]  /privacy sessions redacted|full|disabled")
+            return
+
+        parts = text.split()
+        if parts[0].lower() != "sessions":
+            self.console.print("[kite.muted]/privacy[/]  or  /privacy sessions redacted|full|disabled")
+            return
+
+        if len(parts) == 1:
+            choices = [
+                ("redacted", "sanitize secrets before write (default)"),
+                ("full", "raw JSONL on disk (opt-in)"),
+                ("disabled", "no session file writes"),
+            ]
+            picked = self._pick(choices, title="Session persistence", noun="mode")
+            if not picked:
+                return
+            mode = set_persistence_mode(picked)
+            self.console.print(f"[kite.success]session persistence[/]  {mode}")
+            return
+
+        mode = parts[1].lower()
+        if mode not in valid_persistence_modes():
+            allowed = ", ".join(sorted(valid_persistence_modes()))
+            self.console.print(f"[kite.error]unknown mode {mode}[/]  — choose: {allowed}")
+            return
+        saved = set_persistence_mode(mode)
+        self.console.print(f"[kite.success]session persistence[/]  {saved}")
 
     def _slash_stop(self, _arg: str) -> None:
         if not self._busy:
@@ -1502,6 +1624,136 @@ class ChatSession:
                 preview = preview[:97] + "…"
             label = "steer" if is_steer else "follow-up"
             self.console.print(f"  {i}. [{label}] {preview}")
+
+    def _slash_agents(self, arg: str) -> None:
+        from kite.agent.subagent_profiles import (
+            format_profile_trust,
+            get_profile,
+            init_user_profile,
+            list_profiles,
+            reload_profiles,
+            user_profiles_dir,
+        )
+        from kite.ui.theme import glyph
+
+        text = (arg or "").strip()
+        parts = text.split(None, 1)
+        sub = parts[0].lower() if parts else ""
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if sub in {"profiles", "personas", "list"}:
+            reload_profiles()
+            profiles = list_profiles()
+            if not profiles:
+                self.console.print("[kite.muted]no profiles[/]  · /agents init my-role")
+                return
+            table = kite_table("subagent profiles")
+            table.add_column("id")
+            table.add_column("label")
+            table.add_column("role")
+            table.add_column("trust")
+            table.add_column("description")
+            for p in profiles:
+                mark = f"{p.id} {glyph('home')}" if not p.bundled else p.id
+                desc = p.description or p.prompt.split("\n", 1)[0][:50]
+                table.add_row(mark, p.label, p.role, format_profile_trust(p), desc)
+            self.console.print(table)
+            self.console.print(
+                f"[kite.muted]custom[/]  {user_profiles_dir()}/*.md  "
+                "· /agents init <id>  · /agents show <id>"
+            )
+            return
+
+        if sub == "init":
+            name = rest or ""
+            if not name:
+                self.console.print("[kite.error]/agents init <id>[/]  · e.g. /agents init auditor")
+                return
+            try:
+                path = init_user_profile(name)
+            except (ValueError, FileExistsError, OSError) as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            self.console.print(
+                f"[kite.success]wrote[/] {path}  · edit markdown, then subagent profile={path.stem}"
+            )
+            return
+
+        if sub == "show":
+            pid = rest or ""
+            if not pid:
+                self.console.print("[kite.error]/agents show <id>[/]")
+                return
+            self._agents_show_profile(pid)
+            return
+
+        if sub == "reload":
+            reload_profiles()
+            self.console.print("[kite.success]reloaded[/] subagent profiles")
+            return
+
+        if sub and sub not in {"crew", "board"}:
+            prof = get_profile(sub)
+            if prof is not None:
+                self._agents_show_profile(sub)
+                return
+
+        rows = [job for job in self.jobs.list(active_only=False) if job.kind == "subagent"]
+        active = [job for job in rows if job.status == "running"]
+        if not rows and not self.state.active_subagents:
+            self.console.print(
+                "[kite.muted]no crew yet[/]  · subagent tool · /agents profiles · /agents init <id>"
+            )
+            return
+        table = kite_table("crew")
+        table.add_column("id", style="kite.muted")
+        table.add_column("profile", style="kite.muted")
+        table.add_column("worker", style="kite.plan")
+        table.add_column("outcome")
+        table.add_column("prompt")
+        for job in rows[-12:]:
+            preview = (job.command or job.label or "").replace("\n", " ").strip()
+            if len(preview) > 48:
+                preview = preview[:45] + "…"
+            payload = job.result_payload or {}
+            outcome = str(payload.get("quality") or job.status or "running")
+            elapsed = payload.get("elapsed_ms")
+            if elapsed:
+                outcome = f"{outcome} · {elapsed}ms"
+            profile = job.profile or str(payload.get("profile") or "—")
+            table.add_row(job.id[:8], profile, job.display_label(width=20), outcome, preview)
+        self.console.print(table)
+        if active:
+            self.console.print(f"[kite.muted]{len(active)} running[/]  · /kill to stop one or all")
+        else:
+            self.console.print("[kite.muted]crew idle[/]  · /agents profiles to list personas")
+
+    def _agents_show_profile(self, profile_id: str) -> None:
+        from kite.agent.subagent_profiles import (
+            format_profile_trust,
+            get_profile,
+            profile_source_path,
+            reload_profiles,
+        )
+
+        reload_profiles()
+        prof = get_profile(profile_id)
+        if prof is None:
+            self.console.print(f"[kite.error]unknown profile {profile_id}[/]  · /agents profiles")
+            return
+        src = profile_source_path(prof)
+        trust = format_profile_trust(prof)
+        self.console.print(
+            f"[kite.plan]{prof.id}[/]  {prof.label}  role={prof.role}  trust={trust}"
+        )
+        if src:
+            self.console.print(f"[kite.muted]{src}[/]")
+        body = prof.prompt
+        if not prof.bundled:
+            body = prof.compose("").split("## Task", 1)[0].strip()
+            if body.startswith("# Subagent:"):
+                body = "\n".join(body.split("\n", 1)[1:]).strip()
+        self.console.print(body or "[kite.muted](empty prompt)[/]")
 
     def _slash_jobs(self, _arg: str) -> None:
         rows = self.jobs.list(active_only=True)
@@ -1575,11 +1827,64 @@ class ChatSession:
             return
         self._open_session(arg)
 
+    def _slash_goal(self, arg: str) -> None:
+        from kite.memory.goal import SessionGoal
+
+        text = (arg or "").strip()
+        if not text:
+            if self._goal and self._goal.objective:
+                self.console.print(f"[kite.plan]goal[/]  {self._goal.status}")
+                self.console.print(self._goal.objective[:2000])
+                self.console.print("[kite.muted]/goal pause · resume · clear · edit …[/]")
+            else:
+                self.console.print(
+                    "[kite.muted]no goal  ·  /goal Finish the migration and keep tests green[/]"
+                )
+            return
+        low = text.lower()
+        if low == "clear":
+            self._goal = None
+            self._sync_goal_to_session()
+            self._invalidate_harness()
+            self.console.print("[kite.success]goal cleared[/]")
+            return
+        if low == "pause":
+            if self._goal and self._goal.objective:
+                self._goal = SessionGoal(objective=self._goal.objective, status="paused")
+                self._sync_goal_to_session()
+                self._invalidate_harness()
+                self.console.print("[kite.muted]goal paused[/]")
+            else:
+                self.console.print("[kite.muted]no active goal[/]")
+            return
+        if low == "resume":
+            if self._goal and self._goal.objective:
+                self._goal = SessionGoal(objective=self._goal.objective, status="active")
+                self._sync_goal_to_session()
+                self._invalidate_harness()
+                self.console.print("[kite.success]goal resumed[/]")
+            else:
+                self.console.print("[kite.error]no goal  ·  /goal <objective>[/]")
+            return
+        if low.startswith("edit "):
+            text = text[5:].strip()
+        if not text:
+            self.console.print("[kite.error]goal text required[/]")
+            return
+        preview = text if len(text) <= 72 else text[:69] + "…"
+        self._goal = SessionGoal(objective=text[:4000], status="active")
+        self._sync_goal_to_session()
+        self._invalidate_harness()
+        self.console.print(f"[kite.success]goal set[/]  {preview}")
+
     def _slash_home(self, _arg: str) -> None:
+        from kite.memory.session_policy import persistence_mode
+
         home = kite_home()
         self.console.print(f"{home}")
-        for name in ("commands", "skills", "plugins", "memory", "sessions"):
+        for name in ("commands", "skills", "subagents", "plugins", "memory", "goals", "sessions", "audit.jsonl"):
             self.console.print(f"  {home / name}")
+        self.console.print(f"  sessions policy: {persistence_mode()}  ·  /privacy sessions")
         self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")
 
     def _handle_slash(self, raw: str, parsed: SlashResult | None = None) -> bool:
@@ -1664,6 +1969,14 @@ class ChatSession:
             return
         self._invalidate_harness()
         self._session_id = session.id
+        from kite.memory.goal import load_session_goal
+        from kite.memory.session import load_session_todos
+
+        self._goal = load_session_goal(session.id)
+        restored = load_session_todos(session.id)
+        if restored:
+            self.todos.write(restored)
+            self.state.set_todos(self.todos.read())
         if session.meta.provider:
             self.provider = session.meta.provider
             self.state.provider = session.meta.provider
@@ -1807,8 +2120,12 @@ class ChatSession:
                 self.console.print(f"[kite.error]{e}[/]")
                 return
             listed = ", ".join(f"/{n}" for n in names)
-            self.console.print(f"[kite.success]installed[/] {listed}  ·  ~/.kite/skills")
+            self.console.print(
+                f"[kite.success]installed[/] {listed}  ·  ~/.kite/skills  "
+                f"[kite.muted](untrusted — remote/npm/git skills require explicit install)[/]"
+            )
             return
+        from kite.skills.loader import format_skill_trust_badge
         from kite.ui.theme import glyph
 
         index = self._index()
@@ -1818,15 +2135,21 @@ class ChatSession:
                 self.console.print(f"[kite.error]unknown skill {raw}[/]  — /skills")
                 return
             mark = f" {glyph('home')}" if skill.source == "user" else ""
-            self.console.print(f"[kite.muted]/{skill.name}{mark}[/]  {skill.path}")
+            badge = format_skill_trust_badge(skill)
+            self.console.print(f"[kite.muted]/{skill.name}{mark}[/]  {skill.path}  ·  {badge}")
             self.console.print(skill.content)
             return
         table = kite_table("skills")
         table.add_column("name")
+        table.add_column("trust")
         table.add_column("description")
         for skill in index.skills:
             mark = f" {glyph('home')}" if skill.source == "user" else ""
-            table.add_row(f"/{skill.name}{mark}", (skill.description or "")[:70])
+            table.add_row(
+                f"/{skill.name}{mark}",
+                format_skill_trust_badge(skill),
+                (skill.description or "")[:60],
+            )
         self.console.print(table)
         if not index.skills:
             return
@@ -1847,7 +2170,7 @@ class ChatSession:
                 self.console.print(f"[kite.error]{e}[/]")
                 return
             self.console.print(f"[kite.success]wrote[/] {path}  ·  edit then /{Path(path).stem}")
-            invalidate_command_index()
+            self._invalidate_slash_cache()
             return
         index = self._index()
         table = kite_table("commands")
@@ -1877,7 +2200,7 @@ class ChatSession:
             self.console.print(
                 f"[kite.success]wrote[/] {path}  ·  add commands/*.md and skills/*/SKILL.md"
             )
-            invalidate_command_index()
+            self._invalidate_slash_cache()
             return
         plugins = self._index().plugins
         if arg:
@@ -1911,6 +2234,88 @@ class ChatSession:
         self._show_semantic()
         self.console.print()
         self._show_episodic()
+
+    def _show_user(self, arg: str = "") -> None:
+        from kite.memory.user_context import append_user_note, read_user, user_path
+
+        text = arg.strip()
+        if text.lower().startswith("add "):
+            text = text[4:].strip()
+        if text:
+            try:
+                note = append_user_note(text)
+            except ValueError as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            self.console.print(f"[kite.success]user[/]  {note}")
+            self._harness_key = None
+            return
+        self.console.print(f"[kite.muted]{user_path()}[/]")
+        body = read_user()
+        if body:
+            self.console.print(body)
+        else:
+            self.console.print("[kite.muted]empty  ·  /user add …  ·  edit USER.md directly[/]")
+
+    def _show_profile(self, arg: str = "") -> None:
+        from kite.memory.user_context import append_profile_note, profile_path, read_profile
+
+        text = arg.strip()
+        if text.lower().startswith("add "):
+            text = text[4:].strip()
+        if text:
+            try:
+                note = append_profile_note(text)
+            except ValueError as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            self.console.print(f"[kite.success]profile[/]  {note}")
+            self._harness_key = None
+            return
+        self.console.print(f"[kite.muted]{profile_path()}[/]")
+        body = read_profile()
+        if body:
+            self.console.print(body)
+        else:
+            self.console.print("[kite.muted]empty  ·  /profile add …  ·  edit PROFILE.md directly[/]")
+
+    def _show_working(self, arg: str = "") -> None:
+        from kite.memory.working_style import (
+            append_signal,
+            read_narrative,
+            read_signals,
+            render_working_context,
+            working_path,
+        )
+
+        text = arg.strip()
+        if text.lower().startswith("add "):
+            text = text[4:].strip()
+        if text:
+            try:
+                signal = append_signal(text)
+            except ValueError as e:
+                self.console.print(f"[kite.error]{e}[/]")
+                return
+            self.console.print(f"[kite.success]signal[/]  {signal}")
+            self._harness_key = None
+            return
+
+        self.console.print(f"[kite.muted]{working_path()}[/]")
+        rendered = render_working_context(self.memory)
+        if rendered:
+            self.console.print(rendered)
+            return
+        narrative = read_narrative()
+        signals = read_signals()
+        if narrative:
+            self.console.print(narrative)
+        for signal in signals:
+            self.console.print(f"  - {signal}")
+        if not narrative and not signals:
+            self.console.print(
+                "[kite.muted]no rhythm yet  ·  /working add …  ·  kite learns gently from sessions[/]"
+            )
 
     def _show_semantic(self, _arg: str = "") -> None:
         notes = self.memory.notes()
@@ -2050,6 +2455,7 @@ class ChatSession:
     def _bind_session(self, harness) -> None:
         if harness.last_session:
             self._session_id = harness.last_session.id
+            self._sync_goal_to_session()
 
     def _run_task(self, task: str) -> None:
         from kite.ui.attach import collect_turn_attachments
@@ -2075,12 +2481,13 @@ class ChatSession:
 
         from kite.config.runtime import load_runtime_config
         from kite.memory.continuity import build_continuity_brief, save_continuity
-        from kite.ui.budget_continue import decide_budget_continue
+        from kite.memory.recovery import build_recovery_follow_up, decide_recovery_continue
 
         try:
             max_continues = max(0, int(load_runtime_config(self.config_name).max_budget_continues))
         except Exception:
             max_continues = 2
+        max_continues = max(max_continues, 3 if self._goal and self._goal.active else max_continues)
 
         resume = bool(self._session_id)
         harness = self._make_harness(resume=resume, follow_up=task if resume else None)
@@ -2186,10 +2593,13 @@ class ChatSession:
             exit_status = str(extra.get("exit_status") or "")
             stats = extra.get("model_stats") if isinstance(extra.get("model_stats"), dict) else {}
             tool_calls = int(stats.get("api_calls") or extra.get("api_calls") or 0)
-            action = decide_budget_continue(
+            goal_active = bool(self._goal and self._goal.active)
+            action = decide_recovery_continue(
                 exit_status=exit_status,
                 continues_used=continues_used,
                 max_continues=max_continues,
+                goal_active=goal_active,
+                goal_objective=self._goal_objective_for_harness(),
                 todos=self.todos.read(),
                 tool_call_count=tool_calls,
                 inbox_queued=bool(self._inbox),
@@ -2224,16 +2634,17 @@ class ChatSession:
                 )
             except Exception:
                 pass
-            run_task = (
-                brief.to_markdown()
-                + "\n\nContinue the unfinished work from the continuity brief. "
-                "Do not restart from scratch; pick up at Next / Open todos."
+            run_task = build_recovery_follow_up(
+                exit_status=exit_status,
+                continuity_markdown=brief.to_markdown(),
+                goal_objective=self._goal_objective_for_harness(),
             )
+            label = "goal continue" if goal_active else "recovery continue"
             self.console.print(
-                f"[kite.muted]budget continue {continues_used}/{max_continues} — resuming…[/]"
+                f"[kite.muted]{label} {continues_used}/{max_continues} — resuming…[/]"
             )
             self.state.set_running(
-                label=f"budget continue {continues_used}/{max_continues}",
+                label=f"{label} {continues_used}/{max_continues}",
                 kind="turn",
             )
             self.state.busy = True
@@ -2263,6 +2674,11 @@ class ChatSession:
             self.console.print("[kite.muted]session kept[/]  — type to continue, Ctrl+G after a stop to steer")
         if extra.get("exit_status") == "ProviderFault":
             self.state.last_error = str(extra.get("error") or "provider fault")
+            sid = self._session_id or ""
+            hint = f"kite resume {sid} --retry" if sid else "type to continue"
+            self.console.print(
+                f"[kite.pending]provider fault[/] — session saved. [kite.muted]{hint}[/]"
+            )
             return
         if extra.get("exit_status") in {"LimitsExceeded", "TimeExceeded"}:
             self.state.last_error = str(extra.get("submission") or extra.get("content") or extra.get("exit_status"))
@@ -2276,13 +2692,34 @@ class ChatSession:
                 self.state.cost = float(extra["cost"])
             except (TypeError, ValueError):
                 pass
+        try:
+            from kite.memory.working_style import observe_session_turn
+
+            observe_session_turn(
+                self.memory,
+                session_id=self._session_id or "",
+                mode=str(self.state.mode),
+                approval=str(self.state.approval),
+                extra=extra,
+                interrupted=bool(self.state.interrupted),
+            )
+        except Exception:
+            pass
         self.state.set_todos(self.todos.read())
+        if self._session_id and self.todos.read():
+            try:
+                from kite.memory.session import persist_session_todos
+
+                persist_session_todos(self._session_id, self.todos.read())
+            except Exception:
+                pass
 
     def run(self) -> int:
         from kite.ui.git import git_branch
 
         self.state.git_branch = git_branch(self.cwd)
         self._startup_banner()
+        self._prewarm_composer()
         if self._pending_open:
             self._open_session(self._pending_open)
             self._pending_open = None

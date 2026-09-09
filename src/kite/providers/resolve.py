@@ -128,6 +128,9 @@ def resolve_model(
                 api_key = None
             else:
                 api_key = None
+            if spec.oauth_provider == "anthropic":
+                # Claude subscription auth is CLI-owned; LiteLLM needs BYOK API key for direct calls.
+                api_key = api_key_for(spec) or None
 
     window = cfg.context_window or spec.context_window_for(model_name or "unknown")
     litellm_model = spec.litellm_model_id(model_name) if model_name else ""
@@ -160,9 +163,15 @@ def missing_credentials(resolved: ResolvedModel) -> str | None:
         return None
     if is_oauth_provider(resolved.spec):
         oauth_id = resolved.spec.oauth_provider or resolved.spec.name
-        if has_oauth_session(oauth_id):
-            return None
-        return subscription_login_hint(resolved.spec)
+        if not has_oauth_session(oauth_id):
+            return subscription_login_hint(resolved.spec)
+        if resolved.spec.oauth_provider == "anthropic" and not resolved.api_key:
+            return (
+                "Claude subscription is linked via Claude Code, but direct API calls need "
+                "ANTHROPIC_API_KEY. Run `claude auth login` for Claude Code, or "
+                "`kite keys --set anthropic` for Console API access."
+            )
+        return None
     if resolved.spec.api_key_env and not resolved.api_key:
         names = " or ".join(f"${n}" for n in api_key_env_names(resolved.spec))
         return (

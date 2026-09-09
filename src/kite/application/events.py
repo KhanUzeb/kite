@@ -14,16 +14,15 @@ REDACTION_VERSION = 1
 
 
 def redact_text(text: str) -> str:
-    from kite.guardrails import redact_secrets
+    from kite.guardrails.redact import redact_string
 
-    out, _ = redact_secrets(text)
-    return out.replace("[REDACTED_SECRET]", "[REDACTED]")
+    return redact_string(text)
 
 
 def redact_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    import json
+    from kite.guardrails.redact import sanitize_payload
 
-    return json.loads(redact_text(json.dumps(payload)))
+    return sanitize_payload(payload)
 
 
 @dataclass(frozen=True, slots=True)

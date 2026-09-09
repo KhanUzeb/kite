@@ -305,6 +305,16 @@ def resolve_provider_name(raw: str) -> str:
     return load_catalog().get(name).name
 
 
+def resolve_byos_provider_name(raw: str) -> str:
+    """Resolve BYOS login/logout aliases (codex → chatgpt, xai → grok)."""
+    from kite.providers.auth import resolve_login_provider
+
+    name = resolve_login_provider((raw or "").strip().lower())
+    if not name:
+        raise KeyError("provider name required")
+    return load_catalog().get(name).name
+
+
 def loginable_providers() -> list[tuple[str, str, str]]:
     """(name, display_name, auth hint) for providers that accept login."""
     rows: list[tuple[str, str, str]] = []
@@ -330,7 +340,7 @@ def login_provider(
     """Prompt for a key and save to ~/.kite/.env. Returns (exit_code, message, provider_name)."""
     catalog = load_catalog()
     try:
-        resolved = resolve_provider_name(provider)
+        resolved = resolve_byos_provider_name(provider)
         spec = catalog.get(resolved)
     except KeyError as e:
         return 2, str(e), None
@@ -384,9 +394,10 @@ def login_provider(
     return 0, msg, spec.name
 
 
-def logout_provider(provider: str) -> tuple[int, str]:
+def logout_provider(provider: str, *, byos_aliases: bool = False) -> tuple[int, str]:
     try:
-        resolved = resolve_provider_name(provider)
+        resolver = resolve_byos_provider_name if byos_aliases else resolve_provider_name
+        resolved = resolver(provider)
         spec = load_catalog().get(resolved)
     except KeyError as e:
         return 2, str(e)

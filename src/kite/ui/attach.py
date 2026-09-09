@@ -10,6 +10,7 @@ import base64
 import mimetypes
 import os
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -72,6 +73,10 @@ def load_file(path: str | Path, *, source: str = "file", cwd: str | Path | None 
     p = p.resolve()
     if not p.is_file():
         raise FileNotFoundError(f"not a file: {p}")
+    from kite.guardrails.sandbox import is_protected
+
+    if is_protected(p):
+        raise ValueError(f"protected path cannot be attached: {p}")
     size = p.stat().st_size
     mime = _mime_for(p)
     name = p.name
@@ -89,6 +94,99 @@ def load_file(path: str | Path, *, source: str = "file", cwd: str | Path | None 
     return Attachment(kind="text", name=name, source=source, path=str(p), text=text, mime="text/plain")
 
 
+def read_os_clipboard() -> str:
+    """Read plain text from the OS clipboard (composer paste + /clip)."""
+    try:
+        import sys
+
+        if sys.platform == "win32":
+            import ctypes
+
+            CF_UNICODETEXT = 13
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            user32.OpenClipboard(0)
+            try:
+                handle = user32.GetClipboardData(CF_UNICODETEXT)
+                if not handle:
+                    return ""
+                ptr = kernel32.GlobalLock(handle)
+                try:
+                    return ctypes.wstring_at(ptr) if ptr else ""
+                finally:
+                    kernel32.GlobalUnlock(handle)
+            finally:
+                user32.CloseClipboard()
+    except Exception:
+        pass
+    for cmd in (
+        ["pbpaste"],
+        ["xclip", "-selection", "clipboard", "-o"],
+        ["wl-paste", "-n"],
+    ):
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=3,
+            )
+            if proc.returncode == 0:
+                return (proc.stdout or "").strip()
+        except (FileNotFoundError, subprocess.SubprocessError, OSError):
+            continue
+    return ""
+
+
+def write_os_clipboard(text: str) -> None:
+    """Write plain text to the OS clipboard."""
+    try:
+        import sys
+
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            CF_UNICODETEXT = 13
+            GMEM_MOVEABLE = 0x0002
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+            kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+            kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+            kernel32.GlobalLock.restype = ctypes.c_void_p
+            encoded = text.encode("utf-16-le") + b"\x00\x00"
+            user32.OpenClipboard(0)
+            try:
+                user32.EmptyClipboard()
+                handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(encoded))
+                ptr = kernel32.GlobalLock(handle)
+                ctypes.memmove(ptr, encoded, len(encoded))
+                kernel32.GlobalUnlock(handle)
+                user32.SetClipboardData(CF_UNICODETEXT, handle)
+            finally:
+                user32.CloseClipboard()
+            return
+    except Exception:
+        pass
+    for cmd in (["pbcopy"], ["xclip", "-selection", "clipboard"], ["wl-copy"]):
+        try:
+            subprocess.run(cmd, input=text.encode("utf-8"), check=True, timeout=3)
+            return
+        except (FileNotFoundError, subprocess.SubprocessError, OSError):
+            continue
+
+
+def clipboard_install_hint() -> str:
+    if os.name == "nt":
+        return ""
+    if shutil.which("pbpaste") or shutil.which("wl-paste") or shutil.which("xclip"):
+        return ""
+    return "install pbpaste (macOS), wl-clipboard (Wayland), or xclip (X11) for clipboard support"
+
+
 def _clipboard_text() -> str:
     if os.name == "nt":
         proc = subprocess.run(
@@ -99,16 +197,17 @@ def _clipboard_text() -> str:
             errors="replace",
             timeout=8,
         )
-        return (proc.stdout or "").strip()
-    if os.name == "posix":
-        for cmd in (["pbpaste"], ["xclip", "-selection", "clipboard", "-o"], ["wl-paste"]):
-            try:
-                proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
-            except (OSError, subprocess.TimeoutExpired):
-                continue
-            if proc.returncode == 0:
-                return (proc.stdout or "").strip()
-    return ""
+        text = (proc.stdout or "").strip()
+        if text:
+            return text
+    return read_os_clipboard()
+
+
+def _save_clipboard_image(data: bytes, dest: Path) -> Path | None:
+    if len(data) < 32:
+        return None
+    dest.write_bytes(data)
+    return dest if dest.is_file() else None
 
 
 def _clipboard_image_windows() -> Path | None:
@@ -133,14 +232,54 @@ def _clipboard_image_windows() -> Path | None:
     return None
 
 
+def _clipboard_image_posix() -> Path | None:
+    dest = attachments_dir() / f"clip-{int(time.time())}.png"
+    if shutil.which("pngpaste"):
+        try:
+            proc = subprocess.run(["pngpaste", str(dest)], capture_output=True, timeout=8)
+            if proc.returncode == 0 and dest.is_file() and dest.stat().st_size > 32:
+                return dest
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if shutil.which("wl-paste"):
+        try:
+            proc = subprocess.run(
+                ["wl-paste", "-t", "image/png"],
+                capture_output=True,
+                timeout=8,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                return _save_clipboard_image(proc.stdout, dest)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if shutil.which("xclip"):
+        try:
+            proc = subprocess.run(
+                ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+                capture_output=True,
+                timeout=8,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                return _save_clipboard_image(proc.stdout, dest)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return None
+
+
 def load_clipboard() -> Attachment:
     if os.name == "nt":
         image = _clipboard_image_windows()
         if image is not None:
             return load_file(image, source="clipboard")
+    else:
+        image = _clipboard_image_posix()
+        if image is not None:
+            return load_file(image, source="clipboard")
     text = _clipboard_text()
     if not text:
-        raise ValueError("clipboard is empty")
+        hint = clipboard_install_hint()
+        extra = f" ({hint})" if hint else ""
+        raise ValueError(f"clipboard is empty{extra}")
     # If clipboard holds a path to an existing file, attach that file.
     maybe = Path(text.strip().strip('"')).expanduser()
     if maybe.is_file():
@@ -202,7 +341,8 @@ def user_content_with_attachments(text: str, attachments: list[Attachment], *, i
     text_atts = [a for a in attachments if a.kind != "image"]
     for att in text_atts:
         body = att.text or ""
-        blocks.append(f"\n\n# Attached {att.name}\n```\n{body}\n```")
+        source = att.source or "file"
+        blocks.append(f"\n\n# Attached {att.name} (source: {source})\n```\n{body}\n```")
     if not images:
         for att in image_atts:
             blocks.append(f"\n\n# Image attached (not sent — no vision model): {att.name}")

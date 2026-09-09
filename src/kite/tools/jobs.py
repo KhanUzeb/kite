@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -16,6 +14,7 @@ from typing import Any, Literal
 from kite.agent.cancel import CancelToken
 from kite.agent.events import Event
 from kite.guardrails.env_filter import filtered_child_env
+from kite.guardrails.process import popen_process_group_kwargs, terminate_process_tree
 
 JobKind = Literal["bash", "subagent"]
 JobStatus = Literal["running", "done", "killed", "failed"]
@@ -34,9 +33,11 @@ class BackgroundJob:
     status: JobStatus = "running"
     pid: int | None = None
     label: str = ""
+    profile: str = ""
     proc: subprocess.Popen[str] | None = field(default=None, repr=False)
     cancel: CancelToken | None = field(default=None, repr=False)
     log: deque[str] = field(default_factory=lambda: deque(maxlen=_LOG_RING), repr=False)
+    result_payload: dict[str, Any] | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def display_label(self, *, width: int = 48) -> str:
@@ -132,7 +133,6 @@ class JobRegistry:
             cwd = str(clamped)
         except ImportError:
             pass
-        creationflags = 0
         from kite.env.shell import resolve_shell_invocation
 
         argv, cmd_text = resolve_shell_invocation(command)
@@ -151,12 +151,7 @@ class JobRegistry:
         else:
             popen_kw["shell"] = True
             launch = cmd_text
-        if sys.platform == "win32":
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            if creationflags:
-                popen_kw["creationflags"] = creationflags
-        else:
-            popen_kw["preexec_fn"] = os.setsid
+        popen_kw.update(popen_process_group_kwargs())
 
         proc = subprocess.Popen(launch, **popen_kw)
         job_id = self._new_id()
@@ -190,6 +185,9 @@ class JobRegistry:
         return job
 
     def _drain_bash(self, job: BackgroundJob, timeout_seconds: float = 3600.0) -> None:
+        from kite.env.shell import sanitize_shell_line
+        from kite.guardrails.redact import redact_string
+
         proc = job.proc
         if proc is None or proc.stdout is None:
             return
@@ -198,8 +196,9 @@ class JobRegistry:
         try:
             for line in iter(proc.stdout.readline, ""):
                 drained_bytes += len(line.encode("utf-8", errors="replace"))
-                job.append_log(line)
-                self._emit("job_output", id=job.id, line=line, kind="bash")
+                safe = redact_string(sanitize_shell_line(line))
+                job.append_log(safe)
+                self._emit("job_output", id=job.id, line=safe, kind="bash")
                 if drained_bytes >= max_bytes:
                     job.append_log("\n...[job output truncated]...\n")
                     break
@@ -213,10 +212,7 @@ class JobRegistry:
             except subprocess.TimeoutExpired:
                 continue
         if rc is None:
-            try:
-                proc.kill()
-            except OSError:
-                pass
+            terminate_process_tree(proc)
             rc = -1
             job.append_log("\n...[job killed: timeout]...\n")
         with self._lock:
@@ -241,16 +237,20 @@ class JobRegistry:
         job_id: str | None = None,
         label: str,
         prompt: str = "",
+        profile: str = "",
         cancel: CancelToken | None = None,
     ) -> BackgroundJob:
         """Track a live nested LLM worker so /jobs and /kill can reach it."""
         tid = job_id or self._new_id()
         token = cancel or CancelToken()
+        safe_prompt = (prompt or "")[:500]
+        safe_label = (label or safe_prompt[:60].replace("\n", " ") or tid)[:80]
         job = BackgroundJob(
             id=tid,
             kind="subagent",
-            command=prompt or label,
-            label=label or (prompt[:60].replace("\n", " ") if prompt else tid),
+            command=safe_prompt or safe_label,
+            label=safe_label,
+            profile=(profile or "")[:32],
             cancel=token,
             log=deque(maxlen=self._max_log),
         )
@@ -266,18 +266,28 @@ class JobRegistry:
         )
         return job
 
+    def set_subagent_result(self, job_id: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job.result_payload = dict(payload)
+
     def mark_done(
         self,
         job_id: str,
         *,
         ok: bool = True,
         status: JobStatus | None = None,
+        result_payload: dict[str, Any] | None = None,
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None or job.status != "running":
                 return
             job.status = status or ("done" if ok else "failed")
+            if result_payload is not None:
+                job.result_payload = dict(result_payload)
             kind = job.kind
             label = job.display_label()
         self._emit(
@@ -333,41 +343,4 @@ class JobRegistry:
         proc = job.proc
         if proc is None:
             return
-        pid = proc.pid
-        if sys.platform == "win32" and pid:
-            try:
-                completed = subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/T", "/F"],
-                    capture_output=True,
-                    timeout=10,
-                    check=False,
-                )
-                if completed.returncode not in {0, 128, 255}:
-                    job.append_log(f"\n...[taskkill exit {completed.returncode}]...\n")
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-            try:
-                proc.kill()
-            except OSError:
-                pass
-            return
-        # POSIX: terminate the process group started with setsid
-        try:
-            if pid:
-                os.killpg(os.getpgid(pid), 15)  # SIGTERM
-        except (OSError, ProcessLookupError):
-            try:
-                proc.terminate()
-            except OSError:
-                pass
-        try:
-            proc.wait(timeout=1.5)
-        except (subprocess.TimeoutExpired, OSError):
-            try:
-                if pid:
-                    os.killpg(os.getpgid(pid), 9)  # SIGKILL
-            except (OSError, ProcessLookupError):
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+        terminate_process_tree(proc)

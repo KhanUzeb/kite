@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from importlib import resources
@@ -31,6 +32,40 @@ class Skill:
     description: str | None = None
     disable_model_invocation: bool = False
     source: str = "bundled"  # bundled | user | project | plugin
+    trust: str = "trusted"  # trusted | untrusted
+    origin: str = "bundled"  # bundled | user-local | project | npm | git | link | plugin
+
+
+def skill_trust(source: str, origin: str) -> str:
+    """Only bundled skills ship with full trust; everything else is untrusted."""
+    if source == "bundled" and origin == "bundled":
+        return "trusted"
+    return "untrusted"
+
+
+def _read_provenance(skill_dir: Path) -> str | None:
+    prov = skill_dir / ".kite-provenance.json"
+    if not prov.is_file():
+        return None
+    try:
+        data = json.loads(prov.read_text(encoding="utf-8"))
+        return str(data.get("origin") or "") or None
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+
+
+def origin_for_skill_dir(directory: Path, cwd: Path) -> str:
+    source = classify_skill_dir(directory, cwd)
+    if source == "bundled":
+        return "bundled"
+    if source == "project":
+        return "project"
+    if source == "plugin":
+        return "plugin"
+    prov = _read_provenance(directory)
+    if prov:
+        return prov
+    return "user-local"
 
 
 def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
@@ -54,9 +89,10 @@ def _derive_description(content: str) -> str:
     return "No description"
 
 
-def _load_skill(name: str, path: Path, *, source: str) -> Skill:
+def _load_skill(name: str, path: Path, *, source: str, origin: str) -> Skill:
     raw = path.read_text(encoding="utf-8")
     meta, body = _parse_frontmatter(raw)
+    trust = skill_trust(source, origin)
     return Skill(
         name=meta.get("name") or name,
         path=path,
@@ -64,6 +100,8 @@ def _load_skill(name: str, path: Path, *, source: str) -> Skill:
         description=meta.get("description") or _derive_description(body or raw),
         disable_model_invocation=meta.get("disable-model-invocation", "").lower() == "true",
         source=source,
+        trust=trust,
+        origin=origin,
     )
 
 
@@ -94,7 +132,12 @@ def classify_skill_dir(directory: Path, cwd: Path) -> str:
     return "plugin"
 
 
-def _iter_skill_dirs(cwd: Path, extra: list[str] | None = None) -> list[Path]:
+def _iter_skill_dirs(
+    cwd: Path,
+    extra: list[str] | None = None,
+    *,
+    plugin_dirs: list[Path] | None = None,
+) -> list[Path]:
     dirs: list[Path] = []
     try:
         bundled = resources.files("kite").joinpath("data/skills")
@@ -103,12 +146,15 @@ def _iter_skill_dirs(cwd: Path, extra: list[str] | None = None) -> list[Path]:
         pass
     dirs.append(kite_home() / "skills")
     dirs.append(agents_skills_dir())
-    try:
-        from kite.plugins.loader import plugin_skill_dirs
+    if plugin_dirs is not None:
+        dirs.extend(plugin_dirs)
+    else:
+        try:
+            from kite.plugins.loader import plugin_skill_dirs
 
-        dirs.extend(plugin_skill_dirs(cwd))
-    except Exception:
-        pass
+            dirs.extend(plugin_skill_dirs(cwd))
+        except Exception:
+            pass
     dirs.append(cwd / ".kite" / "skills")
     dirs.append(cwd / ".agents" / "skills")
     for e in extra or []:
@@ -145,9 +191,10 @@ def _is_file(path: Path) -> bool:
         return False
 
 
-def _load_from_dir(skills_dir: Path, *, source: str) -> list[Skill]:
+def _load_from_dir(skills_dir: Path, *, source: str, cwd: Path) -> list[Skill]:
     if not _is_dir(skills_dir):
         return []
+    origin = origin_for_skill_dir(skills_dir, cwd)
     skills: list[Skill] = []
     seen: set[str] = set()
     try:
@@ -161,16 +208,18 @@ def _load_from_dir(skills_dir: Path, *, source: str) -> list[Skill]:
             skill_path = path / "SKILL.md"
             if not _is_file(skill_path):
                 continue
+            item_origin = _read_provenance(path) or origin
         elif _is_file(path) and path.name == "SKILL.md":
             skill_path = path
             name = path.parent.name
+            item_origin = _read_provenance(path.parent) or origin
         else:
             continue
         if name in seen:
             continue
         seen.add(name)
         try:
-            skills.append(_load_skill(name, skill_path, source=source))
+            skills.append(_load_skill(name, skill_path, source=source, origin=item_origin))
         except OSError:
             continue
     return skills
@@ -183,20 +232,34 @@ def invalidate_skills() -> None:
     _SKILLS_CACHE.clear()
 
 
-def load_skills(cwd: str | Path = ".", extra_dirs: list[str] | None = None) -> list[Skill]:
+def load_skills(
+    cwd: str | Path = ".",
+    extra_dirs: list[str] | None = None,
+    *,
+    plugin_dirs: list[Path] | None = None,
+) -> list[Skill]:
     cwd_path = Path(cwd).expanduser().resolve()
     extra_key = tuple(sorted(extra_dirs or []))
-    key = (str(cwd_path), extra_key)
-    return _SKILLS_CACHE.get_or_set(key, lambda: _load_skills_uncached(cwd_path, extra_dirs))
+    plugin_key = tuple(sorted(str(p) for p in (plugin_dirs or [])))
+    key = (str(cwd_path), extra_key, plugin_key)
+    return _SKILLS_CACHE.get_or_set(
+        key,
+        lambda: _load_skills_uncached(cwd_path, extra_dirs, plugin_dirs=plugin_dirs),
+    )
 
 
-def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -> list[Skill]:
+def _load_skills_uncached(
+    cwd_path: Path,
+    extra_dirs: list[str] | None = None,
+    *,
+    plugin_dirs: list[Path] | None = None,
+) -> list[Skill]:
     by_name: dict[str, Skill] = {}
-    for d in _iter_skill_dirs(cwd_path, extra_dirs):
+    for d in _iter_skill_dirs(cwd_path, extra_dirs, plugin_dirs=plugin_dirs):
         if not _is_dir(d):
             continue
         source = classify_skill_dir(d, cwd_path)
-        for skill in _load_from_dir(d, source=source):
+        for skill in _load_from_dir(d, source=source, cwd=cwd_path):
             by_name[skill.name] = skill
     if any(s.source == "bundled" for s in by_name.values()):
         return sorted(by_name.values(), key=lambda s: s.name)
@@ -221,10 +284,18 @@ def _load_skills_uncached(cwd_path: Path, extra_dirs: list[str] | None = None) -
                             disable_model_invocation=meta.get("disable-model-invocation", "").lower()
                             == "true",
                             source="bundled",
+                            trust="trusted",
+                            origin="bundled",
                         )
     except Exception:
         pass
     return sorted(by_name.values(), key=lambda s: s.name)
+
+
+def format_skill_trust_badge(skill: Skill) -> str:
+    if skill.trust == "trusted":
+        return "trusted"
+    return f"untrusted · {skill.origin}"
 
 
 def build_skill_index(skills: list[Skill]) -> str:
@@ -241,6 +312,9 @@ def build_skill_index(skills: list[Skill]) -> str:
         lines.append(f"    <name>{s.name}</name>")
         lines.append(f"    <description>{s.description or 'No description'}</description>")
         lines.append(f"    <location>{s.path}</location>")
+        lines.append(f"    <trust>{s.trust}</trust>")
+        lines.append(f"    <origin>{s.origin}</origin>")
+        lines.append(f"    <source>{s.source}</source>")
         lines.append("  </skill>")
     lines.append("</available_skills>")
     return "\n".join(lines)
@@ -248,7 +322,8 @@ def build_skill_index(skills: list[Skill]) -> str:
 
 def format_skill_invocation(skill: Skill, extra: str | None = None) -> str:
     block = (
-        f'<skill name="{skill.name}" location="{skill.path}">\n'
+        f'<skill name="{skill.name}" location="{skill.path}" trust="{skill.trust}" '
+        f'origin="{skill.origin}" source="{skill.source}">\n'
         f"References are relative to {skill.path.parent}.\n\n"
         f"{skill.content.strip()}\n"
         f"</skill>"

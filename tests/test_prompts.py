@@ -47,6 +47,17 @@ def test_assemble_system_includes_effort_section() -> None:
     assert "Greetings" in text or "short questions" in text
 
 
+def test_assemble_system_includes_harness_and_credentials_guidance() -> None:
+    cfg = load_runtime_config()
+    text = assemble_system_prompt(config=cfg)
+    assert "## Credentials & secrets" in text
+    assert "## Harness limits & workarounds" in text
+    assert "## Skills (trust & supply chain)" in text
+    assert "untrusted" in text
+    assert "SSRF" in text or "localhost" in text
+    assert "## User attachments" in text
+
+
 def test_discover_system_and_append(tmp_path, monkeypatch) -> None:
     home = tmp_path / "kite_home"
     home.mkdir()
