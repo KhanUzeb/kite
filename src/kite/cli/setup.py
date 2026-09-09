@@ -145,7 +145,7 @@ def cmd_keys(args) -> int:
     from kite.providers.credentials import (
         api_key_fingerprint,
         credential_type_label,
-    logout_provider,
+        logout_provider,
     )
     from kite.ui.style import make_console
 
@@ -213,9 +213,13 @@ def cmd_keys(args) -> int:
     )
     console.print(
         "[dim]Add:[/] [cyan]kite keys --set groq[/] (BYOK)  ·  "
+        "[cyan]kite web-keys set tavily|exa|firecrawl[/] (web)  ·  "
         "[cyan]kite login codex|claude|grok[/] (BYOS)  ·  "
         "[cyan]kite logout <provider>[/]"
     )
+    from kite.cli.web_keys import print_web_keys_status
+
+    print_web_keys_status(console)
 
     status = assess_setup_status()
     if status.ready:
@@ -310,6 +314,10 @@ def cmd_login(args) -> int:
 
 
 def needs_model_after_key(provider: str) -> bool:
+    from kite.tools.web_providers import resolve_web_tool_env
+
+    if resolve_web_tool_env(provider):
+        return False
     catalog = load_catalog()
     try:
         spec = catalog.get(provider)

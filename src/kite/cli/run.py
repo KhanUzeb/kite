@@ -1210,22 +1210,29 @@ def build_parser() -> argparse.ArgumentParser:
     logout.add_argument("provider", nargs="?", help="Provider name (codex, claude, grok, xai, …)")
     logout.set_defaults(func=cmd_logout)
 
-    keys = sub.add_parser("keys", help="Show credential status or set a BYOK API key")
+    keys = sub.add_parser(
+        "keys",
+        help="Show credential status or set a BYOK / web-tool API key",
+    )
     keys.add_argument(
         "--set",
         nargs="?",
         const="",
         metavar="PROVIDER",
-        help="Paste a key (omit provider to pick)",
+        help="Paste a key (provider or tavily|exa|firecrawl; omit to pick)",
     )
     keys.add_argument(
         "--logout",
         nargs="?",
         const="",
         metavar="PROVIDER",
-        help="Remove a provider key or OAuth session (omit to pick)",
+        help="Remove a provider/web key or OAuth session (omit to pick)",
     )
     keys.set_defaults(func=cmd_keys)
+
+    from kite.cli.web_keys import add_web_keys_parser
+
+    add_web_keys_parser(sub)
 
     maintainer = sub.add_parser("maintainer", help=argparse.SUPPRESS)
     maint_sub = maintainer.add_subparsers(dest="maintainer_cmd")
