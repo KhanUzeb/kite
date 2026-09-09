@@ -150,7 +150,7 @@ Write-Host "  kite setup                 # guided API key + model picker (or .\s
 Write-Host "  kite providers             # readiness + credential status"
 Write-Host "  kite models -p groq --select"
 Write-Host ""
-Write-Host "REPL: /memory /working /plan /build  (see kite_commands.md)"
+Write-Host "REPL: /user /profile /working /agents profiles /live agents  (see kite_commands.md)"
 Write-Host ""
 Write-Host "Package: .\scripts\pkg.ps1 update | reinstall | uninstall"
 Write-Host "Contributors: bash ./scripts/lint.sh  |  optional: .\scripts\install.ps1 -Verify"

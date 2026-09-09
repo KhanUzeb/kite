@@ -22,7 +22,7 @@ kite bench --stress --json
 |---------|------------------|
 | `task` single | One glob/grep fan-out (real disk I/O) |
 | `task` parallel×3 | Three parallel glob/grep workers |
-| `subagent` sync×1 | Mock nested worker — orchestrator overhead only |
+| `subagent` sync×1 | Mock nested worker — orchestrator overhead only (profiles use real loader when live) |
 | `subagent` sync-crew×3 | Parallel mock crew (thread pool + events) |
 | `subagent` async-spawn | Fire-and-forget return latency |
 | `subagent` async-e2e | Spawn + `wait_for` poll until done |

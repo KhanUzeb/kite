@@ -119,6 +119,21 @@ REPL: `/memory` · `/user` · `/profile` · `/working` · `/remember` · `/forge
 
 ---
 
+## Security (memory + subagents)
+
+| Control | Behavior |
+|---------|----------|
+| File permissions | `USER.md`, `PROFILE.md`, `WORKING.md`, `MEMORY.md` written owner-only (`chmod 600`) |
+| Prompt injection | User-authored blocks wrapped `<!-- kite:untrusted -->` in system prompt |
+| Write caps | Notes/signals length-limited at append time |
+| Nested subagents | Do not receive global USER/PROFILE/WORKING (main agent only) |
+| Custom profiles | Confined to `~/.kite/subagents/`, 32KB max, untrusted in composed prompt |
+| Crew bounds | Max 12 workers per `subagent` dispatch |
+
+See [SECURITY.md](../SECURITY.md) for the full trust model.
+
+---
+
 ## See also
 
 - [kite_commands.md](../kite_commands.md) — slash reference

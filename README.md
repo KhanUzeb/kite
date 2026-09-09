@@ -43,7 +43,9 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 - **Guardrails** — path sandboxing, bash danger checks, recursive secret redaction, process-tree teardown on timeout, SSRF-safe HTTP tools, and per-session approval modes (`auto` / `approve` / `trust` / `readonly`).
 - **Session privacy** — `session_persistence = "redacted"` (default) sanitizes transcripts before write; `full` or `disabled` via `kite config` or `/privacy sessions`.
 - **Skill trust** — bundled skills are trusted; npm/git/project skills are labeled untrusted with provenance metadata.
-- **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, git-stat diffs, theme/font switching, and a context-usage meter.
+- **Global identity memory** — `~/.kite/memory/USER.md`, `PROFILE.md`, `WORKING.md` (always global, never per-repo); injected as soft untrusted context when present.
+- **Subagent orchestration** — bundled personas (`scout`, `reviewer`, `shell`, `coder`, `context`), `profile`/`role` dispatch, `/agents` crew board, `/live agents` streaming.
+- **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, write/edit diff previews, git-stat diffs, theme/font switching, and a context-usage meter.
 - **Portable** — install once, then run `kite` from any project directory via `--cwd`.
 
 ## Setup
@@ -154,7 +156,7 @@ kite chat --cwd C:\dev\other-repo
 kite context --cwd .
 ```
 
-Global config and sessions live in `~/.kite/`. Per-project overlays (optional) go in the target repo: `.kite/commands`, `.kite/plugins`, `.kite/memory`.
+Global config, sessions, and identity memory live in `~/.kite/` (`USER.md`, `PROFILE.md`, `WORKING.md`, `MEMORY.md` under `memory/`). Per-project overlays (optional): `.kite/commands`, `.kite/plugins`, `.kite/MEMORY.md` for project-scoped facts only.
 
 ## Tests
 
@@ -163,7 +165,12 @@ pytest                    # guardrails, agent, sessions, git-stat diffs, skills,
 pytest -v                 # verbose
 ```
 
-Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, orchestrator dispatch, 0.9 application adapters (`PolicyEngine`, `ToolExecutor`, replay acceptance), reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
+Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, orchestrator dispatch, user context + subagent security (`test_security_*`), 0.9 application adapters (`PolicyEngine`, `ToolExecutor`, replay acceptance), reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
+
+```bash
+./scripts/lint.sh              # CI parity: sync_version + ruff + pytest + kite bench --check
+pytest tests/test_security_context_subagents.py -q   # memory/profile/subagent hardening only
+```
 
 **CI:** GitHub Actions runs `pytest` on every push and pull request to `main` (Python 3.11 + 3.12). Details in [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
 
@@ -190,7 +197,7 @@ kite resume <session-id>
 kite resume <session-id> "also update the README"
 ```
 
-In the REPL: `/help` for commands · `/plan` `/build` `/model select` `/checkpoint` `/handoff` · Ctrl+C interrupts the turn. Shortcuts: Ctrl+O expand · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
+In the REPL: `/help` for commands · `/user` `/profile` `/working` · `/agents profiles` · `/live` and `/live agents` · `/plan` `/build` · Ctrl+C interrupts the turn. Shortcuts: Ctrl+O expand · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
 
 Approval modes: `auto` · `approve` · `trust` · `readonly`. Set `KITE_LOADER=grid|dots|orbit|wave|spin` for terminal loader style.
 

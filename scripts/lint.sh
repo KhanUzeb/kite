@@ -13,7 +13,7 @@ Usage: ./scripts/lint.sh [options]
 Runs the same gates as CI on a single Python (current interpreter):
   sync_version --check
   ruff check src tests
-  pytest -q
+  pytest -q                    # includes test_security_* + test_guardrails
   kite bench --check
 
 Options:

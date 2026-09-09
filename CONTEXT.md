@@ -74,11 +74,15 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Trajectory** — Serializable record of a run (messages, tool events) for debug, replay, or `kite apply`.
 
-**Semantic memory** — Durable markdown notes (`MEMORY.md` style) the user asks to remember across sessions. **Opt-in for prompts:** injected only when the user loaded memory this session (`/remember`, `/memory`) or config says `[memory] inject = "always"`.
+**User identity** — Global markdown at `~/.kite/memory/USER.md` (who you are: name, role, comms prefs). Injected when present; wrapped as **untrusted** user-authored content. Never per-repo.
+
+**Profile** — Global markdown at `~/.kite/memory/PROFILE.md` (stack, goals, constraints). Same injection rules as user identity. Distinct from semantic facts and working rhythm.
+
+**Semantic memory** — Durable markdown notes (`~/.kite/memory/MEMORY.md` user-global; optional `<repo>/.kite/MEMORY.md` project-scoped). **Opt-in for prompts:** injected only when the user loaded memory this session (`/remember`, `/memory`) or config says `[memory] inject = "always"`.
 
 **Episodic memory** — Short sqlite log of notable events per user/project. Same opt-in rule as semantic memory when rendered into the prompt.
 
-**Working rhythm** — Fluid long-term context about how the user tends to work (`~/.kite/memory/WORKING.md` + episodic `style` signals). Injected when present as soft context — not weighted policy, not opt-in like semantic memory. Distinct from concrete `/remember` facts.
+**Working rhythm** — Fluid long-term context about how the user tends to work (`~/.kite/memory/WORKING.md` + episodic `style` signals). Injected when present as soft **untrusted** context — not weighted policy, not opt-in like semantic memory. Distinct from concrete `/remember` facts.
 
 **Working-state continuity** — Structured mission/done/next brief written after compact or budget continue. Injected as resume context, **not** durable memory; never auto-pinned to MEMORY.md unless the user asked to remember.
 
@@ -86,7 +90,13 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Auto venv** — When `[environment] auto_venv = true` (default), bash subprocesses prepend the project `.venv`/`venv` to `PATH` if `pyvenv.cfg` exists.
 
-**Live terminal** — `/live` toggles streaming bash/job output in the REPL footer and transcript while tools run.
+**Live terminal** — `/live` toggles streaming bash output in the REPL while tools run (redacted).
+
+**Live subagents** — `/live agents` streams nested crew tool and shell output with worker prefix (`◆ Scout · …`). Redacted like live terminal.
+
+**Subagent profile** — Bundled persona (`scout`, `reviewer`, `shell`, `coder`, `context`) or custom `~/.kite/subagents/*.md`. Passed as `profile=` on the `subagent` tool; composes system prompt + task. Custom profiles are untrusted.
+
+**Subagent crew** — Parallel or background nested harness runs via `subagent` tool. Max 12 workers per dispatch; nested workers cannot recurse (`subagent` stripped) or write global memory (`memory` stripped). Monitor with `/agents`; stop with `/kill`.
 
 **Context checkpoint** — Named snapshot of the full model transcript (and todos) at a point in time. Distinct from git undo. Stored under `~/.kite/checkpoints/<session>/`.
 

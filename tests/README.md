@@ -19,11 +19,15 @@ GitHub Actions runs `pytest` on **every push and pull request to `main`** (Pytho
 | File | Covers |
 |------|--------|
 | `test_guardrails.py` | sandbox, path escape, secret redaction |
+| `test_security_hardening_more.py` | meta redaction, SSRF userinfo, attach guard, gh env filter |
+| `test_security_context_subagents.py` | USER/PROFILE permissions, crew bounds, profile symlink, nested memory strip |
+| `test_user_context.py` | global USER/PROFILE, subagent profile loader |
+| `test_working_style.py` | WORKING.md rhythm, untrusted injection |
 | `test_approval.py` | trust mode, `trusted_paths` bash skip |
 | `test_loop_guard.py` | repetitive tool detection |
 | `test_session.py` | append-only JSONL, meta `updated_at` |
 | `test_verification.py` | test-command artifact detection |
-| `test_orchestrator.py` | parallel subagent dispatch |
+| `test_orchestrator.py` | parallel subagent dispatch, profile/role args |
 | `test_context_cache.py` | 30s project-context TTL |
 | `test_skills_cache.py` | 45s skills TTL |
 | `test_status.py` | context meter, footer tail |

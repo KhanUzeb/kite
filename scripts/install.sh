@@ -178,7 +178,10 @@ First run (recommended):
 REPL tips (after kite setup):
   /plan /build               plan vs apply mode
   /setup /login              credentials and model
-  /memory /working           durable facts vs fluid working rhythm
+  /user /profile /working    global identity (always ~/.kite/memory/)
+  /memory                    durable facts (opt-in for prompts)
+  /agents profiles           bundled subagent personas
+  /live agents               stream crew tool + shell output
   /checkpoint /handoff       save or export session context
   /compact                   summarize older turns
   Ctrl+C                     interrupt current turn (REPL stays open)

@@ -55,6 +55,26 @@ Skills are model instructions — treat them as a supply-chain / prompt-injectio
 
 The model sees `trust`, `origin`, and `source` attributes in skill listings and invocations. Remote skills never silently inherit bundled trust. Skills cannot bypass Kite guardrails or security policies.
 
+## User-authored memory (USER / PROFILE / WORKING)
+
+Files under `~/.kite/memory/` (`USER.md`, `PROFILE.md`, `WORKING.md`, `MEMORY.md`) are **user-authored**. When injected into the system prompt they are wrapped in `<!-- kite:untrusted -->` delimiters — same boundary as npm/git skills. The model must not treat them as overriding safety, guardrails, or credentials policy.
+
+- Writes use owner-only permissions (`chmod 600`) via `secure_memory_write`.
+- Note/signal text is length-capped at write time.
+- Nested subagents (`no_context`) do **not** receive global user identity blocks.
+
+## Subagent profiles and orchestration
+
+| Control | Limit |
+|---------|-------|
+| Bundled profiles | `src/kite/data/subagents/*.md` — trusted |
+| Custom profiles | `~/.kite/subagents/*.md` only; path-confined; 32KB max; untrusted wrapper in composed prompt |
+| Crew size | Max **12** workers per `subagent` dispatch (sync or background) |
+| Nested tools | No `subagent` recursion; no `memory` writes from nested workers |
+| Live crew UI | `/live agents` redacts streamed output and prompt previews |
+
+Background job output (`job_output`) is redacted before display, matching foreground bash streaming.
+
 ## Child process environment
 
 Before spawning subprocesses, Kite filters credential-like keys from the parent environment. Keys passed via `extra` env overrides that match sensitive patterns (e.g. `OPENAI_API_KEY`, `GITHUB_TOKEN`) are **refused** — they cannot reintroduce secrets after filtering.

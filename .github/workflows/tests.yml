@@ -32,5 +32,6 @@ jobs:
           uv pip install -e ".[dev]"
           python scripts/sync_version.py --check
           uv run ruff check src tests
+          # Full suite: guardrails, test_security_*, user context, orchestrator, UI
           uv run pytest -q
           uv run python -m kite.cli.run bench --check
