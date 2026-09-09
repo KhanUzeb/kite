@@ -39,6 +39,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("steer", "Stop and inject a correction as the next turn", hint="text", group="session"),
     BuiltinCommand("tasks", "Show the running turn and queued follow-ups", group="session"),
     BuiltinCommand("jobs", "List background bash jobs and live subagents", group="session"),
+    BuiltinCommand("agents", "Live subagent crew — status and kill picker", group="session"),
     BuiltinCommand("kill", "Kill a background job or subagent", hint="[id|all]", group="session"),
     BuiltinCommand("session", "Show, list, open, or delete transcripts", hint="[list|show|open|delete]", aliases=("sessions",), group="session"),
     BuiltinCommand("resume", "Continue a saved session", hint="[id]", group="session"),

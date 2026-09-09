@@ -1174,6 +1174,7 @@ class ChatSession:
             "steer": self._slash_steer,
             "tasks": self._slash_tasks,
             "jobs": self._slash_jobs,
+            "agents": self._slash_agents,
             "kill": self._slash_kill,
             "resume": self._slash_resume,
             "session": self._handle_session,
@@ -1560,6 +1561,31 @@ class ChatSession:
                 preview = preview[:97] + "…"
             label = "steer" if is_steer else "follow-up"
             self.console.print(f"  {i}. [{label}] {preview}")
+
+    def _slash_agents(self, _arg: str) -> None:
+        rows = [job for job in self.jobs.list(active_only=False) if job.kind == "subagent"]
+        active = [job for job in rows if job.status == "running"]
+        if not rows and not self.state.active_subagents:
+            self.console.print(
+                "[kite.muted]no subagents yet[/]  · use subagent tool or /orchestrate skill"
+            )
+            return
+        table = kite_table("subagent crew")
+        table.add_column("id", style="kite.muted")
+        table.add_column("label", style="kite.plan")
+        table.add_column("status")
+        table.add_column("prompt")
+        for job in rows[-12:]:
+            preview = (job.command or job.label or "").replace("\n", " ").strip()
+            if len(preview) > 56:
+                preview = preview[:53] + "…"
+            status = job.status or "running"
+            table.add_row(job.id[:8], job.display_label(width=24), status, preview)
+        self.console.print(table)
+        if active:
+            self.console.print(f"[kite.muted]{len(active)} running[/]  · /kill to stop one or all")
+        else:
+            self.console.print("[kite.muted]crew idle[/]  · spawn workers with subagent prompts[]")
 
     def _slash_jobs(self, _arg: str) -> None:
         rows = self.jobs.list(active_only=True)

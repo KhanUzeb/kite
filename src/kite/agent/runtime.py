@@ -11,7 +11,13 @@ from kite.agent.cancel import CancelToken
 from kite.agent.events import Event
 from kite.agent.hooks import HarnessSlots, HookBus
 from kite.agent.loop import DefaultAgent
-from kite.agent.mode import AgentMode, ApprovalMode, parse_approval_mode, tools_for_mode
+from kite.agent.mode import (
+    AgentMode,
+    ApprovalMode,
+    parse_approval_mode,
+    tools_for_mode,
+    tools_for_nested_subagent,
+)
 from kite.agent.orchestrator import SubagentOrchestrator
 from kite.agent.queue import RunMessageQueue
 from kite.agent.role import AgentRole, parse_role, tools_for_role
@@ -328,6 +334,8 @@ class AgentRuntime:
         approval = parse_approval_mode(self.options.approval or "auto", default=ApprovalMode.AUTO)
 
         enabled = tools_for_mode(mode, rcfg.tools.enabled)
+        if self.options.label == "subagent":
+            enabled = tools_for_nested_subagent(rcfg.tools.enabled)
         role = parse_role(self.options.role or rcfg.role, mode=mode.value)
         enabled = tools_for_role(role, enabled)
 
@@ -345,6 +353,7 @@ class AgentRuntime:
                 parent_mode=self.options.mode or "build",
                 parent_no_guardrails=bool(self.options.no_guardrails),
                 parent_execution_mode=self.options.execution_mode,
+                child_overrides={"mode": "plan", "approval": "readonly"},
             )
             h = Harness(
                 HarnessConfig(

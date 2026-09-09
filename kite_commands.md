@@ -145,6 +145,7 @@ These never go to the model.
 | `/steer text` | Stop and run `text` as the next turn |
 | `/tasks` | Show the running turn and queued follow-ups |
 | `/jobs` | List background bash jobs and live subagents (pick to kill) |
+| `/agents` | Subagent crew board — labels, status, prompts; `/kill` to stop |
 | `/kill [id\|all]` | Kill one background job/subagent, or all. Empty: pick |
 | `/session` | Current session id |
 | `/session show [id]` | Print a transcript (current if omitted) |

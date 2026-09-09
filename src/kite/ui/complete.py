@@ -43,7 +43,7 @@ class ComposerResult:
 
 
 # Slash commands safe to run while a turn is in flight (read-only / status).
-BUSY_SAFE_SLASHES = frozenset({"tasks", "task", "status", "help", "jobs", "h", "?"})
+BUSY_SAFE_SLASHES = frozenset({"tasks", "task", "status", "help", "jobs", "agents", "h", "?"})
 
 _APPROVAL_CHOICES = {
     "a": "allow",

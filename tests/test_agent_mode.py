@@ -9,6 +9,7 @@ from kite.agent.mode import (
     READONLY_TOOLS,
     AgentMode,
     tools_for_mode,
+    tools_for_nested_subagent,
 )
 from kite.prompts import load_prompt_template
 
@@ -28,6 +29,14 @@ def test_plan_tools_are_readonly_plus_checklist_and_bash() -> None:
     assert READONLY_TOOLS <= PLAN_TOOLS
     assert PLAN_TOOLS - READONLY_TOOLS == frozenset({"todo_write", "bash"})
     assert {"write", "edit", "bash"} <= MUTATING_TOOLS
+
+
+def test_nested_subagent_tools_exclude_subagent() -> None:
+    enabled = ["read", "grep", "subagent", "task", "bash", "todo_write"]
+    nested = tools_for_nested_subagent(enabled)
+    assert "subagent" not in nested
+    assert "read" in nested
+    assert "grep" in nested
 
 
 def test_tools_for_mode_filters_enabled() -> None:

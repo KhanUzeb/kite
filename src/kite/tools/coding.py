@@ -653,7 +653,7 @@ def make_coding_tools(
                     except Exception as e:
                         results[idx] = f"task {idx} error: {e}"
             for i in sorted(results):
-                sections.append(f"\n--- subagent {i} ---\n{results[i]}")
+                sections.append(f"\n--- task {i} ---\n{results[i]}")
             text = "\n".join(sections)
         else:
             prompt = str(args.get("prompt") or "")
