@@ -36,6 +36,7 @@ def build_harness_config(
     execution_mode: str | None = None,
     long_task: bool = False,
     memory_in_prompt: bool = False,
+    goal_objective: str = "",
     **extra: Any,
 ) -> HarnessConfig:
     """Build ``HarnessConfig`` for any harness entry point."""
@@ -71,5 +72,6 @@ def build_harness_config(
         execution_mode=execution_mode,
         long_task=long_task,
         memory_in_prompt=memory_in_prompt,
+        goal_objective=goal_objective,
         **extra,
     )

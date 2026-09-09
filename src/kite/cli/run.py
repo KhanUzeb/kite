@@ -281,10 +281,20 @@ def cmd_resume(args: argparse.Namespace) -> int:
     from kite.memory.session import load_session
     from kite.memory.session_format import format_session_resume_hint, suggest_sessions
 
+    console = _console()
+    if getattr(args, "last", False) and not getattr(args, "session", None):
+        from kite.memory.session import latest_session_for_cwd
+
+        meta = latest_session_for_cwd(args.cwd)
+        if meta is None:
+            console.print("[red]no sessions to resume[/]")
+            return 2
+        args.session = meta.id
+        console.print(f"[dim]last session[/]  {meta.id}  ({meta.label or meta.task[:48]})")
+
     if not getattr(args, "session", None):
         from kite.ui.pick import can_prompt
 
-        console = _console()
         if not can_prompt():
             console.print("[red]session id required[/]  —  kite resume <id>  or  kite sessions")
             return 2
@@ -292,8 +302,6 @@ def cmd_resume(args: argparse.Namespace) -> int:
         if not picked:
             return 130
         args.session = picked
-
-    console = _console()
     try:
         session = load_session(args.session)
     except FileNotFoundError:
@@ -313,6 +321,11 @@ def cmd_resume(args: argparse.Namespace) -> int:
     console.print(f"[dim]resuming[/]  {format_session_resume_hint(session.meta)}")
 
     follow = args.message or args.task
+    if getattr(args, "retry", False) and not follow:
+        follow = (
+            "Continue the unfinished work from where we left off. "
+            "The previous run stopped due to a provider, network, or budget interruption."
+        )
     if not follow:
         return cmd_chat(args)
     mode = _parse_mode(args.mode)
@@ -363,7 +376,23 @@ def cmd_resume(args: argparse.Namespace) -> int:
     finally:
         harness.teardown_jobs()
     console.print(f"[bold]exit[/]={result.get('exit_status')}  session={args.session}")
-    return 0 if result.get("exit_status") == "Submitted" else 1
+    exit_status = str(result.get("exit_status") or "")
+    if exit_status == "ProviderFault":
+        console.print(
+            "[kite.pending]provider fault[/] — session saved. "
+            f"[kite.muted]retry: kite resume {args.session} --retry[/]"
+        )
+    elif exit_status in {"LimitsExceeded", "TimeExceeded"}:
+        console.print(
+            f"[kite.pending]budget pause[/] — "
+            f"[kite.muted]continue: kite resume {args.session} --retry[/]"
+        )
+    elif exit_status == "Interrupted":
+        console.print(
+            "[kite.muted]interrupted — session kept. "
+            f"kite resume {args.session}  or  kite resume {args.session} --retry[/]"
+        )
+    return 0 if exit_status == "Submitted" else 1
 
 
 def cmd_sessions(args: argparse.Namespace) -> int:
@@ -1116,6 +1145,16 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("session", nargs="?", help="Session id or unique prefix (omit to pick)")
     resume.add_argument("message", nargs="?", help="Optional one-shot follow-up message")
     resume.add_argument("--task", help="Alias for follow-up message")
+    resume.add_argument(
+        "--last",
+        action="store_true",
+        help="Resume the most recent session for --cwd (or newest overall)",
+    )
+    resume.add_argument(
+        "--retry",
+        action="store_true",
+        help="Send a recovery follow-up (provider/network/budget interruption)",
+    )
     _add_run_flags(resume)
     resume.set_defaults(func=cmd_resume)
 

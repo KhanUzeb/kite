@@ -365,6 +365,55 @@ def load_session(session_id: str) -> Session:
     return Session(meta=meta, messages=messages, path=path)
 
 
+def load_session_todos(session_id: str) -> list[dict[str, Any]]:
+    """Latest todo snapshot from durable session events."""
+    path = resolve_session_path(session_id)
+    latest: list[dict[str, Any]] = []
+    try:
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row.get("type") != "event" or row.get("kind") != "todo":
+                    continue
+                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+                items = payload.get("items")
+                if isinstance(items, list) and items:
+                    latest = [x for x in items if isinstance(x, dict)]
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return []
+    return latest
+
+
+def persist_session_todos(session_id: str, items: list[dict[str, Any]]) -> None:
+    """Append a durable todo snapshot for resume after restart."""
+    if not session_id or not items:
+        return
+    try:
+        session = load_session(session_id)
+    except (OSError, ValueError, FileNotFoundError):
+        return
+    session.record_event("todo", {"items": items})
+
+
+def latest_session_for_cwd(cwd: str, *, limit: int = 50) -> SessionMeta | None:
+    """Most recently updated session for this workspace, or newest overall."""
+    try:
+        target = str(Path(cwd or ".").expanduser().resolve())
+    except OSError:
+        target = cwd or ""
+    rows = list_sessions(limit=limit)
+    for meta in rows:
+        try:
+            if str(Path(meta.cwd or ".").expanduser().resolve()) == target:
+                return meta
+        except OSError:
+            if meta.cwd == cwd:
+                return meta
+    return rows[0] if rows else None
+
+
 def list_sessions(*, limit: int = 30, query: str = "") -> list[SessionMeta]:
     rows: list[SessionMeta] = []
     for path in sessions_dir().glob("*.jsonl"):

@@ -70,6 +70,7 @@ class RuntimeOptions:
     execution_mode: str | None = None  # restricted | host — overrides runtime TOML
     use_tool_executor: bool = True
     memory_in_prompt: bool = False
+    goal_objective: str = ""
 
 
 @dataclass
@@ -212,6 +213,15 @@ class AgentRuntime:
                 extra_sections.append(load_prompt_template("mode_long"))
             except (FileNotFoundError, OSError):
                 pass
+        goal_text = (self.options.goal_objective or "").strip()
+        if goal_text and self.options.label != "subagent":
+            try:
+                extra_sections.append(load_prompt_template("mode_goal"))
+            except (FileNotFoundError, OSError):
+                pass
+            from kite.memory.goal import format_goal_section
+
+            extra_sections.append(format_goal_section(goal_text))
 
         memory_store = MemoryStore.open(cwd) if self.slots.memory is None else self.slots.memory
         inject_memory = rcfg.memory.inject == "always" or self.options.memory_in_prompt

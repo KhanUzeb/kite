@@ -43,6 +43,12 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("stop", "Stop the current turn — session stays open", group="session"),
     BuiltinCommand("steer", "Stop and inject a correction as the next turn", hint="text", group="session"),
     BuiltinCommand("tasks", "Show the running turn and queued follow-ups", group="session"),
+    BuiltinCommand(
+        "goal",
+        "Persistent long-horizon objective (survives provider errors)",
+        hint="[text]|pause|resume|clear|edit",
+        group="session",
+    ),
     BuiltinCommand("jobs", "List background bash jobs and live subagents", group="session"),
     BuiltinCommand(
         "agents",
@@ -194,6 +200,12 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("show", "print one persona by id"),
         ("init", "scaffold ~/.kite/subagents/<id>.md"),
         ("reload", "reload profiles from disk"),
+    ],
+    "goal": [
+        ("pause", "suspend goal auto-continue"),
+        ("resume", "reactivate goal"),
+        ("clear", "remove goal"),
+        ("edit", "revise objective text"),
     ],
 }
 
