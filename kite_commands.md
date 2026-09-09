@@ -26,6 +26,7 @@ kite chat [--mode plan|build] [--approval auto|approve|trust|readonly] [--sessio
 kite run "task"              # one-shot
 kite resume <session-id>                 # open that transcript in chat
 kite resume <session-id> [follow-up]     # one-shot continue
+kite resume --last [--retry]             # newest session for cwd; --retry sends recovery follow-up
 kite resume abc12345                     # id prefix works when unique
 kite sessions                            # table: date, time, title, model, status, id
 kite sessions humanize                   # filter by title, cwd, date, or id prefix

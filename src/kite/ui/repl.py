@@ -77,6 +77,7 @@ class ChatSession:
         self.policy = None
         self.git = GitCheckpoints.open(cwd)
         self.todos = TodoStore()
+        self._goal = None
         self._memory = None
         self._memory_in_prompt = False
         self.attachments: list = []
@@ -367,7 +368,21 @@ class ChatSession:
             self.config_name,
             self.state.reasoning or "auto",
             self._memory_in_prompt,
+            (self._goal.objective if self._goal and self._goal.active else ""),
+            (self._goal.status if self._goal else ""),
         )
+
+    def _goal_objective_for_harness(self) -> str:
+        if self._goal and self._goal.active:
+            return self._goal.objective
+        return ""
+
+    def _sync_goal_to_session(self) -> None:
+        if not self._session_id:
+            return
+        from kite.memory.goal import save_session_goal
+
+        save_session_goal(self._session_id, self._goal)
 
     def _execution_mode(self) -> str:
         return "restricted" if self.state.sandbox_restricted else "host"
@@ -404,6 +419,7 @@ class ChatSession:
                 attachments=list(self.attachments),
                 execution_mode=self._execution_mode(),
                 memory_in_prompt=self._memory_in_prompt,
+                goal_objective=self._goal_objective_for_harness(),
             )
         )
         h.job_registry = self.jobs
@@ -1215,6 +1231,7 @@ class ChatSession:
             "agents": self._slash_agents,
             "kill": self._slash_kill,
             "resume": self._slash_resume,
+            "goal": self._slash_goal,
             "session": self._handle_session,
             "home": self._slash_home,
             "theme": self._set_theme,
@@ -1810,12 +1827,62 @@ class ChatSession:
             return
         self._open_session(arg)
 
+    def _slash_goal(self, arg: str) -> None:
+        from kite.memory.goal import SessionGoal
+
+        text = (arg or "").strip()
+        if not text:
+            if self._goal and self._goal.objective:
+                self.console.print(f"[kite.plan]goal[/]  {self._goal.status}")
+                self.console.print(self._goal.objective[:2000])
+                self.console.print("[kite.muted]/goal pause · resume · clear · edit …[/]")
+            else:
+                self.console.print(
+                    "[kite.muted]no goal  ·  /goal Finish the migration and keep tests green[/]"
+                )
+            return
+        low = text.lower()
+        if low == "clear":
+            self._goal = None
+            self._sync_goal_to_session()
+            self._invalidate_harness()
+            self.console.print("[kite.success]goal cleared[/]")
+            return
+        if low == "pause":
+            if self._goal and self._goal.objective:
+                self._goal = SessionGoal(objective=self._goal.objective, status="paused")
+                self._sync_goal_to_session()
+                self._invalidate_harness()
+                self.console.print("[kite.muted]goal paused[/]")
+            else:
+                self.console.print("[kite.muted]no active goal[/]")
+            return
+        if low == "resume":
+            if self._goal and self._goal.objective:
+                self._goal = SessionGoal(objective=self._goal.objective, status="active")
+                self._sync_goal_to_session()
+                self._invalidate_harness()
+                self.console.print("[kite.success]goal resumed[/]")
+            else:
+                self.console.print("[kite.error]no goal  ·  /goal <objective>[/]")
+            return
+        if low.startswith("edit "):
+            text = text[5:].strip()
+        if not text:
+            self.console.print("[kite.error]goal text required[/]")
+            return
+        preview = text if len(text) <= 72 else text[:69] + "…"
+        self._goal = SessionGoal(objective=text[:4000], status="active")
+        self._sync_goal_to_session()
+        self._invalidate_harness()
+        self.console.print(f"[kite.success]goal set[/]  {preview}")
+
     def _slash_home(self, _arg: str) -> None:
         from kite.memory.session_policy import persistence_mode
 
         home = kite_home()
         self.console.print(f"{home}")
-        for name in ("commands", "skills", "subagents", "plugins", "memory", "sessions", "audit.jsonl"):
+        for name in ("commands", "skills", "subagents", "plugins", "memory", "goals", "sessions", "audit.jsonl"):
             self.console.print(f"  {home / name}")
         self.console.print(f"  sessions policy: {persistence_mode()}  ·  /privacy sessions")
         self.console.print(f"  {Path(self.cwd) / '.kite' / 'commands'}  (project)")
@@ -1902,6 +1969,14 @@ class ChatSession:
             return
         self._invalidate_harness()
         self._session_id = session.id
+        from kite.memory.goal import load_session_goal
+        from kite.memory.session import load_session_todos
+
+        self._goal = load_session_goal(session.id)
+        restored = load_session_todos(session.id)
+        if restored:
+            self.todos.write(restored)
+            self.state.set_todos(self.todos.read())
         if session.meta.provider:
             self.provider = session.meta.provider
             self.state.provider = session.meta.provider
@@ -2380,6 +2455,7 @@ class ChatSession:
     def _bind_session(self, harness) -> None:
         if harness.last_session:
             self._session_id = harness.last_session.id
+            self._sync_goal_to_session()
 
     def _run_task(self, task: str) -> None:
         from kite.ui.attach import collect_turn_attachments
@@ -2405,12 +2481,13 @@ class ChatSession:
 
         from kite.config.runtime import load_runtime_config
         from kite.memory.continuity import build_continuity_brief, save_continuity
-        from kite.ui.budget_continue import decide_budget_continue
+        from kite.memory.recovery import build_recovery_follow_up, decide_recovery_continue
 
         try:
             max_continues = max(0, int(load_runtime_config(self.config_name).max_budget_continues))
         except Exception:
             max_continues = 2
+        max_continues = max(max_continues, 3 if self._goal and self._goal.active else max_continues)
 
         resume = bool(self._session_id)
         harness = self._make_harness(resume=resume, follow_up=task if resume else None)
@@ -2516,10 +2593,13 @@ class ChatSession:
             exit_status = str(extra.get("exit_status") or "")
             stats = extra.get("model_stats") if isinstance(extra.get("model_stats"), dict) else {}
             tool_calls = int(stats.get("api_calls") or extra.get("api_calls") or 0)
-            action = decide_budget_continue(
+            goal_active = bool(self._goal and self._goal.active)
+            action = decide_recovery_continue(
                 exit_status=exit_status,
                 continues_used=continues_used,
                 max_continues=max_continues,
+                goal_active=goal_active,
+                goal_objective=self._goal_objective_for_harness(),
                 todos=self.todos.read(),
                 tool_call_count=tool_calls,
                 inbox_queued=bool(self._inbox),
@@ -2554,16 +2634,17 @@ class ChatSession:
                 )
             except Exception:
                 pass
-            run_task = (
-                brief.to_markdown()
-                + "\n\nContinue the unfinished work from the continuity brief. "
-                "Do not restart from scratch; pick up at Next / Open todos."
+            run_task = build_recovery_follow_up(
+                exit_status=exit_status,
+                continuity_markdown=brief.to_markdown(),
+                goal_objective=self._goal_objective_for_harness(),
             )
+            label = "goal continue" if goal_active else "recovery continue"
             self.console.print(
-                f"[kite.muted]budget continue {continues_used}/{max_continues} — resuming…[/]"
+                f"[kite.muted]{label} {continues_used}/{max_continues} — resuming…[/]"
             )
             self.state.set_running(
-                label=f"budget continue {continues_used}/{max_continues}",
+                label=f"{label} {continues_used}/{max_continues}",
                 kind="turn",
             )
             self.state.busy = True
@@ -2593,6 +2674,11 @@ class ChatSession:
             self.console.print("[kite.muted]session kept[/]  — type to continue, Ctrl+G after a stop to steer")
         if extra.get("exit_status") == "ProviderFault":
             self.state.last_error = str(extra.get("error") or "provider fault")
+            sid = self._session_id or ""
+            hint = f"kite resume {sid} --retry" if sid else "type to continue"
+            self.console.print(
+                f"[kite.pending]provider fault[/] — session saved. [kite.muted]{hint}[/]"
+            )
             return
         if extra.get("exit_status") in {"LimitsExceeded", "TimeExceeded"}:
             self.state.last_error = str(extra.get("submission") or extra.get("content") or extra.get("exit_status"))
@@ -2620,6 +2706,13 @@ class ChatSession:
         except Exception:
             pass
         self.state.set_todos(self.todos.read())
+        if self._session_id and self.todos.read():
+            try:
+                from kite.memory.session import persist_session_todos
+
+                persist_session_todos(self._session_id, self.todos.read())
+            except Exception:
+                pass
 
     def run(self) -> int:
         from kite.ui.git import git_branch

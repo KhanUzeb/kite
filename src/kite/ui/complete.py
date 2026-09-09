@@ -341,6 +341,8 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             choices.append(("init", "scaffold .kite/plugins/name"))
             for plugin in index.plugins:
                 choices.append((plugin.name, (plugin.description or plugin.source)[:60]))
+        elif cmd == "goal":
+            choices = list(ARG_CHOICES.get("goal", []))
         elif cmd == "agents":
             from kite.agent.subagent_profiles import list_profiles
 

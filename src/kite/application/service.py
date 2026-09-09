@@ -21,8 +21,10 @@ def _map_exit_status(exit_status: str | None) -> tuple[str, StopReason | None]:
         "Error": ("failed", "error"),
         "Cancelled": ("cancelled", "cancelled"),
         "LimitsExceeded": ("failed", "limits_exceeded"),
+        "TimeExceeded": ("failed", "limits_exceeded"),
         "Stalled": ("failed", "stalled"),
         "Interrupted": ("cancelled", "interrupted"),
+        "ProviderFault": ("failed", "error"),
     }
     if status in mapping:
         return mapping[status]
