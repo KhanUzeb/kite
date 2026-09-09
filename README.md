@@ -122,6 +122,8 @@ Or edit keys manually:
 # Copy .env.example to .env (or ~/.kite/.env) and set your key(s)
 kite keys                     # show which keys are set
 kite keys --set groq          # paste a key into ~/.kite/.env
+kite web-keys set tavily      # optional paid websearch (also: exa, firecrawl)
+kite keys --set firecrawl     # same storage path as web-keys set
 kite login codex              # BYOS: ChatGPT/Codex via openai-codex SDK
 kite login claude             # BYOS: Claude Code CLI (claude auth login)
 kite login grok               # BYOS: Grok CLI (or kite login xai)
@@ -223,8 +225,9 @@ kite runtime-config
 kite setup                    # first-run: key + model wizard
 kite login [provider]         # BYOK key or BYOS subscription
 kite logout [provider]        # unlink BYOS subscription
-kite keys [--set provider]    # show or paste API keys (hidden)
-kite keys --logout provider   # remove a stored BYOK key or BYOS session
+kite keys [--set provider]    # show or paste API keys (hidden); also tavily|exa|firecrawl
+kite web-keys [set|logout]    # optional paid web tool keys → ~/.kite/.env
+kite keys --logout provider   # remove a stored BYOK/web key or BYOS session
 kite providers
 kite models -p groq
 kite models --select

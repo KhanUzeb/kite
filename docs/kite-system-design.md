@@ -251,9 +251,11 @@ build_tool_executor(policy, runner=env.execute) → DefaultAgent
 - `ls` — directory listing
 - `todo_write` / `todo_read` — live plan checklist (auditable tool, not client-only UI state)
 - `task` — bounded glob+grep investigation, returns a summary
-- `webfetch` — http(s) fetch; returns extracted text + title (not raw HTML); blocks localhost/private URLs; JSON pretty-print
-- `websearch` — free DuckDuckGo search (no API key); redirect unwrap; dedupe; parser fallback
-- `webcrawl` — follow links on a site, extract text (stdlib, no API key)
+- `webfetch` — http(s) fetch; Firecrawl scrape when `FIRECRAWL_API_KEY` is set, else stdlib extract (title + readable text); blocks localhost/private URLs
+- `websearch` — auto paid chain **Tavily → Exa → Firecrawl → DuckDuckGo** when keys exist in `~/.kite/.env`; else DuckDuckGo HTML/instant; redirect unwrap; dedupe
+- `webcrawl` — Firecrawl crawl when keyed, else same-origin stdlib crawl (depth/page/time budgets)
+- Adapters live in `tools/web_providers.py`; entrypoints stay `websearch` / `webfetch` / `webcrawl` (same tool schemas)
+- Keys: `kite web-keys set tavily|exa|firecrawl` (or `kite keys --set …`) → `~/.kite/.env`
 - `skill` — inject full SKILL.md
 - `memory` — list / remember / forget durable notes (`~/.kite/memory` or `.kite/memory`)
 

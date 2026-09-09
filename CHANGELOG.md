@@ -4,6 +4,12 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+### Added
+- **Paid web backends** — optional `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` in `~/.kite/.env` via `kite web-keys set tavily|exa|firecrawl` (or `kite keys --set …`). `websearch` auto-tries Tavily → Exa → Firecrawl → DuckDuckGo; Firecrawl also upgrades `webfetch` / `webcrawl`.
+
+### Fixed
+- **ChatGPT BYOS hang** — LiteLLM expects flat `auth.json`; Codex stores nested `tokens`. Kite now materializes a LiteLLM-compatible copy under `~/.kite/oauth/chatgpt/` from the official Codex store so the harness no longer blocks on device-code login.
+
 ## [0.9.6] - 2026-09-09
 
 ### Added

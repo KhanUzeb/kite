@@ -71,8 +71,11 @@ kite setup [-p provider]       # first-run wizard: credentials + model
 kite login [provider]          # pick provider if omitted → BYOK key or BYOS browser → pick model
 kite logout [provider]         # unlink BYOS subscription (codex, claude, grok/xai)
 kite keys                      # TTY: status then pick a provider to link
-kite keys [--set [provider]]   # paste BYOK API keys (hidden); omit provider to pick
-kite keys --logout [provider]  # unlink BYOK keys or BYOS (omit provider to pick)
+kite keys [--set [provider]]   # paste BYOK API keys (hidden); also tavily|exa|firecrawl
+kite web-keys                  # show optional web tool key status (Tavily / Exa / Firecrawl)
+kite web-keys set [name]       # paste web tool key (hidden) → ~/.kite/.env owner-only
+kite web-keys logout [name]    # remove a web tool key
+kite keys --logout [provider]  # unlink BYOK keys, web keys, or BYOS (omit provider to pick)
 kite providers                 # status; TTY then pick to connect
 kite models [-p provider]      # TTY: pick a live model (saved). --list dumps the table
 kite models --refresh          # bypass cache; re-fetch from the provider API
@@ -352,11 +355,12 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 | `submit` | Structured completion — `message` with Done / Changed / Verification sections (preferred over bash echo marker) |
 | `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` |
 | `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |
-| `websearch` | DuckDuckGo search (HTML + instant API, no key); unwraps redirects; deduped results |
-| `webfetch` | Fetch one URL → title, description, readable body; optional outbound links; JSON pretty-print |
-| `webcrawl` | Same-origin crawl with depth/page/time/download limits; private URLs blocked |
+| `websearch` | Auto: Tavily → Exa → Firecrawl when keys set; else DuckDuckGo. Returns titles/URLs/snippets |
+| `webfetch` | Firecrawl scrape when `FIRECRAWL_API_KEY` set; else stdlib HTML extract |
+| `webcrawl` | Firecrawl crawl when keyed; else same-origin stdlib crawl |
 
 Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `websearch` → pick URL → `webfetch`.
+Keys: `kite web-keys set tavily|exa|firecrawl` or `kite keys --set …` → `~/.kite/.env` (owner-only).
 
 `KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable facts; `/user` + `/profile` + `/working` are global identity context. See [docs/memory.md](docs/memory.md).
 
@@ -410,7 +414,8 @@ Kite is **local-first**: credentials stay on disk under `~/.kite/` (or provider 
 |-------|---------|
 | **Session persistence** | `session_persistence` in `~/.kite/config.toml`: `redacted` (default), `full`, or `disabled`. REPL: `/privacy sessions …`. CLI: `kite config --session-persistence …` or `kite privacy` |
 | **Secret redaction** | Recursive sanitizer for audit logs, events, session JSONL, and tool output (nested dicts/lists, Bearer tokens, sensitive keys) |
-| **Child processes** | Credential-like env vars stripped; `extra` overrides cannot re-inject `OPENAI_API_KEY`, `GITHUB_TOKEN`, etc. Process trees killed on timeout/cancel |
+| **Child processes** | Credential-like env vars stripped (incl. Tavily/Exa/Firecrawl/Context7); `extra` overrides cannot re-inject secrets. Process trees killed on timeout/cancel |
+| **Web tool keys** | Optional `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` via `kite web-keys set …` or `kite keys --set …` → `~/.kite/.env` (same secure write as BYOK) |
 | **Skills** | Bundled = trusted; npm/git/project/user = untrusted (`.kite-provenance.json` on install) |
 | **HTTP tools** | SSRF + peer IP check; redirects capped; crawl budgets |
 | **OS/hardware** | `/proc` `/sys` `/dev` protected; bash blocks sudo/docker/kubectl/mount; filtered child env on all subprocess tools |

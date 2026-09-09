@@ -28,7 +28,7 @@ src/kite/
   context/        Project discovery, workspace/execution cwd, token estimate
   providers/      Catalog, resolve model, list_models, credentials, select
   models/         LiteLLM wrapper, reasoning effort, prompt cache
-  tools/          Coding tools (read/write/edit/bash/set_cwd/…), jobs registry, metadata, web, github
+  tools/          Coding tools (read/write/edit/bash/…), web + web_providers (Tavily/Exa/Firecrawl), jobs, github
   guardrails/     Path sandbox, execution mode, bash policy, secret redaction
   ui/             REPL, render, approval, complete, theme, status
   memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic, user_context, working_style, secure_io
@@ -114,6 +114,7 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 ```bash
 kite setup                      # onboarding wizard
 kite keys --set groq            # save API key (hidden)
+kite web-keys set tavily        # optional websearch (also: exa, firecrawl)
 kite models -p groq --select    # pick default model
 kite chat                       # REPL
 kite bench                      # harness timing baseline
