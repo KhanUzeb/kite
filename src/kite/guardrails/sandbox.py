@@ -63,6 +63,15 @@ DANGEROUS_BASH = (
     re.compile(r"(?i)\brm\s+-rf\s+\$HOME\b"),
     re.compile(r"(?i)\brm\s+-rf\s+%USERPROFILE%"),
     re.compile(r"(?i)\brd\s+/s(?:\s+/q)?\b"),
+    re.compile(r"(?i)\b(sudo|doas|pkexec)\b"),
+    re.compile(r"(?i)\b(docker|podman|nerdctl)\s+(run|exec|rm|kill|pause|unpause|create)\b"),
+    re.compile(r"(?i)\bkubectl\s+(apply|delete|patch|replace|create|run|exec|scale)\b"),
+    re.compile(r"(?i)\b(mount|umount|swapon|swapoff|losetup)\b"),
+    re.compile(r"(?i)\b(iptables|nftables|ufw|firewall-cmd)\b"),
+    re.compile(r"(?i)(>|>>)\s*/dev/"),
+    re.compile(r"(?i)\b(systemctl|service)\s+(stop|restart|disable|mask|poweroff)\b"),
+    re.compile(r"(?i)\b(nc|ncat|netcat)\s+.*\s+-l\b"),
+    re.compile(r"(?i)\b(Set-ExecutionPolicy|bcdedit|reg\s+add)\b"),
 )
 
 # Known tool/cache dirs — auto/yolo may remove these without mandatory approval.
@@ -101,7 +110,7 @@ _ABS_PATH = re.compile(
         | (?:\$HOME(?:[\\/][^\s'\"|&;<>]*)?)
         | (?:%[A-Za-z_]+%(?:[\\/][^\s'\"|&;<>]*)?)
         | (?:\.\./[^\s'\"|&;<>]+)
-        | (?:/(?:etc|usr|bin|sbin|root|var|sys|System|private|home|opt|boot|data)[^\s'\"|&;<>]*)
+        | (?:/(?:proc|dev|run|etc|usr|bin|sbin|root|var|sys|System|private|home|opt|boot|data)[^\s'\"|&;<>]*)
     )
     """
 )
@@ -209,6 +218,14 @@ def protected_roots() -> list[Path]:
                 Path("/usr"),
                 Path("/bin"),
                 Path("/sbin"),
+                Path("/lib"),
+                Path("/lib64"),
+                Path("/boot"),
+                Path("/proc"),
+                Path("/sys"),
+                Path("/dev"),
+                Path("/run"),
+                Path("/var/run"),
                 Path("/System"),
                 Path("/root"),
                 Path("/private/etc"),
@@ -238,8 +255,27 @@ def _resolve_path_best_effort(path: Path) -> Path:
         return path.expanduser()
 
 
+def is_os_interface_path(path: Path) -> bool:
+    """Block kernel/device interfaces that can expose host state or hardware."""
+    text = str(path)
+    if os.name == "nt":
+        low = text.replace("/", "\\").lower()
+        if low.startswith("\\\\.\\") or low.startswith("\\\\?\\"):
+            return True
+        return False
+    parts = [p.lower() for p in path.parts]
+    if parts and parts[0] == "/" and len(parts) > 1:
+        if parts[1] in {"proc", "sys", "dev", "run"}:
+            return True
+    if "proc" in parts and "environ" in parts:
+        return True
+    return False
+
+
 def is_protected(path: Path) -> bool:
     resolved = _resolve_path_best_effort(path)
+    if is_os_interface_path(resolved):
+        return True
     name = resolved.name
     if name in SENSITIVE_NAMES:
         return True

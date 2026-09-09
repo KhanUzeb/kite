@@ -38,6 +38,11 @@ _ENV_DUMP_PATTERNS = (
 
 _CHAIN_SPLIT = re.compile(r"\s*&&\s*|\s*;\s*|\s*\|\s*")
 
+_OS_INTERFACE_READ = re.compile(
+    r"(?i)\b(cat|type|head|tail|less|more|Get-Content|dd|cp|tee)\s+[^\n]*"
+    r"(/proc/|/sys/|/dev/|\\\\\.\\|\\\\\?\\)"
+)
+
 
 def redact_secrets(text: str) -> tuple[str, int]:
     """Return (redacted_text, count_of_redactions). Usable without a policy instance."""
@@ -127,6 +132,8 @@ class GuardrailPolicy:
         blocked = env_dump_blocked(command)
         if blocked:
             return GuardrailVerdict(False, blocked)
+        if _OS_INTERFACE_READ.search(command):
+            return GuardrailVerdict(False, "refusing to read OS interface paths via bash")
         if self.config.sandbox_to_cwd and not self.config.host_access():
             escaped = check_command_paths(command, self.workspace)
             if escaped:
@@ -195,6 +202,15 @@ class GuardrailPolicy:
             for rx in SECRET_PATTERNS:
                 if rx.search(content):
                     return GuardrailVerdict(False, "refusing to write content that looks like a secret")
+
+        if tool in {"webfetch", "webcrawl"}:
+            from kite.guardrails.ssrf import url_blocked
+
+            target = str(args.get("url") or "").strip()
+            if target:
+                err = url_blocked(target)
+                if err:
+                    return GuardrailVerdict(False, err)
 
         return GuardrailVerdict(True, rewritten_args=args)
 
