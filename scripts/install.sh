@@ -425,7 +425,7 @@ Local .venv is only for pytest/IDE — you do not need to activate it to run kit
   kite
   .venv/bin/pytest -q
 
-Package: ./scripts/pkg.sh update | reinstall | uninstall
+Update / uninstall: uv tool upgrade kite · uv tool uninstall kite
 EOF
 }
 

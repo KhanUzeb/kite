@@ -97,7 +97,7 @@ fi
 
 python scripts/sync_version.py --check
 
-git add pyproject.toml src/kite/__init__.py CHANGELOG.md README.md AGENTS.md architecture.md docs/kite-system-design.md scripts/ "$RELEASE_DOC"
+git add pyproject.toml src/kite/__init__.py CHANGELOG.md README.md AGENTS.md architecture.md scripts/ "$RELEASE_DOC"
 git commit -m "chore: release v$NEW"
 
 if git rev-parse "v$NEW" >/dev/null 2>&1; then

@@ -44,7 +44,6 @@ RULES: tuple[StampRule, ...] = (
     StampRule(ROOT / "README.md", r"\*\*Version:\*\* [\d.]+", "**Version:** {v}"),
     StampRule(ROOT / "AGENTS.md", r"\*\*Kite\*\* v[\d.]+", "**Kite** v{v}"),
     StampRule(ROOT / "architecture.md", r"\*\*Version:\*\* [\d.]+", "**Version:** {v}"),
-    StampRule(ROOT / "docs/kite-system-design.md", r"\*\*Version:\*\* [\d.]+", "**Version:** {v}"),
     StampRule(
         ROOT / "scripts/bump_release.sh",
         r"(?m)^#   ./scripts/bump_release\.sh [\d.]+$",
