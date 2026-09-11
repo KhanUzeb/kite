@@ -191,6 +191,9 @@ def status_segments(state: SessionUiState) -> list[tuple[str, str]]:
         approve = next((bit for bit in ctx if bit.startswith("approve ")), None)
         if approve:
             segments.insert(0, (approve, "kite.pending"))
+        badge = _verification_badge(state.verification_status)
+        if badge:
+            segments.append((badge, "kite.pending"))
         if state.busy:
             segments.append(("working", "kite.highlight"))
         elif state.queued:

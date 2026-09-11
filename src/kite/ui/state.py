@@ -50,7 +50,7 @@ class SessionUiState:
     expanded_all: bool = False
     live_terminal: bool = False
     live_subagents: bool = False
-    thinking_expanded: bool = True
+    thinking_expanded: bool = False
     last_thinking: str = ""
     reasoning: str = "auto"
     pending_attach: int = 0

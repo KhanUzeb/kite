@@ -24,7 +24,7 @@ from kite.guardrails.sandbox import (
     resolve_in_workspace,
     workspace_root,
 )
-from kite.ui.diff import count_diff_lines, diff_path, render_diff_stat
+from kite.ui.diff import render_diff
 from kite.ui.style import GUTTER, PANEL_BAR
 from kite.ui.tool_cards import render_bash_command_block
 
@@ -610,30 +610,7 @@ def render_approval_panel(
                 body.append(f"{key}  ", style="kite.muted")
                 body.append(f"{arguments[key]}\n", style="kite.terminal")
         if diff:
-            added, deleted = count_diff_lines(diff)
-            if added or deleted:
-                body.append(f"{GUTTER}{APPROVAL_BAR}")
-                body.append_text(render_diff_stat(added, deleted, path=diff_path(diff)))
-                body.append("\n")
-            preview = "\n".join(diff.splitlines()[:40])
-            for line in preview.splitlines():
-                if line.startswith("+++") or line.startswith("---"):
-                    style = "kite.diff.meta"
-                elif line.startswith("+"):
-                    style = "kite.diff.add"
-                elif line.startswith("-"):
-                    style = "kite.diff.del"
-                elif line.startswith("@@"):
-                    style = "kite.diff.hunk"
-                elif line.startswith(" ") or not line:
-                    style = "kite.diff.ctx"
-                else:
-                    style = "kite.diff.meta"
-                body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
-                body.append(line + "\n", style=style)
-            extra = max(0, len(diff.splitlines()) - 40)
-            if extra:
-                body.append(f"{GUTTER}{APPROVAL_BAR}… {extra} more diff lines\n", style="kite.muted")
+            body.append_text(render_diff(diff, collapsed=True, max_lines=40))
 
     body.append(f"{GUTTER}{APPROVAL_BAR}\n", style="kite.muted")
     body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
@@ -670,7 +647,7 @@ def prompt_approval(
     choices = ["a", "n", "q"] if mandatory else ["a", "s", "p", "n", "q"]
     try:
         choice = Prompt.ask(
-            " ",
+            "Decision",
             choices=choices,
             default="n",
             console=console,
