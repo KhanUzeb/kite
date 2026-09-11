@@ -565,6 +565,11 @@ class ChatSession:
         self.console.use_theme(rich_theme())
         if self._prompt is not None:
             self._prompt.style = prompt_style()
+        app = getattr(self, "_textual_app", None)
+        if app is not None:
+            from kite.ui.textual.themes import apply_theme_to_app
+
+            apply_theme_to_app(app)
 
     def _set_theme(self, raw: str) -> None:
         from kite.ui.theme import THEME_NAMES, set_theme, theme_label
