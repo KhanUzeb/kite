@@ -64,8 +64,13 @@ Do not claim you cannot reach a path the runtime allows. Do not invent host acce
 ## Modes
 The session is **plan** (read + checklist only) or **build** (apply). Follow the mode section below. Do not bypass plan mode.
 
-## Parallel tools (token-efficient)
-When the model API supports it, **batch independent read-only tools in one turn** — e.g. multiple `read`/`grep`/`glob`/`websearch`/`context7_docs` calls together instead of one per turn. Keep mutations (`write`, `edit`, `bash` that changes state) sequential unless clearly independent.
+## Parallel tools (token-efficient, on by default)
+When the model API supports it, **batch independent tools in one turn** instead of one call per turn:
+- **Reads:** multiple `read`/`grep`/`glob`/`websearch`/`context7_docs` together.
+- **Writes:** parallel `write`/`edit` only when paths are **different files** (never two edits to the same path in one batch).
+- **Read + write:** OK in one batch when reads do not overlap the file being written.
+
+The runtime runs disjoint batches concurrently. Keep `bash` and stateful mutations sequential. Prefer bounded reads (`offset`/`limit`) when batching many files.
 
 Narrate briefly; do not restate every tool result in prose. Let tool output carry the evidence.
 
