@@ -6,7 +6,7 @@ Instructions for coding agents (Cursor, Claude Code, Kite itself, etc.) hacking 
 
 ## What this repo is
 
-**Kite** v0.9.6 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
+**Kite** v0.9.7 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
 
 - **Engine:** mini-swe-agent style loop (`agent/loop.py`) — query → tools → observe → repeat
 - **Cockpit:** tau-inspired assembly — catalog providers, skills, guardrails, Rich TUI, JSONL sessions
@@ -151,7 +151,7 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 | [architecture.md](architecture.md) | Layers, lifecycle, extension points |
 | [kite_commands.md](kite_commands.md) | CLI/REPL command reference |
 | [CONTEXT.md](CONTEXT.md) | Term definitions |
-| [docs/RELEASE-0.9.6.md](docs/RELEASE-0.9.6.md) | Current version release notes |
+| [docs/RELEASE-0.9.7.md](docs/RELEASE-0.9.7.md) | Current version release notes |
 
 ---
 
@@ -172,8 +172,8 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md). Conventional short commits (`feat(ui)
 Version source of truth: **`pyproject.toml`**. Stamped files stay in sync via `scripts/sync_version.py`.
 
 ```bash
-./scripts/bump_release.sh 0.9.6   # bump, sync README/AGENTS/docs, CHANGELOG stub, tag
-# edit CHANGELOG.md + docs/RELEASE-0.9.6.md
+./scripts/bump_release.sh 0.9.7   # bump, sync README/AGENTS/docs, CHANGELOG stub, tag
+# edit CHANGELOG.md + docs/RELEASE-0.9.7.md
 git push origin main --tags       # tag push runs .github/workflows/release.yml
 ```
 

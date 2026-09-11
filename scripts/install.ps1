@@ -1,4 +1,4 @@
-# kite-release-version: 0.9.6
+# kite-release-version: 0.9.7
 # Install Kite as a global CLI (default via irm|iex) or editable checkout (-Dev).
 #
 # Windows / PowerShell. If ExecutionPolicy blocks you, use:
