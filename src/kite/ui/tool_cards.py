@@ -34,15 +34,28 @@ def render_code_edit_preview(
     tool: str,
     args: dict[str, Any],
     *,
-    max_lines: int = 12,
+    max_lines: int = 16,
 ) -> Text | None:
     """Preview write/edit patches at tool start."""
     path = str(args.get("path") or args.get("file_path") or "")
     if not path:
         return None
     block = Text()
-    block.append(f"{GUTTER}{TOOL_BAR}", style="kite.muted")
-    block.append(path, style="kite.tool bold")
+    block.append(GUTTER)
+    block.append(TOOL_BAR, style="kite.muted")
+    block.append(path.replace("\\", "/"), style="kite.tool bold")
+    if tool == "write":
+        content = str(args.get("content") or "")
+        lines = [ln for ln in content.splitlines() if ln.strip()] or [""]
+        block.append("  ")
+        block.append_text(render_diff_stat(len(lines), 0, bar=True))
+    elif tool == "edit":
+        old = str(args.get("old_string") or args.get("old") or "")
+        new = str(args.get("new_string") or args.get("new") or "")
+        old_lines = [ln for ln in old.splitlines() if ln.strip()] or ([""] if old else [])
+        new_lines = [ln for ln in new.splitlines() if ln.strip()] or ([""] if new else [])
+        block.append("  ")
+        block.append_text(render_diff_stat(len(new_lines), len(old_lines), bar=True))
     block.append("\n", style="")
     if tool == "write":
         content = str(args.get("content") or "")
@@ -65,7 +78,7 @@ def render_code_edit_preview(
         for line in old_lines:
             if shown >= max_lines:
                 break
-            block.append(f"{GUTTER}{TOOL_BAR}- ", style="kite.diff.del")
+            block.append(f"{GUTTER}{TOOL_BAR}− ", style="kite.diff.del")
             block.append(line + "\n", style="kite.diff.del")
             shown += 1
         for line in new_lines:
@@ -117,10 +130,22 @@ def format_partial_args(partial: str, limit: int = 72) -> str:
     return truncate_preview(raw, limit)
 
 
-def render_parallel_batch_header(count: int) -> Text:
+def render_parallel_batch_header(count: int, tools: list[str] | None = None) -> Text:
     line = Text()
     line.append(f"{GUTTER}{glyph('tool')} ", style="kite.muted")
-    line.append(f"parallel {count} read-only tools", style="kite.tool")
+    label = f"parallel {count} tools"
+    names = [t for t in dict.fromkeys(tools or []) if t]
+    if names:
+        label = f"{label}  ·  {', '.join(names)}"
+    line.append(label, style="kite.tool")
+    line.append("\n")
+    return line
+
+
+def render_section_break(title: str) -> Text:
+    line = Text()
+    line.append(f"{GUTTER}{PANEL_BAR}", style="kite.muted")
+    line.append(title.strip(), style="kite.muted")
     line.append("\n")
     return line
 

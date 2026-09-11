@@ -25,7 +25,9 @@ from kite.ui.attach import (
     user_content_with_attachments,
 )
 from kite.ui.complete import read_repl_line
-from kite.ui.diff import count_diff_lines, make_unified_diff, preview_mutating_diff, preview_patch_diff
+from kite.ui.diff import count_diff_lines, make_unified_diff, preview_mutating_diff, preview_patch_diff, render_diff
+from kite.ui.streaming import StreamCoalescer
+from kite.ui.tool_cards import render_code_edit_preview
 from kite.ui.empty import render_empty
 from kite.ui.render import RunDisplay
 from kite.ui.repl import ChatSession
@@ -234,6 +236,44 @@ def test_attach_preview_and_clipboard(tmp_path, kite_home, monkeypatch) -> None:
     monkeypatch.setattr(Path, "read_text", spy_read_text)
     preview = preview_mutating_diff("edit", big, {"path": str(big), "old": "needle", "new": "found"}, cwd=tmp_path)
     assert "-needle" in preview and "+found" in preview
+
+
+def test_render_diff_and_stream_answer_styles() -> None:
+    diff = make_unified_diff("src/a.py", "line one\n", "line two\n")
+    rendered = render_diff(diff, collapsed=True).plain
+    assert "src/a.py" in rendered
+    assert "+1" in rendered and "-1" in rendered
+    assert "line two" in rendered and "line one" in rendered
+
+    preview = render_code_edit_preview(
+        "edit",
+        {"path": "lib/x.py", "old": "foo", "new": "bar"},
+    )
+    assert preview is not None
+    assert "lib/x.py" in preview.plain
+    assert "foo" in preview.plain and "bar" in preview.plain
+
+    display = RunDisplay(Console(force_terminal=True, width=100, theme=KITE_THEME), state=SessionUiState())
+    display._stream_write_answer("## Summary\n- first item\n```python\nx = 1\n```\n")
+    # fence markers and bullet land in internal stream path — exercise prose helper directly
+    style, body = display._prose_line_style("- item")
+    assert body.startswith("• ") and style == "kite.answer"
+    style, body = display._prose_line_style("## Title")
+    assert body == "Title" and "bold" in style
+
+    coalescer = StreamCoalescer(min_chars=4, flush_chars=100, max_latency_s=0.0)
+    assert coalescer.push("custom", "hi") is None
+    assert coalescer.push("custom", " there") is not None
+
+
+def test_approval_panel_includes_diff_stat() -> None:
+    from kite.ui.approval import render_approval_panel
+
+    diff = make_unified_diff("app.py", "old\n", "new\n")
+    panel = render_approval_panel("edit", {"path": "app.py"}, diff=diff).plain
+    assert "approve" in panel.lower()
+    assert "app.py" in panel
+    assert "+1" in panel and "-1" in panel
 
 
 def test_empty_repl_enter_does_not_run(tmp_path, kite_home) -> None:

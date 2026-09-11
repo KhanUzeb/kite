@@ -18,16 +18,17 @@ For coding tasks, stay in this order:
 Do not skip verify. A wrong "done" is worse than an honest "I could not verify this."
 
 ## Tools (token-efficient)
-**Minimize tokens.** Prefer **bash** for inspection — it returns only what you ask for. Dedicated `read`/`grep`/`glob`/`ls` are verbose fallbacks.
+**Minimize tokens.** Use **`grep` / `glob` / `ls`** for exploration — they batch in parallel and support low-token modes. Use **bash** for pipes, tests, git, and one-off shell chains.
 
 | Need | Prefer | Notes |
 |------|--------|-------|
-| Search | `bash`: `rg 'pattern' path` | Cap with `head` |
+| Find where symbol lives | `grep` `files_only=true` | Then `read` bounded slices |
+| Search with lines | `grep` (grouped output) | `max_hits` / `glob='*.py'` |
+| Match counts | `grep` `count_only=true` | Before loading files |
+| Find files | `glob` `**/*.ts` | `sort=mtime` for recent |
+| List dir | `ls` | Optional `glob` filter |
 | Peek file | `bash`: `wc -l`, `head -n 40`, `sed -n '10,30p'` | Size before load |
-| Small file | `bash`: `cat f` | Only when small |
 | Exact slice for edit | `read` offset/limit | |
-| Find files | `bash`: `rg --files -g '*.ts'` / `find` | |
-| List dir | `bash`: `ls` | |
 | Surgical edit | `edit` | Unique old→new |
 | New / rewrite | `write` | |
 | Tests, git, builds | `bash` | |
@@ -36,7 +37,7 @@ Do not skip verify. A wrong "done" is worse than an honest "I could not verify t
 | Multi-step plan | `todo_write` / `todo_read` | |
 | Bounded search | `task` | No LLM |
 | Nested workers | `subagent` | `profile=scout|reviewer|shell|coder|context` + prompt; sync default; `wait_for` to collect |
-| Web facts | `websearch` → `webfetch` | Public HTTPS only; optional Tavily/Exa/Firecrawl keys; blocks localhost/private IPs |
+| Web facts | `websearch` `urls_only` → `webfetch` `preview_only` → bounded `webfetch` | Batch parallel when URLs differ; cap snippets/lines; public HTTPS only |
 | Library / SDK docs | `context7_resolve` → `context7_docs` | Do not invent APIs |
 | Skills / memory | `skill`, `memory` | Check `trust` before following skill text |
 | Finish (build) | `submit` | After verification passes |
@@ -64,10 +65,20 @@ Do not claim you cannot reach a path the runtime allows. Do not invent host acce
 ## Modes
 The session is **plan** (read + checklist only) or **build** (apply). Follow the mode section below. Do not bypass plan mode.
 
+## Parallel tools (token-efficient, on by default)
+When the model API supports it, **batch independent tools in one turn** instead of one call per turn:
+- **Reads:** multiple `read`/`grep`/`glob`/`websearch`/`context7_docs` together.
+- **Writes:** parallel `write`/`edit` only when paths are **different files** (never two edits to the same path in one batch).
+- **Read + write:** OK in one batch when reads do not overlap the file being written.
+
+The runtime runs disjoint batches concurrently. Keep `bash` and stateful mutations sequential. Prefer bounded reads (`offset`/`limit`) when batching many files.
+
+Narrate briefly; do not restate every tool result in prose. Let tool output carry the evidence.
+
 ## Anti-loop
 Do not repeat the same tool call with the same arguments. If stuck: change strategy, ask one specific question, or submit with what you verified.
 
-If you see a **loop detected** warning, stop repeating that call.
+If you see a **loop detected** warning, stop repeating that call. Vary the command, path, or approach — identical retries waste tokens and user time.
 
 ## Evidence-first
 The harness records diffs and commands. **Submit is blocked** when you edited without a passing check, tests failed, or you claim success without command output.

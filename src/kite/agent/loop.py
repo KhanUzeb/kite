@@ -22,7 +22,8 @@ from kite.agent.exceptions import (
     TimeExceeded,
 )
 from kite.agent.loop_guard import LoopGuard
-from kite.agent.mode import MUTATING_TOOLS, PARALLEL_SAFE_TOOLS, AgentMode, ApprovalMode
+from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
+from kite.agent.parallel import can_parallelize_batch, plan_execution_batches
 from kite.agent.queue import RunMessageQueue
 from kite.agent.verification import VerificationCollector
 from kite.application.verification import looks_like_test
@@ -55,7 +56,7 @@ def _exit_msg(status: str, *, content: str | None = None, submission: str = "", 
     }
 
 
-_MAX_IDLE_TURNS = 2
+_MAX_IDLE_TURNS = 3
 # Completion contract (interactive build):
 # - Text-only submit: only when the USER's last turn was casual (_is_casual_user_turn).
 # - Assistant greetings ("Hey!") never submit on their own — idle nudge instead.
@@ -815,6 +816,7 @@ class DefaultAgent:
             if self._interrupt:
                 break
             prepared.append(self._prepare_action(action))
+        parallel_tools = [tool for tool, _, _ in prepared]
         for idx, (tool, args, _action) in enumerate(prepared, start=1):
             self._emit(
                 "tool_start",
@@ -823,6 +825,7 @@ class DefaultAgent:
                 reason=args.get("reason"),
                 parallel_batch=len(prepared),
                 parallel_index=idx,
+                parallel_tools=parallel_tools,
             )
         started = time.time()
 
@@ -831,7 +834,7 @@ class DefaultAgent:
             return idx, tool, args, action, self._invoke_tool(tool, args, action)
 
         results: dict[int, tuple[str, dict, dict, dict]] = {}
-        with ThreadPoolExecutor(max_workers=min(4, len(prepared))) as pool:
+        with ThreadPoolExecutor(max_workers=min(8, len(prepared))) as pool:
             for row in pool.map(_worker, list(enumerate(prepared))):
                 idx, tool, args, action, out = row
                 results[idx] = (tool, args, action, out)
@@ -861,19 +864,24 @@ class DefaultAgent:
                 self._tool_started_at = None
             self._after_tool(tool, args, action, out, duration_ms, outputs)
 
+    def _execution_cwd(self) -> str:
+        execution = getattr(self.env, "execution", None)
+        if execution is not None and getattr(execution, "execution_cwd", None):
+            return str(execution.execution_cwd)
+        return str(getattr(self.env, "cwd", None) or ".")
+
     def execute_actions(self, message: dict) -> list[dict]:
         actions = message.get("extra", {}).get("actions", [])
         if not actions:
             return self._handle_no_actions(message)
         self._consecutive_no_tool_turns = 0
         outputs: list[dict] = []
-        parallel = len(actions) > 1 and all(
-            str(a.get("tool") or "") in PARALLEL_SAFE_TOOLS for a in actions
-        )
-        if parallel:
-            self._execute_parallel_actions(actions, outputs)
-        else:
-            self._execute_sequential_actions(actions, outputs)
+        cwd = self._execution_cwd()
+        for batch in plan_execution_batches(actions, cwd=cwd):
+            if len(batch) > 1 and can_parallelize_batch(batch, cwd=cwd):
+                self._execute_parallel_actions(batch, outputs)
+            else:
+                self._execute_sequential_actions(batch, outputs)
         obs = self.add_messages(*self.model.format_observation_messages(message, outputs))
         if self._interrupt:
             raise _user_interrupt()

@@ -19,6 +19,7 @@ from kite.memory.store import MemoryScope, MemoryStore
 from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
 from kite.tools.store import TodoStore
+from kite.tools.search import glob_search, grep_search, ls_search
 from kite.tools.web import webcrawl, websearch
 from kite.tools.web import webfetch as fetch_url
 
@@ -472,99 +473,40 @@ def make_coding_tools(
             return {"ok": False, "returncode": -1, "output": "", "error": str(e)}
 
     def grep_files(args: dict[str, Any]) -> dict[str, Any]:
-        pattern = str(args["pattern"])
         root_path = _resolve(str(args.get("path") or "."), _root())
-        glob_pat = str(args.get("glob") or "")
-        max_hits = _safe_int(args.get("max_hits"), 50, minimum=1, maximum=500)
-        rg = shutil.which("rg")
-        if rg:
-            cmd = [rg, "--line-number", "--no-heading", "--color", "never", "--hidden", "-g", "!.git", "-e", pattern]
-            if glob_pat:
-                cmd.extend(["--glob", glob_pat])
-            cmd.append(str(root_path))
-            try:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=20,
-                    cwd=_root(),
-                    env=_child_env(_root()),
-                )
-            except (OSError, subprocess.TimeoutExpired) as e:
-                return {"ok": False, "error": str(e), "output": str(e)}
-            lines = (proc.stdout or "").splitlines()
-            truncated = len(lines) > max_hits
-            body = "\n".join(lines[:max_hits]) or "(no matches)"
-            if truncated:
-                body += "\n… truncated …"
-            return {"ok": True, "output": body, "hits": min(len(lines), max_hits), "engine": "rg"}
-
-        try:
-            rx = re.compile(pattern)
-        except re.error as e:
-            return {"ok": False, "error": f"invalid regex: {e}", "output": f"invalid regex: {e}"}
-        hits: list[str] = []
-        glob_use = glob_pat or "*"
-        paths = [root_path] if root_path.is_file() else sorted(root_path.rglob(glob_use))
-        for p in paths:
-            if not p.is_file():
-                continue
-            if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in p.parts):
-                continue
-            try:
-                text = p.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            for i, line in enumerate(text.splitlines(), 1):
-                if rx.search(line):
-                    hits.append(f"{p}:{i}:{line[:240]}")
-                    if len(hits) >= max_hits:
-                        return {
-                            "ok": True,
-                            "output": "\n".join(hits) + "\n… truncated …",
-                            "hits": len(hits),
-                            "engine": "python",
-                        }
-        return {
-            "ok": True,
-            "output": "\n".join(hits) if hits else "(no matches)",
-            "hits": len(hits),
-            "engine": "python",
-        }
+        return grep_search(
+            pattern=str(args["pattern"]),
+            root=root_path,
+            cwd=_root(),
+            glob_pat=str(args.get("glob") or ""),
+            max_hits=_safe_int(args.get("max_hits"), 40, minimum=1, maximum=500),
+            max_files=_safe_int(args.get("max_files"), 30, minimum=1, maximum=200),
+            ignore_case=bool(args.get("ignore_case")),
+            fixed=bool(args.get("fixed")),
+            files_only=bool(args.get("files_only")),
+            count_only=bool(args.get("count_only")),
+            context=_safe_int(args.get("context"), 0, minimum=0, maximum=5),
+            child_env=_child_env,
+        )
 
     def glob_files(args: dict[str, Any]) -> dict[str, Any]:
-        pattern = str(args["pattern"])
         root_path = _resolve(str(args.get("root") or "."), _root())
-        matches = []
-        for p in sorted(root_path.glob(pattern)):
-            if any(part in {".git", ".venv", "node_modules", "__pycache__"} for part in p.parts):
-                continue
-            matches.append(str(p.relative_to(root_path) if p.is_relative_to(root_path) else p))
-            if len(matches) >= _safe_int(args.get("max"), 200, minimum=1, maximum=2000):
-                matches.append("…")
-                break
-        return {"ok": True, "output": "\n".join(matches) if matches else "(no matches)", "count": len(matches)}
+        return glob_search(
+            pattern=str(args["pattern"]),
+            root=root_path,
+            max_matches=_safe_int(args.get("max"), 120, minimum=1, maximum=2000),
+            files_only=not bool(args.get("dirs_only")),
+            dirs_only=bool(args.get("dirs_only")),
+            sort=str(args.get("sort") or "name"),
+        )
 
     def ls_dir(args: dict[str, Any]) -> dict[str, Any]:
         path = _resolve(str(args.get("path") or "."), _root())
-        if not path.exists():
-            return {"ok": False, "error": f"not found: {path}", "output": f"not found: {path}"}
-        if path.is_file():
-            return {"ok": True, "output": path.name, "count": 1}
-        try:
-            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
-        except OSError as e:
-            return {"ok": False, "error": str(e), "output": str(e)}
-        lines = []
-        for e in entries:
-            if e.name in _SKIP_NAMES:
-                continue
-            suffix = "/" if e.is_dir() else ""
-            lines.append(e.name + suffix)
-        return {"ok": True, "output": "\n".join(lines) if lines else "(empty)", "count": len(lines)}
+        return ls_search(
+            path=path,
+            glob_pat=str(args.get("glob") or ""),
+            max_entries=_safe_int(args.get("max"), 200, minimum=1, maximum=1000),
+        )
 
     def load_skill(args: dict[str, Any]) -> dict[str, Any]:
         install = args.get("install")
@@ -673,6 +615,10 @@ def make_coding_tools(
         return websearch(
             str(args.get("query") or ""),
             max_results=int(args.get("max_results") or 8),
+            urls_only=bool(args.get("urls_only")),
+            compact=bool(args.get("compact")),
+            max_snippet_chars=int(args.get("max_snippet_chars") or 220),
+            engine=str(args.get("engine") or "auto"),
         )
 
     def web_crawl(args: dict[str, Any]) -> dict[str, Any]:
@@ -684,13 +630,17 @@ def make_coding_tools(
         )
 
     def webfetch(args: dict[str, Any]) -> dict[str, Any]:
+        max_lines_raw = args.get("max_lines")
         return fetch_url(
             str(args.get("url") or ""),
             timeout=int(args.get("timeout") or 15),
-            max_chars=int(args.get("max_chars") or 24_000),
+            max_chars=int(args.get("max_chars") or 16_000),
             extract=bool(args.get("extract", True)),
             include_links=bool(args.get("include_links", False)),
             max_links=int(args.get("max_links") or 12),
+            preview_only=bool(args.get("preview_only")),
+            start=int(args.get("start") or 0),
+            max_lines=int(max_lines_raw) if max_lines_raw is not None else None,
         )
 
     def set_working_directory(args: dict[str, Any]) -> dict[str, Any]:
@@ -838,14 +788,24 @@ def make_coding_tools(
             "grep",
             Tool(
                 name="grep",
-                description="Convenience content search (wraps rg). Prefer bash `rg` when you need tighter control or piping.",
+                description=(
+                    "Search file contents (ripgrep). Token-efficient modes: files_only=true lists paths "
+                    "without line text; count_only=true gives per-file counts. Batch multiple greps in one turn "
+                    "when paths differ. Use context for small surrounding slices; fixed=true for literal strings."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "pattern": {"type": "string"},
-                        "path": {"type": "string"},
-                        "glob": {"type": "string"},
-                        "max_hits": {"type": "integer"},
+                        "path": {"type": "string", "description": "File or directory to search"},
+                        "glob": {"type": "string", "description": "File filter, e.g. '*.py'"},
+                        "max_hits": {"type": "integer", "description": "Max matching lines (default 40)"},
+                        "max_files": {"type": "integer", "description": "Max files in grouped output"},
+                        "files_only": {"type": "boolean", "description": "Return paths only — lowest tokens"},
+                        "count_only": {"type": "boolean", "description": "Per-file match counts only"},
+                        "ignore_case": {"type": "boolean"},
+                        "fixed": {"type": "boolean", "description": "Literal string, not regex"},
+                        "context": {"type": "integer", "description": "Lines of context (0-5)"},
                     },
                     "required": ["pattern"],
                 },
@@ -856,13 +816,18 @@ def make_coding_tools(
             "glob",
             Tool(
                 name="glob",
-                description="Convenience file pattern match. Prefer bash `find` or `rg --files` for scoped discovery.",
+                description=(
+                    "Find paths by pattern under root. Use '**/*.py' for recursive. "
+                    "sort=mtime lists recent files first. Batch with parallel reads."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "pattern": {"type": "string"},
                         "root": {"type": "string"},
                         "max": {"type": "integer"},
+                        "dirs_only": {"type": "boolean"},
+                        "sort": {"type": "string", "enum": ["name", "mtime"], "description": "name or mtime"},
                     },
                     "required": ["pattern"],
                 },
@@ -873,10 +838,14 @@ def make_coding_tools(
             "ls",
             Tool(
                 name="ls",
-                description="Convenience directory listing. Prefer bash `ls` when already in a shell chain.",
+                description="List one directory level. Optional glob filter. Batch with grep/read when exploring.",
                 parameters={
                     "type": "object",
-                    "properties": {"path": {"type": "string"}},
+                    "properties": {
+                        "path": {"type": "string"},
+                        "glob": {"type": "string", "description": "Filter entry names, e.g. '*.py'"},
+                        "max": {"type": "integer"},
+                    },
                     "required": [],
                 },
                 execute_fn=lambda a: gated("ls", a, ls_dir),
@@ -984,17 +953,22 @@ def make_coding_tools(
             Tool(
                 name="webfetch",
                 description=(
-                    "Fetch one http(s) URL and return extracted readable text (title, description, body). "
-                    "Uses Firecrawl when FIRECRAWL_API_KEY is set; otherwise stdlib extract. "
-                    "Use after websearch to read a chosen result. Set extract=false for raw bytes as text. "
-                    "Set include_links=true to list outbound links from the page."
+                    "Fetch one http(s) URL and return extracted text. Token-efficient: preview_only=true "
+                    "for title/description only; start/max_chars/max_lines to slice long pages. "
+                    "Firecrawl when keyed. Batch multiple fetches in one turn when URLs differ."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "url": {"type": "string"},
                         "timeout": {"type": "integer", "description": "Seconds (default 15)"},
-                        "max_chars": {"type": "integer", "description": "Max body chars (default 24000)"},
+                        "max_chars": {"type": "integer", "description": "Max body chars (default 16000)"},
+                        "start": {"type": "integer", "description": "Char offset into extracted body"},
+                        "max_lines": {"type": "integer", "description": "Max body lines after extract"},
+                        "preview_only": {
+                            "type": "boolean",
+                            "description": "Metadata only — no body (lowest tokens)",
+                        },
                         "extract": {
                             "type": "boolean",
                             "description": "Strip HTML to readable text (default true)",
@@ -1018,15 +992,31 @@ def make_coding_tools(
             Tool(
                 name="websearch",
                 description=(
-                    "Search the web. Uses Tavily / Exa / Firecrawl when API keys are set "
-                    "in ~/.kite/.env (auto order), otherwise DuckDuckGo. Returns titles, URLs, "
-                    "and snippets. Use before webfetch/webcrawl when you need to find sources."
+                    "Search the web (Tavily/Exa/Firecrawl when keyed, else DuckDuckGo). "
+                    "Token-efficient: urls_only or compact=true before webfetch. "
+                    "Batch multiple queries in one turn. engine=auto|tavily|exa|firecrawl|duckduckgo."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "Search query"},
                         "max_results": {"type": "integer", "description": "Max hits (default 8, max 15)"},
+                        "urls_only": {
+                            "type": "boolean",
+                            "description": "Return numbered URLs only — lowest tokens",
+                        },
+                        "compact": {
+                            "type": "boolean",
+                            "description": "Title + URL per line, no snippets",
+                        },
+                        "max_snippet_chars": {
+                            "type": "integer",
+                            "description": "Cap snippet length per result (default 220)",
+                        },
+                        "engine": {
+                            "type": "string",
+                            "description": "auto, tavily, exa, firecrawl, or duckduckgo",
+                        },
                     },
                     "required": ["query"],
                 },

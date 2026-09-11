@@ -44,7 +44,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--cwd` | Workspace |
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
-| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | `yolo` = no prompts; `auto`/`trust` = workspace-scoped; `supervised`/`approve` = approve mutations; `readonly` = block writes |
+| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | **Coding blanket** (default `auto`): in-workspace install/test/edit/commit/bash auto-runs; only boundary escapes prompt (outside workspace, sudo, sandbox-blocked). `yolo` = no prompts (guardrails still apply). `trust` = auto + prompts for memory/subagents. `supervised` = prompt all mutations. |
 | `--steps` `--cost` `--time` | Limits (honored by `run`, `chat`, and one-shot `resume`) |
 | `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
@@ -63,9 +63,11 @@ One-shot / headless flags (`kite run`, `kite resume <id> "continue"` — not `ki
 
 Persistent compaction is `kite config --auto-compact true|false` (not a run/chat flag).
 
-`--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto` permits ordinary in-workspace changes while mandatory approval gates fail closed.
+`--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto`/`yolo` permit routine in-workspace work (installs, tests, commits) while critical gates (outside workspace, sudo, remote shell) fail closed.
 
 **Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
+
+**Tool batching:** on by default when the provider supports multiple tool calls per turn. Read-only tools batch freely; `write`/`edit` run in parallel only on **disjoint paths**; reads may run alongside writes when paths do not overlap. `bash` stays sequential. Loop guard tolerates more read-only repeats before warning.
 
 Housekeeping (no model):
 
@@ -183,7 +185,7 @@ These never go to the model.
 |---------|----------------|
 | `/plan` `/p` | Read-only: explore + checklist (no edits); switch to `/build` to apply |
 | `/build` `/b` | Apply edits; continues existing plan checklist; approval leaves `readonly` → supervised |
-| `/approve yolo\|auto\|supervised` | Autonomy. Empty: numbered picker. yolo skips in-workspace prompts; high-risk still asks |
+| `/approve yolo\|auto\|supervised\|trust` | Autonomy. Empty: numbered picker. `auto` (default) = coding blanket; `yolo` = no prompts; `trust` = blanket + memory/subagent gates; `supervised` = approve every mutation |
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off**). Empty: pick on/off |
 | `/privacy` | Security policy summary; `/privacy sessions` picks full/redacted/disabled |
 | `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |
@@ -270,14 +272,14 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+O` / `F6` | Toggle expanded tool output (`/expand`) |
 | `Ctrl+P` / `F3` | Plan mode |
 | `Ctrl+B` / `F4` | Build mode |
-| `Ctrl+T` / `F7` | Toggle thinking trace (expanded by default) |
+| `Ctrl+T` / `F7` | Toggle thinking trace (collapsed by default — one-line summary) |
 | `F2` | Flash status on the footer (`Ctrl+S` is not bound; terminals use it for XOFF) |
 | `F5` | Refresh live models from the API, then pick |
 | `Tab` | Cycle slash completions (`Enter` always submits) |
 
 Drag-select, copy, and right-click paste stay with the terminal (mouse capture off by default). Set `KITE_MOUSE=1` for slash-menu wheel scroll (then use Shift+drag to select in most terminals).
 
-While a turn runs, the bottom toolbar shows a **running line** (`[HH:MM:SS] label running`) and, when bash or background jobs stream output, the latest sanitized line as `› …`. Queued messages show separate **steer** and **follow-up** counts plus `next steer:` / `next follow-up:` preview. Provider retries tick down in the running line. Auto-compaction shows `compacting context`. Metrics row: tok/s, cache %, context meter, and session cost.
+While a turn runs, the bottom toolbar shows a **running line** (`[HH:MM:SS] label running`) and, when bash or background jobs stream output, the latest sanitized line as `› …`. Model streaming shows `streaming` with **ttft** (time-to-first-token) on early tokens, then **tok/s** from provider usage when available. Reasoning and answer text use separate channels; tool-call JSON streams as throttled `preparing` previews. Queued messages show separate **steer** and **follow-up** counts plus `next steer:` / `next follow-up:` preview. Provider retries tick down in the running line. Auto-compaction shows `compacting context`. Metrics row: tok/s, cache %, context meter, and session cost.
 
 `/thinking` and `/fast` appear in the menu only when the current model’s API advertises both effort modes (e.g. OpenRouter, Groq, Nemotron). Use `/reasoning` when only one mode exists.
 

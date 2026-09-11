@@ -16,7 +16,7 @@ from kite.ui.diff import count_diff_lines, render_diff
 from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState
 from kite.ui.status import render_status
-from kite.ui.stream_buffer import StreamCoalescer
+from kite.ui.streaming import StreamCoalescer
 from kite.ui.style import (
     CHANNEL_PREFIX,
     COLLAPSE_LINES,
@@ -36,10 +36,12 @@ from kite.ui.style import (
 from kite.ui.tool_cards import (
     ToolCard,
     detail_from_args,
+    format_partial_args,
     line_count_from_output,
     render_bash_command_block,
     render_code_edit_preview,
     render_parallel_batch_header,
+    render_section_break,
     render_stream_tool_preview,
     render_tool_card_done,
     render_tool_card_start,
@@ -176,9 +178,11 @@ _RENDER_EVENT_KINDS = (
     "route",
     "agent_start",
     "stream_start",
+    "stream_first_token",
     "stream_reasoning",
     "stream_delta",
     "stream_tool",
+    "stream_usage",
     "stream_end",
     "turn_start",
     "turn_end",
@@ -249,6 +253,10 @@ class RunDisplay:
         self._pending_tool_args: str = ""
         self._last_todo_key: str = ""
         self._parallel_batch: int = 0
+        self._in_code_fence: bool = False
+        self._fence_lang: str = ""
+        self._tool_preview_at: float = 0.0
+        self._tool_preview_chars: int = 0
         self._event_handlers: dict[str, Callable[[dict[str, Any]], None]] = {
             kind: getattr(self, f"_on_{kind}")  # noqa: SLF001
             for kind in _RENDER_EVENT_KINDS
@@ -278,10 +286,15 @@ class RunDisplay:
         self._need_prefix = True
         self._did_first_line = False
 
+    def _answer_style(self) -> str:
+        return "kite.terminal" if self._in_code_fence else "kite.answer"
+
     def _stream_write(self, text: str, *, channel: str) -> None:
-        self._ensure_channel(channel)
         if channel == "answer":
             self._saw_answer = True
+            self._stream_write_answer(text)
+            return
+        self._ensure_channel(channel)
         style = "kite.thinking" if channel == "thinking" else "kite.answer"
         prefix = CHANNEL_PREFIX.get(channel, "  ")
         block = Text()
@@ -302,6 +315,62 @@ class RunDisplay:
                 self._streaming = True
         if block.plain:
             self.console.print(block, end="", highlight=False, markup=False)
+
+    def _stream_write_answer(self, text: str) -> None:
+        """Answer channel — prose vs fenced code blocks use distinct styles."""
+        self._ensure_channel("answer")
+        prefix = CHANNEL_PREFIX.get("answer", "  ")
+        block = Text()
+        for raw_line in text.split("\n"):
+            line = raw_line
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                opening = not self._in_code_fence
+                self._in_code_fence = not self._in_code_fence
+                if opening:
+                    self._fence_lang = stripped.lstrip("`").strip() or "code"
+                else:
+                    self._fence_lang = ""
+                if self._need_prefix:
+                    indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
+                    block.append(indent, style="kite.muted")
+                    self._need_prefix = False
+                    self._did_first_line = True
+                fence = f"```{self._fence_lang}" if opening else "```"
+                block.append(fence + "\n", style="kite.muted italic")
+                self._need_prefix = True
+                self._streaming = True
+                continue
+            if self._need_prefix:
+                indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
+                block.append(indent, style=self._answer_style())
+                self._need_prefix = False
+                self._did_first_line = True
+            if line:
+                style = self._answer_style()
+                body = line
+                if not self._in_code_fence:
+                    style, body = self._prose_line_style(line)
+                block.append(body, style=style)
+            block.append("\n")
+            self._need_prefix = True
+            self._streaming = True
+        if block.plain:
+            self.console.print(block, end="", highlight=False, markup=False)
+
+    def _prose_line_style(self, line: str) -> tuple[str, str]:
+        """Lightweight markdown-ish cues for streamed prose (no full parser)."""
+        stripped = line.lstrip()
+        if stripped.startswith("### "):
+            return "kite.highlight bold", stripped[4:]
+        if stripped.startswith("## "):
+            return "kite.highlight bold", stripped[3:]
+        if stripped.startswith("# "):
+            return "kite.highlight bold", stripped[2:]
+        if stripped.startswith(("- ", "* ")):
+            indent = line[: len(line) - len(stripped)]
+            return "kite.answer", f"{indent}• {stripped[2:]}"
+        return "kite.answer", line
 
     def _thinking_text(self) -> str:
         return "".join(self._thinking_buf)
@@ -360,6 +429,25 @@ class RunDisplay:
             self.state.note_stream_delta(chunk)
             self._spin(False)
             self._stream_write(chunk, channel=channel)
+
+    def _maybe_flush_tool_preview(self) -> None:
+        import time
+
+        if not self._pending_tool_name:
+            return
+        partial = self._pending_tool_args
+        now = time.monotonic()
+        grown = len(partial) - self._tool_preview_chars
+        if grown < 24 and (now - self._tool_preview_at) < 0.14:
+            return
+        if not partial and (now - self._tool_preview_at) < 0.4:
+            return
+        self._tool_preview_at = now
+        self._tool_preview_chars = len(partial)
+        self.console.print(
+            render_stream_tool_preview(self._pending_tool_name, partial),
+            highlight=False,
+        )
 
     def _spin(self, on: bool, label: str = "thinking") -> None:
         if on and not self.quiet:
@@ -449,7 +537,21 @@ class RunDisplay:
         self.state.n_calls += 1
         self._channel = None
         self._streaming = False
+        self._tool_preview_at = 0.0
+        self._tool_preview_chars = 0
         self._spin(True, "thinking")
+
+    def _on_stream_first_token(self, p: dict[str, Any]) -> None:
+        ttft = int(p.get("ttft_ms") or 0)
+        channel = str(p.get("channel") or "answer")
+        self.state.note_stream_first_token(ttft)
+        label = "streaming" if channel == "answer" else f"streaming  {channel}"
+        if ttft > 0:
+            label = f"{label}  {ttft}ms"
+        self._spin(True, label)
+
+    def _on_stream_usage(self, p: dict[str, Any]) -> None:
+        self.state.note_stream_usage(dict(p))
 
     def _on_stream_reasoning(self, p: dict[str, Any]) -> None:
         text = p.get("text") or ""
@@ -470,10 +572,17 @@ class RunDisplay:
     def _on_stream_tool(self, p: dict[str, Any]) -> None:
         name = str(p.get("name") or "?")
         partial = str(p.get("partial_args") or "")
+        phase = str(p.get("phase") or "")
         self._pending_tool_name = name
         self._pending_tool_args = partial
-        preview = partial[-40:] if partial else ""
-        self._spin(True, f"preparing  {name}  {preview}".strip())
+        preview = format_partial_args(partial[-120:] if partial else "", limit=48)
+        spin_bits = [f"preparing  {name}"]
+        if phase == "name" and name:
+            spin_bits.append(name)
+        elif preview:
+            spin_bits.append(preview)
+        self._spin(True, "  ".join(spin_bits))
+        self._maybe_flush_tool_preview()
 
     def _on_stream_end(self, p: dict[str, Any]) -> None:
         self._flush_stream_buffers()
@@ -504,9 +613,14 @@ class RunDisplay:
         reason = str(args.get("reason") or p.get("reason") or "")
         batch = int(p.get("parallel_batch") or 0)
         pindex = int(p.get("parallel_index") or 1)
+        if self._saw_answer:
+            self.console.print(render_section_break("tools"), highlight=False)
+            self._saw_answer = False
         if batch > 1 and batch != self._parallel_batch:
             self._parallel_batch = batch
-            self.console.print(render_parallel_batch_header(batch))
+            tools = p.get("parallel_tools")
+            names = tools if isinstance(tools, list) else []
+            self.console.print(render_parallel_batch_header(batch, names))
         card = ToolCard(
             tool=tool,
             detail=detail_from_args(tool, args),
@@ -730,7 +844,9 @@ class RunDisplay:
         if path:
             self.console.print(Text(f"{GUTTER}{path}", style="kite.muted"))
         if diff:
-            self.console.print(render_diff(diff, collapsed=not self.verbose))
+            self.console.print(
+                render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all))
+            )
 
     def _on_context(self, p: dict[str, Any]) -> None:
         total = p.get("total_tokens")
@@ -869,6 +985,16 @@ class RunDisplay:
     def _on_approval(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
+        tool = str(p.get("tool") or "?")
+        mandatory = bool(p.get("mandatory"))
+        line = Text()
+        line.append(f"{GUTTER}{SYMBOL_WARN} ", style="kite.pending")
+        line.append("waiting for approval", style="kite.pending bold")
+        line.append(f"  ·  {tool}", style="kite.tool")
+        if mandatory:
+            line.append("  ·  mandatory", style="kite.error")
+        line.append("\n")
+        self.console.print(line)
 
     def _on_submit_blocked(self, p: dict[str, Any]) -> None:
         self._end_stream_line()

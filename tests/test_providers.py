@@ -38,6 +38,7 @@ from kite.providers.credentials import (
     web_tool_api_key,
     write_api_key,
 )
+from kite.providers.capabilities import agent_model_warning, model_supports_parallel_tool_calls, model_supports_tools
 from kite.providers.resolve import missing_credentials, resolve_model
 from kite.providers.select import _can_use_radiolist, _numbered_pick, select_model_interactive
 
@@ -291,3 +292,18 @@ def test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: py
     (codex_home / "auth.json").write_text(json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
     with pytest.raises(CodexLitellmAuthError):
         codex_litellm.materialize_litellm_chatgpt_auth()
+
+
+def test_model_tool_support_is_metadata_driven() -> None:
+    assert agent_model_warning("") == "No model selected — agent mode requires a tool-capable chat model."
+    assert agent_model_warning("text-embedding-3-small") is not None
+    assert agent_model_warning("my-custom-agent-model") is None
+    assert agent_model_warning("custom-model", raw={"capabilities": {"tools": False}}) is not None
+    assert model_supports_tools(raw={"supported_parameters": ["tools", "tool_choice"]}) is True
+    assert model_supports_tools(raw={"capabilities": {"tools": True}}) is True
+    from kite.providers.list_models import RemoteModel
+
+    remote = RemoteModel(id="vendor/foo", raw={"supported_parameters": ["tools"]})
+    assert remote.supports_tools() is True
+    assert model_supports_parallel_tool_calls(raw={"supported_parameters": ["parallel_tool_calls", "tools"]}) is True
+    assert model_supports_parallel_tool_calls(raw={"capabilities": {"tools": False}}) is False

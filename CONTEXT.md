@@ -44,7 +44,9 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Build mode** — Default apply mode. Edits, bash, and writes are allowed subject to **approval**.
 
-**Approval** — How much autonomy mutating tools get in a session: `auto`, `approve`, `trust`, or `readonly`.
+**Approval** — Coding blanket autonomy (like Codex workspace-write, OpenCode `--auto`, OMP `write`/`yolo`): `auto` (default) auto-runs in-workspace dev work and only prompts on boundary escapes; `yolo` skips all approval prompts; `trust` adds memory/subagent gates; `approve`/`supervised` prompts every mutation; `readonly` blocks writes. Blanket covers POSIX and Windows/PowerShell command shapes — not tied to any one model or provider.
+
+**Tool-capable models** — Kite does not maintain a model-name allowlist. Suitability warnings use live provider metadata (`supported_parameters`, `capabilities.tools`) and LiteLLM `get_supported_openai_params`; unknown models are allowed to try tool calling.
 
 **Role** — Optional persona (`architect`, `implementer`, `debugger`) that adjusts the system prompt fragment.
 

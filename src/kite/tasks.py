@@ -121,6 +121,9 @@ class HeadlessRunDisplay:
             "orchestrator_end": self._on_orchestrator_end,
             "error": self._on_error,
             "stream_delta": self._on_stream_delta,
+            "stream_reasoning": self._on_stream_reasoning,
+            "stream_first_token": self._on_stream_first_token,
+            "stream_usage": self._on_stream_usage,
         }
 
     def __call__(self, event: Event) -> None:
@@ -212,6 +215,27 @@ class HeadlessRunDisplay:
         text = str(p.get("text") or p.get("delta") or "")
         if text:
             _log(f"[stream] {text.rstrip()}")
+
+    def _on_stream_reasoning(self, p: dict[str, Any]) -> None:
+        if not self.verbose:
+            return
+        text = str(p.get("text") or "")
+        if text:
+            _log(f"[reason] {text.rstrip()}")
+
+    def _on_stream_first_token(self, p: dict[str, Any]) -> None:
+        if not self.verbose:
+            return
+        ttft = int(p.get("ttft_ms") or 0)
+        channel = str(p.get("channel") or "answer")
+        _log(f"[stream] first token  {channel}  {ttft}ms")
+
+    def _on_stream_usage(self, p: dict[str, Any]) -> None:
+        if not self.verbose:
+            return
+        out = int(p.get("completion_tokens") or p.get("output_tokens") or 0)
+        if out:
+            _log(f"[stream] usage  out={out}")
 
 
 @dataclass
