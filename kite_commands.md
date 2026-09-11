@@ -2,6 +2,8 @@
 
 Kite is a coding agent. **What lands in git is still yours.** These commands steer the process, not a second commit stream.
 
+**New to Kite?** Start with the visual [guide.md](guide.md) (workflows, example Q&A, cockpit layout). This file is the complete reference.
+
 There are four surfaces:
 
 | Surface | When | Hits the model? |

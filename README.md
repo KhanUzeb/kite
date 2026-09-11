@@ -217,7 +217,7 @@ In the REPL: `/help` for commands · `/cockpit` for run layout · `/user` `/prof
 
 Approval modes: `auto` · `approve` · `trust` · `readonly`. Set `KITE_LOADER=grid|dots|orbit|wave|spin` for terminal loader style.
 
-Full command map: [`kite_commands.md`](kite_commands.md)
+Visual walkthrough: [`guide.md`](guide.md) · Full command map: [`kite_commands.md`](kite_commands.md)
 
 Other commands:
 
