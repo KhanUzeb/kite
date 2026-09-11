@@ -1,6 +1,6 @@
 # CONTEXT.md — Kite domain language
 
-Glossary for humans and agents. **Terms and boundaries only** — no file paths, no implementation recipes. For code layout see [AGENTS.md](AGENTS.md) and [docs/kite-system-design.md](docs/kite-system-design.md).
+Glossary for humans and agents. **Terms and boundaries only** — no file paths, no implementation recipes. For code layout see [AGENTS.md](AGENTS.md) and [architecture.md](architecture.md).
 
 ---
 
@@ -160,7 +160,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Evidence ledger** — Journaled `VerificationRecord`s and `EvidenceVerifier` digests linking final claims to tool results; model prose cannot satisfy verification alone.
 
-**ReplayBundle** — Recorded run transcript for eval/replay without live providers. May include `events` and `acceptance` criteria (`content_contains`, `event_kinds`, `min_events`).
+**ReplayBundle** — Recorded run transcript (`kite.eval`) for replay without live providers. May include `events` and `acceptance` criteria (`content_contains`, `event_kinds`, `min_events`).
 
 **Submit** — End of a build turn when the task is finished. Preferred: structured **`submit`** tool with `message` (Done / Changed / Verification sections). Legacy: bash `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. In interactive build chat, a **text-only** reply may submit **only when the user's last turn was casual** (hi, thanks, short non-task Q&A) — not when the assistant reply looks like a greeting. Task requests (`lower tests`, `fix bug`, …) require tools, verification, or `submit`; greeting-only replies get an idle nudge.
 
@@ -200,5 +200,4 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 - [AGENTS.md](AGENTS.md) — how to work on this repository
 - [kite_commands.md](kite_commands.md) — full CLI and slash map
 - [architecture.md](architecture.md) — layers and extension points
-- [docs/kite-system-design.md](docs/kite-system-design.md) — architecture atlas
-- [docs/RELEASE-0.9.0.md](docs/RELEASE-0.9.0.md) — 0.9 release notes
+- [docs/RELEASE-0.9.6.md](docs/RELEASE-0.9.6.md) — current release notes

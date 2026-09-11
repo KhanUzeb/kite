@@ -4,7 +4,7 @@
 
 Kite is a **slim hybrid coding-agent harness**: a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) style control loop wrapped in tau-inspired **runtime assembly** (providers, tools, guardrails, compaction, sessions). 0.9 adds an **application layer** (`RunSpec`, `ApplicationRunService`, `PolicyEngine`, `ToolExecutor`) while `Harness` remains the compatibility adapter. The brain never renders UI; the CLI never calls LiteLLM directly.
 
-Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (full atlas) · [kite_commands.md](kite_commands.md) (CLI/REPL) · [CONTEXT.md](CONTEXT.md) (glossary) · [AGENTS.md](AGENTS.md) (contributing)
+Deeper references: [kite_commands.md](kite_commands.md) (CLI/REPL) · [CONTEXT.md](CONTEXT.md) (glossary) · [AGENTS.md](AGENTS.md) (contributing)
 
 ---
 
@@ -33,7 +33,7 @@ Deeper references: [docs/kite-system-design.md](docs/kite-system-design.md) (ful
                              ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  Application (0.9)   application/service.py · contracts      │
-│  RunSpec · ApplicationRunService · PolicyEngine · replay   │
+│  RunSpec · ApplicationRunService · PolicyEngine · store    │
 └────────────────────────────┬─────────────────────────────────┘
                              ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -84,8 +84,8 @@ Exit paths: **`submit`** tool or bash submit marker, step/cost/time limits, user
 | `agent/loop.py` | Main turn loop, approval, plan/build mode, **ToolExecutor** path |
 | `agent/runtime.py` | One-shot assembly: model, env, session, summarizer, **build_tool_executor** |
 | `agent/verification.py` | `VerificationCollector` — artifacts, plans, **EvidenceVerifier** |
-| `application/execution/pipeline.py` | **ToolExecutor** — authorize → run → normalize |
-| `application/policy/engine.py` | **PolicyEngine** — path/network authorization |
+| `application/execution.py` | **ToolExecutor** — authorize → run → normalize |
+| `application/policy.py` | **PolicyEngine** — path/network authorization |
 | `context/repomap.py` | Git-ranked symbol sketch for project context |
 | `agent/compaction.py` | Pre-query compaction gate (`LoopCompactor`) |
 | `agent/events.py` | Thin event types (`tool_start`, `stream_delta`, `compact`, …) |
@@ -105,8 +105,10 @@ Exit paths: **`submit`** tool or bash submit marker, step/cost/time limits, user
 | `agent/subagent_profiles.py` | Bundled + `~/.kite/subagents/` persona loader |
 | `data/subagents/*.md` | Base personas (scout, reviewer, shell, coder, context) |
 | `bench/` | `kite bench` timing suite |
-| `application/` | 0.9 contracts: RunSpec, EventEnvelope, PolicyEngine, SQLite store, replay |
-| `eval/` | Recorded `ReplayBundle` (no live providers) |
+| `application/` | Flattened 0.9 modules: contracts, `execution.py`, `policy.py`, `verification.py`, SQLite store |
+| `eval.py` | Recorded `ReplayBundle` (no live providers) |
+| `tasks.py` | Headless / `kite tasks` batches |
+| `plugins/extensions.py` | `.kite/extensions` `register_tool` loader |
 | `skills/` | Load `SKILL.md`; install npm/git or **symlink** a local folder into `~/.kite/skills` |
 | `ui/repl.py` | prompt_toolkit REPL, slash expansion, keybindings |
 
@@ -195,6 +197,7 @@ Streaming uses stderr for loaders; stdout stays clean for copy/paste.
 | Add a CLI command | `cli/run.py` + handler module |
 | Add a slash command | `ui/commands.py` + `ui/repl.py` + `ui/complete.py` |
 | Add a tool | `tools/coding.py` or plugin; register in runtime config `[tools].enabled` |
+| Register a Python extension | `.kite/extensions/*.py` via `plugins/extensions.py` (`ExtensionAPI.register_tool`) |
 | Add a provider | `data/catalog.toml` + credentials env var |
 | Add a skill | `SKILL.md` in `~/.kite/skills` or `.kite/skills`; `/skills add pkg` or `/skills add ./path` (symlink) |
 | Swap sandbox | Replace `env/local.py` (same `execute(action)` contract) |
@@ -204,10 +207,10 @@ Streaming uses stderr for loaders; stdout stays clean for copy/paste.
 
 ## Testing & CI
 
-- **Local:** `pytest` from repo root (no live LLM calls; `KITE_HOME` isolated in fixtures).
-- **CI:** `.github/workflows/tests.yml` — pytest on Python 3.11/3.12 on every push and PR to `main`; `workflow_dispatch` for manual re-runs.
+- **Local:** `pytest` from repo root (~150 tests, no live LLM; `KITE_HOME` isolated in fixtures). Layout: `tests/README.md`.
+- **CI:** `.github/workflows/tests.yml` — Linux and Windows × Python 3.11/3.12: `sync_version --check`, `ruff check src tests`, `pytest -q`, `kite bench --check`.
 
-Focus areas: guardrails, approval, loop detection, sessions, render helpers, credentials.
+Focus areas: guardrails/SSRF, approval, agent loop, sessions, CLI/REPL, credentials/BYOS.
 
 ---
 
@@ -215,7 +218,6 @@ Focus areas: guardrails, approval, loop detection, sessions, render helpers, cre
 
 | Doc | Use when |
 |-----|----------|
-| [docs/kite-system-design.md](docs/kite-system-design.md) | Full module atlas, tradeoffs, provider table |
 | [kite_commands.md](kite_commands.md) | CLI/REPL command reference |
 | [CONTEXT.md](CONTEXT.md) | Term definitions |
 | [AGENTS.md](AGENTS.md) | Hacking on this repository |

@@ -19,10 +19,10 @@ Stack: LiteLLM, Rich, prompt_toolkit, pydantic, tomllib. Entry: `kite.cli.run:ma
 
 ```
 src/kite/
-  application/    RunSpec, ApplicationRunService, EventEnvelope (0.9 contracts)
+  application/    0.9 contracts + flattened modules (execution, policy, tools, verification, cli, …)
   agent/          Loop, harness, harness_build, runtime, compaction, cancel, tool_result, orchestrator
   bench/          Repeatable harness benchmarks (`kite bench`)
-  tasks/          Headless task batches (`kite tasks`, `--headless`)
+  tasks.py        Headless task batches (`kite tasks`, `--headless`)
   cli/            argparse entry (run.py), slash index, setup, stats, bench, tasks, import/apply
   config/         ~/.kite/config.toml (UserConfig), runtime TOML merge
   context/        Project discovery, workspace/execution cwd, token estimate
@@ -34,15 +34,14 @@ src/kite/
   memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic, user_context, working_style, secure_io
   data/subagents/ Bundled subagent personas (scout, reviewer, shell, coder, context)
   cli/subagents.py  kite subagents list/show/init; REPL /agents profiles|show|init
-  eval/           Recorded replay (ReplayBundle) without live providers
+  eval.py         Recorded replay (ReplayBundle) without live providers
   skills/         SKILL.md loader; npm/git install; local path symlink into ~/.kite/skills
   commands/       Markdown slash prompt loader
-  plugins/        .kite/plugins discovery
-  extensions/     .kite/extensions loader (register_tool → Harness.extra_tools)
+  plugins/        .kite/plugins discovery + extensions loader (register_tool → Harness.extra_tools)
   data/           Bundled catalog.toml, prompts, skills, commands
-tests/            pytest unit tests (no live LLM)
-docs/             RELEASE notes + kite-system-design.md
-scripts/          install.sh, download-macos.sh, install.ps1, lint.sh, build_design_pdf.py
+tests/            compact pytest suite (~150 tests, no live LLM; see tests/README.md)
+docs/             current RELEASE notes only (`docs/RELEASE-X.Y.Z.md`)
+scripts/          install.sh, install.ps1, download.sh, download.ps1, sync_version.py, bump_release.sh
 ```
 
 **Layer rule:** CLI/UI subscribe to events; `ApplicationRunService` (0.9) or `AgentRuntime` assembles; `DefaultAgent` loops; tools/guardrails execute. Do not import UI from `agent/` or call LiteLLM from `ui/repl.py` directly.
@@ -68,7 +67,7 @@ Editable install: `uv pip install -e ".[dev]"` (or `./scripts/install.sh --dev`)
 - **Local:** `pytest` from repo root (uses `tests/`, `conftest.py` isolates `KITE_HOME`).
 - **CI:** `.github/workflows/tests.yml` runs pytest on every push and PR to `main` (Python 3.11 + 3.12). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Add tests for real behavior; skip trivial “assert True” coverage. No live provider calls in unit tests.
+Add tests for real behavior in the matching `tests/test_*.py` domain module. Combine related asserts; skip one-assert slop. No live provider calls. Target size is ~150 collected tests.
 
 ---
 
@@ -80,7 +79,7 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 4. **New CLI subcommands** — `cli/run.py` `build_parser()` + handler module.
 5. **Provider behavior** — `providers/` + `models/reasoning.py`; don’t hardcode model id lists.
 6. **Secrets** — `providers/credentials.py` writes `~/.kite/.env` with owner-only perms; never log key values.
-7. **Docs** — User-facing behavior changes need `kite_commands.md`. Glossary changes → `CONTEXT.md`. Memory layers → `docs/memory.md`. Layer/architecture changes → `architecture.md` or `docs/kite-system-design.md`. Prompt changes → `data/prompts/system.md`. Security behavior → `SECURITY.md`. Project/user overrides: `.kite/SYSTEM.md` / `APPEND_SYSTEM.md` (same idea as pi / Prime Agent).
+7. **Docs** — User-facing behavior changes need `kite_commands.md`. Glossary and memory-layer terms → `CONTEXT.md`. Layer/architecture changes → `architecture.md`. Prompt changes → `data/prompts/system.md`. Security behavior → `SECURITY.md`. Project/user overrides: `.kite/SYSTEM.md` / `APPEND_SYSTEM.md` (same idea as pi / Prime Agent).
 
 ---
 
@@ -90,15 +89,16 @@ Add tests for real behavior; skip trivial “assert True” coverage. No live pr
 |-------------|------------|
 | `kite` REPL | `ui/repl.py` → `agent/harness.py` |
 | `kite run "…"` | `cli/run.py` `cmd_run` |
-| `kite run --headless` / `kite tasks run` | `tasks/headless.py` + `cli/tasks.py` |
+| `kite run --headless` / `kite tasks run` | `tasks.py` + `cli/tasks.py` |
 | `/login groq` | `providers/credentials.py` → `ui/repl.py` |
 | Model resolution | `providers/resolve.py` |
 | Tool execution | `env/local.py` + `tools/coding.py` + `tools/jobs.py` + `guardrails/` |
-| 0.9 tool pipeline | `application/execution/pipeline.py` (`ToolExecutor`) + `application/policy/engine.py` |
+| 0.9 tool pipeline | `application/execution.py` (`ToolExecutor`) + `application/policy.py` |
 | Context compaction | `agent/compaction.py` + `memory/compaction_ops.py` |
 | Repo map / discovery | `context/repomap.py` + `context/discovery.py` |
-| Verification / submit gate | `agent/verification.py` + `application/verification/` |
-| Replay / eval | `eval/replay.py` (`ReplayBundle` + acceptance) |
+| Verification / submit gate | `agent/verification.py` + `application/verification.py` |
+| Replay / eval | `eval.py` (`ReplayBundle` + acceptance) |
+| Custom Python tools | `plugins/extensions.py` + `.kite/extensions/` |
 | Checkpoints / handoff | `memory/context_checkpoint.py` + `memory/handoff.py` + `ui/repl.py` |
 | User identity memory | `memory/user_context.py` — global `USER.md` / `PROFILE.md` |
 | Subagent personas | `agent/subagent_profiles.py` + `data/subagents/*.md` + `~/.kite/subagents/` |
@@ -149,10 +149,9 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 | Doc | Use when |
 |-----|----------|
 | [architecture.md](architecture.md) | Layers, lifecycle, extension points |
-| [docs/kite-system-design.md](docs/kite-system-design.md) | Full module atlas, tradeoffs, provider table |
-| [docs/RELEASE-0.9.0.md](docs/RELEASE-0.9.0.md) | 0.9 release notes |
 | [kite_commands.md](kite_commands.md) | CLI/REPL command reference |
 | [CONTEXT.md](CONTEXT.md) | Term definitions |
+| [docs/RELEASE-0.9.6.md](docs/RELEASE-0.9.6.md) | Current version release notes |
 
 ---
 
@@ -173,11 +172,10 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md). Conventional short commits (`feat(ui)
 Version source of truth: **`pyproject.toml`**. Stamped files stay in sync via `scripts/sync_version.py`.
 
 ```bash
-./scripts/bump_release.sh 0.9.0   # bump, sync README/AGENTS/docs, CHANGELOG stub, tag
-# edit CHANGELOG.md + docs/RELEASE-0.9.0.md
+./scripts/bump_release.sh 0.9.6   # bump, sync README/AGENTS/docs, CHANGELOG stub, tag
+# edit CHANGELOG.md + docs/RELEASE-0.9.6.md
 git push origin main --tags       # tag push runs .github/workflows/release.yml
 ```
 
 - **`scripts/sync_version.py`** — sync or `--check` (also runs in CI on every push/PR). Stamps `scripts/*` via `# kite-release-version:`.
-- **`scripts/verify_release_pr.sh`** — pre-tag pytest + version check on main.
 - **`.github/workflows/release.yml`** — on `v*` tag push, verify stamps and publish GitHub release from `docs/RELEASE-X.Y.Z.md`.

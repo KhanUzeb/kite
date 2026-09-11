@@ -45,18 +45,27 @@ Shared flags on `run` / `chat` / `resume`:
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
 | `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | `yolo` = no prompts; `auto`/`trust` = workspace-scoped; `supervised`/`approve` = approve mutations; `readonly` = block writes |
-| `--steps` `--cost` `--time` | Limits |
+| `--steps` `--cost` `--time` | Limits (honored by `run`, `chat`, and one-shot `resume`) |
 | `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
-| `-v` / `-q` | Verbose tool bodies / quiet |
+| `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
+| `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. Missing paths exit 2 before the REPL starts. |
+| `--role` | `auto` / `architect` / `implementer` / `debugger` |
+| `-v` | Verbose tool bodies |
+
+One-shot / headless flags (`kite run`, `kite resume <id> "continue"` — not `kite chat`):
+
+| Flag | Meaning |
+|------|---------|
+| `-q` | Quiet |
 | `--headless` | Line-oriented stderr log (`[tool]`, `[crew]`, `[out]`), no TTY prompts — CI / cloud agents |
 | `--no-stream` | With `--headless`, hide live bash/tool output lines |
-| `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
-| `--auto-compact` | Persist auto-compaction on/off in `~/.kite/config.toml` (`kite config --auto-compact true\|false`) |
-| `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. |
+| `--json` `-o PATH` `--label` | Machine output / trajectory path / session label |
+
+Persistent compaction is `kite config --auto-compact true|false` (not a run/chat flag).
 
 `--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto` permits ordinary in-workspace changes while mandatory approval gates fail closed.
 
-**Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory. inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
+**Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
 
 Housekeeping (no model):
 
@@ -93,6 +102,7 @@ kite runtime-config [--config name]
 kite bench [--json] [--save PATH] [--compare BASELINE.json] [--check] [--ab] [--stress]
 kite tasks init [--force] [path]              # write example ~/.kite/tasks/example.jsonl
 kite tasks run <file.jsonl> [--stdin] [--json] [--dry-run] [--continue-on-error]
+                           [--steps N] [--cost USD] [--time SEC] [-p] [-m]
 kite subagents [--show id] [--init id] [--role architect] [--force]
 kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
 ```
@@ -115,7 +125,7 @@ kite bench --check              # exit 1 if any case exceeds budget (CI gate)
 | **context** | `repo_map`, `prompt_cache_prepare`, `context_gather`, `prompt_assembly` |
 | **tools** | `tool_registry`, `read_tool`, `grep_tool`, `bash_echo`, `subprocess_spawn` |
 
-Optional (not in CI pytest): `kite bench --ab` and `kite bench --stress` — see [docs/bench-orchestrate-ab.md](docs/bench-orchestrate-ab.md).
+Optional (not in CI pytest): `kite bench --ab` and `kite bench --stress`.
 
 Budget ceilings live in `src/kite/bench/budgets.py`. `pytest tests/test_bench.py` runs the same suite in CI.
 
@@ -129,7 +139,9 @@ kite tasks run ~/.kite/tasks/example.jsonl   # run batch
 echo '{"task": "pytest -q", "label": "tests"}' | kite tasks run --stdin
 kite tasks run tasks.jsonl --dry-run         # list without running
 kite tasks run tasks.jsonl --json            # machine-readable summary on stdout
+kite tasks run tasks.jsonl --steps 20 --time 120
 kite run --headless "fix the failing test"   # single task, stderr event log
+kite exec "pytest -q" --json                 # CI: headless + quiet + auto approval
 ```
 
 **Task file format** — JSONL (one object per line) or plain text (one prompt per line). `#` lines and blanks are skipped.
@@ -144,6 +156,8 @@ kite run --headless "fix the failing test"   # single task, stderr event log
 | `long` / `long_task` | Long-task limits + phased checkpoints |
 
 Stderr tags: `[kite]` lifecycle, `[tool]` tool start/end, `[out]` bash/tool lines (redacted), `[crew]` subagent workers, `[stream]` model deltas (`-v`).
+
+Batch exit code is 0 only when every task `exit_status` is `Submitted` **and** leftover bash/subagent jobs were torn down (count 0). Incomplete, stalled, interrupted, budget-exceeded, provider-faulted, and orphan-job tasks return a non-zero batch exit even when their sessions remain resumable (`kite resume <id>`). JSON still includes `exit_status`, `session_id`, `submission`, and `error` so callers can distinguish retryable interruptions from hard failures. `kite tasks run` requires a file (or `--stdin` / `-`); `--steps` / `--cost` / `--time` apply per task.
 
 ### Subagent personas (`kite subagents`)
 
@@ -234,7 +248,7 @@ These never go to the model.
 | `/clip` `/paste` `/clipboard` | Attach clipboard text or image (**F8** or **Esc v**) |
 | `/detach [name\|all]` | Drop queued attachments |
 | `/attachments` | List queued files |
-| `/help` `/h` | Command map + keyboard shortcuts |
+| `/help` `/h` | Command map, keyboard shortcuts, and remaining docs (`kite_commands.md`, `CONTEXT.md`, `architecture.md`, `SECURITY.md`, current `docs/RELEASE-X.Y.Z.md`) |
 | `/quit` `/q` `/exit` | Leave the REPL |
 
 Ctrl+C stops the **current turn**, not the process.
@@ -362,7 +376,7 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `websearch` → pick URL → `webfetch`.
 Keys: `kite web-keys set tavily|exa|firecrawl` or `kite keys --set …` → `~/.kite/.env` (owner-only).
 
-`KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable facts; `/user` + `/profile` + `/working` are global identity context. See [docs/memory.md](docs/memory.md).
+`KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable facts; `/user` + `/profile` + `/working` are global identity context. See [CONTEXT.md](CONTEXT.md) (Memory & persistence).
 
 **Verification:** after edits, run the applicable check for the touched package. Monorepos may need per-service checks. Override defaults in `.kite/verification.toml` (see `src/kite/data/verification.example.toml`).
 
@@ -445,13 +459,7 @@ irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | i
 
 Needs `curl` + `git`. Update / uninstall: `uv tool upgrade kite` · `uv tool uninstall kite`
 
-Contributor (optional): `./scripts/install.sh --dev` still puts `kite` on PATH (editable).
-
-```bash
-./scripts/pkg.sh update       # uv tool upgrade (or editable reinstall)
-./scripts/pkg.sh uninstall
-# Windows: .\scripts\pkg.ps1 update|reinstall|uninstall
-```
+Contributor (optional): `./scripts/install.sh --dev` still puts `kite` on PATH (editable). Update / uninstall: `uv tool upgrade kite` · `uv tool uninstall kite`.
 
 Manual: `uv tool install "git+https://github.com/KhanUzeb/kite.git"` then `uv tool update-shell`. Then `kite setup`.
 
@@ -476,12 +484,10 @@ Global: `~/.kite/` (sessions, config, user skills). Also loads skills from `~/.a
 ### Tests & lint (CI parity)
 
 ```bash
-./scripts/lint.sh           # sync_version + ruff + pytest + bench --check
-pytest                      # after install.sh or uv pip install -e ".[dev]"
-pytest -v
-./scripts/lint.sh --ruff-all   # optional: lint scripts/ too
+python scripts/sync_version.py --check
+ruff check src tests
+pytest -q
+kite bench --check
 ```
 
-Maintainers before a release tag: `./scripts/verify_release_pr.sh`
-
-See `tests/` for guardrails, approval/trust, loop guard, sessions, verification, orchestrator, caches, and UI helpers.
+See `tests/README.md` for the compact pytest map (~150 tests: security, approval, agent, CLI/UI, providers).
