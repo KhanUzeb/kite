@@ -13,9 +13,10 @@ from rich.console import Console
 from rich.prompt import Prompt
 from rich.text import Text
 
-from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
+from kite.agent.mode import MUTATING_TOOLS, READONLY_TOOLS, AgentMode, ApprovalMode
 from kite.config import kite_home
 from kite.guardrails.sandbox import (
+    check_command_paths,
     check_dangerous,
     is_benign_cache_delete,
     is_inspection_bash,
@@ -180,6 +181,8 @@ def mandatory_approval_reason(
     blocked = check_dangerous(cmd)
     if blocked:
         return blocked.replace("bash command blocked by sandbox: ", "blocked command — ")
+    if workspace_cwd and check_command_paths(cmd, workspace_root(workspace_cwd)):
+        return "shell paths outside the project workspace always need approval"
     if is_git_write(cmd):
         return "git history changes always need approval"
     # Known relative caches (.pytest_cache, .ruff_cache, …) — auto/yolo may proceed;
@@ -605,8 +608,13 @@ def make_approver(
         )
 
     def approve(tool: str, arguments: dict[str, Any], extra: dict[str, Any] | None = None) -> Decision:
+        from kite.application.tools.contracts import ToolCall
+        from kite.application.tools.effects import derive_effects
+        from kite.application.tools.effects import mandatory_reason as canonical_mandatory_reason
+
         extra = extra or {}
         cmd = str(arguments.get("command") or "")
+        effects = set(derive_effects(ToolCall("approval", tool, arguments)))
         mandatory_reason = mandatory_approval_reason(
             tool,
             command=cmd,
@@ -614,12 +622,26 @@ def make_approver(
             workspace_cwd=workspace_cwd,
             bash_cwd=str(arguments.get("cwd") or "") or None,
         )
+        mandatory_reason = mandatory_reason or canonical_mandatory_reason(
+            tuple(effects),
+            tool=tool,
+            args=arguments,
+        )
+        mutates = bool(
+            effects & {"durable_memory", "destructive", "package_or_skill_install"}
+            or tool in MUTATING_TOOLS
+            or (
+                "workspace_write" in effects
+                and tool not in READONLY_TOOLS
+                and tool not in {"submit", "todo_write"}
+            )
+        )
         if mode is AgentMode.PLAN and tool != "todo_write":
             if tool == "bash" and is_inspection_bash(cmd):
-                pass
-            else:
+                return "allow"
+            if mutates:
                 return "deny"
-        if approval is ApprovalMode.READONLY and tool in MUTATING_TOOLS:
+        if approval is ApprovalMode.READONLY and mutates:
             return "deny"
         if mandatory_reason:
             return _prompt_or_coordinate(

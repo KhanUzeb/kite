@@ -66,6 +66,28 @@ def test_resume_without_id_non_tty(monkeypatch) -> None:
     assert cmd_resume(argparse.Namespace(session=None)) == 2
 
 
+def test_headless_auto_approver_allows_inside_and_denies_outside(tmp_path: Path) -> None:
+    from kite.agent.harness import Harness, HarnessConfig
+    from kite.cli.run import _wire_display
+
+    harness = Harness(HarnessConfig(cwd=str(tmp_path), approval="auto"))
+    args = argparse.Namespace(
+        mode="build",
+        approval="auto",
+        headless=True,
+        quiet=False,
+        no_stream=False,
+        verbose=False,
+        cwd=str(tmp_path),
+        config=None,
+    )
+
+    _wire_display(harness, MagicMock(), args)
+
+    assert harness.approver("write", {"path": str(tmp_path / "inside.txt")}, {}) == "allow"
+    assert harness.approver("write", {"path": str(tmp_path.parent / "outside.txt")}, {}) == "deny"
+
+
 # --- slash / help ---
 
 

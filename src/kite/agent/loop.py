@@ -1055,8 +1055,13 @@ class DefaultAgent:
             return self._run_gated_via_executor(tool, args, action)
         from kite.application.tools.effects import tool_requires_approval_gate
 
+        args = self._effective_tool_arguments(tool, args)
+        action = {**action, "arguments": args}
         needs_gate = tool in MUTATING_TOOLS or tool_requires_approval_gate(tool, args)
-        if self.approver and needs_gate:
+        inspection_bash = tool == "bash" and is_inspection_bash(str(args.get("command") or ""))
+        if needs_gate and not inspection_bash and self.approver is None:
+            return _blocked("approval required but no approver is available")
+        if needs_gate and not inspection_bash:
             extra = {"reason": args.get("reason") or "", "diff": ""}
             if tool in {"write", "edit"}:
                 extra["diff"] = self._preview_diff(tool, args)
@@ -1088,12 +1093,42 @@ class DefaultAgent:
             out[key] = value
         return out
 
+    def _effective_tool_arguments(self, tool: str, args: dict) -> dict:
+        from kite.context.workspace import ExecutionSession
+
+        normalized = dict(args)
+        execution = getattr(self.env, "execution", None)
+        if not isinstance(execution, ExecutionSession):
+            return normalized
+
+        path_keys: tuple[str, ...] = ()
+        if tool in {"read", "write", "edit", "grep", "ls", "set_cwd"}:
+            path_keys = ("path",)
+        elif tool == "glob":
+            path_keys = ("root", "path")
+        elif tool == "task":
+            path_keys = ("root",)
+
+        for key in path_keys:
+            value = normalized.get(key)
+            if value:
+                normalized[key] = str(execution.resolve_path(str(value)))
+
+        if tool == "bash":
+            cwd = normalized.get("cwd")
+            normalized["cwd"] = str(
+                execution.resolve_path(str(cwd)) if cwd else execution.execution_cwd
+            )
+        return normalized
+
     def _run_gated_via_executor(self, tool: str, args: dict, action: dict) -> dict:
         import uuid
 
         from kite.agent.exceptions import InterruptAgentFlow
         from kite.application.tools.contracts import ToolCall
 
+        args = self._effective_tool_arguments(tool, args)
+        action = {**action, "arguments": args}
         call = ToolCall(call_id=str(uuid.uuid4()), name=tool, arguments=dict(args))
         policy = self.tool_executor.policy
         intent = policy.derive_intent(call)
@@ -1101,7 +1136,11 @@ class DefaultAgent:
         if not decision.allowed:
             return _blocked(decision.reason or "denied by policy")
 
-        if decision.requires_approval and self.approver:
+        inspection_bash = tool == "bash" and is_inspection_bash(str(args.get("command") or ""))
+        if decision.requires_approval and not inspection_bash and self.approver is None:
+            return _blocked("approval required but no approver is available")
+
+        if decision.requires_approval and not inspection_bash:
             extra = {"reason": str(args.get("reason") or decision.reason or ""), "diff": ""}
             if tool in {"write", "edit"}:
                 extra["diff"] = self._preview_diff(tool, args)
