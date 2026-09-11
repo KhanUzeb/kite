@@ -71,7 +71,15 @@ READONLY_TOOLS = frozenset(
 )
 
 # Read-only tools safe to run concurrently in one model turn (deterministic order preserved).
+# Prefer is_parallel_safe() — derives from tool metadata (any provider/model may batch these).
 PARALLEL_SAFE_TOOLS = frozenset({"read", "grep", "glob", "ls"})
+
+
+def is_parallel_safe(tool: str) -> bool:
+    """True when this tool may run alongside others in the same model turn."""
+    from kite.tools.metadata import is_concurrency_safe
+
+    return is_concurrency_safe(tool)
 
 # Mutating / side-effecting — gated; write/edit never offered in plan mode.
 # bash is mutating by default but plan mode still exposes it for inspection-only

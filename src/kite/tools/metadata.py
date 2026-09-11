@@ -47,8 +47,16 @@ DEFAULT_TOOL_METADATA: dict[str, ToolMetadata] = {
     "webfetch": _meta(read_only=True, network=True, expensive=True),
     "websearch": _meta(read_only=True, network=True, expensive=True),
     "webcrawl": _meta(read_only=True, network=True, expensive=True),
-    "context7_resolve": _meta(read_only=True, network=True, expensive=True),
-    "context7_docs": _meta(read_only=True, network=True, expensive=True),
+    "context7_resolve": _meta(read_only=True, network=True, expensive=True, concurrency_safe=True),
+    "context7_docs": _meta(read_only=True, network=True, expensive=True, concurrency_safe=True),
+    "webfetch": _meta(read_only=True, network=True, expensive=True, concurrency_safe=True),
+    "websearch": _meta(read_only=True, network=True, expensive=True, concurrency_safe=True),
+    "webcrawl": _meta(read_only=True, network=True, expensive=True, concurrency_safe=True),
+    "gh_issue": _meta(read_only=True, network=True, concurrency_safe=True),
+    "gh_pr": _meta(read_only=True, network=True, concurrency_safe=True),
+    "gh_prs": _meta(read_only=True, network=True, concurrency_safe=True),
+    "gh_runs": _meta(read_only=True, network=True, concurrency_safe=True),
+    "gh_run": _meta(read_only=True, network=True, concurrency_safe=True),
     "subagent": _meta(expensive=True),
     "task": _meta(expensive=True),
     "write": _meta(mutating=True),
@@ -81,3 +89,8 @@ def metadata_for(name: str) -> ToolMetadata:
     if name in MUTATING_TOOLS:
         return DEFAULT_TOOL_METADATA.get(name, _meta(mutating=True))
     return DEFAULT_TOOL_METADATA.get(name, _meta())
+
+
+def is_concurrency_safe(name: str) -> bool:
+    """True when independent calls may run in parallel (read-only / network reads)."""
+    return metadata_for(name).concurrency_safe

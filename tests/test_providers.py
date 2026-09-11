@@ -38,7 +38,7 @@ from kite.providers.credentials import (
     web_tool_api_key,
     write_api_key,
 )
-from kite.providers.capabilities import agent_model_warning, model_supports_tools
+from kite.providers.capabilities import agent_model_warning, model_supports_parallel_tool_calls, model_supports_tools
 from kite.providers.resolve import missing_credentials, resolve_model
 from kite.providers.select import _can_use_radiolist, _numbered_pick, select_model_interactive
 
@@ -305,3 +305,5 @@ def test_model_tool_support_is_metadata_driven() -> None:
 
     remote = RemoteModel(id="vendor/foo", raw={"supported_parameters": ["tools"]})
     assert remote.supports_tools() is True
+    assert model_supports_parallel_tool_calls(raw={"supported_parameters": ["parallel_tool_calls", "tools"]}) is True
+    assert model_supports_parallel_tool_calls(raw={"capabilities": {"tools": False}}) is False

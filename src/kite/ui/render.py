@@ -40,6 +40,7 @@ from kite.ui.tool_cards import (
     render_bash_command_block,
     render_code_edit_preview,
     render_parallel_batch_header,
+    render_section_break,
     render_stream_tool_preview,
     render_tool_card_done,
     render_tool_card_start,
@@ -249,6 +250,8 @@ class RunDisplay:
         self._pending_tool_args: str = ""
         self._last_todo_key: str = ""
         self._parallel_batch: int = 0
+        self._in_code_fence: bool = False
+        self._fence_lang: str = ""
         self._event_handlers: dict[str, Callable[[dict[str, Any]], None]] = {
             kind: getattr(self, f"_on_{kind}")  # noqa: SLF001
             for kind in _RENDER_EVENT_KINDS
@@ -278,10 +281,15 @@ class RunDisplay:
         self._need_prefix = True
         self._did_first_line = False
 
+    def _answer_style(self) -> str:
+        return "kite.terminal" if self._in_code_fence else "kite.answer"
+
     def _stream_write(self, text: str, *, channel: str) -> None:
-        self._ensure_channel(channel)
         if channel == "answer":
             self._saw_answer = True
+            self._stream_write_answer(text)
+            return
+        self._ensure_channel(channel)
         style = "kite.thinking" if channel == "thinking" else "kite.answer"
         prefix = CHANNEL_PREFIX.get(channel, "  ")
         block = Text()
@@ -300,6 +308,36 @@ class RunDisplay:
                 self._streaming = True
             elif i > 0:
                 self._streaming = True
+        if block.plain:
+            self.console.print(block, end="", highlight=False, markup=False)
+
+    def _stream_write_answer(self, text: str) -> None:
+        """Answer channel — prose vs fenced code blocks use distinct styles."""
+        self._ensure_channel("answer")
+        prefix = CHANNEL_PREFIX.get("answer", "  ")
+        block = Text()
+        for raw_line in text.split("\n"):
+            line = raw_line
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                self._in_code_fence = not self._in_code_fence
+                if self._in_code_fence:
+                    self._fence_lang = stripped.lstrip("`").strip()
+                else:
+                    self._fence_lang = ""
+                block.append("\n")
+                self._need_prefix = True
+                continue
+            if self._need_prefix:
+                indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
+                block.append(indent, style=self._answer_style())
+                self._need_prefix = False
+                self._did_first_line = True
+            if line:
+                block.append(line, style=self._answer_style())
+            block.append("\n")
+            self._need_prefix = True
+            self._streaming = True
         if block.plain:
             self.console.print(block, end="", highlight=False, markup=False)
 
@@ -504,9 +542,14 @@ class RunDisplay:
         reason = str(args.get("reason") or p.get("reason") or "")
         batch = int(p.get("parallel_batch") or 0)
         pindex = int(p.get("parallel_index") or 1)
+        if self._saw_answer:
+            self.console.print(render_section_break("tools"), highlight=False)
+            self._saw_answer = False
         if batch > 1 and batch != self._parallel_batch:
             self._parallel_batch = batch
-            self.console.print(render_parallel_batch_header(batch))
+            tools = p.get("parallel_tools")
+            names = tools if isinstance(tools, list) else []
+            self.console.print(render_parallel_batch_header(batch, names))
         card = ToolCard(
             tool=tool,
             detail=detail_from_args(tool, args),
