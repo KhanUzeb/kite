@@ -186,6 +186,47 @@ def test_websearch_empty_hint(mock_search, mock_instant):
     assert "No results found" in out["output"]
 
 
+@patch("kite.tools.web._fetch_url")
+def test_webfetch_preview_only(mock_fetch):
+    mock_fetch.return_value = (HTML_PAGE.encode(), "text/html", "https://example.com/page", None)
+    out = web.webfetch("https://example.com/page", preview_only=True)
+    assert out["ok"] is True
+    assert "preview_only: true" in out["output"]
+    assert "Hello World" not in out["output"]
+    assert out.get("summary")
+
+
+@patch("kite.tools.web._fetch_url")
+def test_webfetch_start_and_max_lines(mock_fetch):
+    mock_fetch.return_value = (HTML_PAGE.encode(), "text/html", "https://example.com/page", None)
+    out = web.webfetch("https://example.com/page", start=0, max_lines=2, max_chars=5000)
+    assert out["ok"] is True
+    assert out["chars"] <= 500
+
+
+@patch("kite.tools.web._ddg_instant")
+@patch("kite.tools.web._ddg_html_search")
+def test_websearch_urls_only(mock_search, mock_instant):
+    mock_instant.return_value = []
+    mock_search.return_value = (DDG_FIXTURE, "html", None)
+    out = web.websearch("example docs", urls_only=True)
+    assert out["ok"] is True
+    assert "Example Docs" not in out["output"]
+    assert "https://example.com/docs" in out["output"]
+    assert out.get("summary")
+
+
+@patch("kite.tools.web._ddg_instant")
+@patch("kite.tools.web._ddg_html_search")
+def test_websearch_compact(mock_search, mock_instant):
+    mock_instant.return_value = []
+    mock_search.return_value = (DDG_FIXTURE, "html", None)
+    out = web.websearch("example docs", compact=True)
+    assert out["ok"] is True
+    assert "Example Docs" in out["output"]
+    assert "Official documentation" not in out["output"]
+
+
 @patch("kite.tools.web._ddg_instant")
 @patch("kite.tools.web._ddg_html_search")
 def test_websearch_filters_private_urls(mock_search, mock_instant):
