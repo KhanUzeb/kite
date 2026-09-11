@@ -4,10 +4,26 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-09-11
+
 ### Added
 - **Paid web backends** — optional `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` in `~/.kite/.env` via `kite web-keys set tavily|exa|firecrawl` (or `kite keys --set …`). `websearch` auto-tries Tavily → Exa → Firecrawl → DuckDuckGo; Firecrawl also upgrades `webfetch` / `webcrawl`.
+- **`docs/RELEASE-0.9.7.md`** — release notes for this version.
+
+### Changed
+- **Layout** — nested one-file application packages, `eval`, `tasks`, and plugin extensions are now modules (`kite.application.cli`, `kite.tasks`, `kite.plugins.extensions`, …). Public names stay the same.
+- **Test suite** — collapsed ~555 one-assert tests into ~174 domain modules (`tests/README.md`). Same contracts, less slop.
+- **Scripts** — only install/download (unix + Windows), `sync_version.py`, and `bump_release.sh`. Dropped `pkg.*`, `lint.sh`, `download-macos.sh`, and `verify_release_pr.sh`; CI and `uv tool` cover those jobs.
+- **Docs** — keep architecture/glossary/commands plus current `docs/RELEASE-X.Y.Z.md`. Dropped duplicate atlas, old release notes, `plan.md`, and one-shot merge/bench notes. Version history stays in `CHANGELOG.md`.
+- **`/help` / `kite help`** — list the remaining docs (`kite_commands.md`, `CONTEXT.md`, `architecture.md`, `SECURITY.md`, current release notes) instead of deleted atlas/memory files.
+- **Headless success** — `kite run --headless`, `kite exec`, and `kite tasks` succeed only when the run submitted **and** leftover jobs were torn down.
+- **Startup load path** — CLI parser no longer imports setup/dashboard/bench suites; catalog/runtime TOML parse once; credentials skip BYOS until needed; LiteLLM and approval policy load on first use.
 
 ### Fixed
+- **REPL** — blank Enter no longer starts a turn; “Setup needed” no longer shows when a usable key exists but `default_model` is unset (catalog groq has an empty default).
+- **`kite tasks run`** — requires a file (or `--stdin` / `-`); `--steps` / `--cost` / `--time` pass through.
+- **`kite exec`** — always headless and quiet unless `-v`.
+- **Claude subscription login** — CLI link still needs `ANTHROPIC_API_KEY` for Kite model calls; login success text says so.
 - **ChatGPT BYOS hang** — LiteLLM expects flat `auth.json`; Codex stores nested `tokens`. Kite now materializes a LiteLLM-compatible copy under `~/.kite/oauth/chatgpt/` from the official Codex store so the harness no longer blocks on device-code login.
 
 ## [0.9.6] - 2026-09-09
