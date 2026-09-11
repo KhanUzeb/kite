@@ -209,7 +209,7 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
             "  [cyan]/login groq[/]      BYOK key or BYOS OAuth\n"
             "  [cyan]kite login chatgpt[/] link a subscription plan\n"
             "  [cyan]/keys[/]            see credential status\n\n"
-            "[dim]REPL shortcuts: Ctrl+O expand tools · Ctrl+P plan · Ctrl+B build · /help[/]",
+            "[dim]REPL shortcuts: Ctrl+B build (default) · Ctrl+P plan (opt-in) · Ctrl+O expand · /help[/]",
             title="next steps",
             border_style="green",
         )
