@@ -1292,7 +1292,7 @@ class ChatSession:
     def _apply_build_mode(self) -> None:
         self.state.mode = AgentMode.BUILD
         if self.state.approval is ApprovalMode.READONLY:
-            self.state.approval = ApprovalMode.APPROVE
+            self.state.approval = ApprovalMode.AUTO
         self._invalidate_harness()
 
     def _slash_help(self, _arg: str) -> None:

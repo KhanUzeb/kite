@@ -33,7 +33,7 @@ class ToolBlock:
 @dataclass
 class SessionUiState:
     mode: AgentMode = AgentMode.BUILD
-    approval: ApprovalMode = ApprovalMode.APPROVE
+    approval: ApprovalMode = ApprovalMode.AUTO
     provider: str = ""
     model: str = ""
     git_branch: str = ""

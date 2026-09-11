@@ -78,7 +78,7 @@ BUILD_TOOLS = frozenset({*READONLY_TOOLS, *MUTATING_TOOLS, "todo_write", "todo_r
 
 
 def default_approval(mode: AgentMode) -> ApprovalMode:
-    return ApprovalMode.READONLY if mode is AgentMode.PLAN else ApprovalMode.APPROVE
+    return ApprovalMode.READONLY if mode is AgentMode.PLAN else ApprovalMode.AUTO
 
 
 def filter_enabled(enabled: list[str], allowed: frozenset[str]) -> list[str]:
