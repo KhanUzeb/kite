@@ -249,6 +249,13 @@ class LitellmModel:
             out["tool_calls"] = tool_calls_out
         return out
 
+    def _emit_first_token(self, *, started: float, channel: str, seen: bool) -> bool:
+        if seen:
+            return True
+        ttft_ms = int((time.monotonic() - started) * 1000)
+        self._emit("stream_first_token", ttft_ms=ttft_ms, channel=channel)
+        return True
+
     def _query_stream(self, messages: list[dict]) -> dict:
         import litellm
 
@@ -261,6 +268,8 @@ class LitellmModel:
         reasoning = ""
         tool_calls_acc: dict[int, dict[str, Any]] = {}
         cost = 0.0
+        started = time.monotonic()
+        first_token = False
 
         try:
             stream = litellm.completion(**self._completion_kwargs(messages, stream=True))
@@ -272,6 +281,7 @@ class LitellmModel:
                 if usage is not None:
                     hidden_chunk = getattr(chunk, "_hidden_params", None) or {}
                     self._record_usage(usage, hidden_chunk if isinstance(hidden_chunk, dict) else {})
+                    self._emit("stream_usage", **self.last_usage)
                 hidden = getattr(chunk, "_hidden_params", None) or {}
                 if isinstance(hidden, dict) and hidden.get("response_cost") is not None:
                     cost = float(hidden.get("response_cost") or 0.0)
@@ -281,14 +291,21 @@ class LitellmModel:
                     continue
                 delta = choices[0].delta
                 think_piece, answer_piece = extract_reasoning_and_content(delta)
+                tool_deltas = list(getattr(delta, "tool_calls", None) or [])
                 if think_piece:
+                    first_token = self._emit_first_token(
+                        started=started, channel="reasoning", seen=first_token
+                    )
                     reasoning += think_piece
                     self._emit("stream_reasoning", text=think_piece)
                 if answer_piece:
+                    first_token = self._emit_first_token(
+                        started=started, channel="answer", seen=first_token
+                    )
                     content += answer_piece
                     self._emit("stream_delta", text=answer_piece)
 
-                for tc in getattr(delta, "tool_calls", None) or []:
+                for tc in tool_deltas:
                     idx = int(getattr(tc, "index", 0) or 0)
                     slot = tool_calls_acc.setdefault(idx, {"id": None, "name": "", "arguments": ""})
                     if getattr(tc, "id", None):
@@ -296,17 +313,43 @@ class LitellmModel:
                     fn = getattr(tc, "function", None)
                     if fn is not None:
                         if getattr(fn, "name", None):
+                            first_token = self._emit_first_token(
+                                started=started, channel="tool", seen=first_token
+                            )
                             slot["name"] = (slot["name"] or "") + fn.name
-                            self._emit("stream_tool", name=slot["name"], partial_args=slot["arguments"])
+                            self._emit(
+                                "stream_tool",
+                                index=idx,
+                                name=slot["name"],
+                                partial_args=slot["arguments"],
+                                phase="name",
+                            )
                         if getattr(fn, "arguments", None):
+                            first_token = self._emit_first_token(
+                                started=started, channel="tool", seen=first_token
+                            )
                             slot["arguments"] += fn.arguments
-                            self._emit("stream_tool", name=slot["name"], partial_args=slot["arguments"])
+                            self._emit(
+                                "stream_tool",
+                                index=idx,
+                                name=slot["name"],
+                                partial_args=slot["arguments"],
+                                phase="args",
+                            )
         except Exception:
             self._emit("stream_end", ok=False)
             raise
 
         self.cost += cost
-        self._emit("stream_end", ok=True, chars=len(content), tools=len(tool_calls_acc), reasoning_chars=len(reasoning))
+        ttft_ms = int((time.monotonic() - started) * 1000) if first_token else None
+        self._emit(
+            "stream_end",
+            ok=True,
+            chars=len(content),
+            tools=len(tool_calls_acc),
+            reasoning_chars=len(reasoning),
+            ttft_ms=ttft_ms,
+        )
         return self._build_assistant(content=content, tool_calls_acc=tool_calls_acc, cost=cost, reasoning=reasoning)
 
     def _query_blocking(self, messages: list[dict]) -> dict:

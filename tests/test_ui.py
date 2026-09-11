@@ -26,7 +26,7 @@ from kite.ui.attach import (
 )
 from kite.ui.complete import read_repl_line
 from kite.ui.diff import count_diff_lines, make_unified_diff, preview_mutating_diff, preview_patch_diff, render_diff
-from kite.ui.stream_buffer import StreamCoalescer
+from kite.ui.streaming import StreamCoalescer
 from kite.ui.tool_cards import render_code_edit_preview
 from kite.ui.empty import render_empty
 from kite.ui.render import RunDisplay
@@ -262,8 +262,8 @@ def test_render_diff_and_stream_answer_styles() -> None:
     assert body == "Title" and "bold" in style
 
     coalescer = StreamCoalescer(min_chars=4, flush_chars=100, max_latency_s=0.0)
-    assert coalescer.push("answer", "hi") is None
-    assert coalescer.push("answer", " there") is not None
+    assert coalescer.push("custom", "hi") is None
+    assert coalescer.push("custom", " there") is not None
 
 
 def test_approval_panel_includes_diff_stat() -> None:
