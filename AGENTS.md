@@ -30,7 +30,7 @@ src/kite/
   models/         LiteLLM wrapper, reasoning effort, prompt cache
   tools/          Coding tools (read/write/edit/bash/…), web + web_providers (Tavily/Exa/Firecrawl), jobs, github
   guardrails/     Path sandbox, execution mode, bash policy, secret redaction
-  ui/             REPL, render, approval, complete, theme, status, cockpit/
+  ui/             REPL, render, approval, complete, theme, status
   memory/         Sessions JSONL, checkpoints, handoff, compaction_ops, semantic/episodic, user_context, working_style, secure_io
   data/subagents/ Bundled subagent personas (scout, reviewer, shell, coder, context)
   cli/subagents.py  kite subagents list/show/init; REPL /agents profiles|show|init
@@ -106,7 +106,6 @@ Add tests for real behavior in the matching `tests/test_*.py` domain module. Com
 | Orchestrator / crew | `agent/orchestrator.py` + `tools/jobs.py` + `/agents` `/live agents` |
 | Benchmarks | `bench/` + `cli/bench.py` |
 | Streaming UI | `ui/render.py` `RunDisplay` ← `agent/events.py` |
-| Cockpit / run view | `ui/cockpit/reducer.py` `RunCockpitReducer` → `render.py`; `/cockpit` in `ui/repl.py` |
 | Slash expansion | `cli/slash.py` `CommandIndex` |
 
 ---

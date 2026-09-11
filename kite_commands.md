@@ -2,7 +2,7 @@
 
 Kite is a coding agent. **What lands in git is still yours.** These commands steer the process, not a second commit stream.
 
-**New to Kite?** Start with the visual [guide.md](guide.md) (workflows, example Q&A, cockpit layout). This file is the complete reference.
+**New to Kite?** Start with the visual [guide.md](guide.md) (workflows, example Q&A). This file is the complete reference.
 
 There are four surfaces:
 
@@ -228,7 +228,6 @@ These never go to the model.
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Toggle expanded tool output |
-| `/cockpit` | Toggle run-centric cockpit layout (`on`/`off`/`refresh`; needs ≥100×30 terminal) |
 | `/live` | Stream bash output in real time while tools run |
 | `/live agents` | Stream subagent crew tool + shell output with worker prefix |
 | `/collapse` | Collapse tool output (default) |
@@ -256,23 +255,6 @@ These never go to the model.
 
 Ctrl+C stops the **current turn**, not the process.
 
-### Run cockpit (`/cockpit`)
-
-Kite is **run-centric**: the primary object is a **Run** (goal → plan → tools → changes → verification → result), not a chat scrollback.
-
-| Mode | When | Layout |
-|------|------|--------|
-| **Compact** | Default; any terminal | Dense transcript, footer meter, collapsed tool output |
-| **Cockpit** | `/cockpit` or `Ctrl+Space`; terminal ≥100×30 | Work · Run · Inspect panels: timeline, changes (+/−), verification, crew, composer pills |
-
-```text
-/cockpit           toggle compact ↔ cockpit
-/cockpit on|off    explicit mode
-/cockpit refresh   redraw cockpit without toggling
-```
-
-On terminals smaller than 100×30 columns × 30 rows, cockpit stays in compact mode. Both modes read the same event stream — switching does not reset the run.
-
 ### Keyboard shortcuts (composer)
 
 | Shortcut | Action |
@@ -288,7 +270,6 @@ On terminals smaller than 100×30 columns × 30 rows, cockpit stays in compact m
 | `Enter` | Send the line. While working, queues a chat follow-up |
 | `@path` | Inline file attach in the composer (e.g. `fix @src/foo.py`) |
 | `Ctrl+O` / `F6` | Toggle expanded tool output (`/expand`) |
-| `Ctrl+Space` | Toggle cockpit / compact layout (`/cockpit`) |
 | `Ctrl+P` / `F3` | Plan mode |
 | `Ctrl+B` / `F4` | Build mode |
 | `Ctrl+T` / `F7` | Toggle thinking trace (expanded by default) |

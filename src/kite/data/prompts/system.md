@@ -17,21 +17,6 @@ For coding tasks, stay in this order:
 
 Do not skip verify. A wrong "done" is worse than an honest "I could not verify this."
 
-## Run cockpit (terminal UI)
-Kite is **run-centric**, not chat-centric. The harness projects each turn into a **Run** with a semantic timeline — Goal → Plan → Tools → Changes → Verification → Result — not a wall of transcript.
-
-The user may use **compact** mode (default) or **cockpit** (`/cockpit`, `Ctrl+Space` when the terminal is ≥100×30). Both read the same event stream:
-
-| Surface | What the user sees | What you should provide |
-|---------|-------------------|-------------------------|
-| **Timeline** | Goal, plan steps, tools, approvals, verification | One clear action per tool; avoid duplicate peeks |
-| **Changes** | Per-file `+`/`-` counts | Real diffs via `edit`/`write`; name every touched path |
-| **Verification** | Pass/fail checks, or **Unverified** | Run checks in the affected package; cite command output |
-| **Approval** | Foreground card: what / why / risk / scope | Pass `reason` on mutating tools when non-obvious; wait for allow before claiming success |
-| **Crew** | Subagent workers (running / done) | Prefer bundled profiles; one objective per worker |
-
-Tool output is **collapsed by default** — summaries beat raw logs. Structure final answers so **Done**, **Changed**, and **Verification** map cleanly to the inspect panel. A prose "done" with no evidence shows as unverified and may block submit.
-
 ## Tools (token-efficient)
 **Minimize tokens.** Prefer **bash** for inspection — it returns only what you ask for. Dedicated `read`/`grep`/`glob`/`ls` are verbose fallbacks.
 
@@ -166,7 +151,7 @@ These are enforced — adapt instead of retrying the same blocked action:
 | Missing API key / provider | Not configured | Tell user to run `/login` or `kite keys` — you cannot fix credentials via bash |
 | Vision-less model + image attachment | Model capability | Describe that you received an image block but cannot see it; ask user to describe or switch model |
 
-When approval is required, the harness floats an **approval card** (what / why / risk / scope) — `[a] allow once`, `[s] session`, `[p] always` (when offered), `[n] deny`, `[q] stop`. Wait for the harness — do not claim the action ran until tool output confirms it.
+When approval is required, the user sees `[a] allow / [n] deny`. Wait for the harness — do not claim the action ran until tool output confirms it.
 
 ## Skills (trust & supply chain)
 Skills are markdown instructions loaded via `skill` or slash expansion. They are **not** equal:

@@ -624,7 +624,6 @@ def make_repl_key_bindings(
     on_toggle_expand: Callable[[], str] | None = None,
     on_toggle_thinking: Callable[[], str] | None = None,
     on_expand_thinking: Callable[[], str | None] | None = None,
-    on_toggle_cockpit: Callable[[], str] | None = None,
     on_plan: Callable[[], str] | None = None,
     on_build: Callable[[], str] | None = None,
     on_status: Callable[[], str] | None = None,
@@ -685,10 +684,6 @@ def make_repl_key_bindings(
     @bindings.add("f7", eager=True)
     def _thinking(event) -> None:  # noqa: ANN001
         _fire(on_toggle_thinking, event)
-
-    @bindings.add("c-space", eager=True)
-    def _cockpit(event) -> None:  # noqa: ANN001
-        _fire(on_toggle_cockpit, event)
 
     @bindings.add("c-p", eager=True)
     @bindings.add("f3", eager=True)

@@ -33,8 +33,6 @@ from kite.ui.complete import (
 from kite.ui.empty import render_empty
 from kite.ui.git import GitCheckpoints
 from kite.ui.inbox import MessageInbox
-from kite.ui.cockpit import RunCockpitReducer, can_show_cockpit, preferred_display_mode, render_cockpit
-from kite.ui.cockpit.mode import UiDisplayMode
 from kite.ui.render import RunDisplay, render_compact_boundary
 from kite.ui.state import SessionUiState
 from kite.ui.status import render_status
@@ -95,8 +93,6 @@ class ChatSession:
             approval=approval or default_approval(mode),
         )
         self.display = RunDisplay(self.console, verbose=verbose, state=self.state)
-        self._cockpit = RunCockpitReducer()
-        self._display_mode: UiDisplayMode = "compact"
         self.policy = None
         self.git = GitCheckpoints.open(cwd)
         self.todos = TodoStore()
@@ -323,26 +319,19 @@ class ChatSession:
         return app is not None and bool(getattr(app, "is_running", False))
 
     def _ui_event_handler(self, event) -> None:
-        self._cockpit.apply_event(event)
         if self._busy:
             self._ui_queue.put(event)
         else:
             self.display(event)
-            self._maybe_refresh_cockpit(event.kind)
 
     def _drain_ui_queue(self, *, limit: int = 500) -> None:
-        last_kind = ""
         for _ in range(limit):
             try:
-                ev = self._ui_queue.get_nowait()
-                self.display(ev)
-                last_kind = ev.kind
+                self.display(self._ui_queue.get_nowait())
             except queue.Empty:
                 break
         self._sync_queue_count()
         self.state.flush_pending_touch()
-        if last_kind:
-            self._maybe_refresh_cockpit(last_kind)
 
     def _busy_tick(self) -> None:
         self._drain_ui_queue()
@@ -1050,7 +1039,6 @@ class ChatSession:
             on_toggle_expand=lambda: self._flash_note(_toggle_expand()),
             on_toggle_thinking=lambda: self._flash_note(_toggle_thinking()),
             on_expand_thinking=_expand_thinking_if_collapsed,
-            on_toggle_cockpit=lambda: self._flash_note(self._toggle_cockpit_mode()),
             on_plan=lambda: self._flash_note(_plan()),
             on_build=lambda: self._flash_note(_build()),
             on_status=lambda: self._flash_note(_status()),
@@ -1235,7 +1223,6 @@ class ChatSession:
             "sandbox": self._slash_restricted,
             "cost": self._slash_cost,
             "expand": self._slash_expand,
-            "cockpit": self._slash_cockpit,
             "live": self._slash_live,
             "expand-thinking": self._slash_expand_thinking,
             "collapse": self._slash_collapse,
@@ -1426,82 +1413,6 @@ class ChatSession:
     def _slash_collapse(self, _arg: str) -> None:
         self.state.expanded_all = False
         self.console.print("[kite.muted]tool output collapsed[/]")
-
-    def _sync_cockpit_session(self) -> None:
-        from pathlib import Path
-
-        pct = 0.0
-        if self.state.window and self.state.tokens:
-            pct = min(100.0, 100.0 * self.state.tokens / self.state.window)
-        self._cockpit.sync_session(
-            mode=self.state.mode.value if hasattr(self.state.mode, "value") else str(self.state.mode),
-            provider=self.state.provider,
-            model=self.state.model,
-            branch=self.state.git_branch,
-            repo=Path(self.cwd).name,
-            approval=self.state.approval.value if hasattr(self.state.approval, "value") else str(self.state.approval),
-            attachments=[getattr(a, "path", str(a)) for a in self.attachments],
-            queued=self.state.queued,
-            context_pct=pct,
-            window=self.state.window,
-            tokens=self.state.tokens,
-            cost=self.state.cost,
-            turn=self.state.turn,
-            display_mode=self._display_mode,
-        )
-
-    def _toggle_cockpit_mode(self) -> str:
-        cols = self.console.width or 120
-        rows = self.console.height or 40
-        if self._display_mode == "compact":
-            if not can_show_cockpit(cols, rows):
-                return "cockpit needs ≥100×30 — staying compact"
-            self._display_mode = "cockpit"
-            self._render_cockpit()
-            return "cockpit on  (Ctrl+Space · /cockpit off)"
-        self._display_mode = "compact"
-        return "compact mode"
-
-    def _render_cockpit(self) -> None:
-        self._sync_cockpit_session()
-        self._cockpit.model.display_mode = self._display_mode
-        render_cockpit(
-            self.console,
-            self._cockpit.model,
-            cols=self.console.width or 120,
-            rows=self.console.height or 40,
-        )
-
-    def _maybe_refresh_cockpit(self, kind: str) -> None:
-        if self._display_mode != "cockpit":
-            return
-        if kind in {"agent_end", "turn_end", "approval", "verification_status", "submit_blocked"}:
-            self._render_cockpit()
-
-    def _slash_cockpit(self, arg: str) -> None:
-        token = (arg or "").strip().lower()
-        cols = self.console.width or 120
-        rows = self.console.height or 40
-        if token in {"on", "enable", "show"}:
-            self._display_mode = preferred_display_mode(preference="cockpit", cols=cols, rows=rows)
-            if self._display_mode == "compact":
-                self.console.print("[kite.pending]terminal too small for cockpit (need ≥100×30)[/]")
-                return
-            self._render_cockpit()
-            self.console.print("[kite.muted]cockpit on[/]")
-            return
-        if token in {"off", "disable", "compact"}:
-            self._display_mode = "compact"
-            self.console.print("[kite.muted]compact mode[/]")
-            return
-        if token in {"refresh", "draw"}:
-            if self._display_mode != "cockpit":
-                self.console.print("[kite.muted]cockpit is off — /cockpit on[/]")
-                return
-            self._render_cockpit()
-            return
-        note = self._toggle_cockpit_mode()
-        self.console.print(f"[kite.muted]{note}[/]")
 
     def _slash_trace(self, _arg: str) -> None:
         if self.state.last_trace:

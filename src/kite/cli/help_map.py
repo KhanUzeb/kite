@@ -9,6 +9,7 @@ def docs_help() -> str:
 
     return (
         "docs\n"
+        "  guide.md           visual walkthrough + example Q&A\n"
         "  kite_commands.md   CLI and slash map\n"
         "  CONTEXT.md         terms, including memory layers\n"
         "  architecture.md    layers and extension points\n"

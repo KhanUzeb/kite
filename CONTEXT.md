@@ -172,23 +172,11 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 ## UI concepts
 
-**Run** — The primary object in the terminal UI: one user task from start through tools, changes, verification, and result. Not a chat thread scrollback.
-
-**Compact mode** — Default REPL layout: minimal chrome, dense transcript, keyboard-first. Tool output collapsed by default.
-
-**Cockpit** — Full-screen run layout (`/cockpit`, `Ctrl+Space` when terminal ≥100×30). Same event stream as compact; projects Work · Run · Inspect panels (timeline, changes, verification, crew). Falls back to compact on small terminals.
-
-**RunViewModel** — UI projection of a run: goal, semantic timeline, composer pills, approval state, change list, verification checks, and crew workers. Built by `RunCockpitReducer` from the event log — widgets never mutate runtime state directly.
-
-**Timeline** — Semantic run history (Goal, Plan, Tool, Change, Approval, Verification, Checkpoint, Result) — not a wall of raw transcript.
-
 **Cell** — One visual block in the stream (user, thinking, answer, tool row, diff, compaction boundary).
 
 **Footer** — Status line: mode, approval, model, effort, running command, tok/s, cache hit, context %, cost, branch.
 
 **Collapse** — Tool output truncated by default; user expands with `/expand` or Ctrl+O.
-
-**Approval card** — Foreground panel when a mutating tool needs consent: what / why / risk / scope, with `[a]` allow once, `[s]` session, `[p]` always (when offered), `[n]` deny, `[q]` stop.
 
 ---
 
