@@ -139,13 +139,19 @@ def login_oauth(
     _oauth_model_cache.pop(key, None)
     msg = result.message
     if set_default:
-        cfg = UserConfig.load()
-        cfg.default_provider = spec.name
-        if spec.default_model:
-            cfg.default_model = spec.default_model
-            cfg.provider_defaults[spec.name] = spec.default_model
-        cfg.save()
-        msg += f"  ·  default provider → {spec.name}"
+        from kite.providers.credentials import inspect_provider_credentials
+
+        status = inspect_provider_credentials(spec)
+        if status.usable:
+            cfg = UserConfig.load()
+            cfg.default_provider = spec.name
+            if spec.default_model:
+                cfg.default_model = spec.default_model
+                cfg.provider_defaults[spec.name] = spec.default_model
+            cfg.save()
+            msg += f"  ·  default provider → {spec.name}"
+        elif spec.oauth_provider == "anthropic":
+            msg += "  ·  API key required for Kite — kite keys --set anthropic"
 
     return 0, msg, spec.name
 

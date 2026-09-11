@@ -98,7 +98,11 @@ def render_credentials_table_rows(
 ) -> Text:
     """Plain-text credential rows for REPL /keys (no Rich Table)."""
     from kite.providers.catalog import load_catalog
-    from kite.providers.credentials import credential_type_label, provider_credential_status
+    from kite.providers.credentials import (
+        credential_type_label,
+        inspect_provider_credentials,
+        provider_credential_status,
+    )
     from kite.providers.keys import api_key_env_names
 
     catalog = load_catalog()
@@ -109,9 +113,10 @@ def render_credentials_table_rows(
         try:
             spec = catalog.get(name)
             kind = credential_type_label(spec)
+            status = inspect_provider_credentials(spec).detail
         except KeyError:
             kind = "—"
-        status = provider_credential_status(ok=ok, env_col=env)
+            status = provider_credential_status(ok=ok, env_col=env)
         if kind == "BYOK" and ok and env not in {"local", "oauth", "—"}:
             detail = fingerprints.get(name) or "••••"
         elif kind == "BYOS":

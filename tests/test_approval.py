@@ -1,4 +1,4 @@
-"""Approval policy — trust mode and trusted_paths."""
+"""Approval modes, mandatory high-risk gates, and non-interactive denials."""
 
 from __future__ import annotations
 
@@ -8,15 +8,24 @@ from unittest.mock import MagicMock
 
 from rich.console import Console
 
-from kite.agent.mode import AgentMode, ApprovalMode
-from kite.ui.approval import make_approver, needs_approval
+from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name, parse_approval_mode
+from kite.ui.approval import (
+    ApprovalPolicy,
+    action_pattern,
+    is_mandatory_approval,
+    make_approver,
+    mandatory_approval_reason,
+    needs_approval,
+    prompt_approval,
+)
 
 
-def test_trust_mode_allows_read_tools(workspace: Path) -> None:
+def test_aliases_trust_and_git_gating(workspace: Path) -> None:
+    assert parse_approval_mode("supervised") is ApprovalMode.APPROVE
+    assert parse_approval_mode("yolo") is ApprovalMode.YOLO
+    assert approval_display_name(ApprovalMode.APPROVE) == "supervised"
     assert not needs_approval("read", AgentMode.BUILD, ApprovalMode.TRUST)
-
-
-def test_trust_mode_blocks_destructive_bash(workspace: Path) -> None:
+    assert not needs_approval("read", AgentMode.BUILD, ApprovalMode.APPROVE)
     assert needs_approval(
         "bash",
         AgentMode.BUILD,
@@ -24,83 +33,59 @@ def test_trust_mode_blocks_destructive_bash(workspace: Path) -> None:
         command="rm -rf node_modules",
         workspace_cwd=str(workspace),
     )
-
-
-def test_git_reads_skip_approval(workspace: Path) -> None:
-    assert not needs_approval(
-        "bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="git status",
-        workspace_cwd=str(workspace),
-    )
-    assert not needs_approval(
-        "bash", AgentMode.BUILD, ApprovalMode.AUTO, command="git log -1",
-        workspace_cwd=str(workspace), bash_cwd=str(workspace),
-    )
-
-
-def test_git_writes_require_approval(workspace: Path) -> None:
-    assert needs_approval(
-        "bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="git commit -m wip",
-        workspace_cwd=str(workspace),
-    )
-    assert needs_approval(
-        "bash", AgentMode.BUILD, ApprovalMode.AUTO, command="git push origin main",
-        workspace_cwd=str(workspace), bash_cwd=str(workspace),
-    )
-
-
-def test_git_status_pattern_does_not_cover_push() -> None:
-    from kite.ui.approval import ApprovalPolicy, action_pattern
-
+    ws = str(workspace)
+    assert not needs_approval("bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="git status", workspace_cwd=ws)
+    assert needs_approval("bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="git commit -m wip", workspace_cwd=ws)
+    assert needs_approval("bash", AgentMode.BUILD, ApprovalMode.YOLO, command="git commit -m x", workspace_cwd=ws, bash_cwd=ws)
     policy = ApprovalPolicy(session_patterns={"bash:git*"})
-    status = action_pattern("bash", {"command": "git status"})
-    push = action_pattern("bash", {"command": "git push origin main"})
-    commit = action_pattern("bash", {"command": "git commit -m x"})
-    assert policy.remembered(status)
-    assert not policy.remembered(push)
-    assert not policy.remembered(commit)
-
-
-def test_trusted_paths_skip_bash_approval(workspace: Path) -> None:
+    assert policy.remembered(action_pattern("bash", {"command": "git status"}))
+    assert not policy.remembered(action_pattern("bash", {"command": "git push origin main"}))
     assert not needs_approval(
         "bash",
         AgentMode.BUILD,
         ApprovalMode.TRUST,
         command="pytest -q",
         trusted_paths=["src/"],
-        workspace_cwd=str(workspace),
+        workspace_cwd=ws,
         bash_cwd=str(workspace / "src"),
     )
 
 
-def test_noninteractive_auto_denies_canonical_mandatory_actions(workspace: Path) -> None:
-    approver = make_approver(
-        Console(file=StringIO()),
-        mode=AgentMode.BUILD,
-        approval=ApprovalMode.AUTO,
-        interactive=False,
-        workspace_cwd=str(workspace),
-    )
-
-    assert approver("write", {"path": str(workspace / "inside.txt")}, {}) == "allow"
-    assert approver("memory", {"action": "remember", "text": "secret"}, {}) == "deny"
+def test_auto_and_supervised_mutations(workspace: Path) -> None:
+    ws = str(workspace)
+    assert needs_approval("write", AgentMode.BUILD, ApprovalMode.APPROVE, arguments={"path": "src/foo.py"}, workspace_cwd=ws)
+    assert not needs_approval("write", AgentMode.BUILD, ApprovalMode.AUTO, arguments={"path": "src/foo.py"}, workspace_cwd=ws)
+    assert needs_approval("write", AgentMode.BUILD, ApprovalMode.AUTO, arguments={"path": "/etc/passwd"}, workspace_cwd=ws)
+    assert needs_approval("bash", AgentMode.BUILD, ApprovalMode.AUTO, command="pip install requests", workspace_cwd=ws, bash_cwd=ws)
+    assert needs_approval("bash", AgentMode.BUILD, ApprovalMode.AUTO, command="git commit -m wip", workspace_cwd=ws, bash_cwd="/tmp")
 
 
-def test_plan_readonly_approver_allows_inspection_bash(workspace: Path) -> None:
-    approver = make_approver(
-        Console(file=StringIO()),
-        mode=AgentMode.PLAN,
-        approval=ApprovalMode.READONLY,
-        interactive=False,
-        workspace_cwd=str(workspace),
-    )
+def test_mandatory_high_risk_and_cache_exception(workspace: Path) -> None:
+    ws = str(workspace)
+    assert is_mandatory_approval("bash", command="git commit -m wip", workspace_cwd=ws, bash_cwd=ws)
+    assert mandatory_approval_reason("bash", command="pip install requests", workspace_cwd=ws, bash_cwd=ws) == "package installs always need approval"
+    assert mandatory_approval_reason("bash", command="rm -rf node_modules") == "destructive file removal always needs approval"
+    assert mandatory_approval_reason("bash", command="ls -la", workspace_cwd=ws, bash_cwd="/tmp") == "shell outside the project workspace always needs approval"
+    assert "outside" in (mandatory_approval_reason("write", arguments={"path": "/etc/passwd"}, workspace_cwd=ws) or "")
+    assert not is_mandatory_approval("bash", command="git status", workspace_cwd=ws, bash_cwd=ws)
+    for cmd in ("rmdir /s /q .pytest_cache", "rm -rf .pytest_cache"):
+        assert not is_mandatory_approval("bash", command=cmd, workspace_cwd=ws, bash_cwd=ws), cmd
+        assert not needs_approval("bash", AgentMode.BUILD, ApprovalMode.AUTO, command=cmd, workspace_cwd=ws, bash_cwd=ws), cmd
+    assert needs_approval("bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="rmdir /s /q .pytest_cache", workspace_cwd=ws, bash_cwd=ws)
 
-    assert approver("bash", {"command": "git status"}, {}) == "allow"
 
-
-def test_readonly_denies_durable_memory_without_prompting(workspace: Path) -> None:
+def test_noninteractive_auto_plan_and_readonly(workspace: Path) -> None:
+    auto = make_approver(Console(file=StringIO()), mode=AgentMode.BUILD, approval=ApprovalMode.AUTO, interactive=False, workspace_cwd=str(workspace))
+    assert auto("write", {"path": str(workspace / "inside.txt")}, {}) == "allow"
+    assert auto("memory", {"action": "remember", "text": "secret"}, {}) == "deny"
+    outside = workspace.parent / "outside"
+    assert auto("bash", {"command": f'cd "{outside}" && echo escaped > escape.txt'}, {}) == "deny"
+    assert auto("bash", {"command": f'cd "{workspace}" && echo inspected'}, {}) == "allow"
+    plan = make_approver(Console(file=StringIO()), mode=AgentMode.PLAN, approval=ApprovalMode.READONLY, interactive=False, workspace_cwd=str(workspace))
+    assert plan("bash", {"command": "git status"}, {}) == "allow"
     coordinator = MagicMock()
     coordinator.request.return_value = "allow"
-    approver = make_approver(
+    readonly = make_approver(
         Console(file=StringIO()),
         mode=AgentMode.BUILD,
         approval=ApprovalMode.READONLY,
@@ -108,28 +93,21 @@ def test_readonly_denies_durable_memory_without_prompting(workspace: Path) -> No
         workspace_cwd=str(workspace),
         coordinator=coordinator,
     )
-
-    assert approver("memory", {"action": "remember", "text": "secret"}, {}) == "deny"
+    assert readonly("memory", {"action": "remember", "text": "secret"}, {}) == "deny"
     coordinator.request.assert_not_called()
 
 
-def test_noninteractive_auto_denies_embedded_cwd_outside_workspace(workspace: Path) -> None:
-    approver = make_approver(
-        Console(file=StringIO()),
-        mode=AgentMode.BUILD,
-        approval=ApprovalMode.AUTO,
-        interactive=False,
-        workspace_cwd=str(workspace),
-    )
-    outside = workspace.parent / "outside"
+def test_mandatory_still_prompts_when_pattern_remembered(monkeypatch) -> None:
+    policy = ApprovalPolicy(session_patterns={"bash:git commit*"})
+    calls: list[str] = []
+    monkeypatch.setattr("kite.ui.approval.Prompt.ask", lambda *_a, **_k: calls.append("asked") or "n")
 
-    assert approver(
-        "bash",
-        {"command": f'cd "{outside}" && echo escaped > escape.txt'},
-        {},
-    ) == "deny"
-    assert approver(
-        "bash",
-        {"command": f'cd "{workspace}" && echo inspected'},
-        {},
-    ) == "allow"
+    class _Console:
+        def print(self, *_a, **_k) -> None:
+            pass
+
+    deny = prompt_approval(_Console(), "bash", {"command": "git commit -m x"}, reason="git", policy=policy, mandatory=True)
+    assert calls == ["asked"] and deny == "deny"
+    calls.clear()
+    allow = prompt_approval(_Console(), "bash", {"command": "git commit -m x"}, policy=policy, mandatory=False)
+    assert calls == [] and allow == "allow"

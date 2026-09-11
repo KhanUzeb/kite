@@ -63,7 +63,6 @@ class UserConfig:
     @classmethod
     def load(cls) -> UserConfig:
         global _USER_CONFIG_CACHE
-        ensure_home()
         path = kite_home() / "config.toml"
         mtime = path.stat().st_mtime if path.is_file() else 0.0
         if _USER_CONFIG_CACHE is not None and _USER_CONFIG_CACHE[0] == mtime:

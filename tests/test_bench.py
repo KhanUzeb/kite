@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from kite.bench.budgets import BUDGETS_MS, check_report
 from kite.bench.suite import load_report, run_suite, save_report
 
@@ -13,6 +11,8 @@ def test_run_suite_includes_all_budgeted_benchmarks(workspace) -> None:
     names = {r.name for r in report.results}
     assert names == set(BUDGETS_MS)
     assert all(r.seconds >= 0 for r in report.results)
+    for category in ("startup", "context", "tools"):
+        assert [r for r in report.results if r.category == category], category
 
 
 def test_harness_benchmarks_within_budget(workspace) -> None:
@@ -30,13 +30,6 @@ def test_report_roundtrip(workspace, tmp_path) -> None:
     assert {r.name for r in loaded.results} == {r.name for r in report.results}
 
 
-@pytest.mark.parametrize("category", ["startup", "context", "tools"])
-def test_each_category_has_benchmarks(workspace, category: str) -> None:
-    report = run_suite(cwd=workspace)
-    rows = [r for r in report.results if r.category == category]
-    assert rows, f"no benchmarks in category {category}"
-
-
 def test_repl_startup_banner_skips_model_resolve(monkeypatch, tmp_path) -> None:
     calls: list[str] = []
 
@@ -47,6 +40,5 @@ def test_repl_startup_banner_skips_model_resolve(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("kite.providers.resolve.resolve_model", _fake_resolve)
     from kite.ui.repl import ChatSession
 
-    session = ChatSession(cwd=str(tmp_path))
-    session._startup_banner()
+    ChatSession(cwd=str(tmp_path))._startup_banner()
     assert not calls

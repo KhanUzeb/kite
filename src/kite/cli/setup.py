@@ -15,9 +15,9 @@ from kite.providers.catalog import load_catalog
 from kite.providers.credentials import (
     configured_providers,
     env_file_path,
+    inspect_provider_credentials,
     login_provider,
     logout_provider,
-    provider_credential_status,
     write_api_key,
 )
 from kite.providers.select import connect_interactive, select_provider_interactive
@@ -33,7 +33,102 @@ __all__ = [
     "cmd_logout",
     "run_setup_wizard",
     "maybe_run_first_setup",
+    "print_providers_table",
+    "print_keys_table",
 ]
+
+
+NARROW_PROVIDER_WIDTH = 72
+
+
+def _selected_model(cfg: UserConfig, spec) -> str:
+    return (
+        cfg.provider_defaults.get(spec.name)
+        or (cfg.default_model if spec.name == cfg.default_provider else None)
+        or spec.default_model
+        or "(live)"
+    )
+
+
+def print_providers_table(console) -> None:
+    from rich.table import Table
+
+    from kite.providers.catalog import load_catalog
+
+    catalog = load_catalog()
+    cfg = UserConfig.load()
+    narrow = console.size.width < NARROW_PROVIDER_WIDTH
+    table = Table(title="Providers", expand=True, pad_edge=False)
+    table.add_column("provider", no_wrap=True, overflow="ellipsis")
+    table.add_column("model", no_wrap=True, overflow="ellipsis")
+    table.add_column("status", no_wrap=True, overflow="ellipsis")
+    if not narrow:
+        table.add_column("display", no_wrap=True, overflow="ellipsis")
+        table.add_column("auth", no_wrap=True, overflow="ellipsis")
+    extras: list[str] = []
+    for spec in catalog.list():
+        cred = inspect_provider_credentials(spec)
+        mark = " *" if spec.name == cfg.default_provider else ""
+        provider = spec.name + mark
+        model = _selected_model(cfg, spec)
+        if narrow:
+            table.add_row(provider, model, cred.detail)
+            extras.append(f"  {spec.name}  {spec.display_name}  ·  {cred.method}")
+        else:
+            table.add_row(provider, model, cred.detail, spec.display_name, cred.method)
+    console.print(table)
+    if narrow:
+        for line in extras:
+            console.print(f"[dim]{line}[/]")
+    console.print(
+        "[dim]* = default · BYOK = API key · BYOS = oauth subscription (chatgpt/claude/grok)[/]"
+    )
+
+
+def print_keys_table(console) -> None:
+    from rich.table import Table
+
+    from kite.providers.catalog import load_catalog
+    from kite.providers.credentials import api_key_fingerprint, credential_type_label
+
+    catalog = load_catalog()
+    cfg = UserConfig.load()
+    narrow = console.size.width < NARROW_PROVIDER_WIDTH
+    table = Table(title="Keys", expand=True, pad_edge=False)
+    table.add_column("provider", no_wrap=True, overflow="ellipsis")
+    table.add_column("status", no_wrap=True, overflow="ellipsis")
+    if not narrow:
+        table.add_column("type", no_wrap=True, overflow="ellipsis")
+        table.add_column("detail", no_wrap=True, overflow="ellipsis")
+    extras: list[str] = []
+    for spec in catalog.list():
+        cred = inspect_provider_credentials(spec)
+        kind = credential_type_label(spec)
+        mark = " *" if spec.name == cfg.default_provider else ""
+        if kind == "BYOK" and cred.usable:
+            detail = api_key_fingerprint(spec) or cred.method
+        elif kind == "BYOS":
+            detail = cred.detail
+        elif cred.method == "local":
+            detail = "localhost"
+        else:
+            detail = cred.method
+        status = cred.detail
+        if cred.usable:
+            status = f"[green]{status}[/]"
+        elif kind == "BYOS":
+            status = f"[yellow]{status}[/]"
+        elif cred.method not in {"local", "—"}:
+            status = f"[yellow]{status}[/]"
+        if narrow:
+            table.add_row(spec.name + mark, status)
+            extras.append(f"  {spec.name}  {kind}  ·  {detail}")
+        else:
+            table.add_row(spec.name + mark, status, kind, detail)
+    console.print(table)
+    if narrow:
+        for line in extras:
+            console.print(f"[dim]{line}[/]")
 
 
 def run_setup_wizard(console, *, provider: str | None = None) -> int:
@@ -138,29 +233,24 @@ def maybe_run_first_setup(console) -> int | None:
 
 
 def cmd_keys(args) -> int:
-    from rich.table import Table
-
-    from kite.config import UserConfig
     from kite.providers.catalog import load_catalog
-    from kite.providers.credentials import (
-        api_key_fingerprint,
-        credential_type_label,
-        logout_provider,
-    )
+    from kite.providers.credentials import logout_provider
     from kite.ui.style import make_console
 
     console = make_console(stderr=True)
     env_path = env_file_path()
     catalog = load_catalog()
-    cfg = UserConfig.load()
-    rows = configured_providers()
 
     if getattr(args, "logout", None) is not None:
         provider = (args.logout or "").strip()
         if not provider:
             from kite.ui.pick import numbered_pick
 
-            linked = [(name, f"{name}  {env}") for name, ok, env in rows if ok and env != "local"]
+            linked = []
+            for spec in catalog.list():
+                cred = inspect_provider_credentials(spec)
+                if cred.linked and cred.method != "local":
+                    linked.append((spec.name, f"{spec.name}  {cred.detail}"))
             if not linked:
                 console.print("[yellow]No linked providers to log out[/]")
                 return 1
@@ -174,39 +264,7 @@ def cmd_keys(args) -> int:
         console.print(f"[{style}]{msg}[/]")
         return code
 
-    table = Table(title="Provider credentials")
-    table.add_column("provider")
-    table.add_column("type")
-    table.add_column("status")
-    table.add_column("detail")
-    for name, ok, env in rows:
-        try:
-            spec = catalog.get(name)
-            kind = credential_type_label(spec)
-        except KeyError:
-            kind = "—"
-            spec = None
-        status = provider_credential_status(ok=ok, env_col=env)
-        if kind == "BYOK" and ok and spec is not None:
-            detail = api_key_fingerprint(spec) or env
-        elif kind == "BYOS":
-            detail = "oauth"
-        elif env == "local":
-            detail = "localhost"
-        else:
-            detail = env if env not in {"—"} else "—"
-
-        if ok:
-            status = f"[green]{status}[/]"
-        elif kind == "BYOS":
-            status = f"[yellow]{status}[/]"
-        elif env not in {"local", "—"}:
-            status = f"[yellow]{status}[/]"
-
-        mark = " *" if name == cfg.default_provider else ""
-        table.add_row(name + mark, kind, status, detail)
-
-    console.print(table)
+    print_keys_table(console)
     console.print(
         f"[dim]BYOK keys:[/] {env_path}  "
         f"[dim]BYOS:[/] provider CLIs (~/.codex, Claude Code, ~/.grok)"
@@ -252,9 +310,13 @@ def cmd_keys(args) -> int:
     from kite.ui.pick import can_prompt, numbered_pick
 
     if can_prompt():
+        cfg = UserConfig.load()
         picked = numbered_pick(
             console,
-            [(name, f"{name}  {env}") for name, _ok, env in rows],
+            [
+                (spec.name, f"{spec.name}  {inspect_provider_credentials(spec).detail}")
+                for spec in catalog.list()
+            ],
             current=cfg.default_provider,
             title="Link a provider (empty = done)",
             noun="provider",
@@ -309,7 +371,14 @@ def cmd_login(args) -> int:
     if code != 0:
         return code
     if resolved and model:
-        console.print(f"[dim]Ready[/]  [cyan]{resolved}/{model}[/]")
+        from kite.config.readiness import assess_setup_status
+
+        status = assess_setup_status(provider=resolved, model=model)
+        if status.ready:
+            console.print(f"[dim]Ready[/]  [cyan]{resolved}/{model}[/]")
+        else:
+            for blocker in status.blockers:
+                console.print(f"[yellow]{blocker}[/]")
     return 0
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tomllib
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from importlib import resources
 from pathlib import Path
@@ -233,6 +234,14 @@ def _file_mtime(path: Path) -> float:
 
 
 _RUNTIME_CACHE: dict[tuple[str, str, float, float], AgentRuntimeConfig] = {}
+_PACKAGED_DEFAULT: dict[str, Any] | None = None
+
+
+def _packaged_default() -> dict[str, Any]:
+    global _PACKAGED_DEFAULT
+    if _PACKAGED_DEFAULT is None:
+        _PACKAGED_DEFAULT = _read_packaged("default")
+    return deepcopy(_PACKAGED_DEFAULT)
 
 
 def load_runtime_config(name_or_path: str | Path | None = None) -> AgentRuntimeConfig:
@@ -248,7 +257,7 @@ def load_runtime_config(name_or_path: str | Path | None = None) -> AgentRuntimeC
     hit = _RUNTIME_CACHE.get(key)
     if hit is not None:
         return hit
-    data = _read_packaged("default")
+    data = _packaged_default()
 
     if user_default.is_file():
         data = _merge_dict(data, _read_toml(user_default))

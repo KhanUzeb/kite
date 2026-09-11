@@ -95,7 +95,7 @@ class Harness:
         if self._extensions_loaded or self.config.no_extensions:
             return
         self._extensions_loaded = True
-        from kite.extensions.loader import load_extensions
+        from kite.plugins.extensions import load_extensions
 
         load_extensions(self, self.config.cwd or ".")
 
@@ -167,9 +167,9 @@ class Harness:
         finally:
             if cancel is None:
                 runtime.cancel_token = None
-        self.last_session = runtime.last_session
-        if self.job_registry is None and runtime.job_registry is not None:
-            self.job_registry = runtime.job_registry
+            self.last_session = runtime.last_session
+            if runtime.job_registry is not None:
+                self.job_registry = runtime.job_registry
         return result
 
     def request_interrupt(self) -> None:
@@ -192,6 +192,6 @@ class Harness:
 
     def to_run_spec(self, task: str) -> RunSpec:
         """Build a canonical RunSpec from the current harness config."""
-        from kite.application.adapters.harness import run_spec_from_harness_config
+        from kite.application.adapters import run_spec_from_harness_config
 
         return run_spec_from_harness_config(self.config, task)

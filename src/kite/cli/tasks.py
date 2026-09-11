@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from kite.config import kite_home
-from kite.tasks.headless import load_tasks_file, load_tasks_text, run_headless_batch
+from kite.tasks import load_tasks_file, load_tasks_text, run_headless_batch
 
 
 def _console():
@@ -44,8 +44,12 @@ def cmd_tasks(args) -> int:
 
     if action == "run":
         default_cwd = str(Path(getattr(args, "cwd", ".") or ".").resolve())
+        use_stdin = bool(getattr(args, "stdin", False) or str(getattr(args, "file", "") or "") == "-")
+        if not use_stdin and not getattr(args, "file", None):
+            console.print("[red]provide a task file, or --stdin / -[/]")
+            return 2
         try:
-            if getattr(args, "stdin", False) or str(getattr(args, "file", "")) == "-":
+            if use_stdin:
                 tasks = load_tasks_text(sys.stdin.read(), default_cwd=default_cwd)
             else:
                 path = Path(args.file)
@@ -74,6 +78,9 @@ def cmd_tasks(args) -> int:
             no_context=bool(getattr(args, "no_context", False)),
             no_compact=bool(getattr(args, "no_compact", False)),
             no_guardrails=bool(getattr(args, "no_guardrails", False)),
+            step_limit=getattr(args, "steps", None),
+            cost_limit=getattr(args, "cost", None),
+            wall_time_limit_seconds=int(getattr(args, "time", 0) or 0),
         )
         if getattr(args, "json", False):
             print(json.dumps(batch.to_dict(), indent=2))
@@ -109,14 +116,17 @@ def add_tasks_parser(sub) -> None:
     run_p.add_argument(
         "file",
         nargs="?",
-        default="-",
-        help="Task file (.jsonl or one task per line). Use - for stdin",
+        default=None,
+        help="Task file (.jsonl or one task per line). Use - or --stdin for stdin",
     )
     run_p.add_argument("--stdin", action="store_true", help="Read tasks from stdin")
     run_p.add_argument("--cwd", default=".", help="Default workspace for tasks without cwd")
     run_p.add_argument("-p", "--provider", default=None)
     run_p.add_argument("-m", "--model", default=None)
     run_p.add_argument("--config", default=None, help="Runtime TOML overlay")
+    run_p.add_argument("--steps", type=int, default=None, help="Max model calls per task")
+    run_p.add_argument("--cost", type=float, default=None, help="Cost limit USD per task")
+    run_p.add_argument("--time", type=int, default=0, help="Wall-time limit seconds per task")
     run_p.add_argument("--continue-on-error", action="store_true", help="Keep batch after a failure")
     run_p.add_argument("--dry-run", action="store_true", help="List tasks without running")
     run_p.add_argument("--no-stream", action="store_true", help="Hide live bash/tool output lines")

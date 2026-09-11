@@ -2,6 +2,19 @@
 
 from __future__ import annotations
 
+# Canonical markdown after pruning old release notes / duplicate atlas.
+def docs_help() -> str:
+    from kite import __version__
+
+    return (
+        "docs\n"
+        "  kite_commands.md   CLI and slash map\n"
+        "  CONTEXT.md         terms, including memory layers\n"
+        "  architecture.md    layers and extension points\n"
+        "  SECURITY.md        trust boundaries\n"
+        f"  docs/RELEASE-{__version__}.md  current release notes\n"
+    )
+
 CLI_EPILOG = """quick start:
   kite setup              API key + model wizard
   kite                    interactive REPL (same as kite chat)
@@ -14,7 +27,7 @@ common:
   kite web-keys set tavily  optional web tool keys (also exa, firecrawl)
   kite bench              harness timing (no LLM)
   kite subagents          list/show/init subagent personas
-  kite tasks run FILE     headless task batch (JSONL or plain text)
+  kite tasks run FILE     headless batch (--steps/--cost/--time, file required)
 
 run `kite help` for the full map  ·  in REPL type /help
 """
@@ -48,8 +61,9 @@ Project
 Advanced
   kite runtime-config           merged agent TOML
   kite bench [--json] [--compare file]
-  kite tasks init | kite tasks run <file>   headless batches (CI / cloud)
+  kite tasks init | kite tasks run <file> [--steps N] [--cost $] [--time S]
   kite apply | kite import | kite exec | kite audit | kite cloud
+  kite exec "task"          CI one-shot (headless, quiet, same flags as run)
 
 REPL essentials (type /help in chat)
   /plan /build                  checklist-only vs apply
@@ -63,9 +77,14 @@ REPL essentials (type /help in chat)
   /goal [text]            persistent objective; /goal pause|resume|clear
   /jobs /agents /kill [id|all]  crew board; /agents profiles|init|show
 
-Flags on run/chat/resume: -p provider  -m model  --cwd PATH  --mode plan|build
+Flags on run: -p provider  -m model  --cwd PATH  --mode plan|build
   --approval auto|approve|supervised|yolo|trust|readonly  --headless  --no-stream
-  --auto-compact  -v  -q  --attach PATH
+  --steps  --cost  --time  --role  --long  --attach PATH  -v  -q  --json  -o PATH
 
-Docs: kite_commands.md
-"""
+Flags on chat (also interactive resume): -p  -m  --cwd  --mode  --approval
+  --steps  --cost  --time  --role  --long  --attach PATH  --no-context  --no-compact
+  --no-guardrails  -v
+
+Persistent compaction: kite config --auto-compact true|false
+
+""" + docs_help()

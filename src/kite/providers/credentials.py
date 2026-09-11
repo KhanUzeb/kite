@@ -7,17 +7,11 @@ import os
 import re
 import stat
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from kite.config import UserConfig, ensure_home, kite_home
-from kite.providers.byos import (
-    credential_label,
-    has_oauth_session,
-    is_oauth_provider,
-    login_oauth,
-    logout_oauth,
-)
+from kite.config.user import UserConfig, kite_home
 from kite.providers.catalog import load_catalog
 from kite.providers.keys import api_key_env_names, api_key_for
 
@@ -25,9 +19,37 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 
+def _byos():
+    from kite.providers import byos as mod
+
+    return mod
+
+
+def is_oauth_provider(spec) -> bool:
+    return _byos().is_oauth_provider(spec)
+
+
+def has_oauth_session(provider: str) -> bool:
+    return _byos().has_oauth_session(provider)
+
+
+def credential_label(spec) -> str:
+    return _byos().credential_label(spec)
+
+
+def login_oauth(spec, *, set_default: bool = False, console: Console | None = None):
+    return _byos().login_oauth(spec, set_default=set_default, console=console)
+
+
+def logout_oauth(spec) -> bool:
+    return _byos().logout_oauth(spec)
+
+
 def env_file_path() -> Path:
-    ensure_home()
     return kite_home() / ".env"
+
+
+_ENV_LOADED_KEY: tuple[str, float, str, float] | None = None
 
 
 def load_kite_env() -> None:
@@ -36,19 +58,31 @@ def load_kite_env() -> None:
     Non-empty project values win. Kite home fills keys still unset or left
     empty (``KEY=`` placeholders from a copied ``.env.example``).
     """
+    global _ENV_LOADED_KEY
+    path = env_file_path()
+    project_env = Path.cwd() / ".env"
+    try:
+        home_mtime = path.stat().st_mtime if path.is_file() else 0.0
+    except OSError:
+        home_mtime = 0.0
+    try:
+        project_mtime = project_env.stat().st_mtime if project_env.is_file() else 0.0
+    except OSError:
+        project_mtime = 0.0
+    key = (str(path), home_mtime, str(project_env), project_mtime)
+    if _ENV_LOADED_KEY == key:
+        return
     from dotenv import dotenv_values, load_dotenv
 
-    project_env = Path.cwd() / ".env"
     if project_env.is_file():
         load_dotenv(project_env)
-    path = env_file_path()
-    if not path.is_file():
-        return
-    for key, val in dotenv_values(path).items():
-        if not val:
-            continue
-        if not (os.getenv(key) or "").strip():
-            os.environ[key] = val
+    if path.is_file():
+        for env_key, val in dotenv_values(path).items():
+            if not val:
+                continue
+            if not (os.getenv(env_key) or "").strip():
+                os.environ[env_key] = val
+    _ENV_LOADED_KEY = key
 
 
 
@@ -131,8 +165,65 @@ def web_tool_key_fingerprint(name: str) -> str:
     return mask_api_key_fingerprint(key) if key else ""
 
 
-def provider_credential_status(*, ok: bool, env_col: str) -> str:
+@dataclass(frozen=True)
+class ProviderCredentialStatus:
+    provider: str
+    linked: bool
+    usable: bool
+    method: str
+    detail: str
+
+
+def inspect_provider_credentials(spec) -> ProviderCredentialStatus:
+    """Separate CLI/subscription linkage from Kite model-call readiness."""
+    if spec.name == "ollama":
+        return ProviderCredentialStatus(
+            provider=spec.name, linked=True, usable=True, method="local", detail="local"
+        )
+    if is_oauth_provider(spec):
+        linked = has_oauth_session(spec.oauth_provider or spec.name)
+        if spec.oauth_provider == "anthropic":
+            key_ready = bool(api_key_for(spec))
+            usable = linked and key_ready
+            if linked and not key_ready:
+                detail = "CLI linked · API key required for Kite"
+            elif linked and key_ready:
+                detail = "CLI linked · API key set"
+            else:
+                detail = "login required"
+            return ProviderCredentialStatus(
+                provider=spec.name,
+                linked=linked,
+                usable=usable,
+                method="oauth",
+                detail=detail,
+            )
+        return ProviderCredentialStatus(
+            provider=spec.name,
+            linked=linked,
+            usable=linked,
+            method="oauth",
+            detail="linked" if linked else "login required",
+        )
+    envs = api_key_env_names(spec)
+    if not envs:
+        return ProviderCredentialStatus(
+            provider=spec.name, linked=False, usable=False, method="—", detail="n/a"
+        )
+    ok = bool(api_key_for(spec))
+    return ProviderCredentialStatus(
+        provider=spec.name,
+        linked=ok,
+        usable=ok,
+        method=envs[0],
+        detail="set" if ok else "missing",
+    )
+
+
+def provider_credential_status(*, ok: bool, env_col: str, detail: str | None = None) -> str:
     """Human-readable credential status for CLI/REPL tables."""
+    if detail:
+        return detail
     if env_col == "local":
         return "local"
     if env_col == "—":
@@ -359,7 +450,8 @@ def configured_providers() -> list[tuple[str, bool, str]]:
             rows.append((spec.name, True, "local"))
             continue
         if is_oauth_provider(spec):
-            rows.append((spec.name, has_oauth_session(spec.oauth_provider or spec.name), "oauth"))
+            status = inspect_provider_credentials(spec)
+            rows.append((spec.name, status.usable, "oauth"))
             continue
         envs = api_key_env_names(spec)
         if not envs:

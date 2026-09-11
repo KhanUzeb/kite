@@ -11,6 +11,7 @@ _FALLBACKS: dict[str, tuple[str, ...]] = {
     "nvidia": ("NVIDIA_NIM_API_KEY", "NGC_API_KEY"),
     "opencode-zen": ("OPENCODE_ZEN_API_KEY",),
     "opencode-go": ("OPENCODE_GO_API_KEY",),
+    "claude": ("ANTHROPIC_API_KEY",),
 }
 
 

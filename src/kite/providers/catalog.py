@@ -135,6 +135,15 @@ def _merge_provider(base: ProviderSpec, overlay: ProviderSpec) -> ProviderSpec:
 
 
 _CATALOG_CACHE: dict[tuple[str, float], Catalog] = {}
+_BUNDLED_PROVIDERS: dict[str, ProviderSpec] | None = None
+
+
+def _bundled_providers() -> dict[str, ProviderSpec]:
+    global _BUNDLED_PROVIDERS
+    if _BUNDLED_PROVIDERS is None:
+        pkg = resources.files("kite").joinpath("data/catalog.toml")
+        _BUNDLED_PROVIDERS = _parse_providers(_load_toml_bytes(pkg.read_bytes()))
+    return _BUNDLED_PROVIDERS
 
 
 def load_catalog() -> Catalog:
@@ -148,9 +157,7 @@ def load_catalog() -> Catalog:
     hit = _CATALOG_CACHE.get(key)
     if hit is not None:
         return hit
-    pkg = resources.files("kite").joinpath("data/catalog.toml")
-    data = _load_toml_bytes(pkg.read_bytes())
-    providers = _parse_providers(data)
+    providers = dict(_bundled_providers())
 
     if user_path.is_file():
         user = _parse_providers(_load_toml_bytes(user_path.read_bytes()))

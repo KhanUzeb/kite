@@ -66,6 +66,18 @@ def _stock_cloud_base(provider: str, api_base: str | None) -> bool:
     return bool(needle and needle in api_base)
 
 
+def _first_configured_provider() -> str:
+    from kite.providers.credentials import configured_providers
+
+    rows = configured_providers()
+    usable = [name for name, ok, _env in rows if ok and name != "ollama"]
+    if usable:
+        return usable[0]
+    if any(name == "ollama" and ok for name, ok, _env in rows):
+        return "ollama"
+    return "openai"
+
+
 def resolve_model(
     *,
     provider: str | None = None,
@@ -76,7 +88,24 @@ def resolve_model(
     cfg = config or UserConfig.load()
     cat = catalog or load_catalog()
 
-    requested = provider or cfg.default_provider or "openai"
+    explicit = bool((provider or "").strip())
+    requested = (provider or cfg.default_provider or "").strip()
+    rows = None
+    if not explicit:
+        from kite.providers.credentials import configured_providers
+
+        rows = configured_providers()
+        ready = {name for name, ok, _env in rows if ok}
+        if not requested or requested not in ready:
+            usable = [name for name, ok, _env in rows if ok and name != "ollama"]
+            if usable:
+                requested = usable[0]
+            elif any(name == "ollama" and ok for name, ok, _env in rows):
+                requested = "ollama"
+            elif not requested:
+                requested = "openai"
+    if not requested:
+        requested = _first_configured_provider()
     spec = cat.get(requested)
     provider_name = spec.name
 
@@ -174,9 +203,8 @@ def missing_credentials(resolved: ResolvedModel) -> str | None:
             return subscription_login_hint(resolved.spec)
         if resolved.spec.oauth_provider == "anthropic" and not resolved.api_key:
             return (
-                "Claude subscription is linked via Claude Code, but direct API calls need "
-                "ANTHROPIC_API_KEY. Run `claude auth login` for Claude Code, or "
-                "`kite keys --set anthropic` for Console API access."
+                "Claude Code is linked, but Kite model calls need ANTHROPIC_API_KEY. "
+                "Run `kite keys --set anthropic`."
             )
         if oauth_id == "chatgpt":
             try:

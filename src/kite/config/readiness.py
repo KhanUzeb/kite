@@ -86,8 +86,9 @@ def assess_setup_status(
         others = [n for n in ready_names if n != resolved.provider]
         if others:
             hints.append(f"Keys ready for: {', '.join(others)} — run /model select or kite setup")
-    elif is_fresh_install():
-        hints.append("Free tier BYOK: groq.com → /login groq  ·  BYOS: /login chatgpt|claude|grok")
+    else:
+        hints.append("Free tier BYOK: groq.com → /login groq  ·  BYOS: /login chatgpt|grok")
+        hints.append("Claude: kite keys --set anthropic (Claude Code login is not enough)")
         hints.append("Run kite setup or /setup for the guided wizard")
 
     if not has_config_file():
@@ -123,15 +124,36 @@ def assess_setup_status_fast(
     """Lightweight readiness — no catalog/model resolution (REPL cold start)."""
     cfg = config or UserConfig.load()
     ready_names = configured_provider_names()
+    usable = [n for n in ready_names if n != "ollama"]
+    explicit = bool((provider or "").strip())
     prov = (provider or cfg.default_provider or "").strip()
-    mod = model or cfg.default_model
+    mod = (model or cfg.default_model or "") or None
+    if prov:
+        try:
+            from kite.providers.catalog import load_catalog
+
+            prov = load_catalog().get(prov).name
+        except Exception:
+            pass
+    if not prov or (prov not in ready_names and not explicit):
+        prov = usable[0] if usable else (ready_names[0] if ready_names and not explicit else prov)
+    if not mod and prov:
+        try:
+            from kite.providers.catalog import load_catalog
+
+            spec = load_catalog().get(prov)
+            mod = spec.default_model or None
+        except Exception:
+            pass
     blockers: list[str] = []
     hints: list[str] = []
 
     if prov and prov not in ready_names:
         blockers.append(f"no API key for provider '{prov}'")
-    if not mod:
-        blockers.append("no default model configured")
+    elif not prov:
+        blockers.append("no API key configured")
+    # Catalog default_model is often empty (e.g. groq). Missing saved model is a tip, not a blocker —
+    # resolve_model fills it from provider_defaults / live list when a turn actually starts.
 
     if not blockers:
         return SetupStatus(
@@ -149,8 +171,9 @@ def assess_setup_status_fast(
         others = [n for n in ready_names if n != prov]
         if others:
             hints.append(f"Keys ready for: {', '.join(others)} — run /model select or kite setup")
-    elif is_fresh_install():
-        hints.append("Free tier BYOK: groq.com → /login groq  ·  BYOS: /login chatgpt|claude|grok")
+    else:
+        hints.append("Free tier BYOK: groq.com → /login groq  ·  BYOS: /login chatgpt|grok")
+        hints.append("Claude: kite keys --set anthropic (Claude Code login is not enough)")
         hints.append("Run kite setup or /setup for the guided wizard")
 
     if not has_config_file():
@@ -176,7 +199,7 @@ def format_setup_banner(status: SetupStatus) -> str:
         lines.append(f"  [kite.muted]{b}[/]")
     for h in status.hints[:3]:
         lines.append(f"  [kite.brand]{h}[/]")
-    lines.append("  [kite.muted]Fix:[/] [kite.brand]/setup[/]  or  [kite.brand]kite setup[/]  ·  [kite.brand]/login groq[/]  ·  [kite.brand]kite login chatgpt[/]")
+    lines.append("  [kite.muted]Fix:[/] [kite.brand]/setup[/]  or  [kite.brand]kite setup[/]  ·  [kite.brand]/login[/]  ·  [kite.brand]/select[/]")
     return "\n".join(lines)
 
 
@@ -186,7 +209,7 @@ def offer_setup_interactive(console) -> bool:
         return False
     if not is_interactive_tty():
         return False
-    if not is_fresh_install():
+    if assess_setup_status().ready:
         return False
     try:
         raw = console.input("[kite.brand]First run?[/] Run [cyan]kite setup[/] now? [Y/n] ").strip().lower()

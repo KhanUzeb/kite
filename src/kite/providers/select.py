@@ -64,21 +64,9 @@ def _numbered_pick(
 
 def _provider_auth_hint(spec: ProviderSpec) -> str:
     """Short auth status for provider pickers."""
-    from kite.providers.byos import has_oauth_session, is_oauth_provider
-    from kite.providers.credentials import credential_type_label
-    from kite.providers.keys import api_key_for
+    from kite.providers.credentials import inspect_provider_credentials
 
-    kind = credential_type_label(spec)
-    if spec.name == "ollama":
-        return "local"
-    if is_oauth_provider(spec):
-        oauth_id = spec.oauth_provider or spec.name
-        linked = "linked" if has_oauth_session(oauth_id) else "login required"
-        return f"{kind} · {linked}"
-    if spec.api_key_env:
-        key_status = "key set" if api_key_for(spec) else "missing key"
-        return f"{kind} · {key_status}"
-    return kind
+    return inspect_provider_credentials(spec).detail
 
 
 def select_model_interactive(
@@ -106,6 +94,17 @@ def select_model_interactive(
         console.print(
             f"[yellow]{spec.display_name}[/] is not linked. "
             f"Run [cyan]kite login {provider}[/] — a browser opens so you can sign in."
+        )
+        return 1, None, None
+
+    from kite.providers.credentials import inspect_provider_credentials
+
+    cred = inspect_provider_credentials(spec)
+    if not cred.usable:
+        console.print(
+            f"[yellow]{cred.detail}[/]  Run [cyan]kite keys --set anthropic[/]"
+            if spec.oauth_provider == "anthropic"
+            else f"[yellow]{spec.display_name}[/] is not ready for Kite model calls."
         )
         return 1, None, None
 
@@ -186,6 +185,7 @@ def select_provider_interactive(
     from kite.config.readiness import RECOMMENDED_PROVIDERS
     from kite.providers.byos import is_byok_provider, is_oauth_provider
     from kite.providers.catalog import load_catalog
+    from kite.providers.credentials import inspect_provider_credentials
 
     catalog = load_catalog()
     cfg = UserConfig.load()
@@ -194,8 +194,7 @@ def select_provider_interactive(
     def _sort_key(spec):
         name = spec.name
         oauth_rank = 0 if oauth_first and is_oauth_provider(spec) else 1
-        hint = _provider_auth_hint(spec)
-        ready = hint == "local" or hint.endswith("linked") or hint.endswith("key set")
+        ready = inspect_provider_credentials(spec).usable
         rec = RECOMMENDED_PROVIDERS.index(name) if name in RECOMMENDED_PROVIDERS else 99
         return (oauth_rank, 0 if ready else 1, rec, name)
 

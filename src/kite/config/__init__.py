@@ -1,6 +1,9 @@
-"""User prefs (~/.kite) and merged agent runtime TOML."""
+"""User prefs (~/.kite) and merged agent runtime TOML.
 
-from kite.config.readiness import SetupStatus, assess_setup_status, is_fresh_install, needs_setup
+Heavy readiness helpers load on first use so `from kite.config import UserConfig`
+does not pull credentials / BYOS auth on CLI cold start.
+"""
+
 from kite.config.runtime import (
     AgentRuntimeConfig,
     ContextConfig,
@@ -28,3 +31,11 @@ __all__ = [
     "load_runtime_config",
     "needs_setup",
 ]
+
+
+def __getattr__(name: str):
+    if name in {"SetupStatus", "assess_setup_status", "is_fresh_install", "needs_setup"}:
+        from kite.config import readiness as _readiness
+
+        return getattr(_readiness, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

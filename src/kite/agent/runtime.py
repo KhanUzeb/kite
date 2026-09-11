@@ -32,7 +32,6 @@ from kite.memory.audit import AuditLog
 from kite.memory.session import Session, create_session, load_session
 from kite.memory.store import MemoryStore
 from kite.models.cache import PromptCacheManager
-from kite.models.litellm_model import LitellmModel
 from kite.prompts import assemble_instance_prompt, assemble_system_prompt, load_prompt_template
 from kite.providers.resolve import ResolvedModel, missing_credentials, missing_model, resolve_model
 from kite.skills.loader import load_skills
@@ -393,7 +392,7 @@ class AgentRuntime:
         ) -> dict:
             from kite.agent.harness import Harness
             from kite.agent.harness_build import build_harness_config
-            from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
+            from kite.application.cli import execute_harness_task, legacy_result_from_run
             from kite.application.policy import child_inherits_parent_policy
 
             inherited = child_inherits_parent_policy(
@@ -515,6 +514,8 @@ class AgentRuntime:
                 reasoning=self.options.reasoning,
             )
         else:
+            from kite.models.litellm_model import LitellmModel
+
             prompt_cache = PromptCacheManager(resolved.provider, enabled=rcfg.prompt_cache_enabled)
             model = LitellmModel(
                 resolved=resolved,
