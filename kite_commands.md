@@ -44,7 +44,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--cwd` | Workspace |
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
-| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | Tiered autonomy: `yolo` = only critical prompts (outside workspace, sudo); `auto`/`trust` = routine in-workspace work auto-runs (install, test, commit); `supervised`/`approve` = approve all mutations; `readonly` = block writes |
+| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | **Coding blanket** (default `auto`): in-workspace install/test/edit/commit/bash auto-runs; only boundary escapes prompt (outside workspace, sudo, sandbox-blocked). `yolo` = no prompts (guardrails still apply). `trust` = auto + prompts for memory/subagents. `supervised` = prompt all mutations. |
 | `--steps` `--cost` `--time` | Limits (honored by `run`, `chat`, and one-shot `resume`) |
 | `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
@@ -183,7 +183,7 @@ These never go to the model.
 |---------|----------------|
 | `/plan` `/p` | Read-only: explore + checklist (no edits); switch to `/build` to apply |
 | `/build` `/b` | Apply edits; continues existing plan checklist; approval leaves `readonly` → supervised |
-| `/approve yolo\|auto\|supervised` | Autonomy. Empty: numbered picker. `auto`/`yolo` auto-run routine dev work; only serious/critical actions prompt |
+| `/approve yolo\|auto\|supervised\|trust` | Autonomy. Empty: numbered picker. `auto` (default) = coding blanket; `yolo` = no prompts; `trust` = blanket + memory/subagent gates; `supervised` = approve every mutation |
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off**). Empty: pick on/off |
 | `/privacy` | Security policy summary; `/privacy sessions` picks full/redacted/disabled |
 | `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |

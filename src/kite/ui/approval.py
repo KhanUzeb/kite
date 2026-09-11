@@ -36,9 +36,13 @@ GitBashKind = Literal["read", "write", "other"]
 class ConsequenceLevel(IntEnum):
     """How serious a mutating action is — higher tiers prompt in more autonomy modes."""
 
-    ROUTINE = 0   # installs, tests, in-workspace edits — auto in auto/yolo/trust
-    SERIOUS = 1   # push, destructive rm, network fetch, durable memory — auto in yolo
-    CRITICAL = 2  # outside workspace, sudo, remote shell — always prompt
+    ROUTINE = 0   # in-workspace coding: install, test, edit, commit, rm, curl
+    SERIOUS = 1   # durable memory, nested agents — prompt in trust/supervised
+    CRITICAL = 2  # outside workspace, sudo, sandbox-blocked — prompt in auto; deny headless
+
+
+# Never prompt via the approval gate (yolo defers to sandbox/guardrail deny rules).
+_NEVER_PROMPT = ConsequenceLevel.CRITICAL + 1
 
 # Flags that consume the next token (git -C /path status).
 _GIT_VALUE_FLAGS = frozenset({"-c", "--git-dir", "--work-tree", "--namespace"})
@@ -66,13 +70,17 @@ _CRITICAL_BASH = re.compile(
     r")\b"
 )
 
-# Serious bash — prompt in auto/trust; yolo proceeds without asking.
-_SERIOUS_BASH = re.compile(
-    r"(?i)\b("
-    r"git\s+(push|reset|rebase|clean|stash\s+(push|pop|apply)|checkout\s+-[fB]|branch\s+-[dD])"
-    r"|rm\b|rmdir\b|del\b|remove-item\b|erase\b"
-    r"|chmod\b|chown\b|chgrp\b|icacls\b|takeown\b"
-    r"|curl\b|wget\b|invoke-webrequest\b|iwr\b"
+# Coding blanket — routine in-workspace dev commands (Codex workspace-write, OMP write mode).
+_CODING_BASH = re.compile(
+    r"(?i)(?:^|[;&|]\s*)("
+    r"pip3?\b|npm\b|yarn\b|pnpm\b|cargo\b|uv\b|apt(?:-get)?\b|brew\b|dnf\b|yum\b"
+    r"|pytest\b|jest\b|mocha\b|vitest\b|cargo\s+(test|build|run|check)\b|go\s+(test|build|run)\b"
+    r"|make\b|cmake\b|ninja\b|gradle\b|mvn\b|npm\s+(test|run|start|ci)\b|yarn\s+(test|run)\b"
+    r"|python3?\s+-m\s+(pytest|pip|build|unittest)\b|node\b|npx\b|uvicorn\b|gunicorn\b"
+    r"|git\s+(status|diff|log|show|branch|add|commit|checkout|merge|pull|stash|switch|restore|rev-parse|describe|fetch)\b"
+    r"|mkdir\b|touch\b|cp\b|mv\b|rm\b|rmdir\b|chmod\b|chown\b|cat\b|head\b|tail\b|tee\b"
+    r"|curl\b|wget\b|rg\b|grep\b|find\b|fd\b|ls\b|pwd\b|echo\b|which\b|wc\b|file\b|stat\b|tree\b"
+    r"|docker\s+compose\b|docker\s+build\b|kubectl\s+get\b|kubectl\s+describe\b"
     r")\b"
 )
 
@@ -192,6 +200,36 @@ def _git_bash_consequence(command: str) -> ConsequenceLevel:
     return ConsequenceLevel.ROUTINE
 
 
+def is_coding_bash(command: str) -> bool:
+    """True when bash looks like routine in-workspace development work."""
+    cmd = (command or "").strip()
+    if not cmd or check_dangerous(cmd):
+        return False
+    if _CRITICAL_BASH.search(cmd):
+        return False
+    return bool(_CODING_BASH.search(cmd))
+
+
+def _in_workspace_coding_blanket(
+    cmd: str,
+    *,
+    workspace_cwd: str | None,
+    bash_cwd: str | None,
+) -> bool:
+    """Codex workspace-write / OMP write-mode blanket: in-project coding auto-runs."""
+    if not workspace_cwd or not _cwd_in_workspace(bash_cwd, workspace_cwd):
+        return False
+    if check_command_paths(cmd, workspace_root(workspace_cwd)):
+        return False
+    if is_benign_cache_delete(cmd):
+        return True
+    if is_git_read(cmd):
+        return True
+    if is_git_write(cmd) and _git_bash_consequence(cmd) is ConsequenceLevel.ROUTINE:
+        return True
+    return is_coding_bash(cmd)
+
+
 def action_consequence(
     tool: str,
     *,
@@ -200,7 +238,7 @@ def action_consequence(
     workspace_cwd: str | None = None,
     bash_cwd: str | None = None,
 ) -> tuple[ConsequenceLevel, str]:
-    """Return (severity, reason) for a mutating tool call. Routine actions need no prompt in auto/yolo."""
+    """Return (severity, reason). In-workspace coding is ROUTINE; only boundary escapes prompt in auto."""
     args = arguments or {}
     if tool in {"write", "edit"}:
         path = str(args.get("path") or "")
@@ -220,35 +258,26 @@ def action_consequence(
         return ConsequenceLevel.CRITICAL, "shell paths outside the project workspace always need approval"
     if workspace_cwd and not _cwd_in_workspace(bash_cwd, workspace_cwd):
         return ConsequenceLevel.CRITICAL, "shell outside the project workspace always needs approval"
-    if is_benign_cache_delete(cmd):
-        return ConsequenceLevel.ROUTINE, ""
     if _CRITICAL_BASH.search(cmd):
         if re.search(r"(?i)\b(sudo|su|doas)\b", cmd):
             return ConsequenceLevel.CRITICAL, "privileged commands always need approval"
         return ConsequenceLevel.CRITICAL, "high-risk remote or privileged command always needs approval"
-    if is_git_read(cmd):
+    if _in_workspace_coding_blanket(cmd, workspace_cwd=workspace_cwd, bash_cwd=bash_cwd):
         return ConsequenceLevel.ROUTINE, ""
     if is_git_write(cmd):
         level = _git_bash_consequence(cmd)
         if level is ConsequenceLevel.SERIOUS:
             return level, "git history or remote changes need approval"
-        return ConsequenceLevel.ROUTINE, ""
-    if _SERIOUS_BASH.search(cmd):
-        if re.search(r"(?i)\b(rm|rmdir|del|remove-item|erase)\b", cmd):
-            return ConsequenceLevel.SERIOUS, "destructive file removal needs approval"
-        if re.search(r"(?i)\b(curl|wget|invoke-webrequest|iwr)\b", cmd):
-            return ConsequenceLevel.SERIOUS, "network fetch commands need approval"
-        if re.search(r"(?i)\b(chmod|chown|chgrp|icacls|takeown)\b", cmd):
-            return ConsequenceLevel.SERIOUS, "permission changes need approval"
-        return ConsequenceLevel.SERIOUS, "high-risk shell command needs approval"
     return ConsequenceLevel.ROUTINE, ""
 
 
-def consequence_prompt_threshold(approval: ApprovalMode) -> ConsequenceLevel:
+def consequence_prompt_threshold(approval: ApprovalMode) -> int:
     """Minimum consequence level that triggers a prompt for this autonomy mode."""
     if approval is ApprovalMode.YOLO:
+        return _NEVER_PROMPT
+    if approval is ApprovalMode.AUTO:
         return ConsequenceLevel.CRITICAL
-    if approval in {ApprovalMode.AUTO, ApprovalMode.TRUST}:
+    if approval is ApprovalMode.TRUST:
         return ConsequenceLevel.SERIOUS
     if approval is ApprovalMode.APPROVE:
         return ConsequenceLevel.ROUTINE
@@ -364,22 +393,21 @@ def _needs_approval_trust(
     workspace_cwd: str | None,
     bash_cwd: str | None,
 ) -> bool:
+    """Trust mode: coding blanket + trusted subtrees; prompts on serious non-coding effects."""
     if tool != "bash":
+        return False
+    if _in_workspace_coding_blanket(command, workspace_cwd=workspace_cwd, bash_cwd=bash_cwd):
         return False
     if trusted_paths and workspace_cwd:
         from kite.guardrails.sandbox import clamp_cwd, cwd_in_trusted, workspace_root
 
         root = workspace_root(workspace_cwd)
         workdir, _ = clamp_cwd(bash_cwd, root)
-        if workdir and cwd_in_trusted(workdir, root, trusted_paths):
+        if workdir and cwd_in_trusted(workdir, root, trusted_paths) and _is_safe_bash(command):
             return False
     if _cwd_in_workspace(bash_cwd, workspace_cwd) and _is_safe_bash(command):
         return False
-    cmd = command.lower()
-    return any(
-        tok in cmd
-        for tok in ("rm -", "git push", "git reset", "chmod", "curl", "wget", "pip install", "npm install")
-    )
+    return True
 
 
 def _needs_approval_by_mode(
@@ -426,11 +454,9 @@ def _effect_consequence(
     low = reason.lower()
     if "outside" in low or "privileged" in low or "blocked" in low:
         return ConsequenceLevel.CRITICAL, reason
-    if "nested agent" in low or "durable memory" in low:
-        return ConsequenceLevel.SERIOUS, reason
-    if "package" in low or "skill install" in low:
+    if "package" in low or "skill install" in low or "network" in low or "destructive" in low:
         return ConsequenceLevel.ROUTINE, ""
-    if "network" in low or "destructive" in low:
+    if "nested agent" in low or "durable memory" in low:
         return ConsequenceLevel.SERIOUS, reason
     return ConsequenceLevel.SERIOUS, reason
 
