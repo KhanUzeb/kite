@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 # Canonical markdown after pruning old release notes / duplicate atlas.
 def docs_help() -> str:
     from kite import __version__
