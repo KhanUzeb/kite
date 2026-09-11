@@ -54,7 +54,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--auto-compact` | Persist auto-compaction on/off in `~/.kite/config.toml` (`kite config --auto-compact true\|false`) |
 | `--attach PATH` | Attach a file or image (repeatable). Images route to a live vision model. |
 
-`--headless` also activates when stdout is not a TTY or with `-q`. `approve` / `readonly` approval is upgraded to `auto` so runs do not block on prompts.
+`--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto` permits ordinary in-workspace changes while mandatory approval gates fail closed.
 
 **Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory. inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
 
@@ -140,7 +140,7 @@ kite run --headless "fix the failing test"   # single task, stderr event log
 | `label` / `name` | Short name in logs |
 | `cwd` / `workspace` | Per-task workspace (default: `--cwd` or `.`) |
 | `mode` | `plan` or `build` |
-| `approval` | `auto`, `yolo`, `trust`, … (`approve`/`readonly` → `auto` headless) |
+| `approval` | `auto`, `yolo`, `trust`, `approve`, or `readonly`; headless runs preserve the selected policy |
 | `long` / `long_task` | Long-task limits + phased checkpoints |
 
 Stderr tags: `[kite]` lifecycle, `[tool]` tool start/end, `[out]` bash/tool lines (redacted), `[crew]` subagent workers, `[stream]` model deltas (`-v`).

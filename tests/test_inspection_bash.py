@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from kite.guardrails.sandbox import is_inspection_bash
 
 
@@ -18,6 +20,19 @@ def test_inspection_bash_blocks_mutations() -> None:
     assert not is_inspection_bash("git commit -m x")
     assert not is_inspection_bash("echo hi > out.txt")
     assert not is_inspection_bash("pip install requests")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $(python3 -c 'open(\"escaped.txt\",\"w\").write(\"x\")')",
+        "echo `python3 -c 'open(\"escaped.txt\",\"w\").write(\"x\")'`",
+        "find . -exec sh -c 'echo x' \\;",
+        "find . -delete",
+    ],
+)
+def test_inspection_bash_rejects_interpreted_or_mutating_syntax(command: str) -> None:
+    assert not is_inspection_bash(command)
 
 
 def test_plan_mode_allows_inspection_bash(workspace, tmp_path) -> None:

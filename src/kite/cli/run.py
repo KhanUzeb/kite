@@ -51,7 +51,6 @@ def _is_headless(args: argparse.Namespace) -> bool:
 
 
 def _wire_display(harness, console, args: argparse.Namespace):
-    from kite.agent.mode import ApprovalMode
     from kite.ui.git import GitCheckpoints, git_branch
     from kite.ui.state import SessionUiState
 
@@ -84,21 +83,20 @@ def _wire_display(harness, console, args: argparse.Namespace):
             state=state,
         )
         harness.subscribe(display)
-    if approval is not ApprovalMode.AUTO or mode is AgentMode.PLAN:
-        from kite.config import load_runtime_config
-        from kite.ui.approval import make_approver
+    from kite.config import load_runtime_config
+    from kite.ui.approval import make_approver
 
-        rcfg = load_runtime_config(getattr(args, "config", None))
-        harness.approver = make_approver(
-            console,
-            mode=mode,
-            approval=approval,
-            interactive=sys.stdin.isatty()
-            and not getattr(args, "quiet", False)
-            and not getattr(args, "headless", False),
-            trusted_paths=rcfg.guardrails.trusted_paths,
-            workspace_cwd=getattr(args, "cwd", os.getcwd()),
-        )
+    rcfg = load_runtime_config(getattr(args, "config", None))
+    harness.approver = make_approver(
+        console,
+        mode=mode,
+        approval=approval,
+        interactive=sys.stdin.isatty()
+        and not getattr(args, "quiet", False)
+        and not getattr(args, "headless", False),
+        trusted_paths=rcfg.guardrails.trusted_paths,
+        workspace_cwd=getattr(args, "cwd", os.getcwd()),
+    )
     if mode is AgentMode.BUILD and not headless:
         harness.checkpoints = GitCheckpoints.open(getattr(args, "cwd", os.getcwd()))
     return None
@@ -129,10 +127,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     if _is_headless(args):
         from kite.tasks.headless import resolve_headless_approval
 
-        if args.approval in {"approve", "supervised", "readonly"}:
-            console.print(
-                "[kite.muted]headless: approval upgraded to auto (no TTY prompts)[/]"
-            )
         approval = resolve_headless_approval(args.approval, mode, headless=True)
     try:
         task, attachments = _load_attachments(

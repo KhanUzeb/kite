@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from kite.agent.events import Event
-from kite.agent.mode import AgentMode, ApprovalMode, default_approval, parse_approval_mode
+from kite.agent.mode import AgentMode, ApprovalMode, parse_approval_mode
 from kite.util.tty import is_interactive_tty
 
 
@@ -251,12 +251,9 @@ class HeadlessBatchResult:
 
 
 def resolve_headless_approval(raw: str | None, mode: AgentMode, *, headless: bool) -> ApprovalMode:
-    """Pick approval for non-interactive runs — avoid blocking on prompts."""
-    approval = parse_approval_mode(raw, default=default_approval(mode))
-    if not headless:
-        return approval
-    if approval in {ApprovalMode.APPROVE, ApprovalMode.READONLY}:
-        return ApprovalMode.AUTO
+    """Pick approval for non-interactive runs without weakening user policy."""
+    default = ApprovalMode.AUTO if mode is AgentMode.BUILD else ApprovalMode.READONLY
+    approval = parse_approval_mode(raw, default=default)
     return approval
 
 
@@ -298,6 +295,19 @@ def run_headless_task(
             no_guardrails=no_guardrails,
             config_name=config_name,
         )
+    )
+    from kite.config import load_runtime_config
+    from kite.ui.approval import make_approver
+    from kite.ui.style import make_console
+
+    runtime_config = load_runtime_config(config_name)
+    harness.approver = make_approver(
+        make_console(stderr=True),
+        mode=mode,
+        approval=approval,
+        interactive=False,
+        trusted_paths=runtime_config.guardrails.trusted_paths,
+        workspace_cwd=cwd,
     )
     display = HeadlessRunDisplay(stream_tools=stream_tools, verbose=verbose)
     harness.subscribe(display)
