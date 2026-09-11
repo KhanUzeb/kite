@@ -16,9 +16,10 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, RichLog, Static
 
-from kite.ui.textual.composer import Composer
-
 from kite.agent.events import Event
+from kite.ui.textual.complete_data import PlainCompletion, plain_completions
+from kite.ui.textual.complete_popup import CompletePopup
+from kite.ui.textual.composer import Composer
 from kite.ui.textual.display import TextualRunDisplay
 from kite.ui.textual.messages import AgentEventMessage, StatusFlashMessage
 
@@ -115,6 +116,7 @@ class KiteApp(App[None]):
         Binding("ctrl+o", "toggle_expand", "Expand"),
         Binding("escape", "stop_turn", "Stop", show=False),
         Binding("f2", "flash_status", "Status"),
+        Binding("tab", "accept_completion", "Complete", show=False),
     ]
 
     def __init__(self, session: ChatSession) -> None:
@@ -130,7 +132,9 @@ class KiteApp(App[None]):
         yield RichLog(id="transcript", highlight=True, markup=True, wrap=True)
         yield Static("", id="flash")
         yield Static("", id="status-line")
-        yield Composer(id="composer")
+        with Vertical(id="composer-stack"):
+            yield CompletePopup(id="complete-popup")
+            yield Composer(id="composer")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -227,8 +231,59 @@ class KiteApp(App[None]):
         self._turn_done = done
         self._turn_waiting = True
 
+    def _composer_line_prefix(self) -> str:
+        composer = self.query_one("#composer", Composer)
+        row, col = composer.cursor_location
+        lines = composer.text.split("\n") if composer.text else [""]
+        if row >= len(lines):
+            return ""
+        return lines[row][:col]
+
+    def _refresh_completions(self) -> None:
+        from kite.ui.complete import _at_attach_prefix
+
+        prefix = self._composer_line_prefix()
+        popup = self.query_one("#complete-popup", CompletePopup)
+        if not prefix.startswith("/") and _at_attach_prefix(prefix) is None:
+            popup.hide()
+            return
+        rows = plain_completions(
+            prefix,
+            index_factory=self.session._index,
+            models_factory=self.session._model_ids,
+            providers_factory=self.session._provider_names,
+            reasoning_info=self.session._reasoning_info,
+        )
+        popup.set_suggestions(rows)
+
+    def _apply_completion(self, row: PlainCompletion) -> None:
+        composer = self.query_one("#composer", Composer)
+        line_row, col = composer.cursor_location
+        lines = composer.text.split("\n") if composer.text else [""]
+        if line_row >= len(lines):
+            return
+        line = lines[line_row]
+        before = line[:col]
+        after = line[col:]
+        trim = min(row.replace_chars, len(before))
+        new_before = before[: len(before) - trim] + row.insert
+        lines[line_row] = new_before + after
+        composer.text = "\n".join(lines)
+        composer.cursor_location = (line_row, len(new_before))
+        self._refresh_completions()
+
+    @on(Composer.Changed, "#composer")
+    def _composer_changed(self, _event: Composer.Changed) -> None:
+        self._refresh_completions()
+
+    @on(CompletePopup.Picked, "#complete-popup")
+    def _completion_picked(self, event: CompletePopup.Picked) -> None:
+        if event.row is not None:
+            self._apply_completion(event.row)
+
     @on(Composer.Submitted, "#composer")
     def _submit(self, event: Composer.Submitted) -> None:
+        self.query_one("#complete-popup", CompletePopup).hide()
         text = event.text.strip()
         if not text:
             return
@@ -274,6 +329,16 @@ class KiteApp(App[None]):
         from kite.ui.status import format_status_tail
 
         self.post_message(StatusFlashMessage(format_status_tail(self.session.state)))
+
+    def action_accept_completion(self) -> None:
+        popup = self.query_one("#complete-popup", CompletePopup)
+        if not popup.has_class("visible"):
+            return
+        row = popup.selected()
+        if row is None and popup._rows:
+            row = popup._rows[0]
+        if row is not None:
+            self._apply_completion(row)
 
     @on(StatusFlashMessage)
     def _on_flash(self, message: StatusFlashMessage) -> None:
