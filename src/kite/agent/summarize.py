@@ -59,7 +59,6 @@ def _try_complete(resolved: Any, transcript: str) -> str | None:
             {"role": "system", "content": COMPACTION_SYSTEM},
             {"role": "user", "content": transcript},
         ],
-        "temperature": 0,
         "max_tokens": 900,
         "timeout": 40,
         "num_retries": 0,
