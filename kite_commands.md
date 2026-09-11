@@ -272,7 +272,7 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+O` / `F6` | Toggle expanded tool output (`/expand`) |
 | `Ctrl+P` / `F3` | Plan mode |
 | `Ctrl+B` / `F4` | Build mode |
-| `Ctrl+T` / `F7` | Toggle thinking trace (expanded by default) |
+| `Ctrl+T` / `F7` | Toggle thinking trace (collapsed by default — one-line summary) |
 | `F2` | Flash status on the footer (`Ctrl+S` is not bound; terminals use it for XOFF) |
 | `F5` | Refresh live models from the API, then pick |
 | `Tab` | Cycle slash completions (`Enter` always submits) |

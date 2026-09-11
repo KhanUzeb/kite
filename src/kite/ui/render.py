@@ -320,13 +320,21 @@ class RunDisplay:
             line = raw_line
             stripped = line.strip()
             if stripped.startswith("```"):
+                opening = not self._in_code_fence
                 self._in_code_fence = not self._in_code_fence
-                if self._in_code_fence:
-                    self._fence_lang = stripped.lstrip("`").strip()
+                if opening:
+                    self._fence_lang = stripped.lstrip("`").strip() or "code"
                 else:
                     self._fence_lang = ""
-                block.append("\n")
+                if self._need_prefix:
+                    indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
+                    block.append(indent, style="kite.muted")
+                    self._need_prefix = False
+                    self._did_first_line = True
+                fence = f"```{self._fence_lang}" if opening else "```"
+                block.append(fence + "\n", style="kite.muted italic")
                 self._need_prefix = True
+                self._streaming = True
                 continue
             if self._need_prefix:
                 indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
@@ -334,12 +342,30 @@ class RunDisplay:
                 self._need_prefix = False
                 self._did_first_line = True
             if line:
-                block.append(line, style=self._answer_style())
+                style = self._answer_style()
+                body = line
+                if not self._in_code_fence:
+                    style, body = self._prose_line_style(line)
+                block.append(body, style=style)
             block.append("\n")
             self._need_prefix = True
             self._streaming = True
         if block.plain:
             self.console.print(block, end="", highlight=False, markup=False)
+
+    def _prose_line_style(self, line: str) -> tuple[str, str]:
+        """Lightweight markdown-ish cues for streamed prose (no full parser)."""
+        stripped = line.lstrip()
+        if stripped.startswith("### "):
+            return "kite.highlight bold", stripped[4:]
+        if stripped.startswith("## "):
+            return "kite.highlight bold", stripped[3:]
+        if stripped.startswith("# "):
+            return "kite.highlight bold", stripped[2:]
+        if stripped.startswith(("- ", "* ")):
+            indent = line[: len(line) - len(stripped)]
+            return "kite.answer", f"{indent}• {stripped[2:]}"
+        return "kite.answer", line
 
     def _thinking_text(self) -> str:
         return "".join(self._thinking_buf)
@@ -773,7 +799,9 @@ class RunDisplay:
         if path:
             self.console.print(Text(f"{GUTTER}{path}", style="kite.muted"))
         if diff:
-            self.console.print(render_diff(diff, collapsed=not self.verbose))
+            self.console.print(
+                render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all))
+            )
 
     def _on_context(self, p: dict[str, Any]) -> None:
         total = p.get("total_tokens")
@@ -912,6 +940,16 @@ class RunDisplay:
     def _on_approval(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
+        tool = str(p.get("tool") or "?")
+        mandatory = bool(p.get("mandatory"))
+        line = Text()
+        line.append(f"{GUTTER}{SYMBOL_WARN} ", style="kite.pending")
+        line.append("waiting for approval", style="kite.pending bold")
+        line.append(f"  ·  {tool}", style="kite.tool")
+        if mandatory:
+            line.append("  ·  mandatory", style="kite.error")
+        line.append("\n")
+        self.console.print(line)
 
     def _on_submit_blocked(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
