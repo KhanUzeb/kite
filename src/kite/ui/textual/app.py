@@ -12,7 +12,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, RichLog, Static
 
@@ -21,6 +21,7 @@ from kite.ui.textual.complete_data import PlainCompletion, plain_completions
 from kite.ui.textual.complete_popup import CompletePopup
 from kite.ui.textual.composer import Composer
 from kite.ui.textual.display import TextualRunDisplay
+from kite.ui.textual.sidebar import Sidebar
 from kite.ui.textual.messages import AgentEventMessage, StatusFlashMessage
 
 if TYPE_CHECKING:
@@ -29,6 +30,14 @@ if TYPE_CHECKING:
 KITE_CSS = """
 Screen {
     layout: vertical;
+}
+
+#main {
+    height: 1fr;
+}
+
+#work {
+    width: 1fr;
 }
 
 #transcript {
@@ -117,6 +126,7 @@ class KiteApp(App[None]):
         Binding("escape", "stop_turn", "Stop", show=False),
         Binding("f2", "flash_status", "Status"),
         Binding("tab", "accept_completion", "Complete", show=False),
+        Binding("ctrl+\\\\", "toggle_sidebar", "Sidebar"),
     ]
 
     def __init__(self, session: ChatSession) -> None:
@@ -126,15 +136,19 @@ class KiteApp(App[None]):
         self._turn_done: threading.Event | None = None
         self._turn_waiting = False
         self._quit_requested = False
+        self._sidebar_visible = True
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        yield RichLog(id="transcript", highlight=True, markup=True, wrap=True)
-        yield Static("", id="flash")
-        yield Static("", id="status-line")
-        with Vertical(id="composer-stack"):
-            yield CompletePopup(id="complete-popup")
-            yield Composer(id="composer")
+        with Horizontal(id="main"):
+            yield Sidebar(self.session, id="sidebar")
+            with Vertical(id="work"):
+                yield RichLog(id="transcript", highlight=True, markup=True, wrap=True)
+                yield Static("", id="flash")
+                yield Static("", id="status-line")
+                with Vertical(id="composer-stack"):
+                    yield CompletePopup(id="complete-popup")
+                    yield Composer(id="composer")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -148,6 +162,7 @@ class KiteApp(App[None]):
         self._write_banner()
         self.set_interval(0.12, self._poll_turn)
         self.set_interval(0.4, self._refresh_status)
+        self.set_interval(2.0, self._refresh_sidebar)
         self.query_one("#composer", Composer).focus()
 
     def _write_banner(self) -> None:
@@ -339,6 +354,22 @@ class KiteApp(App[None]):
             row = popup._rows[0]
         if row is not None:
             self._apply_completion(row)
+
+    def action_toggle_sidebar(self) -> None:
+        sidebar = self.query_one("#sidebar", Sidebar)
+        self._sidebar_visible = not self._sidebar_visible
+        if self._sidebar_visible:
+            sidebar.remove_class("hidden")
+            sidebar.refresh_panel()
+        else:
+            sidebar.add_class("hidden")
+        note = "sidebar on" if self._sidebar_visible else "sidebar off"
+        self.post_message(StatusFlashMessage(note))
+
+    def _refresh_sidebar(self) -> None:
+        if not self._sidebar_visible:
+            return
+        self.query_one("#sidebar", Sidebar).refresh_panel()
 
     @on(StatusFlashMessage)
     def _on_flash(self, message: StatusFlashMessage) -> None:
