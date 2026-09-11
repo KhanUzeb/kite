@@ -59,9 +59,9 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("expand", "Toggle expanded tool output", group="session"),
     BuiltinCommand(
         "fullscreen",
-        "Fullscreen workbench — stream, changes, verification (≥100×30)",
-        hint="on|off|refresh",
+        "Retired — Textual sidebar (Ctrl+\\) replaces fullscreen workbench",
         group="session",
+        visibility="legacy",
     ),
     BuiltinCommand(
         "live",

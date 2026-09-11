@@ -267,10 +267,6 @@ class RunDisplay:
         self.state.touch()
 
     def _print(self, *args: Any, **kwargs: Any) -> None:
-        if self.state.fullscreen and self.state.busy:
-            if args:
-                self._transcript_buffer.append(args[0] if len(args) == 1 else args)
-            return
         self.console.print(*args, **kwargs)
 
     def flush_transcript_buffer(self) -> None:
@@ -282,8 +278,6 @@ class RunDisplay:
         self._transcript_buffer.clear()
 
     def _stdout_write(self, text: str) -> None:
-        if self.state.fullscreen and self.state.busy:
-            return
         sys.stdout.write(text)
         sys.stdout.flush()
 
