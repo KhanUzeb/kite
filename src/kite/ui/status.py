@@ -177,33 +177,45 @@ def _segment_style(text: str) -> str:
 
 def status_segments(state: SessionUiState) -> list[tuple[str, str]]:
     """Ordered (text, rich_style) segments shown after the kite brand."""
-    compact = _terminal_compact()
+    if state.awaiting_approval:
+        label = state.awaiting_approval or "tool"
+        return [("approval", "kite.pending"), (label, "kite.pending")]
+
     mode_label = "plan" if state.mode is AgentMode.PLAN else state.mode.value
-    segments: list[tuple[str, str]] = [
+    model = format_model_label(state)
+    cost = f"${state.cost:.3f}"
+
+    if state.busy:
+        action = state.running_label or "working"
+        if len(action) > 48:
+            action = action[:45] + "…"
+        return [
+            (mode_label, mode_style(state)),
+            (action, "kite.highlight"),
+            (cost, "kite.muted"),
+        ]
+
+    return [
         (mode_label, mode_style(state)),
-        (approval_display_name(state.approval), approval_style(state)),
+        (model, "kite.muted"),
+        (cost, "kite.muted"),
     ]
-    if not compact and state.mode is AgentMode.PLAN and state.todos:
-        done = sum(1 for item in state.todos if item.status == "completed")
-        segments.append((f"list {done}/{len(state.todos)}", "kite.task"))
-    if state.sandbox_restricted:
-        segments.append(("restricted", "kite.pending"))
-    ctx = status_context_parts(state)
-    if compact:
-        approve = next((bit for bit in ctx if bit.startswith("approve ")), None)
-        if approve:
-            segments.insert(0, (approve, "kite.pending"))
-        badge = _verification_badge(state.verification_status)
-        if badge:
-            segments.append((badge, "kite.pending"))
-        if state.busy:
-            segments.append(("working", "kite.highlight"))
-        elif state.queued:
-            segments.append((f"q{state.queued}", "kite.muted"))
-        return segments
-    for bit in ctx:
-        segments.append((bit, _segment_style(bit)))
-    return segments
+
+
+def status_detail_lines(state: SessionUiState) -> list[str]:
+    """Extended status for /status — shortcuts, paths, and subsystem detail."""
+    lines = [
+        f"{state.mode.value} · {approval_display_name(state.approval)} · "
+        f"sandbox {'restricted' if state.sandbox_restricted else 'host'} · "
+        f"{format_model_label(state)} · effort {state.reasoning}",
+    ]
+    metrics = format_metrics_tail(state)
+    if metrics:
+        lines.append(metrics)
+    for bit in status_context_parts(state):
+        if bit not in {state.git_branch, format_model_label(state)}:
+            lines.append(bit)
+    return lines
 
 
 def format_status_tail(state: SessionUiState) -> str:

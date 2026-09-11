@@ -88,6 +88,7 @@ class SessionUiState:
     running_kind: str = ""
     activity_preview: str = ""
     budget_limit: float | None = None
+    fullscreen: bool = False
     _refresh: Callable[[], None] | None = field(default=None, repr=False, compare=False)
     _last_touch_at: float = field(default=0.0, repr=False, compare=False)
     _touch_pending: bool = field(default=False, repr=False, compare=False)

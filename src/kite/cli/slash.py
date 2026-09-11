@@ -229,10 +229,22 @@ def expand_prompt_slash(
     return text
 
 
-def help_text(index: CommandIndex) -> str:
+def help_text(index: CommandIndex, *, all: bool = False) -> str:
     from kite.cli.help_map import docs_help
-    from kite.ui.commands import BUILTINS, LEGACY_ALIASES, LEGACY_HELP
+    from kite.ui.commands import BUILTINS, LEGACY_ALIASES, LEGACY_HELP, primary_builtins
     from kite.ui.shortcuts import shortcuts_help_text
+
+    builtins = BUILTINS if all else primary_builtins()
+    lines: list[str] = ["Type a task or /command.", ""]
+    for b in builtins:
+        hint = f" {b.hint}" if b.hint else ""
+        alias_note = ""
+        if b.aliases:
+            alias_note = f"  (/{', /'.join(b.aliases)})"
+        lines.append(f"  /{b.name:<14}{hint}{alias_note}  {b.description}".rstrip())
+    if not all:
+        lines.extend(["", "More: /help all"])
+        return "\n".join(lines)
 
     labels = {
         "session": "session",
@@ -246,7 +258,7 @@ def help_text(index: CommandIndex) -> str:
         key = builtin.group or "session"
         groups.setdefault(key, []).append(builtin)
 
-    lines: list[str] = ["Type a task or /command.", ""]
+    lines = ["Type a task or /command.", ""]
     for group in ("session", "model", "memory", "extensions", "attach"):
         items = groups.get(group)
         if not items:

@@ -2,8 +2,20 @@
 
 from __future__ import annotations
 
+# Shown in `kite --help` / `kite help` (everything else: `kite help all`).
+CLI_PRIMARY_COMMANDS: frozenset[str] = frozenset({
+    "run",
+    "resume",
+    "setup",
+    "sessions",
+    "tasks",
+    "help",
+})
 
-# Canonical markdown after pruning old release notes / duplicate atlas.
+# Compatibility aliases — still work, hidden from default help.
+CLI_HIDDEN_ALIASES: frozenset[str] = frozenset({"chat", "exec"})
+
+
 def docs_help() -> str:
     from kite import __version__
 
@@ -16,26 +28,36 @@ def docs_help() -> str:
         f"  docs/RELEASE-{__version__}.md  current release notes\n"
     )
 
-CLI_EPILOG = """quick start:
-  kite setup              API key + model wizard
-  kite                    interactive REPL (same as kite chat)
-  kite run "task"         one-shot task
 
-common:
-  kite sessions           pick a transcript (or --show / --delete)
-  kite resume [id]        continue a session (omit id to pick)
-  kite models [-p groq]   pick a live model (--list to dump)
-  kite web-keys set tavily  optional web tool keys (also exa, firecrawl)
-  kite bench              harness timing (no LLM)
-  kite subagents          list/show/init subagent personas
-  kite tasks run FILE     headless batch (--steps/--cost/--time, file required)
+CLI_EPILOG = """commands:
+  kite                 interactive session
+  kite run             one-shot or headless task
+  kite resume          continue work
+  kite setup           onboarding
+  kite sessions        history
+  kite tasks           batches
 
-run `kite help` for the full map  ·  in REPL type /help
+run `kite help all` for the full map  ·  in REPL type /help all
+"""
+
+
+def cli_help_brief() -> str:
+    return """Kite CLI
+
+  kite                 interactive session
+  kite run             one-shot or headless task
+  kite resume          continue work
+  kite setup           onboarding
+  kite sessions        history
+  kite tasks           batches
+
+More: kite help all
+REPL:  /help  ·  /help all
 """
 
 
 def cli_help_text() -> str:
-    return """Kite CLI - quick reference
+    return """Kite CLI - full reference
 
 Session
   kite | kite chat              REPL (plan/build, /slash commands)
@@ -66,7 +88,7 @@ Advanced
   kite apply | kite import | kite exec | kite audit | kite cloud
   kite exec "task"          CI one-shot (headless, quiet, same flags as run)
 
-REPL essentials (type /help in chat)
+REPL essentials (type /help in chat, /help all for everything)
   /plan /build                  checklist-only vs apply
   /model [list|select|groq/id]  model picker
   /login /keys /select          credentials

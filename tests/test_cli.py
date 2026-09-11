@@ -54,12 +54,14 @@ def test_slash_help_and_legacy_routing() -> None:
     cmd, arg = session._apply_legacy_slash("model", "groq", "select")
     assert cmd == "model" and arg == "select groq"
     text = help_text(CommandIndex.load("."))
-    assert "session" in text and "/select" in text
+    assert "/plan" in text and "More: /help all" in text
+    text_all = help_text(CommandIndex.load("."), all=True)
+    assert "session" in text_all and "/select" in text_all
     from kite import __version__
 
-    assert "kite_commands.md" in text and "CONTEXT.md" in text
-    assert "architecture.md" in text and "SECURITY.md" in text
-    assert f"docs/RELEASE-{__version__}.md" in text
+    assert "kite_commands.md" in text_all and "CONTEXT.md" in text_all
+    assert "architecture.md" in text_all and "SECURITY.md" in text_all
+    assert f"docs/RELEASE-{__version__}.md" in text_all
     assert "kite-system-design" not in text and "docs/memory.md" not in text
 
 
@@ -125,8 +127,9 @@ def test_chat_flags_rejects_and_resume(monkeypatch, tmp_path: Path, kite_home) -
     assert seen["wall_time_limit_seconds"] == 30 and seen["role"] == "debugger"
     import re
 
-    from kite.cli.help_map import cli_help_text
+    from kite.cli.help_map import cli_help_brief, cli_help_text
 
+    assert "kite help all" in cli_help_brief()
     text = cli_help_text()
     assert "kite_commands.md" in text and "CONTEXT.md" in text
     assert "kite-system-design" not in text
@@ -135,6 +138,8 @@ def test_chat_flags_rejects_and_resume(monkeypatch, tmp_path: Path, kite_home) -
     assert [flag for flag in flags if flag not in combined] == []
     help_text_cli = parser.format_help()
     assert "maintainer" not in help_text_cli
+    assert "models" not in help_text_cli
+    assert "run" in help_text_cli
     assert parser.parse_args(["maintainer", "dashboard"]).command == "maintainer"
     from kite.cli.run import cmd_resume as _resume
     monkeypatch.setattr("kite.ui.pick.can_prompt", lambda: False)
