@@ -67,6 +67,25 @@ class WorkspaceProfile:
 
 def _posix_rel(workspace: Path, path: Path) -> str:
     return path.relative_to(workspace).as_posix()
+def normalize_workspace_path(path: str, workspace_root: str | Path | None) -> str:
+    """Return a workspace-relative POSIX path when the path is inside the workspace."""
+    raw = str(path or "").strip()
+    if not raw:
+        return ""
+    if not workspace_root:
+        return raw.replace("\\", "/")
+
+    root = Path(workspace_root).expanduser().resolve()
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    try:
+        resolved = candidate.resolve()
+        return resolved.relative_to(root).as_posix()
+    except (OSError, ValueError):
+        return candidate.absolute().as_posix()
+
+
 
 
 def _read_toml(path: Path) -> dict:
@@ -538,7 +557,12 @@ def build_verification_plan(
     profile: WorkspaceProfile | None = None,
 ) -> VerificationPlan:
     """Select checks from touched paths and workspace layout — monorepo-aware."""
-    paths = tuple(p for p in touched_paths if p)
+    workspace_root = profile.workspace_root if profile else None
+    paths = tuple(
+        normalize_workspace_path(path, workspace_root)
+        for path in touched_paths
+        if path
+    )
     kinds = classify_touched_paths(paths)
     required: list[CheckSpec] = []
     optional: list[CheckSpec] = []
@@ -928,7 +952,8 @@ def apply_write_edit(
 ) -> None:
     if not result.get("ok"):
         return
-    path = str(result.get("path") or args.get("path") or "")
+    raw_path = str(result.get("path") or args.get("path") or "")
+    path = normalize_workspace_path(raw_path, collector.workspace_root)
     diff = str(result.get("diff") or "")
     content = str(result.get("content") or args.get("content") or "")
     if path:
@@ -937,7 +962,7 @@ def apply_write_edit(
             record_html_check(collector, path, content or diff)
     if diff:
         collector.diffs.append(diff)
-        add_artifact("diff", f"edited {path}", path=path, ok=True, detail=diff[:400])
+        add_artifact("diff", f"edited {raw_path}", path=raw_path, ok=True, detail=diff[:400])
 
 
 def apply_read(
