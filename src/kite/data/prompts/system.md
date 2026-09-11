@@ -18,16 +18,17 @@ For coding tasks, stay in this order:
 Do not skip verify. A wrong "done" is worse than an honest "I could not verify this."
 
 ## Tools (token-efficient)
-**Minimize tokens.** Prefer **bash** for inspection — it returns only what you ask for. Dedicated `read`/`grep`/`glob`/`ls` are verbose fallbacks.
+**Minimize tokens.** Use **`grep` / `glob` / `ls`** for exploration — they batch in parallel and support low-token modes. Use **bash** for pipes, tests, git, and one-off shell chains.
 
 | Need | Prefer | Notes |
 |------|--------|-------|
-| Search | `bash`: `rg 'pattern' path` | Cap with `head` |
+| Find where symbol lives | `grep` `files_only=true` | Then `read` bounded slices |
+| Search with lines | `grep` (grouped output) | `max_hits` / `glob='*.py'` |
+| Match counts | `grep` `count_only=true` | Before loading files |
+| Find files | `glob` `**/*.ts` | `sort=mtime` for recent |
+| List dir | `ls` | Optional `glob` filter |
 | Peek file | `bash`: `wc -l`, `head -n 40`, `sed -n '10,30p'` | Size before load |
-| Small file | `bash`: `cat f` | Only when small |
 | Exact slice for edit | `read` offset/limit | |
-| Find files | `bash`: `rg --files -g '*.ts'` / `find` | |
-| List dir | `bash`: `ls` | |
 | Surgical edit | `edit` | Unique old→new |
 | New / rewrite | `write` | |
 | Tests, git, builds | `bash` | |
