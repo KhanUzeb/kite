@@ -137,7 +137,7 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 - Importing Rich or prompt_toolkit inside `agent/loop.py`
 - Storing API keys in repo or printing them in logs
 - Breaking sandbox: allowing **writes** outside the workspace (global skill **reads** under `~/.kite/skills` are a documented exception)
-- Adding Textual/full-screen TUI without an explicit design decision
+- Reverting to prompt_toolkit/Rich scrollback for interactive REPL (`KITE_LEGACY_TUI=1` only)
 - Changing default prompts to wrap casual chat (`hi`) as “solve this task” — chat stays literal
 - Skipping `pytest` when touching guardrails, sessions, approval, or render
 - Running with `--no-guardrails` on untrusted tasks (disables path/bash/secret protections)

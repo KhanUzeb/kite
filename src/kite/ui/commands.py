@@ -19,8 +19,8 @@ class BuiltinCommand:
 
 
 PRIMARY_SLASH_COMMANDS: frozenset[str] = frozenset({
-    "plan",
     "build",
+    "plan",
     "status",
     "model",
     "session",
@@ -36,16 +36,16 @@ PRIMARY_SLASH_COMMANDS: frozenset[str] = frozenset({
 
 BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand(
-        "plan",
-        "Read-only — explore, checklist, then stop",
-        aliases=("p",),
+        "build",
+        "Apply edits (default) — continues any plan checklist",
+        aliases=("b",),
         group="session",
         visibility="primary",
     ),
     BuiltinCommand(
-        "build",
-        "Apply edits from the checklist",
-        aliases=("b",),
+        "plan",
+        "Opt-in read-only explore + checklist — /build to apply",
+        aliases=("p",),
         group="session",
         visibility="primary",
     ),
@@ -269,8 +269,8 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("refresh", "re-fetch models from API, then pick"),
     ],
     "mode": [
-        ("plan", "explore + checklist, no edits"),
-        ("build", "apply checklist / edits"),
+        ("build", "apply edits (default)"),
+        ("plan", "opt-in: explore + checklist, no edits"),
     ],
     "theme": [
         ("auto", "follow the terminal"),

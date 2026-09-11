@@ -14,8 +14,8 @@ composer (idle)
   Ctrl+D          quit REPL
   Ctrl+L          clear screen
   Ctrl+O / F6     toggle expanded tool output
-  Ctrl+P / F3     plan mode
-  Ctrl+B / F4     build mode
+  Ctrl+B / F4     build mode (default)
+  Ctrl+P / F3     plan mode (opt-in read-only checklist)
   Ctrl+T / F7     toggle thinking trace
   F2              flash status footer
   F5              refresh models, then pick

@@ -25,6 +25,8 @@ Prefix `//` if you need a natural-language line that starts with `/`.
 
 Default `kite --help` lists six commands (`kite`, `run`, `resume`, `setup`, `sessions`, `tasks`). `kite help all` prints the full map. `chat` and `exec` remain as hidden aliases.
 
+**Interactive TUI:** `kite` launches a **Textual** full-screen interface (Pi/Tau-style transcript + composer). Set `KITE_LEGACY_TUI=1` to use the older Rich + prompt_toolkit scrollback REPL.
+
 ```
 kite                         # REPL (same as kite chat)
 kite --version
@@ -189,8 +191,8 @@ These never go to the model.
 
 | Command | What it does |
 |---------|----------------|
-| `/plan` `/p` | Read-only: explore + checklist (no edits); switch to `/build` to apply |
-| `/build` `/b` | Apply edits; continues existing plan checklist; approval leaves `readonly` → supervised |
+| `/build` `/b` | **Default** — apply edits, run tests, submit; continues any plan checklist |
+| `/plan` `/p` | **Opt-in** — read-only explore + checklist; switch to `/build` to apply |
 | `/approve yolo\|auto\|supervised\|trust` | Autonomy. Empty: numbered picker. `auto` (default) = coding blanket; `yolo` = no prompts; `trust` = blanket + memory/subagent gates; `supervised` = approve every mutation |
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off**). Empty: pick on/off |
 | `/privacy` | Security policy summary; `/privacy sessions` picks full/redacted/disabled |
