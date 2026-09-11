@@ -16,7 +16,7 @@ from kite.ui.diff import count_diff_lines, render_diff
 from kite.ui.spinner import WaitSpinner
 from kite.ui.state import SessionUiState
 from kite.ui.status import render_status
-from kite.ui.stream_buffer import StreamCoalescer
+from kite.ui.streaming import StreamCoalescer
 from kite.ui.style import (
     CHANNEL_PREFIX,
     COLLAPSE_LINES,
@@ -36,6 +36,7 @@ from kite.ui.style import (
 from kite.ui.tool_cards import (
     ToolCard,
     detail_from_args,
+    format_partial_args,
     line_count_from_output,
     render_bash_command_block,
     render_code_edit_preview,
@@ -177,9 +178,11 @@ _RENDER_EVENT_KINDS = (
     "route",
     "agent_start",
     "stream_start",
+    "stream_first_token",
     "stream_reasoning",
     "stream_delta",
     "stream_tool",
+    "stream_usage",
     "stream_end",
     "turn_start",
     "turn_end",
@@ -252,6 +255,8 @@ class RunDisplay:
         self._parallel_batch: int = 0
         self._in_code_fence: bool = False
         self._fence_lang: str = ""
+        self._tool_preview_at: float = 0.0
+        self._tool_preview_chars: int = 0
         self._event_handlers: dict[str, Callable[[dict[str, Any]], None]] = {
             kind: getattr(self, f"_on_{kind}")  # noqa: SLF001
             for kind in _RENDER_EVENT_KINDS
@@ -425,6 +430,25 @@ class RunDisplay:
             self._spin(False)
             self._stream_write(chunk, channel=channel)
 
+    def _maybe_flush_tool_preview(self) -> None:
+        import time
+
+        if not self._pending_tool_name:
+            return
+        partial = self._pending_tool_args
+        now = time.monotonic()
+        grown = len(partial) - self._tool_preview_chars
+        if grown < 24 and (now - self._tool_preview_at) < 0.14:
+            return
+        if not partial and (now - self._tool_preview_at) < 0.4:
+            return
+        self._tool_preview_at = now
+        self._tool_preview_chars = len(partial)
+        self.console.print(
+            render_stream_tool_preview(self._pending_tool_name, partial),
+            highlight=False,
+        )
+
     def _spin(self, on: bool, label: str = "thinking") -> None:
         if on and not self.quiet:
             self._anim_tick += 1
@@ -513,7 +537,21 @@ class RunDisplay:
         self.state.n_calls += 1
         self._channel = None
         self._streaming = False
+        self._tool_preview_at = 0.0
+        self._tool_preview_chars = 0
         self._spin(True, "thinking")
+
+    def _on_stream_first_token(self, p: dict[str, Any]) -> None:
+        ttft = int(p.get("ttft_ms") or 0)
+        channel = str(p.get("channel") or "answer")
+        self.state.note_stream_first_token(ttft)
+        label = "streaming" if channel == "answer" else f"streaming  {channel}"
+        if ttft > 0:
+            label = f"{label}  {ttft}ms"
+        self._spin(True, label)
+
+    def _on_stream_usage(self, p: dict[str, Any]) -> None:
+        self.state.note_stream_usage(dict(p))
 
     def _on_stream_reasoning(self, p: dict[str, Any]) -> None:
         text = p.get("text") or ""
@@ -534,10 +572,17 @@ class RunDisplay:
     def _on_stream_tool(self, p: dict[str, Any]) -> None:
         name = str(p.get("name") or "?")
         partial = str(p.get("partial_args") or "")
+        phase = str(p.get("phase") or "")
         self._pending_tool_name = name
         self._pending_tool_args = partial
-        preview = partial[-40:] if partial else ""
-        self._spin(True, f"preparing  {name}  {preview}".strip())
+        preview = format_partial_args(partial[-120:] if partial else "", limit=48)
+        spin_bits = [f"preparing  {name}"]
+        if phase == "name" and name:
+            spin_bits.append(name)
+        elif preview:
+            spin_bits.append(preview)
+        self._spin(True, "  ".join(spin_bits))
+        self._maybe_flush_tool_preview()
 
     def _on_stream_end(self, p: dict[str, Any]) -> None:
         self._flush_stream_buffers()

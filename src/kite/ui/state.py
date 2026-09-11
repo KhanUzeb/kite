@@ -61,7 +61,9 @@ class SessionUiState:
     usage_cache_read_tokens: int = 0
     usage_cache_write_tokens: int = 0
     stream_chars: int = 0
+    stream_tokens: int = 0
     stream_started_at: float | None = None
+    ttft_ms: int | None = None
     tps: float = 0.0
     active_subagents: int = 0
     active_jobs: int = 0
@@ -156,11 +158,18 @@ class SessionUiState:
 
     def reset_stream_stats(self) -> None:
         self.stream_chars = 0
+        self.stream_tokens = 0
         self.stream_started_at = None
+        self.ttft_ms = None
         self.tps = 0.0
         self.touch()
 
-    def note_stream_delta(self, text: str) -> None:
+    def note_stream_first_token(self, ttft_ms: int) -> None:
+        if self.ttft_ms is None and ttft_ms >= 0:
+            self.ttft_ms = ttft_ms
+            self.touch()
+
+    def note_stream_delta(self, text: str, *, tokens: int | None = None) -> None:
         import time
 
         if not text:
@@ -169,11 +178,25 @@ class SessionUiState:
         if self.stream_started_at is None:
             self.stream_started_at = now
         self.stream_chars += len(text)
+        if tokens is not None and tokens > 0:
+            self.stream_tokens += tokens
         elapsed = now - (self.stream_started_at or now)
         if elapsed > 0:
-            est_tokens = max(1, self.stream_chars // 4)
-            self.tps = est_tokens / elapsed
+            est = self.stream_tokens if self.stream_tokens > 0 else max(1, self.stream_chars // 4)
+            self.tps = est / elapsed
         if not self.busy:
+            self.touch()
+
+    def note_stream_usage(self, usage: dict) -> None:
+        completion = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+        if completion > 0:
+            self.stream_tokens = max(self.stream_tokens, completion)
+            if self.stream_started_at is not None:
+                import time
+
+                elapsed = time.monotonic() - self.stream_started_at
+                if elapsed > 0:
+                    self.tps = self.stream_tokens / elapsed
             self.touch()
 
     def set_context_usage(self, *, total_tokens: int, window: int) -> None:

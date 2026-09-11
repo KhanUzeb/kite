@@ -87,6 +87,8 @@ def sanitize_status_text(text: str) -> str:
 
 def format_metrics_tail(state: SessionUiState) -> str:
     parts: list[str] = []
+    if state.busy and state.ttft_ms is not None and state.stream_chars < 400:
+        parts.append(f"ttft {state.ttft_ms}ms")
     if state.busy or state.tps > 0:
         parts.append(f"{state.tps:.0f} tok/s" if state.tps > 0 else "— tok/s")
     if state.cache_hit_tokens > 0 or state.cache_hit_ratio > 0:
