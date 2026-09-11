@@ -257,6 +257,7 @@ class RunDisplay:
         self._fence_lang: str = ""
         self._tool_preview_at: float = 0.0
         self._tool_preview_chars: int = 0
+        self._transcript_buffer: list[Any] = []
         self._event_handlers: dict[str, Callable[[dict[str, Any]], None]] = {
             kind: getattr(self, f"_on_{kind}")  # noqa: SLF001
             for kind in _RENDER_EVENT_KINDS
@@ -265,13 +266,30 @@ class RunDisplay:
     def _touch_state(self) -> None:
         self.state.touch()
 
+    def _print(self, *args: Any, **kwargs: Any) -> None:
+        if self.state.fullscreen and self.state.busy:
+            if args:
+                self._transcript_buffer.append(args[0] if len(args) == 1 else args)
+            return
+        self.console.print(*args, **kwargs)
+
+    def flush_transcript_buffer(self) -> None:
+        for item in self._transcript_buffer:
+            if isinstance(item, tuple):
+                self._print(*item)
+            else:
+                self._print(item, highlight=False, markup=False)
+        self._transcript_buffer.clear()
+
     def _stdout_write(self, text: str) -> None:
+        if self.state.fullscreen and self.state.busy:
+            return
         sys.stdout.write(text)
         sys.stdout.flush()
 
     def _end_stream_line(self) -> None:
         if self._streaming:
-            self.console.print()
+            self._print()
             self._streaming = False
         self._need_prefix = False
 
@@ -281,7 +299,7 @@ class RunDisplay:
         had = self._channel is not None
         self._end_stream_line()
         if had:
-            self.console.print()
+            self._print()
         self._channel = channel
         self._need_prefix = True
         self._did_first_line = False
@@ -314,7 +332,7 @@ class RunDisplay:
             elif i > 0:
                 self._streaming = True
         if block.plain:
-            self.console.print(block, end="", highlight=False, markup=False)
+            self._print(block, end="", highlight=False, markup=False)
 
     def _stream_write_answer(self, text: str) -> None:
         """Answer channel — prose vs fenced code blocks use distinct styles."""
@@ -356,7 +374,7 @@ class RunDisplay:
             self._need_prefix = True
             self._streaming = True
         if block.plain:
-            self.console.print(block, end="", highlight=False, markup=False)
+            self._print(block, end="", highlight=False, markup=False)
 
     def _prose_line_style(self, line: str) -> tuple[str, str]:
         """Lightweight markdown-ish cues for streamed prose (no full parser)."""
@@ -388,7 +406,7 @@ class RunDisplay:
             self._stream_write(text, channel="thinking")
             self._end_stream_line()
         else:
-            self.console.print(render_thinking_summary(chars, lines), highlight=False)
+            self._print(render_thinking_summary(chars, lines), highlight=False)
         self._thinking_buf.clear()
         self._thinking_open = False
 
@@ -399,13 +417,13 @@ class RunDisplay:
         self.state.last_thinking = self._thinking_text()
         if self.state.thinking_expanded:
             if not self._thinking_open:
-                self.console.print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
+                self._print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
                 self._thinking_open = True
             self._coalesced_stream("thinking", text)
             return
         chars = len(self.state.last_thinking)
         if not self._thinking_open:
-            self.console.print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
+            self._print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
             self._thinking_open = True
         self._spin(True, f"thinking  {chars:,} chars")
 
@@ -417,7 +435,7 @@ class RunDisplay:
     def _flush_tool_preview(self) -> None:
         if not self._pending_tool_name:
             return
-        self.console.print(
+        self._print(
             render_stream_tool_preview(self._pending_tool_name, self._pending_tool_args)
         )
         self._pending_tool_name = None
@@ -444,7 +462,7 @@ class RunDisplay:
             return
         self._tool_preview_at = now
         self._tool_preview_chars = len(partial)
-        self.console.print(
+        self._print(
             render_stream_tool_preview(self._pending_tool_name, partial),
             highlight=False,
         )
@@ -476,7 +494,7 @@ class RunDisplay:
 
     def print_status(self) -> None:
         if not self.quiet:
-            self.console.print(render_status(self.state), highlight=False)
+            self._print(render_status(self.state), highlight=False)
 
     def print_plan(self) -> None:
         if self.quiet or not self.state.todos:
@@ -485,12 +503,12 @@ class RunDisplay:
         if key == self._last_todo_key:
             return
         self._last_todo_key = key
-        self.console.print()
-        self.console.print(render_plan_tasks(self.state.todos, tick=self._anim_tick))
+        self._print()
+        self._print(render_plan_tasks(self.state.todos, tick=self._anim_tick))
 
     def print_banner(self, task: str = "") -> None:
         if task:
-            self.console.print(render_user_cell(task), highlight=False)
+            self._print(render_user_cell(task), highlight=False)
 
     def __call__(self, event: Event) -> None:
         if self.quiet:
@@ -504,16 +522,16 @@ class RunDisplay:
         source = str(p.get("source") or "file")
         kind_label = str(p.get("kind") or "")
         extra = f"  {kind_label}" if kind_label and kind_label != "text" else ""
-        self.console.print(f"[kite.muted]attach  {source}  {name}{extra}[/]")
+        self._print(f"[kite.muted]attach  {source}  {name}{extra}[/]")
 
     def _on_route(self, p: dict[str, Any]) -> None:
         reason = str(p.get("reason") or "")
         if reason == "vision":
-            self.console.print(
+            self._print(
                 f"[kite.muted]vision  {p.get('provider')}/{p.get('model')}[/]"
             )
         else:
-            self.console.print("[kite.muted]no vision model configured — image noted but not sent[/]")
+            self._print("[kite.muted]no vision model configured — image noted but not sent[/]")
 
     def _on_agent_start(self, p: dict[str, Any]) -> None:
         self.state.provider = str(p.get("provider") or self.state.provider)
@@ -614,13 +632,13 @@ class RunDisplay:
         batch = int(p.get("parallel_batch") or 0)
         pindex = int(p.get("parallel_index") or 1)
         if self._saw_answer:
-            self.console.print(render_section_break("tools"), highlight=False)
+            self._print(render_section_break("tools"), highlight=False)
             self._saw_answer = False
         if batch > 1 and batch != self._parallel_batch:
             self._parallel_batch = batch
             tools = p.get("parallel_tools")
             names = tools if isinstance(tools, list) else []
-            self.console.print(render_parallel_batch_header(batch, names))
+            self._print(render_parallel_batch_header(batch, names))
         card = ToolCard(
             tool=tool,
             detail=detail_from_args(tool, args),
@@ -637,18 +655,18 @@ class RunDisplay:
         self.state.touch(force=True)
         sub_prefix = _subagent_prefix(p)
         if sub_prefix and self.state.live_subagents:
-            self.console.print(
+            self._print(
                 Text(f"{GUTTER}{sub_prefix}{tool}", style="kite.plan")
             )
-        self.console.print(render_tool_card_start(card))
+        self._print(render_tool_card_start(card))
         if reason:
-            self.console.print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted italic"))
+            self._print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted italic"))
         if tool == "bash" and args.get("command"):
-            self.console.print(render_bash_command_block(str(args["command"])))
+            self._print(render_bash_command_block(str(args["command"])))
         elif tool in {"write", "edit"}:
             preview = render_code_edit_preview(tool, args)
             if preview is not None:
-                self.console.print(preview)
+                self._print(preview)
         self._spin(True, f"working  {tool}")
 
     def _on_tool_progress(self, p: dict[str, Any]) -> None:
@@ -674,7 +692,7 @@ class RunDisplay:
         if not _live_stream_enabled(self.state, p):
             return
         prefix = _subagent_prefix(p)
-        self.console.print(
+        self._print(
             Text(f"{GUTTER}{GUTTER}{prefix}{line}", style="kite.terminal"),
             highlight=False,
         )
@@ -691,7 +709,7 @@ class RunDisplay:
             return
         job_id = str(p.get("id") or "")
         prefix = _subagent_prefix(p) or (f"[{job_id}] " if job_id else "")
-        self.console.print(
+        self._print(
             Text(f"{GUTTER}{GUTTER}{prefix}{line}", style="kite.terminal"),
             highlight=False,
         )
@@ -714,7 +732,7 @@ class RunDisplay:
             counted = count_diff_lines(diff)
             if counted[0] or counted[1]:
                 added, deleted = counted
-        self.console.print(
+        self._print(
             render_tool_card_done(
                 tool,
                 ok=ok,
@@ -733,28 +751,28 @@ class RunDisplay:
             line_count=line_count_from_output(output) if tool == "read" else None,
         )
         if summary_line is not None and (added is None and deleted is None):
-            self.console.print(summary_line)
+            self._print(summary_line)
 
         if isinstance(diff, str) and diff.strip():
 
-            self.console.print(render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all)))
+            self._print(render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all)))
         elif not ok:
             err = str(p.get("error") or p.get("output") or "")
             if err:
                 expanded = self.verbose or self.state.expanded_all
                 collapsed = _collapse_text(err, expanded=expanded)
                 if collapsed.plain:
-                    self.console.print(collapsed)
+                    self._print(collapsed)
                 else:
-                    self.console.print(render_error(err.splitlines()[0], show_trace_hint=False))
+                    self._print(render_error(err.splitlines()[0], show_trace_hint=False))
         else:
             redacted = p.get("secrets_redacted")
             expanded = self.verbose or self.state.expanded_all
             collapsed = _collapse_text(output, expanded=expanded)
             if collapsed.plain:
-                self.console.print(collapsed)
+                self._print(collapsed)
             if redacted:
-                self.console.print(Text(f"{GUTTER}{GUTTER}· {redacted} secret(s) hidden", style="kite.muted"))
+                self._print(Text(f"{GUTTER}{GUTTER}· {redacted} secret(s) hidden", style="kite.muted"))
 
     def _on_artifact(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -773,15 +791,15 @@ class RunDisplay:
         count = p.get("artifact_count")
         if count:
             line.append(f"  ({count})", style="kite.muted")
-        self.console.print(line)
+        self._print(line)
         for art in (p.get("artifacts") or [])[-5:]:
             if isinstance(art, dict):
                 mark = SYMBOL_OK if art.get("ok", True) else SYMBOL_FAIL
-                self.console.print(
+                self._print(
                     Text(f"{GUTTER}{mark} [{art.get('kind', '?')}] {art.get('summary', '')}", style="kite.muted")
                 )
         for gap in p.get("gaps") or []:
-            self.console.print(Text(f"{GUTTER}{SYMBOL_WARN} {gap}", style="kite.pending"))
+            self._print(Text(f"{GUTTER}{SYMBOL_WARN} {gap}", style="kite.pending"))
 
     def _on_cost_estimate(self, p: dict[str, Any]) -> None:
         try:
@@ -795,7 +813,7 @@ class RunDisplay:
             return
         note = str(p.get("note") or "")
         if note:
-            self.console.print(Text(f"{GUTTER}{note}", style="kite.muted"))
+            self._print(Text(f"{GUTTER}{note}", style="kite.muted"))
 
     def _on_cost_warning(self, p: dict[str, Any]) -> None:
         msg = str(p.get("message") or "cost warning")
@@ -825,12 +843,12 @@ class RunDisplay:
             except (TypeError, ValueError):
                 pass
         line.append("\n")
-        self.console.print(line)
+        self._print(line)
 
     def _on_loop_warning(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
-        self.console.print(render_loop_warning(str(p.get("message") or "")))
+        self._print(render_loop_warning(str(p.get("message") or "")))
 
     def _on_todo(self, p: dict[str, Any]) -> None:
         self.state.set_todos(p.get("items") or [])
@@ -842,9 +860,9 @@ class RunDisplay:
         diff = str(p.get("diff") or "")
         path = str(p.get("path") or "")
         if path:
-            self.console.print(Text(f"{GUTTER}{path}", style="kite.muted"))
+            self._print(Text(f"{GUTTER}{path}", style="kite.muted"))
         if diff:
-            self.console.print(
+            self._print(
                 render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all))
             )
 
@@ -864,7 +882,7 @@ class RunDisplay:
             bits = [f"ctx {total}/{window}"]
             if ratio is not None:
                 bits.append(f"{ratio:.0%}" if isinstance(ratio, float) else str(ratio))
-            self.console.print(f"[kite.muted]{SYMBOL_SEP} {' '.join(str(b) for b in bits)}[/]")
+            self._print(f"[kite.muted]{SYMBOL_SEP} {' '.join(str(b) for b in bits)}[/]")
 
     def _on_compact(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -874,7 +892,7 @@ class RunDisplay:
         if isinstance(total, int) and isinstance(window, int) and window > 0:
             self.state.set_context_usage(total_tokens=total, window=window)
             context_pct = min(1.0, total / window)
-        self.console.print(
+        self._print(
             render_compact_boundary(
                 p.get("before", "?"),
                 p.get("after", "?"),
@@ -898,7 +916,7 @@ class RunDisplay:
         elif ratio is not None:
             line.append(f"  ·  {float(ratio):.0%}", style="kite.muted")
         line.append("\n")
-        self.console.print(line)
+        self._print(line)
 
     def _on_compaction_end(self, p: dict[str, Any]) -> None:
         self.state.compacting = False
@@ -918,7 +936,7 @@ class RunDisplay:
         line.append(f"  {p.get('id', '')}  ", style="kite.terminal")
         line.append(f"({p.get('tokens', '?')} tok)", style="kite.muted")
         line.append("\n")
-        self.console.print(line)
+        self._print(line)
 
     def _on_commit(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -935,13 +953,13 @@ class RunDisplay:
             line.append(f"  {sha}", style="kite.muted")
         if n:
             line.append(f"  ({n} file{'s' if n != 1 else ''})", style="kite.muted")
-        self.console.print(line)
+        self._print(line)
 
     def _on_interrupt(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
         self.state.interrupted = True
-        self.console.print(f"[kite.error]{SYMBOL_FAIL} stopped[/] [kite.muted]— steer with a follow-up to continue[/]")
+        self._print(f"[kite.error]{SYMBOL_FAIL} stopped[/] [kite.muted]— steer with a follow-up to continue[/]")
 
     def _on_provider_retry(self, p: dict[str, Any]) -> None:
         import time
@@ -963,7 +981,7 @@ class RunDisplay:
         if err:
             line.append(f"  ·  {err[:100]}", style="kite.muted")
         line.append("\n")
-        self.console.print(line)
+        self._print(line)
 
     def _on_provider_fault(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -980,7 +998,7 @@ class RunDisplay:
         if self.state.provider and self.state.model:
             line.append(f"  ·  {self.state.provider}/{self.state.model}", style="kite.muted")
         line.append("\n")
-        self.console.print(line)
+        self._print(line)
 
     def _on_approval(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -994,7 +1012,7 @@ class RunDisplay:
         if mandatory:
             line.append("  ·  mandatory", style="kite.error")
         line.append("\n")
-        self.console.print(line)
+        self._print(line)
 
     def _on_submit_blocked(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -1005,7 +1023,7 @@ class RunDisplay:
         line.append("submit blocked", style="kite.pending bold")
         line.append(f"  ·  {reason[:160]}", style="kite.muted")
         line.append("\n")
-        self.console.print(line)
+        self._print(line)
         self.state.set_flash("submit blocked — run verification")
         self._touch_state()
 
@@ -1028,12 +1046,12 @@ class RunDisplay:
             line.append(f"{GUTTER}{SYMBOL_OK} ", style="kite.success")
             line.append("work complete", style="kite.success bold")
             line.append("\n")
-            self.console.print(line)
+            self._print(line)
             vstatus = p.get("verification_status")
             vsum = p.get("verification") if isinstance(p.get("verification"), dict) else {}
             had_work = bool(vsum.get("artifact_count") or vsum.get("diff_count") or vsum.get("gaps"))
             if vstatus in {"failed", "partial"} or (vstatus == "unverified" and had_work):
-                self.console.print(
+                self._print(
                     Text(
                         f"{SYMBOL_WARN} couldn't fully verify — status: {vstatus}. Check the artifacts above.",
                         style="kite.pending",
@@ -1041,7 +1059,7 @@ class RunDisplay:
                 )
             return
         if status in {"Interrupted", "Denied"}:
-            self.console.print(Text(str(status).lower(), style="kite.pending"))
+            self._print(Text(str(status).lower(), style="kite.pending"))
             return
         if status == "ProviderFault":
             err = str(p.get("error") or "provider error")
@@ -1050,22 +1068,22 @@ class RunDisplay:
             line.append("paused — provider fault", style="kite.pending")
             line.append(f"  ·  {err[:100]}", style="kite.muted")
             line.append("\n")
-            self.console.print(line)
+            self._print(line)
             return
         if status == "Stalled":
             msg = str(p.get("submission") or p.get("content") or "stopped — no progress")
-            self.console.print(render_error(msg, show_trace_hint=False))
+            self._print(render_error(msg, show_trace_hint=False))
             return
         if status == "Error":
             err = str(p.get("error") or "unexpected error")
             trace = str(p.get("traceback") or "")
             self.state.last_error = err
             self.state.last_trace = trace
-            self.console.print(render_error(err, traceback_text=trace))
+            self._print(render_error(err, traceback_text=trace))
             return
         if status == "RepeatedFormatError":
             detail = str(p.get("submission") or p.get("content") or status)
-            self.console.print(render_error(f"{status}: {detail}", show_trace_hint=False))
+            self._print(render_error(f"{status}: {detail}", show_trace_hint=False))
             return
         if status in {"LimitsExceeded", "TimeExceeded"}:
             detail = str(p.get("submission") or p.get("content") or "").strip()
@@ -1080,9 +1098,9 @@ class RunDisplay:
             line.append(f"{GUTTER}{SYMBOL_OK} ", style="kite.success")
             line.append("session saved — send another message to continue", style="kite.success")
             line.append("\n")
-            self.console.print(line)
+            self._print(line)
             return
-        self.console.print(render_error(str(status), show_trace_hint=False))
+        self._print(render_error(str(status), show_trace_hint=False))
 
     def _on_agent_end(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -1099,7 +1117,7 @@ class RunDisplay:
         msg = str(p.get("error") or "error")
         self.state.last_error = msg
         self.state.last_trace = str(p.get("traceback") or "")
-        self.console.print(
+        self._print(
             render_error(msg, traceback_text=self.state.last_trace, show_trace_hint=not self.state.last_trace)
         )
 
@@ -1124,7 +1142,7 @@ class RunDisplay:
                 pass
             self._touch_state()
             if self.verbose:
-                self.console.print(
+                self._print(
                     f"[kite.muted]{GUTTER}cache hit  {hits} tokens ({self.state.cache_hit_ratio:.0%})[/]"
                 )
 
@@ -1135,7 +1153,7 @@ class RunDisplay:
             return
         self._end_stream_line()
         at_once = f" · {workers} at a time" if workers < total else ""
-        self.console.print(
+        self._print(
             Text(
                 f"{GUTTER}{SYMBOL_COLLAPSE} crew  {total} workers{at_once}",
                 style="kite.plan bold",
@@ -1150,7 +1168,7 @@ class RunDisplay:
         ok = bool(p.get("ok"))
         mark = SYMBOL_OK if ok else SYMBOL_WARN
         style = "kite.success" if ok else "kite.muted"
-        self.console.print(
+        self._print(
             Text(
                 f"{GUTTER}{mark} crew  {succeeded}/{total} succeeded",
                 style=style,
@@ -1177,7 +1195,7 @@ class RunDisplay:
             elapsed = row.get("elapsed_ms")
             timing = str(elapsed) if elapsed else "—"
             table.add_row(glyph, label[:28], quality, timing)
-        self.console.print(table)
+        self._print(table)
 
     def _on_subagent_start(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
@@ -1187,7 +1205,7 @@ class RunDisplay:
         self.state.active_subagents += 1
         self._touch_state()
         suffix = f"  ·  {profile}" if profile else ""
-        self.console.print(
+        self._print(
             Text(f"{GUTTER}{SYMBOL_COLLAPSE} {glyph}  {label}{suffix}", style="kite.plan")
         )
         if self.state.live_subagents:
@@ -1195,7 +1213,7 @@ class RunDisplay:
 
             prompt = redact_string(str(p.get("prompt") or "")[:120])
             if prompt:
-                self.console.print(Text(f"{GUTTER}{GUTTER}{prompt}", style="kite.muted"))
+                self._print(Text(f"{GUTTER}{GUTTER}{prompt}", style="kite.muted"))
         self._spin(True, f"{glyph}  {label}")
 
     def _on_subagent_end(self, p: dict[str, Any]) -> None:
@@ -1211,14 +1229,14 @@ class RunDisplay:
         elapsed = p.get("elapsed_ms")
         timing = f"  ·  {elapsed}ms" if elapsed else ""
         detail = f"  ·  {quality}" if quality not in {"done", "failed"} else ""
-        self.console.print(
+        self._print(
             Text(f"{GUTTER}{mark} {glyph}  {label}{detail}{timing}", style=style)
         )
         preview = str(p.get("preview") or "")
         if preview:
             from kite.guardrails.redact import redact_string
 
-            self.console.print(
+            self._print(
                 Text(f"{GUTTER}{GUTTER}{redact_string(preview[:100])}", style="kite.muted")
             )
 
@@ -1234,7 +1252,7 @@ class RunDisplay:
             return
         label = str(p.get("label") or p.get("command") or p.get("id") or "job")
         if kind == "bash":
-            self.console.print(
+            self._print(
                 Text(f"{GUTTER}{SYMBOL_COLLAPSE} job  {kind}  {label}", style="kite.muted")
             )
 
@@ -1256,12 +1274,12 @@ class RunDisplay:
         label = str(p.get("label") or p.get("id") or "job")
         status = str(p.get("status") or ("done" if ok else "ended"))
         if kind == "bash":
-            self.console.print(Text(f"{GUTTER}{mark} job  {kind}  {label}  {status}", style=style))
+            self._print(Text(f"{GUTTER}{mark} job  {kind}  {label}  {status}", style=style))
 
     def _on_warning(self, p: dict[str, Any]) -> None:
         msg = str(p.get("message") or "").strip()
         if msg:
-            self.console.print(Text(f"{GUTTER}{SYMBOL_WARN} {msg}", style="kite.muted"))
+            self._print(Text(f"{GUTTER}{SYMBOL_WARN} {msg}", style="kite.muted"))
 
     def _on_mode(self, p: dict[str, Any]) -> None:
         try:
