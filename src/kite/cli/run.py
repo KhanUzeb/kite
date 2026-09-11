@@ -1200,10 +1200,14 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
     _add_one_shot_output_flags(p)
 
 
-def cmd_help(_args: argparse.Namespace) -> int:
-    from kite.cli.help_map import cli_help_text
+def cmd_help(args: argparse.Namespace) -> int:
+    from kite.cli.help_map import cli_help_brief, cli_help_text
 
-    print(cli_help_text())
+    topic = (getattr(args, "topic", None) or "").strip().lower()
+    if topic == "all":
+        print(cli_help_text())
+    else:
+        print(cli_help_brief())
     return 0
 
 
@@ -1220,6 +1224,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     help_p = sub.add_parser("help", help="Print CLI quick reference")
+    help_p.add_argument(
+        "topic",
+        nargs="?",
+        default="",
+        help="Use 'all' for the full command map",
+    )
     help_p.set_defaults(func=cmd_help)
 
     run = sub.add_parser("run", help="One-shot task")
@@ -1454,6 +1464,15 @@ def build_parser() -> argparse.ArgumentParser:
     from kite.cli.bench import add_bench_parser
 
     add_bench_parser(sub)
+
+    from kite.cli.help_map import CLI_HIDDEN_ALIASES, CLI_PRIMARY_COMMANDS
+
+    for name in list(sub.choices):
+        if name not in CLI_PRIMARY_COMMANDS:
+            _hide_subcommand_from_help(sub, name)
+    for alias in CLI_HIDDEN_ALIASES:
+        if alias in sub.choices:
+            _hide_subcommand_from_help(sub, alias)
 
     return parser
 

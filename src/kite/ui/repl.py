@@ -192,21 +192,9 @@ class ChatSession:
 
         banner = Text()
         banner.append("kite", style="kite.brand")
-        banner.append("  ", style="kite.muted")
+        banner.append(" · ", style="kite.muted")
         banner.append(model_line, style="kite.highlight")
-        banner.append("  ·  ", style="kite.muted")
-        banner.append("Esc", style="kite.pending")
-        banner.append(" stop", style="kite.muted")
-        banner.append("  ·  ", style="kite.muted")
-        banner.append("Ctrl+G", style="kite.pending")
-        banner.append(" steer", style="kite.muted")
-        banner.append("  ·  ", style="kite.muted")
-        banner.append("Enter", style="kite.pending")
-        banner.append(" queue", style="kite.muted")
-        banner.append("  ·  ", style="kite.muted")
-        banner.append("F3", style="kite.plan")
-        banner.append(" plan", style="kite.muted")
-        banner.append("  ·  ", style="kite.muted")
+        banner.append(" · ", style="kite.muted")
         banner.append("/help", style="kite.brand")
         self.console.print(banner)
 
@@ -1295,8 +1283,9 @@ class ChatSession:
             self.state.approval = ApprovalMode.AUTO
         self._invalidate_harness()
 
-    def _slash_help(self, _arg: str) -> None:
-        self.console.print(help_text(self._index()), style="kite.muted")
+    def _slash_help(self, arg: str) -> None:
+        show_all = (arg or "").strip().lower() in {"all", "full", "advanced"}
+        self.console.print(help_text(self._index(), all=show_all), style="kite.muted")
 
     def _slash_plan(self, _arg: str) -> None:
         self._apply_plan_mode()
@@ -1569,20 +1558,28 @@ class ChatSession:
             self.console.print(f"[kite.success]forgot episode[/] {ep.id}  {ep.summary}")
 
     def _slash_status(self, _arg: str) -> None:
-        from kite.memory.session_policy import persistence_mode
+        from kite.config import kite_home
+        from kite.memory.session_policy import persistence_mode, persistence_summary
+        from kite.ui.shortcuts import shortcuts_help_text
+        from kite.ui.status import status_detail_lines
         from kite.ui.theme import current_font, theme_label
 
         sid = self._session_id or "—"
+        for line in status_detail_lines(self.state):
+            self.console.print(f"[kite.muted]{line}[/]")
         self.console.print(
-            f"{self.state.mode.value} · {self.state.approval.value} · "
-            f"sandbox {'restricted' if self.state.sandbox_restricted else 'host'} · "
-            f"{self.state.provider or '—'}/{self.state.model or '—'} · "
-            f"effort {self.state.reasoning} · "
-            f"theme {theme_label()} · font {current_font()} · "
-            f"sessions {persistence_mode()} · "
-            f"${self.state.cost:.4f} · session {sid}"
+            f"[kite.muted]theme {theme_label()} · font {current_font()} · "
+            f"sessions {persistence_mode()} · session {sid}"
             + (f" · queued {len(self._inbox)}" if self._inbox else "")
+            + "[/]"
         )
+        self.console.print(f"[kite.muted]home {kite_home()}[/]")
+        summary = persistence_summary()
+        if summary:
+            self.console.print("[kite.muted]privacy[/]")
+            for key, value in summary.items():
+                self.console.print(f"  [kite.brand]{key.replace('_', ' ')}[/]  {value}")
+        self.console.print(shortcuts_help_text(), style="kite.muted")
 
     def _slash_privacy(self, arg: str) -> None:
         from kite.memory.session_policy import (
