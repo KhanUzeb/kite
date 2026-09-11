@@ -44,7 +44,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Build mode** — Default apply mode. Edits, bash, and writes are allowed subject to **approval**.
 
-**Approval** — Tiered autonomy for mutating tools: `yolo` (critical-only prompts), `auto`/`trust` (routine in-workspace work auto-runs), `approve`/`supervised` (prompt all mutations), or `readonly`.
+**Approval** — Coding blanket autonomy (like Codex workspace-write, OpenCode `--auto`, OMP `write`/`yolo`): `auto` (default) auto-runs in-workspace dev work and only prompts on boundary escapes; `yolo` skips all approval prompts; `trust` adds memory/subagent gates; `approve`/`supervised` prompts every mutation; `readonly` blocks writes.
 
 **Role** — Optional persona (`architect`, `implementer`, `debugger`) that adjusts the system prompt fragment.
 

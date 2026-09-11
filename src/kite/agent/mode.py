@@ -11,7 +11,15 @@ class AgentMode(StrEnum):
 
 
 class ApprovalMode(StrEnum):
-    """How much autonomy is granted — surfaced in the prompt itself."""
+    """How much autonomy is granted — surfaced in the prompt itself.
+
+    Tier model (aligned with Codex workspace-write, OpenCode --auto, OMP write/yolo):
+    - auto: coding blanket — in-workspace install/test/edit/commit auto-runs; boundary escapes prompt
+    - yolo: no approval prompts (sandbox/guardrail deny rules still apply)
+    - trust: auto + prompts for durable memory and nested agents
+    - approve/supervised: prompt all mutations
+    - readonly: block mutations
+    """
 
     AUTO = "auto"
     TRUST = "trust"
