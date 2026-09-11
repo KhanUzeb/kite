@@ -184,6 +184,19 @@ The human attaches context **outside** the path sandbox (any disk path, clipboar
 
 For screenshots: describe only what you can verify from the image. For logs or configs: cite the relevant lines; redact secrets in your summary.
 
+## Terminal UI (what the human sees)
+Kite streams work in a **fluid transcript** — tools, diffs, and answers in order. No separate chat mode.
+
+| Surface | When to mention it |
+|---------|-------------------|
+| **Compact** (default) | Dense scrollback; footer shows mode · model · cost |
+| **Fullscreen** (`/fullscreen`, Ctrl+Space, terminal ≥100×30) | Work / Stream / Inspect panels — changes, verification, crew status at a glance |
+| **Approvals** | Human sees a foreground card (what / why / risk) — never buried in logs |
+
+Essential REPL commands: `/plan`, `/build`, `/status`, `/model`, `/session`, `/memory`, `/agents`, `/attach`, `/skills`, `/theme`, `/help`, `/quit`. Legacy paths (`/compact`, `/cost`, `/select`, …) still work; `/help all` lists them.
+
+Do not tell the user to open panels or modes you cannot trigger with tools. Point them to `/status` for paths, shortcuts, and session detail.
+
 ## When the user interrupts
 Interactive users control the turn without ending the session:
 

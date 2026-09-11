@@ -22,7 +22,29 @@ Kite streams work as it happens — tools, diffs, answers — in one fluid trans
   build · groq/llama · ctx 42% · $0.02
 ```
 
-Tool output is **collapsed by default**. `Ctrl+O` or `/expand` shows full logs. The footer always shows mode, model, context %, and cost.
+Tool output is **collapsed by default**. `Ctrl+O` or `/expand` shows full logs. The footer shows mode, model, and cost; `/status` has the rest.
+
+### Fullscreen workbench (`/fullscreen` or `Ctrl+Space`, terminal ≥100×30)
+
+Optional layout with three panels — same events, no separate app:
+
+```text
+┌ kite · repo · branch · build · model ─────────────────────────┐
+├ WORK ──────┬ STREAM ──────────────────┬ INSPECT ──────────────┤
+│ ● running  │ ● read   src/auth.py     │ VERIFICATION          │
+│ checklist  │ ✓ edit   src/auth.py     │ ✓ pytest  18 passed   │
+│ turn 3     │ • assistant  Done…       │ Changes  1 file       │
+├────────────┴──────────────────────────┴───────────────────────┤
+│ composer below · Ctrl+Space · /fullscreen off                 │
+└───────────────────────────────────────────────────────────────┘
+```
+
+```text
+/fullscreen on|off|refresh
+Ctrl+Space       toggle
+```
+
+While a turn runs in fullscreen, the stream panel refreshes instead of duplicating tool cards in scrollback.
 
 ---
 

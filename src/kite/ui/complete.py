@@ -634,6 +634,7 @@ def make_repl_key_bindings(
     on_status: Callable[[], str] | None = None,
     on_attach_clipboard: Callable[[], str] | None = None,
     on_clear_screen: Callable[[], None] | None = None,
+    on_toggle_fullscreen: Callable[[], str] | None = None,
     is_busy: Callable[[], bool] | None = None,
     is_awaiting_approval: Callable[[], bool] | None = None,
     can_remember_approval: Callable[[], bool] | None = None,
@@ -703,6 +704,10 @@ def make_repl_key_bindings(
     @bindings.add("f2", eager=True)
     def _status(event) -> None:  # noqa: ANN001
         _fire(on_status, event)
+
+    @bindings.add("c-space", eager=True)
+    def _fullscreen(event) -> None:  # noqa: ANN001
+        _fire(on_toggle_fullscreen, event)
 
     idle = Condition(lambda: not _busy())
 

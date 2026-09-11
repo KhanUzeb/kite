@@ -19,6 +19,7 @@ composer (idle)
   Ctrl+T / F7     toggle thinking trace
   F2              flash status footer
   F5              refresh models, then pick
+  Ctrl+Space      toggle fullscreen workbench
   @path           attach file inline (e.g. fix @src/foo.py)
 """
 
