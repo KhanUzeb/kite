@@ -35,6 +35,7 @@ jobs:
           KITE_SKIP_SETUP: "1"
         run: |
           mkdir -p "$KITE_HOME"
+          ruff check src tests
           pytest -q
           python -m kite.cli.run bench --check
 

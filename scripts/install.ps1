@@ -347,7 +347,7 @@ function Install-DevEditable {
     Write-Host ""
     Write-Host "Opening 'kite' uses this editable install from any directory."
     Write-Host "Local .venv is only for pytest/IDE — do not activate it to run kite."
-    Write-Host "Package: .\scripts\pkg.ps1 update | reinstall | uninstall"
+    Write-Host "Update / uninstall: uv tool upgrade kite · uv tool uninstall kite"
 }
 
 try {
