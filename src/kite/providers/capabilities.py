@@ -72,6 +72,40 @@ def _tools_from_litellm(provider: str, model: str, litellm_model: str) -> bool |
     return None
 
 
+def model_supports_parallel_tool_calls(
+    *,
+    provider: str = "",
+    model: str = "",
+    litellm_model: str = "",
+    raw: dict[str, Any] | None = None,
+) -> bool:
+    """True when the provider API accepts parallel tool calls in one completion."""
+    from_meta = _tools_from_raw(raw)
+    if from_meta is False:
+        return False
+    try:
+        import litellm
+    except Exception:
+        return True
+    mid = (litellm_model or model or "").strip()
+    if not mid:
+        return True
+    attempts: list[dict[str, Any]] = []
+    if provider:
+        attempts.append({"custom_llm_provider": provider})
+    attempts.append({})
+    for kwargs in attempts:
+        try:
+            params = litellm.get_supported_openai_params(model=mid, **kwargs)
+            norm = {str(p).lower().replace("-", "_") for p in params}
+            if "parallel_tool_calls" in norm:
+                return True
+        except Exception:
+            continue
+    # Optimistic default — most chat/agent APIs accept multiple tool calls per turn.
+    return model_supports_tools(provider=provider, model=model, litellm_model=litellm_model, raw=raw) is not False
+
+
 def model_supports_tools(
     *,
     provider: str = "",

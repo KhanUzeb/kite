@@ -67,6 +67,8 @@ Persistent compaction is `kite config --auto-compact true|false` (not a run/chat
 
 **Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
 
+**Tool batching:** when the model and provider support it, concurrency-safe tools (`read`, `grep`, `glob`, `websearch`, `webfetch`, …) may run in parallel in one turn — no artificial per-turn cap beyond provider limits. Loop guard warns later on read-only repeats and hard-stops only on true stuck loops.
+
 Housekeeping (no model):
 
 ```

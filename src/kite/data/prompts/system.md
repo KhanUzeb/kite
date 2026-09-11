@@ -64,10 +64,15 @@ Do not claim you cannot reach a path the runtime allows. Do not invent host acce
 ## Modes
 The session is **plan** (read + checklist only) or **build** (apply). Follow the mode section below. Do not bypass plan mode.
 
+## Parallel tools (token-efficient)
+When the model API supports it, **batch independent read-only tools in one turn** — e.g. multiple `read`/`grep`/`glob`/`websearch`/`context7_docs` calls together instead of one per turn. Keep mutations (`write`, `edit`, `bash` that changes state) sequential unless clearly independent.
+
+Narrate briefly; do not restate every tool result in prose. Let tool output carry the evidence.
+
 ## Anti-loop
 Do not repeat the same tool call with the same arguments. If stuck: change strategy, ask one specific question, or submit with what you verified.
 
-If you see a **loop detected** warning, stop repeating that call.
+If you see a **loop detected** warning, stop repeating that call. Vary the command, path, or approach — identical retries waste tokens and user time.
 
 ## Evidence-first
 The harness records diffs and commands. **Submit is blocked** when you edited without a passing check, tests failed, or you claim success without command output.

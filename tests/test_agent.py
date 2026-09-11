@@ -20,6 +20,7 @@ from kite.agent.mode import (
     PLAN_TOOLS,
     READONLY_TOOLS,
     AgentMode,
+    is_parallel_safe,
     tools_for_mode,
     tools_for_nested_subagent,
 )
@@ -109,14 +110,16 @@ def test_query_limits_retry_and_fault() -> None:
 
 def test_loop_guard_warns_and_hard_stops() -> None:
     guard = LoopGuard(repeat_threshold=3)
-    args = {"command": "ls"}
-    assert guard.record("bash", args).warning is None
-    warning = guard.record("bash", args)
+    mutating = {"command": "make build"}
+    for _ in range(2):
+        assert guard.record("bash", mutating).warning is None
+    warning = guard.record("bash", mutating)
     assert warning.warning and "same arguments" in warning.warning
     grep = LoopGuard(repeat_threshold=3)
-    assert grep.record("grep", {"pattern": "foo"}).warning is None
-    assert grep.record("grep", {"pattern": "foo"}).warning is None
-    assert grep.record("grep", {"pattern": "foo"}).warning is not None
+    grep_args = {"pattern": "foo"}
+    for _ in range(5):
+        assert grep.record("grep", grep_args).warning is None
+    assert grep.record("grep", grep_args).warning is not None
     progress = LoopGuard(repeat_threshold=3, hard_threshold=5)
     pending = {"command": "curl -s localhost/status"}
     progress.record("bash", pending, {"ok": True, "output": "pending"})
@@ -124,8 +127,8 @@ def test_loop_guard_warns_and_hard_stops() -> None:
     assert progress.record("bash", pending, {"ok": True, "output": "ready"}).warning is None
     hard = LoopGuard(repeat_threshold=2, hard_threshold=4)
     for _ in range(3):
-        hard.record("bash", args, {"ok": True, "output": "same"})
-    assert hard.record("bash", args, {"ok": True, "output": "same"}).hard_stop
+        hard.record("bash", mutating, {"ok": True, "output": "same"})
+    assert hard.record("bash", mutating, {"ok": True, "output": "same"}).hard_stop
 
 
 def test_steer_follow_up_and_compaction_events() -> None:
@@ -186,6 +189,8 @@ def test_plan_build_tools_and_plan_submit_block(workspace: Path) -> None:
     assert "write" not in plan and "submit" not in plan
     assert "submit" in tools_for_mode(AgentMode.BUILD, enabled)
     assert PARALLEL_SAFE_TOOLS.issubset(READONLY_TOOLS)
+    assert is_parallel_safe("read") and is_parallel_safe("websearch") and is_parallel_safe("webfetch")
+    assert not is_parallel_safe("write") and not is_parallel_safe("bash")
     assert {"write", "edit", "bash"} <= MUTATING_TOOLS
     assert "Checklist handoff" in load_prompt_template("mode_build")
     plan_prompt = load_prompt_template("mode_plan")

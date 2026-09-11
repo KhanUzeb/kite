@@ -22,7 +22,7 @@ from kite.agent.exceptions import (
     TimeExceeded,
 )
 from kite.agent.loop_guard import LoopGuard
-from kite.agent.mode import MUTATING_TOOLS, PARALLEL_SAFE_TOOLS, AgentMode, ApprovalMode
+from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode, is_parallel_safe
 from kite.agent.queue import RunMessageQueue
 from kite.agent.verification import VerificationCollector
 from kite.application.verification import looks_like_test
@@ -55,7 +55,7 @@ def _exit_msg(status: str, *, content: str | None = None, submission: str = "", 
     }
 
 
-_MAX_IDLE_TURNS = 2
+_MAX_IDLE_TURNS = 3
 # Completion contract (interactive build):
 # - Text-only submit: only when the USER's last turn was casual (_is_casual_user_turn).
 # - Assistant greetings ("Hey!") never submit on their own — idle nudge instead.
@@ -815,6 +815,7 @@ class DefaultAgent:
             if self._interrupt:
                 break
             prepared.append(self._prepare_action(action))
+        parallel_tools = [tool for tool, _, _ in prepared]
         for idx, (tool, args, _action) in enumerate(prepared, start=1):
             self._emit(
                 "tool_start",
@@ -823,6 +824,7 @@ class DefaultAgent:
                 reason=args.get("reason"),
                 parallel_batch=len(prepared),
                 parallel_index=idx,
+                parallel_tools=parallel_tools,
             )
         started = time.time()
 
@@ -831,7 +833,7 @@ class DefaultAgent:
             return idx, tool, args, action, self._invoke_tool(tool, args, action)
 
         results: dict[int, tuple[str, dict, dict, dict]] = {}
-        with ThreadPoolExecutor(max_workers=min(4, len(prepared))) as pool:
+        with ThreadPoolExecutor(max_workers=min(8, len(prepared))) as pool:
             for row in pool.map(_worker, list(enumerate(prepared))):
                 idx, tool, args, action, out = row
                 results[idx] = (tool, args, action, out)
@@ -867,9 +869,7 @@ class DefaultAgent:
             return self._handle_no_actions(message)
         self._consecutive_no_tool_turns = 0
         outputs: list[dict] = []
-        parallel = len(actions) > 1 and all(
-            str(a.get("tool") or "") in PARALLEL_SAFE_TOOLS for a in actions
-        )
+        parallel = len(actions) > 1 and all(is_parallel_safe(str(a.get("tool") or "")) for a in actions)
         if parallel:
             self._execute_parallel_actions(actions, outputs)
         else:

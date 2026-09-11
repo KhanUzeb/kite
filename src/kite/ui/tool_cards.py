@@ -117,10 +117,22 @@ def format_partial_args(partial: str, limit: int = 72) -> str:
     return truncate_preview(raw, limit)
 
 
-def render_parallel_batch_header(count: int) -> Text:
+def render_parallel_batch_header(count: int, tools: list[str] | None = None) -> Text:
     line = Text()
     line.append(f"{GUTTER}{glyph('tool')} ", style="kite.muted")
-    line.append(f"parallel {count} read-only tools", style="kite.tool")
+    label = f"parallel {count} tools"
+    names = [t for t in dict.fromkeys(tools or []) if t]
+    if names:
+        label = f"{label}  ·  {', '.join(names)}"
+    line.append(label, style="kite.tool")
+    line.append("\n")
+    return line
+
+
+def render_section_break(title: str) -> Text:
+    line = Text()
+    line.append(f"{GUTTER}{PANEL_BAR}", style="kite.muted")
+    line.append(title.strip(), style="kite.muted")
     line.append("\n")
     return line
 

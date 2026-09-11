@@ -13,6 +13,7 @@ from kite.models.cache import PromptCacheManager, parse_cache_usage
 from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, split_reasoning
 from kite.models.tool_args import repair_tool_arguments
 from kite.providers.byos import ensure_oauth_env, is_oauth_provider
+from kite.providers.capabilities import model_supports_parallel_tool_calls
 from kite.providers.resolve import ResolvedModel
 from kite.tools import ToolRegistry
 
@@ -151,6 +152,12 @@ class LitellmModel:
         if self.registry is not None:
             kwargs["tools"] = self.registry.tool_schemas()
             kwargs["tool_choice"] = "auto"
+            if model_supports_parallel_tool_calls(
+                provider=self.resolved.provider,
+                model=self.resolved.model,
+                litellm_model=self.resolved.litellm_model,
+            ):
+                kwargs["parallel_tool_calls"] = True
         if self.timeout_seconds > 0:
             kwargs["timeout"] = float(self.timeout_seconds)
         return apply_reasoning(

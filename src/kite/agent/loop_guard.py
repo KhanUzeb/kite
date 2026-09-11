@@ -8,8 +8,9 @@ from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Any
 
-BASH_REPEAT_THRESHOLD = 2
-DEFAULT_HARD_THRESHOLD = 5
+BASH_REPEAT_THRESHOLD = 3
+READ_ONLY_REPEAT_THRESHOLD = 6
+DEFAULT_HARD_THRESHOLD = 7
 
 
 def _tool_signature(tool: str, args: dict[str, Any]) -> str:
@@ -72,7 +73,7 @@ class LoopGuard:
                 del self._counts[dropped]
 
         count = self._counts[sig]
-        soft = BASH_REPEAT_THRESHOLD if tool == "bash" else self.repeat_threshold
+        soft = self._soft_threshold(tool, args)
         if count < soft:
             return LoopRecord()
 
@@ -92,6 +93,19 @@ class LoopGuard:
                 "with an honest note about what's left."
             )
         )
+
+    def _soft_threshold(self, tool: str, args: dict[str, Any]) -> int:
+        from kite.guardrails.sandbox import is_inspection_bash
+        from kite.tools.metadata import is_concurrency_safe
+
+        if is_concurrency_safe(tool):
+            return READ_ONLY_REPEAT_THRESHOLD
+        if tool == "bash":
+            cmd = str(args.get("command") or "")
+            if is_inspection_bash(cmd):
+                return READ_ONLY_REPEAT_THRESHOLD
+            return BASH_REPEAT_THRESHOLD
+        return self.repeat_threshold
 
     def reset(self) -> None:
         self._recent.clear()
