@@ -89,7 +89,7 @@ Advanced
   kite exec "task"          CI one-shot (headless, quiet, same flags as run)
 
 REPL essentials (type /help in chat, /help all for everything)
-  /plan /build                  checklist-only vs apply
+  /build /plan                  apply edits (default) vs opt-in checklist-only
   /model [list|select|groq/id]  model picker
   /login /keys /select          credentials
   /checkpoint /handoff /compact session continuity

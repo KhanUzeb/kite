@@ -132,7 +132,7 @@ class KiteApp(App[None]):
         yield RichLog(id="transcript", highlight=True, markup=True, wrap=True)
         yield Static("", id="flash")
         yield Static("", id="status-line")
-        yield Input(placeholder="Ask kite…  (/help · Ctrl+P plan · Ctrl+B build)", id="composer")
+        yield Input(placeholder="Ask kite…  (build mode · /plan to explore first · /help)", id="composer")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -158,6 +158,8 @@ class KiteApp(App[None]):
         line.append("kite", style="bold cyan")
         line.append(" · ", style="dim")
         line.append(f"{prov}/{mod}", style="bold")
+        line.append(" · ", style="dim")
+        line.append("build", style="bold green")
         line.append(" · ", style="dim")
         line.append("/help", style="cyan")
         self.write_transcript(line, markup=False)

@@ -1155,7 +1155,7 @@ def _add_interactive_flags(p: argparse.ArgumentParser) -> None:
         "--mode",
         choices=["plan", "build"],
         default="build",
-        help="plan = read-only checklist; build = apply edits",
+        help="build = apply edits (default); plan = opt-in read-only checklist",
     )
     p.add_argument(
         "--approval",
@@ -1216,7 +1216,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="kite",
-        description="Kite coding agent — plan or build in the terminal",
+        description="Kite coding agent — build by default; /plan for read-only checklist",
         epilog=CLI_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

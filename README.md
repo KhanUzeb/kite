@@ -213,7 +213,7 @@ kite resume <session-id>
 kite resume <session-id> "also update the README"
 ```
 
-In the REPL: `/help` for commands · `/user` `/profile` `/working` · `/agents profiles` · `/live` and `/live agents` · `/plan` `/build` · Ctrl+C interrupts the turn. Shortcuts: Ctrl+O expand · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
+In the REPL: start in **build** mode — type a task. `/plan` for an opt-in read-only checklist. `/help` for commands · `/agents profiles` · Ctrl+C interrupts the turn. Shortcuts: Ctrl+B build · Ctrl+P plan · Ctrl+O expand · F2 status.
 
 Approval modes: `auto` · `approve` · `trust` · `readonly`. Set `KITE_LOADER=grid|dots|orbit|wave|spin` for terminal loader style.
 

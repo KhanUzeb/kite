@@ -1409,7 +1409,7 @@ class ChatSession:
     def _slash_plan(self, _arg: str) -> None:
         self._apply_plan_mode()
         self.console.print(
-            "[kite.plan]plan mode[/]  inspect + checklist only — no edits; /build when ready"
+            "[kite.plan]plan mode[/]  read-only checklist — no edits; /build when ready"
         )
 
     def _slash_build(self, _arg: str) -> None:
@@ -1420,7 +1420,7 @@ class ChatSession:
                 f"[kite.build]build mode[/]  edits on — continuing {n} checklist item(s)"
             )
         else:
-            self.console.print("[kite.build]build mode[/]  edits are on")
+            self.console.print("[kite.build]build mode[/]  default — edits are on")
 
     def _slash_approve(self, arg: str) -> None:
         token = (arg or "").strip()
