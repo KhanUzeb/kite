@@ -25,7 +25,7 @@ from kite.agent.loop_guard import LoopGuard
 from kite.agent.mode import MUTATING_TOOLS, PARALLEL_SAFE_TOOLS, AgentMode, ApprovalMode
 from kite.agent.queue import RunMessageQueue
 from kite.agent.verification import VerificationCollector
-from kite.application.verification.collector_ops import looks_like_test
+from kite.application.verification import looks_like_test
 from kite.guardrails.sandbox import is_inspection_bash
 from kite.memory.session import Session
 from kite.models.retry import is_transient_provider_error, retry_delay_s
@@ -790,7 +790,7 @@ class DefaultAgent:
                 if reason:
                     return self.add_messages({"role": "user", "content": reason})
             nudge = self.verification.post_edit_nudge() or _VERIFY_IDLE_NUDGE
-            from kite.application.verification.collector_ops import next_required_check_command
+            from kite.application.verification import next_required_check_command
 
             cmd = next_required_check_command(self.verification)
             if cmd:
@@ -931,7 +931,7 @@ class DefaultAgent:
                 require_verification=self.verify_before_submit,
             )
             if reason:
-                from kite.application.verification.collector_ops import next_required_check_command
+                from kite.application.verification import next_required_check_command
 
                 cmd = next_required_check_command(self.verification)
                 detail = reason
@@ -1053,7 +1053,7 @@ class DefaultAgent:
     def _run_gated(self, tool: str, args: dict, action: dict) -> dict:
         if self.tool_executor is not None:
             return self._run_gated_via_executor(tool, args, action)
-        from kite.application.tools.effects import tool_requires_approval_gate
+        from kite.application.tools import tool_requires_approval_gate
 
         args = self._effective_tool_arguments(tool, args)
         action = {**action, "arguments": args}
@@ -1125,7 +1125,7 @@ class DefaultAgent:
         import uuid
 
         from kite.agent.exceptions import InterruptAgentFlow
-        from kite.application.tools.contracts import ToolCall
+        from kite.application.tools import ToolCall
 
         args = self._effective_tool_arguments(tool, args)
         action = {**action, "arguments": args}

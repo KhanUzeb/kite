@@ -129,6 +129,16 @@ class ClaudeCodeAuthProvider:
         after = self.status()
         if not after.authenticated:
             return LoginResult(2, _SUBSCRIPTION_HINT)
+        from kite.providers.catalog import load_catalog
+        from kite.providers.keys import api_key_for
+
+        key_ready = bool(api_key_for(load_catalog().get("claude")))
+        if not key_ready:
+            return LoginResult(
+                0,
+                after.message
+                + " Kite model calls still need ANTHROPIC_API_KEY (`kite keys --set anthropic`).",
+            )
         return LoginResult(0, after.message)
 
     def logout(self) -> bool:

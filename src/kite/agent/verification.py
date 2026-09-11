@@ -5,29 +5,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from kite.application.tools.contracts import ToolResult
-from kite.application.verification.collector_ops import (
+from kite.application.tools import ToolResult
+from kite.application.verification import (
+    EvidenceVerifier,
+    VerificationRecord,
+    WorkspaceProfile,
     apply_bash,
     apply_read,
     apply_write_edit,
+    build_verification_plan,
+    discover_workspace_profile,
+    is_check_command,
+    plan_status,
     terminal_status,
 )
-from kite.application.verification.collector_ops import (
+from kite.application.verification import (
     post_edit_nudge as _post_edit_nudge,
 )
-from kite.application.verification.collector_ops import (
+from kite.application.verification import (
     submit_block_reason as _submit_block_reason,
 )
-from kite.application.verification.collector_ops import (
+from kite.application.verification import (
     unfounded_claim_reason as _unfounded_claim_reason,
 )
-from kite.application.verification.evidence import EvidenceVerifier, is_check_command
-from kite.application.verification.plan import (
-    VerificationRecord,
-    build_verification_plan,
-    plan_status,
-)
-from kite.application.verification.workspace_profile import WorkspaceProfile, discover_workspace_profile
 
 VerificationStatus = Literal[
     "verified", "partial", "unverified", "failed", "idle", "changed_unverified", "blocked"
@@ -115,7 +115,7 @@ class VerificationCollector:
         return bool(self.diffs or self.paths_touched)
 
     def has_passing_tests(self) -> bool:
-        from kite.application.verification.collector_ops import latest_test
+        from kite.application.verification import latest_test
 
         latest = latest_test(self.artifacts)
         if latest is not None and latest.ok:

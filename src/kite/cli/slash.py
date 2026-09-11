@@ -230,6 +230,7 @@ def expand_prompt_slash(
 
 
 def help_text(index: CommandIndex) -> str:
+    from kite.cli.help_map import docs_help
     from kite.ui.commands import BUILTINS, LEGACY_ALIASES, LEGACY_HELP
     from kite.ui.shortcuts import shortcuts_help_text
 
@@ -293,6 +294,8 @@ def help_text(index: CommandIndex) -> str:
         [
             "",
             shortcuts_help_text(),
+            "",
+            docs_help().strip(),
         ]
     )
     return "\n".join(lines)

@@ -6,11 +6,8 @@ import argparse
 import json
 import sys
 
-from kite.bench.budgets import check_report
-from kite.bench.suite import BenchmarkReport, load_report, run_suite, save_report
 
-
-def _print_table(report: BenchmarkReport) -> None:
+def _print_table(report) -> None:
     from kite.ui.style import make_console
 
     console = make_console(stderr=True)
@@ -22,7 +19,7 @@ def _print_table(report: BenchmarkReport) -> None:
         console.print(f"{row.name:<22} {row.category:<12} {row.ms:>10.1f}  {row.iterations:>5}")
 
 
-def _print_compare(current: BenchmarkReport, baseline: BenchmarkReport) -> None:
+def _print_compare(current, baseline) -> None:
     from kite.ui.style import make_console
 
     console = make_console(stderr=True)
@@ -78,6 +75,9 @@ def _print_stress(report) -> None:
 
 
 def cmd_bench(args: argparse.Namespace) -> int:
+    from kite.bench.budgets import check_report
+    from kite.bench.suite import load_report, run_suite, save_report
+
     if args.ab:
         from kite.bench.orchestrate_ab import run_orchestrate_ab
 

@@ -11,6 +11,19 @@ from pathlib import Path
 from kite.agent.mode import AgentMode, ApprovalMode, default_approval, parse_approval_mode
 
 
+def _lazy_cmd(module: str, attr: str):
+    """Bind argparse handlers without importing dashboard/setup/bench at parse time."""
+
+    def _dispatch(args: argparse.Namespace) -> int:
+        import importlib
+
+        return getattr(importlib.import_module(module), attr)(args)
+
+    _dispatch.__name__ = attr
+    _dispatch.__qualname__ = attr
+    return _dispatch
+
+
 def _console():
     from kite.ui.style import make_console
 
@@ -42,12 +55,65 @@ def _load_attachments(paths: list[str], task: str, cwd: str):
 
 
 def _is_headless(args: argparse.Namespace) -> bool:
-    from kite.tasks.headless import is_headless_run
+    from kite.tasks import is_headless_run
 
     return is_headless_run(
         headless_flag=bool(getattr(args, "headless", False)),
         quiet=bool(getattr(args, "quiet", False)),
     )
+
+
+_ONESHOT_ONLY_FLAGS = (
+    ("json", "--json"),
+    ("output", "--output"),
+    ("headless", "--headless"),
+    ("quiet", "--quiet"),
+    ("no_stream", "--no-stream"),
+    ("label", "--label"),
+)
+
+
+def _oneshot_only_flags_used(args: argparse.Namespace) -> list[str]:
+    used: list[str] = []
+    for attr, flag in _ONESHOT_ONLY_FLAGS:
+        value = getattr(args, attr, None)
+        if attr == "label" and not value:
+            continue
+        if value:
+            used.append(flag)
+    return used
+
+
+def _chat_session_from_args(args: argparse.Namespace, *, attachments: list | None = None):
+    from kite.ui.repl import ChatSession
+
+    mode = _parse_mode(getattr(args, "mode", None))
+    approval = _parse_approval(getattr(args, "approval", None), mode)
+    if getattr(args, "approval", None) is None:
+        approval = default_approval(mode)
+    return ChatSession(
+        cwd=getattr(args, "cwd", None) or os.getcwd(),
+        provider=getattr(args, "provider", None),
+        model=getattr(args, "model", None),
+        mode=mode,
+        approval=approval,
+        config_name=getattr(args, "config", None),
+        verbose=getattr(args, "verbose", False),
+        session_id=getattr(args, "session", None),
+        step_limit=getattr(args, "steps", None),
+        cost_limit=getattr(args, "cost", None),
+        wall_time_limit_seconds=int(getattr(args, "time", 0) or 0),
+        no_context=bool(getattr(args, "no_context", False)),
+        no_compact=bool(getattr(args, "no_compact", False)),
+        no_guardrails=bool(getattr(args, "no_guardrails", False)),
+        role=getattr(args, "role", "auto") or "auto",
+        long_task=bool(getattr(args, "long", False)),
+        attachments=attachments,
+    )
+
+
+def _hide_subcommand_from_help(sub: argparse._SubParsersAction, name: str) -> None:
+    sub._choices_actions = [action for action in sub._choices_actions if action.dest != name]
 
 
 def _wire_display(harness, console, args: argparse.Namespace):
@@ -60,7 +126,7 @@ def _wire_display(harness, console, args: argparse.Namespace):
     quiet = bool(getattr(args, "quiet", False))
 
     if headless and not quiet:
-        from kite.tasks.headless import HeadlessRunDisplay
+        from kite.tasks import HeadlessRunDisplay
 
         harness.subscribe(
             HeadlessRunDisplay(
@@ -125,7 +191,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
     if _is_headless(args):
-        from kite.tasks.headless import resolve_headless_approval
+        from kite.tasks import resolve_headless_approval
 
         approval = resolve_headless_approval(args.approval, mode, headless=True)
     try:
@@ -174,9 +240,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     )
     _wire_display(harness, console, args)
+    killed = 0
     try:
-        from kite.application.cli import CliResult
-        from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
+        from kite.application.cli import CliResult, execute_harness_task, legacy_result_from_run
 
         run_result = execute_harness_task(harness, task)
         result = legacy_result_from_run(run_result)
@@ -188,26 +254,31 @@ def cmd_run(args: argparse.Namespace) -> int:
             console.print(f"[red]{e}[/]")
         return 1
     finally:
-        harness.teardown_jobs()
+        killed = harness.teardown_jobs() or 0
 
     sid = harness.last_session.id if harness.last_session else ""
+    exit_status = str(result.get("exit_status") or "")
+    ok = exit_status == "Submitted" and killed == 0
     if getattr(args, "json", False):
         data = {
-            "ok": cli_result.ok,
+            "ok": ok,
             "exit_status": result.get("exit_status"),
             "submission": result.get("submission"),
             "session_id": sid,
             "verification": result.get("verification"),
             "status": cli_result.status,
+            "orphaned_jobs": killed,
         }
         print(json.dumps(data, indent=2))
-        return int(cli_result.exit_code)
+        return 0 if ok else (int(cli_result.exit_code) or 1)
 
     console.print(
         f"[bold]exit[/]={result.get('exit_status')}  "
         f"[bold]session[/]={sid}  "
         f"trajectory={ensure_home() / 'trajectories' / f'{sid}.json'}"
     )
+    if killed:
+        console.print(f"[yellow]stopped {killed} leftover background job(s)[/]")
     if result.get("exit_status") == "ProviderFault":
         console.print(
             f"[kite.pending]provider fault[/] — session saved. "
@@ -223,26 +294,21 @@ def cmd_run(args: argparse.Namespace) -> int:
         console.print(f"[red]{result.get('error')}[/]")
         if result.get("traceback"):
             console.print("[dim]See session log or re-run with -v for full traceback[/]")
-    return int(cli_result.exit_code)
+    return 0 if ok else (int(cli_result.exit_code) or 1)
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
-    from kite.ui.repl import ChatSession
-
-    mode = _parse_mode(getattr(args, "mode", None))
-    approval = _parse_approval(getattr(args, "approval", None), mode)
-    if getattr(args, "approval", None) is None:
-        approval = default_approval(mode)
-    session = ChatSession(
-        cwd=getattr(args, "cwd", None) or os.getcwd(),
-        provider=getattr(args, "provider", None),
-        model=getattr(args, "model", None),
-        mode=mode,
-        approval=approval,
-        config_name=getattr(args, "config", None),
-        verbose=getattr(args, "verbose", False),
-        session_id=getattr(args, "session", None),
-    )
+    console = _console()
+    try:
+        _task, attachments = _load_attachments(
+            getattr(args, "attach", None) or [],
+            "",
+            getattr(args, "cwd", None) or os.getcwd(),
+        )
+    except (OSError, ValueError, FileNotFoundError) as e:
+        console.print(f"[red]{e}[/]")
+        return 2
+    session = _chat_session_from_args(args, attachments=attachments)
     return session.run()
 
 
@@ -321,11 +387,19 @@ def cmd_resume(args: argparse.Namespace) -> int:
             "The previous run stopped due to a provider, network, or budget interruption."
         )
     if not follow:
+        extra = _oneshot_only_flags_used(args)
+        if extra:
+            console.print(
+                "[red]one-shot flags require a follow-up message:[/] "
+                + ", ".join(extra)
+                + f"  —  kite resume {args.session} \"continue\""
+            )
+            return 2
         return cmd_chat(args)
     mode = _parse_mode(args.mode)
     approval = _parse_approval(args.approval, mode)
     if _is_headless(args):
-        from kite.tasks.headless import resolve_headless_approval
+        from kite.tasks import resolve_headless_approval
 
         approval = resolve_headless_approval(args.approval, mode, headless=True)
     try:
@@ -344,6 +418,8 @@ def cmd_resume(args: argparse.Namespace) -> int:
             cwd=args.cwd,
             step_limit=args.steps,
             cost_limit=args.cost,
+            wall_time_limit_seconds=int(getattr(args, "time", 0) or 0),
+            output_path=Path(args.output) if getattr(args, "output", None) else None,
             session_id=args.session,
             resume=True,
             follow_up=follow,
@@ -355,22 +431,41 @@ def cmd_resume(args: argparse.Namespace) -> int:
             approval=approval.value,
             interactive=False,
             attachments=attachments,
+            role=getattr(args, "role", "auto") or "auto",
             long_task=bool(getattr(args, "long", False)),
         )
     )
     _wire_display(harness, console, args)
     try:
-        from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
+        from kite.application.cli import execute_harness_task, legacy_result_from_run
 
         run_result = execute_harness_task(harness, follow)
         result = legacy_result_from_run(run_result)
     except Exception as e:
-        console.print(f"[red]{e}[/]")
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": False, "error": str(e)}))
+        else:
+            console.print(f"[red]{e}[/]")
         return 1
     finally:
         harness.teardown_jobs()
-    console.print(f"[bold]exit[/]={result.get('exit_status')}  session={args.session}")
+    sid = args.session
     exit_status = str(result.get("exit_status") or "")
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "ok": exit_status == "Submitted",
+                    "exit_status": exit_status,
+                    "session_id": sid,
+                    "submission": result.get("submission"),
+                    "error": result.get("error"),
+                },
+                indent=2,
+            )
+        )
+        return 0 if exit_status == "Submitted" else 1
+    console.print(f"[bold]exit[/]={result.get('exit_status')}  session={args.session}")
     if exit_status == "ProviderFault":
         console.print(
             "[kite.pending]provider fault[/] — session saved. "
@@ -491,6 +586,15 @@ def cmd_sessions(args: argparse.Namespace) -> int:
                 ("approval", None),
                 ("config", None),
                 ("verbose", False),
+                ("steps", None),
+                ("cost", None),
+                ("time", 0),
+                ("no_context", False),
+                ("no_compact", False),
+                ("no_guardrails", False),
+                ("role", "auto"),
+                ("long", False),
+                ("attach", []),
             ):
                 if not hasattr(args, name):
                     setattr(args, name, default)
@@ -513,50 +617,27 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 
 
 def cmd_providers(_args: argparse.Namespace) -> int:
-    from rich.table import Table
-
-    from kite.config import UserConfig, assess_setup_status
+    from kite.cli.setup import print_providers_table
+    from kite.config import assess_setup_status
     from kite.providers.catalog import load_catalog
-    from kite.providers.credentials import configured_providers, provider_credential_status
+    from kite.ui.pick import can_prompt, numbered_pick
 
     console = _console()
     catalog = load_catalog()
-    cfg = UserConfig.load()
+    print_providers_table(console)
     status = assess_setup_status()
-    cred_rows = {name: (ok, env) for name, ok, env in configured_providers()}
-    table = Table(title="Providers")
-    table.add_column("name")
-    table.add_column("display")
-    table.add_column("selected model")
-    table.add_column("auth")
-    table.add_column("status")
-    for p in catalog.list():
-        ok, env_col = cred_rows.get(p.name, (False, p.api_key_env or "—"))
-        auth = env_col if env_col in {"local", "oauth", "—"} else (p.api_key_env or "—")
-        cred_status = provider_credential_status(ok=ok, env_col=env_col)
-        selected = (
-            cfg.provider_defaults.get(p.name)
-            or (cfg.default_model if p.name == cfg.default_provider else None)
-            or p.default_model
-            or "(live)"
-        )
-        mark = " *" if p.name == cfg.default_provider else ""
-        table.add_row(p.name + mark, p.display_name, selected, auth, cred_status)
-    console.print(table)
-    console.print(
-        "[dim]* = default · BYOK = API key · BYOS = oauth subscription (chatgpt/claude/grok)[/]"
-    )
     if status.ready:
         console.print(f"[green]Ready[/]  {status.default_provider}/{status.default_model}")
     else:
         console.print("[yellow]Not ready[/] — run [cyan]kite setup[/] or [cyan]/setup[/] in the REPL")
         for hint in status.hints[:2]:
             console.print(f"[dim]{hint}[/]")
-    from kite.ui.pick import can_prompt, numbered_pick
 
     if can_prompt():
+        from kite.config import UserConfig
         from kite.providers.select import connect_interactive
 
+        cfg = UserConfig.load()
         picked = numbered_pick(
             console,
             [(p.name, f"{p.display_name}  ({p.name})") for p in catalog.list()],
@@ -977,7 +1058,8 @@ def cmd_import(args: argparse.Namespace) -> int:
 
 def cmd_exec(args: argparse.Namespace) -> int:
     args.approval = args.approval or "auto"
-    if not getattr(args, "quiet", False) and not getattr(args, "verbose", False):
+    args.headless = True
+    if not getattr(args, "verbose", False):
         args.quiet = True
     return cmd_run(args)
 
@@ -1044,16 +1126,20 @@ def cmd_cloud(args: argparse.Namespace) -> int:
     return 2
 
 
-def _add_run_flags(p: argparse.ArgumentParser) -> None:
+def _add_model_workspace_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("-p", "--provider", help="Provider name from catalog")
     p.add_argument("-m", "--model", help="Model id within provider")
     p.add_argument("--cwd", default=os.getcwd(), help="Working directory")
     p.add_argument("--config", help="Runtime config name or path (TOML)")
+
+
+def _add_budget_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--steps", type=int, default=None, help="Max model calls")
     p.add_argument("--cost", type=float, default=None, help="Cost limit USD")
     p.add_argument("--time", type=int, default=0, help="Wall-time limit seconds")
-    p.add_argument("-o", "--output", help="Trajectory JSON path")
-    p.add_argument("--label", default="", help="Session label")
+
+
+def _add_interactive_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-context", action="store_true", help="Skip AGENTS.md/git/tree injection")
     p.add_argument("--no-compact", action="store_true", help="Disable auto context compaction")
     p.add_argument("--no-guardrails", action="store_true", help="Disable path/bash/secret guardrails")
@@ -1063,17 +1149,6 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
         default=[],
         metavar="PATH",
         help="Attach a file or image to the task (repeatable)",
-    )
-    p.add_argument("-q", "--quiet", action="store_true")
-    p.add_argument(
-        "--headless",
-        action="store_true",
-        help="Line-oriented stderr log, no TTY prompts (CI / cloud agents)",
-    )
-    p.add_argument(
-        "--no-stream",
-        action="store_true",
-        help="With --headless, hide live bash/tool output lines",
     )
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument(
@@ -1099,7 +1174,30 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Long-running agentic task: higher limits, phase checkpoints, mode_long prompt",
     )
+
+
+def _add_one_shot_output_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument("-o", "--output", help="Trajectory JSON path")
+    p.add_argument("--label", default="", help="Session label")
+    p.add_argument("-q", "--quiet", action="store_true")
+    p.add_argument(
+        "--headless",
+        action="store_true",
+        help="Line-oriented stderr log, no TTY prompts (CI / cloud agents)",
+    )
+    p.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="With --headless, hide live bash/tool output lines",
+    )
     p.add_argument("--json", action="store_true", help="Emit final trajectory JSON on stdout (CI-friendly)")
+
+
+def _add_run_flags(p: argparse.ArgumentParser) -> None:
+    _add_model_workspace_flags(p)
+    _add_budget_flags(p)
+    _add_interactive_flags(p)
+    _add_one_shot_output_flags(p)
 
 
 def cmd_help(_args: argparse.Namespace) -> int:
@@ -1119,7 +1217,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="store_true", help="Print version")
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     help_p = sub.add_parser("help", help="Print CLI quick reference")
     help_p.set_defaults(func=cmd_help)
@@ -1131,7 +1229,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.set_defaults(func=cmd_run)
 
     chat = sub.add_parser("chat", help="Interactive REPL (default when bare `kite`)")
-    _add_run_flags(chat)
+    _add_model_workspace_flags(chat)
+    _add_budget_flags(chat)
+    _add_interactive_flags(chat)
     chat.add_argument("--session", help="Open an existing session id")
     chat.set_defaults(func=cmd_chat)
 
@@ -1176,13 +1276,9 @@ def build_parser() -> argparse.ArgumentParser:
     providers = sub.add_parser("providers", help="List providers + credential status")
     providers.set_defaults(func=cmd_providers)
 
-    from kite.cli.dashboard import cmd_dashboard
-    from kite.cli.setup import cmd_keys, cmd_login, cmd_logout, cmd_setup
-    from kite.cli.stats import cmd_maintainer_dashboard
-
     setup = sub.add_parser("setup", help="First-run wizard — credentials, provider, model")
     setup.add_argument("-p", "--provider", help="Skip provider picker")
-    setup.set_defaults(func=cmd_setup)
+    setup.set_defaults(func=_lazy_cmd("kite.cli.setup", "cmd_setup"))
 
     login = sub.add_parser(
         "login",
@@ -1195,14 +1291,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="set_default",
         help="Do not set this provider as default in ~/.kite/config.toml",
     )
-    login.set_defaults(func=cmd_login, set_default=True)
+    login.set_defaults(func=_lazy_cmd("kite.cli.setup", "cmd_login"), set_default=True)
 
     logout = sub.add_parser(
         "logout",
         help="Unlink a BYOS subscription (chatgpt/codex, claude, grok/xai)",
     )
     logout.add_argument("provider", nargs="?", help="Provider name (codex, claude, grok, xai, …)")
-    logout.set_defaults(func=cmd_logout)
+    logout.set_defaults(func=_lazy_cmd("kite.cli.setup", "cmd_logout"))
 
     keys = sub.add_parser(
         "keys",
@@ -1222,17 +1318,18 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PROVIDER",
         help="Remove a provider/web key or OAuth session (omit to pick)",
     )
-    keys.set_defaults(func=cmd_keys)
+    keys.set_defaults(func=_lazy_cmd("kite.cli.setup", "cmd_keys"))
 
     from kite.cli.web_keys import add_web_keys_parser
 
     add_web_keys_parser(sub)
 
-    maintainer = sub.add_parser("maintainer", help=argparse.SUPPRESS)
+    maintainer = sub.add_parser("maintainer")
     maint_sub = maintainer.add_subparsers(dest="maintainer_cmd")
-    dashboard = maint_sub.add_parser("dashboard", help=argparse.SUPPRESS)
+    dashboard = maint_sub.add_parser("dashboard")
     dashboard.add_argument("--json", action="store_true")
-    dashboard.set_defaults(func=cmd_maintainer_dashboard)
+    dashboard.set_defaults(func=_lazy_cmd("kite.cli.stats", "cmd_maintainer_dashboard"))
+    _hide_subcommand_from_help(sub, "maintainer")
 
     models = sub.add_parser("models", help="Pick a live model (or --list to dump)")
     models.add_argument("-p", "--provider", help="Filter one provider")
@@ -1339,7 +1436,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--limit", type=int, default=200, help="Max sessions to scan")
     dashboard.add_argument("--watch", type=int, default=0, metavar="SEC", help="Refresh every N seconds")
     dashboard.add_argument("--json", action="store_true")
-    dashboard.set_defaults(func=cmd_dashboard)
+    dashboard.set_defaults(func=_lazy_cmd("kite.cli.dashboard", "cmd_dashboard"))
 
     from kite.cli.subagents import add_subagents_parser
     from kite.cli.tasks import add_tasks_parser
@@ -1401,6 +1498,16 @@ def main(argv: list[str] | None = None) -> int:
                 mode="build",
                 approval=None,
                 verbose=False,
+                session=None,
+                steps=None,
+                cost=None,
+                time=0,
+                no_context=False,
+                no_compact=False,
+                no_guardrails=False,
+                role="auto",
+                long=False,
+                attach=[],
             )
         )
 

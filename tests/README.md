@@ -5,67 +5,42 @@ Run from the repo root after installing Kite:
 ```bash
 ./scripts/install.sh          # macOS/Linux — or .\scripts\install.ps1 on Windows
 pytest
-./scripts/install.sh --no-clone --verify   # install + smoke check
+./scripts/install.sh --dev --verify   # install + smoke check
 ```
 
-Or manual install: `uv venv --python 3.12` → activate → `uv pip install -e ".[dev]"` → `pytest`.
+Or: `uv pip install -e ".[dev]"` → `pytest`. No live LLM calls. `conftest.py` isolates `KITE_HOME`.
 
 ## CI
 
-GitHub Actions runs `pytest` on **every push and pull request to `main`** (Python 3.11 + 3.12). See [CONTRIBUTING.md](../CONTRIBUTING.md#ci-github-actions).
+`.github/workflows/tests.yml` runs pytest on Linux and Windows × Python 3.11 and 3.12, plus `ruff check src tests`, `sync_version.py --check`, and `kite bench --check`.
 
-## Layout
+## Layout (~150 collected tests)
+
+Prefer one module per domain. Combine related asserts in a single test (or a loop) instead of one-assert functions. Do not use `@pytest.mark.parametrize` just to inflate the collect count.
 
 | File | Covers |
 |------|--------|
-| `test_guardrails.py` | sandbox, path escape, secret redaction |
-| `test_security_hardening_more.py` | meta redaction, SSRF userinfo, attach guard, gh env filter |
-| `test_security_context_subagents.py` | USER/PROFILE permissions, crew bounds, profile symlink, nested memory strip |
-| `test_user_context.py` | global USER/PROFILE, subagent profile loader + init |
-| `test_working_style.py` | WORKING.md rhythm, untrusted injection |
-| `test_approval.py` | trust mode, `trusted_paths` bash skip |
-| `test_loop_guard.py` | repetitive tool detection |
-| `test_session.py` | append-only JSONL, meta `updated_at` |
-| `test_verification.py` | test-command artifact detection |
-| `test_orchestrator.py` | parallel subagent dispatch, profile/role args |
-| `test_context_cache.py` | 30s project-context TTL |
-| `test_skills_cache.py` | 45s skills TTL |
-| `test_status.py` | context meter, footer tail |
-| `test_chips.py` | tool chips, task row badges |
-| `test_animations.py` | loader glyphs, elapsed format |
-| `test_render.py` | warning events, git-stat `+N,-M` on edit (ANSI-safe) |
-| `test_preview_diff.py` | approval previews, `+125,-21` counts |
-| `test_skill_install.py` | npm/npx/git/local-path parse; global symlink/junction; project `.kite/skills` link |
-| `test_application_contracts.py` | RunSpec, EventEnvelope, ApplicationRunService |
-| `test_harness_build.py` | central `build_harness_config` for CLI/REPL/headless |
-| `test_recovery_goal.py` | /goal persistence, auto-recovery, resume --retry |
-| `test_context_assembler.py` | budgets, untrusted delimiters, inspection redaction |
-| `test_harness_universal.py` | 0.9 adapters: policy, approval, verification, replay, reducer |
-| `test_sota_harness.py` | submit tool, repomap, EvidenceVerifier, ToolExecutor loop, replay acceptance |
-| `test_ui_busy.py` | busy composer, approval polling, verification_status footer |
-| `test_submit_gate.py` | submit blocked without evidence |
-| `test_policy_execution.py` | PolicyEngine, ToolExecutor, ChangeJournal, path policy |
-| `test_persistence.py` | SQLite event store, resume, redaction |
-| `test_model_gateway.py` | retries, BudgetLedger |
-| `test_replay.py` | recorded replay without live providers |
-| `test_theme.py` | `/theme` palettes, `/font` glyphs |
-| `test_config.py` | default runtime TOML load |
-| `test_reasoning.py` | `/reasoning` levels, effort detection, completion |
-| `test_setup.py` | `kite setup` / `kite keys` env writer |
-| `test_maintainer_dashboard.py` | maintainer-only dashboard gate |
-| `test_git.py` | git checkpoints, `/undo` |
-| `test_prompts.py` | prompt assembly, greeting handling |
-| `test_session_list.py` | session list/delete |
-| `test_cache.py` | prompt cache stats |
-| `test_context_checkpoint_handoff.py` | checkpoints, handoff export, compaction facts |
-| `test_bench.py` | Harness timing suite + budget regression (`kite bench --check`) |
-| `test_headless_tasks.py` | JSONL task files, headless display, approval upgrade, batch runner |
-| `test_tool_result.py` | ToolResult contract, tool metadata |
-| `test_workspace.py` | execution cwd, host/restricted mode, `set_cwd` |
-| `test_cancellation_parallel.py` | bash cancel, parallel read tools |
-| `test_repl_lazy.py` | REPL cold start skips model resolve |
-| `test_cli_commands.py` | slash legacy aliases, `kite help` |
+| `test_security.py` | sandbox, SSRF, env filter, redaction, inspection bash, nested-agent bounds |
+| `test_guardrails.py` | dangerous bash, cache deletes, skill-tree reads |
+| `test_approval.py` | supervised/auto/yolo, mandatory high-risk, non-interactive deny |
+| `test_agent.py` | loop limits/retry/guard, modes, completion, cancel, dispatch, submit gate |
+| `test_application.py` | RunSpec, PolicyEngine, ToolExecutor, verification, nested policy |
+| `test_providers.py` | BYOS OAuth, select, reasoning, Codex LiteLLM flatten |
+| `test_credentials.py` | `~/.kite/.env` keys, web-tool keys, Claude usable vs linked |
+| `test_cli.py` | apply/diff, slash help, chat/resume flags |
+| `test_headless_tasks.py` | JSONL tasks, Submitted-only success, non-interactive approval |
+| `test_ui.py` | render, theme, REPL slash/jobs, attach, preview |
+| `test_composer.py` | Ctrl-C steer/stop, queue, approval composer |
+| `test_memory.py` | persistence modes, continuity, USER/PROFILE, prompts |
+| `test_session.py` | append-only JSONL, compact rewrite, stats |
+| `test_tools.py` | paid web chain, jobs, compaction, shell |
+| `test_web.py` | search/fetch/crawl parsing (no network) |
+| `test_orchestrator.py` | crew dispatch, success semantics |
+| `test_workspace.py` | host vs restricted, `set_cwd` |
+| `test_util.py` | cache, version stamps, venv, replay, tool metadata |
+| `test_skills.py` | install specs, user vs project load |
+| `test_bench.py` | harness timing budgets (`kite bench --check`) |
 
-Fixtures in `conftest.py`: isolated `KITE_HOME`, sample workspace with `src/`, `strip_ansi()` helper.
+Fixtures: isolated `KITE_HOME`, sample workspace with `src/`, `strip_ansi()`.
 
-Not covered yet: live LLM calls, catalog resolve edge cases, full CLI integration, handoff round-trip across machines.
+Imports use flattened modules: `kite.application.execution`, `kite.application.policy`, `kite.eval`, `kite.tasks`, `kite.plugins.extensions` (not nested `….pipeline` / `….headless` / `….replay` packages).

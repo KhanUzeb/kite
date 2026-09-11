@@ -7,7 +7,7 @@ from typing import Any
 
 from kite.agent.events import Event
 from kite.agent.harness import Harness
-from kite.application.adapters.harness import harness_config_from_run_spec
+from kite.application.adapters import harness_config_from_run_spec
 from kite.application.contracts import RunResult, RunSpec, StopReason
 from kite.application.dependencies import HarnessDependencies
 from kite.application.events import LegacyEventBridge
@@ -28,9 +28,7 @@ def _map_exit_status(exit_status: str | None) -> tuple[str, StopReason | None]:
     }
     if status in mapping:
         return mapping[status]
-    if status:
-        return "failed", "error"
-    return "completed", None
+    return "failed", "error"
 
 
 def _apply_run_state(state: RunState, event: Event) -> None:

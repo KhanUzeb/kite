@@ -62,7 +62,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("init", "Write KITE.md project memory", group="session"),
     BuiltinCommand("trace", "Last error traceback", group="session"),
     BuiltinCommand("home", "Show ~/.kite paths", group="session"),
-    BuiltinCommand("help", "This map", aliases=("h",), group="session"),
+    BuiltinCommand("help", "Command map, shortcuts, and remaining docs", aliases=("h",), group="session"),
     BuiltinCommand("quit", "Leave the REPL", aliases=("q", "exit"), group="session"),
     BuiltinCommand("theme", "Color palette", hint="auto|kite|dark|light|dim|mono|monochrome|catppuccin|ember|forest|hues|transparent", group="session"),
     BuiltinCommand("font", "Glyphs for this terminal", hint="unicode|ascii", group="session"),

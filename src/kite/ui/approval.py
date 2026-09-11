@@ -608,9 +608,8 @@ def make_approver(
         )
 
     def approve(tool: str, arguments: dict[str, Any], extra: dict[str, Any] | None = None) -> Decision:
-        from kite.application.tools.contracts import ToolCall
-        from kite.application.tools.effects import derive_effects
-        from kite.application.tools.effects import mandatory_reason as canonical_mandatory_reason
+        from kite.application.tools import ToolCall, derive_effects
+        from kite.application.tools import mandatory_reason as canonical_mandatory_reason
 
         extra = extra or {}
         cmd = str(arguments.get("command") or "")

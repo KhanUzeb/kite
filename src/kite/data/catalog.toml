@@ -44,7 +44,7 @@ oauth_provider = "anthropic"
 models = []
 default_model = "claude-opus-5"
 docs_url = "https://claude.ai"
-billing_note = "OAuth — uses your Claude Max/Pro plan, not API credits"
+billing_note = "Claude Code can be linked for status; Kite model calls need ANTHROPIC_API_KEY"
 
 [[providers]]
 name = "anthropic"

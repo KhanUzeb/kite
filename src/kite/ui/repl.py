@@ -64,12 +64,29 @@ class ChatSession:
         config_name: str | None = None,
         verbose: bool = False,
         session_id: str | None = None,
+        step_limit: int | None = None,
+        cost_limit: float | None = None,
+        wall_time_limit_seconds: int = 0,
+        no_context: bool = False,
+        no_compact: bool = False,
+        no_guardrails: bool = False,
+        role: str = "auto",
+        long_task: bool = False,
+        attachments: list | None = None,
     ):
         self.cwd = cwd
         self.provider = provider
         self.model = model
         self.config_name = config_name
         self.verbose = verbose
+        self.step_limit = step_limit
+        self.cost_limit = cost_limit
+        self.wall_time_limit_seconds = wall_time_limit_seconds or 0
+        self.no_context = no_context
+        self.no_compact = no_compact
+        self.no_guardrails = no_guardrails
+        self.role = role or "auto"
+        self.long_task = long_task
         self.console = make_console(stderr=True)
         self.state = SessionUiState(
             mode=mode,
@@ -82,7 +99,7 @@ class ChatSession:
         self._goal = None
         self._memory = None
         self._memory_in_prompt = False
-        self.attachments: list = []
+        self.attachments: list = list(attachments or [])
         self._session_id: str | None = None
         self._harness = None
         self._harness_key: tuple | None = None
@@ -98,10 +115,7 @@ class ChatSession:
         self._composer_action: dict[str, str] = {"kind": "submit"}
         self._busy = False
         self._quit_after_turn = False
-        from kite.application.policy import ApprovalCoordinator
-
-        self._approval_coordinator = ApprovalCoordinator(interactive=sys.stdin.isatty())
-        self._approval_coordinator.wake_main = self._wake_composer
+        self._approval_coord = None
         self._approval_resolving = False
         self._approval_wake_sent = False
         self._composer_wake = False
@@ -120,6 +134,21 @@ class ChatSession:
             self.model = cfg.default_model or self.model
         self.state.provider = self.provider or self.state.provider
         self.state.model = self.model or self.state.model
+
+    @property
+    def _approval_coordinator(self):
+        coord = self._approval_coord
+        if coord is None:
+            from kite.application.policy import ApprovalCoordinator
+
+            coord = ApprovalCoordinator(interactive=sys.stdin.isatty())
+            coord.wake_main = self._wake_composer
+            self._approval_coord = coord
+        return coord
+
+    @_approval_coordinator.setter
+    def _approval_coordinator(self, value) -> None:
+        self._approval_coord = value
 
     def _ensure_model_resolved(self) -> None:
         if self._model_resolved and self.provider and self.model:
@@ -154,7 +183,7 @@ class ChatSession:
             return provider or "", model or ""
 
     def _startup_banner(self) -> None:
-        from kite.config.readiness import assess_setup_status_fast, format_setup_banner, is_fresh_install
+        from kite.config.readiness import assess_setup_status_fast, format_setup_banner
 
         cfg = UserConfig.load()
         prov = self.provider or cfg.default_provider or "—"
@@ -182,12 +211,11 @@ class ChatSession:
         self.console.print(banner)
 
         status = assess_setup_status_fast(provider=self.provider, model=self.model)
-        if is_fresh_install():
+        if not status.ready:
             self.console.print(
-                "[kite.brand]Welcome![/]  First time here? Run [kite.brand]/setup[/] "
+                "[kite.brand]Welcome![/]  Run [kite.brand]/setup[/] "
                 "or [kite.brand]kite setup[/] to add an API key and pick a model."
             )
-        elif not status.ready:
             note = format_setup_banner(status)
             if note:
                 self.console.print(note)
@@ -372,6 +400,14 @@ class ChatSession:
             self._memory_in_prompt,
             (self._goal.objective if self._goal and self._goal.active else ""),
             (self._goal.status if self._goal else ""),
+            self.step_limit,
+            self.cost_limit,
+            self.wall_time_limit_seconds,
+            self.no_context,
+            self.no_compact,
+            self.no_guardrails,
+            self.role,
+            self.long_task,
         )
 
     def _goal_objective_for_harness(self) -> str:
@@ -422,6 +458,14 @@ class ChatSession:
                 execution_mode=self._execution_mode(),
                 memory_in_prompt=self._memory_in_prompt,
                 goal_objective=self._goal_objective_for_harness(),
+                step_limit=self.step_limit,
+                cost_limit=self.cost_limit,
+                wall_time_limit_seconds=self.wall_time_limit_seconds,
+                no_context=self.no_context,
+                no_compact=self.no_compact,
+                no_guardrails=self.no_guardrails,
+                role=self.role,
+                long_task=self.long_task,
             )
         )
         h.job_registry = self.jobs
@@ -1016,8 +1060,6 @@ class ChatSession:
             line = Prompt.ask(
                 f"[kite.brand]{SYMBOL_PROMPT}[/]",
                 console=self.console,
-                default="",
-                show_default=False,
             )
         except EOFError:
             return None
@@ -2468,18 +2510,19 @@ class ChatSession:
             self.console.print(f"[kite.error]{e}[/]")
             return
         if not task.strip() and not bundled:
+            self.console.print("[kite.muted]empty — type a task or /help[/]")
             return
         if not task.strip():
             task = "Look at the attached files."
-        preview = task.replace("\n", " ").strip()
-        self.state.set_running(label=preview[:80] or "working", kind="turn")
-        self.attachments = list(bundled)
-        self._sync_attach_count()
         try:
             self._ensure_model_resolved()
         except Exception as e:
             self.console.print(f"[kite.error]{escape(str(e))}[/]  [kite.muted]/login · /select · kite setup[/]")
             return
+        preview = task.replace("\n", " ").strip()
+        self.state.set_running(label=preview[:80] or "working", kind="turn")
+        self.attachments = list(bundled)
+        self._sync_attach_count()
 
         from kite.config.runtime import load_runtime_config
         from kite.memory.continuity import build_continuity_brief, save_continuity
@@ -2525,7 +2568,7 @@ class ChatSession:
 
             def worker() -> None:
                 try:
-                    from kite.application.cli.runner import execute_harness_task, legacy_result_from_run
+                    from kite.application.cli import execute_harness_task, legacy_result_from_run
 
                     run_result = execute_harness_task(harness, prompt_task)
                     box["result"] = legacy_result_from_run(run_result)
@@ -2747,9 +2790,11 @@ class ChatSession:
                     self.console.print("[kite.muted]nothing running[/]  — session stays open")
                     continue
                 if got.kind == "empty":
+                    self.console.print("[kite.muted]empty — type a task or /help[/]")
                     continue
                 line = got.text
-                if not line:
+                if not line or not str(line).strip():
+                    self.console.print("[kite.muted]empty — type a task or /help[/]")
                     continue
             parsed = resolve_slash(line, self._index())
             if parsed.kind != "not_slash":
