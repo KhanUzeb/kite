@@ -44,7 +44,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--cwd` | Workspace |
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
-| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | `yolo` = no prompts; `auto`/`trust` = workspace-scoped; `supervised`/`approve` = approve mutations; `readonly` = block writes |
+| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | Tiered autonomy: `yolo` = only critical prompts (outside workspace, sudo); `auto`/`trust` = routine in-workspace work auto-runs (install, test, commit); `supervised`/`approve` = approve all mutations; `readonly` = block writes |
 | `--steps` `--cost` `--time` | Limits (honored by `run`, `chat`, and one-shot `resume`) |
 | `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
@@ -63,7 +63,7 @@ One-shot / headless flags (`kite run`, `kite resume <id> "continue"` — not `ki
 
 Persistent compaction is `kite config --auto-compact true|false` (not a run/chat flag).
 
-`--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto` permits ordinary in-workspace changes while mandatory approval gates fail closed.
+`--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto`/`yolo` permit routine in-workspace work (installs, tests, commits) while critical gates (outside workspace, sudo, remote shell) fail closed.
 
 **Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
 
@@ -183,7 +183,7 @@ These never go to the model.
 |---------|----------------|
 | `/plan` `/p` | Read-only: explore + checklist (no edits); switch to `/build` to apply |
 | `/build` `/b` | Apply edits; continues existing plan checklist; approval leaves `readonly` → supervised |
-| `/approve yolo\|auto\|supervised` | Autonomy. Empty: numbered picker. yolo skips in-workspace prompts; high-risk still asks |
+| `/approve yolo\|auto\|supervised` | Autonomy. Empty: numbered picker. `auto`/`yolo` auto-run routine dev work; only serious/critical actions prompt |
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off**). Empty: pick on/off |
 | `/privacy` | Security policy summary; `/privacy sessions` picks full/redacted/disabled |
 | `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |

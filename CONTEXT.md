@@ -44,7 +44,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Build mode** — Default apply mode. Edits, bash, and writes are allowed subject to **approval**.
 
-**Approval** — How much autonomy mutating tools get in a session: `auto`, `approve`, `trust`, or `readonly`.
+**Approval** — Tiered autonomy for mutating tools: `yolo` (critical-only prompts), `auto`/`trust` (routine in-workspace work auto-runs), `approve`/`supervised` (prompt all mutations), or `readonly`.
 
 **Role** — Optional persona (`architect`, `implementer`, `debugger`) that adjusts the system prompt fragment.
 

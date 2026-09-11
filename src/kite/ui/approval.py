@@ -6,6 +6,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import IntEnum
 from fnmatch import fnmatch
 from typing import Any, Literal
 
@@ -31,6 +32,14 @@ Decision = Literal["allow", "session", "always", "deny", "stop"]
 
 GitBashKind = Literal["read", "write", "other"]
 
+
+class ConsequenceLevel(IntEnum):
+    """How serious a mutating action is — higher tiers prompt in more autonomy modes."""
+
+    ROUTINE = 0   # installs, tests, in-workspace edits — auto in auto/yolo/trust
+    SERIOUS = 1   # push, destructive rm, network fetch, durable memory — auto in yolo
+    CRITICAL = 2  # outside workspace, sudo, remote shell — always prompt
+
 # Flags that consume the next token (git -C /path status).
 _GIT_VALUE_FLAGS = frozenset({"-c", "--git-dir", "--work-tree", "--namespace"})
 
@@ -48,24 +57,23 @@ _GIT_READ_SUBS = frozenset({
     "help", "version", "reflog", "config",
 })
 
-# High-risk bash — always prompt; no yolo/auto/trust/remember bypass.
-_MANDATORY_BASH = re.compile(
+# Critical bash — always prompt, even in yolo (outside-workspace / privileged / remote).
+_CRITICAL_BASH = re.compile(
     r"(?i)\b("
     r"sudo\b|su\b|doas\b"
-    r"|git\s+(commit|push|reset|rebase|clean|stash\s+(push|pop|apply)|checkout\s+-[fB]|branch\s+-[dD])"
-    r"|rm\b|rmdir\b|del\b|remove-item\b|erase\b"
-    r"|chmod\b|chown\b|chgrp\b|icacls\b|takeown\b"
-    r"|pip\s+(install|uninstall)|pip3\s+(install|uninstall)"
-    r"|npm\s+(install|uninstall|ci)|yarn\s+(add|remove)|pnpm\s+(add|remove)"
-    r"|cargo\s+install|apt(-get)?\s+install|brew\s+install|dnf\s+install|yum\s+install"
-    r"|curl\b|wget\b|invoke-webrequest\b|iwr\b"
     r"|docker\s+(run|rm|system\s+prune)|kubectl\s+(apply|delete)"
     r"|ssh\b|scp\b|rsync\b"
     r")\b"
 )
 
-_PACKAGE_INSTALL = re.compile(
-    r"(?i)\b(pip3?|npm|yarn|pnpm|cargo|apt|apt-get|brew|dnf|yum)\s+(install|uninstall|ci|add|remove)\b"
+# Serious bash — prompt in auto/trust; yolo proceeds without asking.
+_SERIOUS_BASH = re.compile(
+    r"(?i)\b("
+    r"git\s+(push|reset|rebase|clean|stash\s+(push|pop|apply)|checkout\s+-[fB]|branch\s+-[dD])"
+    r"|rm\b|rmdir\b|del\b|remove-item\b|erase\b"
+    r"|chmod\b|chown\b|chgrp\b|icacls\b|takeown\b"
+    r"|curl\b|wget\b|invoke-webrequest\b|iwr\b"
+    r")\b"
 )
 
 
@@ -158,6 +166,95 @@ def action_pattern(tool: str, arguments: dict[str, Any]) -> str:
     return f"{tool}:*"
 
 
+def _git_bash_consequence(command: str) -> ConsequenceLevel:
+    """Classify git subcommands by consequence — commit/add/checkout are routine dev work."""
+    tokens = _git_command_tokens(command)
+    if not tokens:
+        return ConsequenceLevel.ROUTINE
+    sub, *rest = tokens
+    if sub in {"push", "fetch"}:
+        return ConsequenceLevel.SERIOUS
+    if sub in {"reset", "rebase", "clean", "filter-branch", "update-ref"}:
+        return ConsequenceLevel.SERIOUS
+    if sub == "stash" and rest and rest[0] in {"pop", "apply", "drop", "clear", "push", "store"}:
+        return ConsequenceLevel.SERIOUS
+    if sub == "branch" and any(x in rest for x in ("-d", "-D", "-m", "-M", "--delete", "--move")):
+        return ConsequenceLevel.SERIOUS
+    if sub == "remote" and rest and rest[0] in {"add", "remove", "rm", "set-url", "rename", "prune"}:
+        return ConsequenceLevel.SERIOUS
+    if sub == "tag" and rest and not rest[0].startswith("-") and rest[0] not in {"-l", "--list", "list"}:
+        return ConsequenceLevel.SERIOUS
+    if sub == "config" and rest and rest[0] not in {"--get", "--list", "-l"} and not any(
+        r.startswith("--get") for r in rest
+    ):
+        if len(rest) >= 2 or "=" in " ".join(rest):
+            return ConsequenceLevel.SERIOUS
+    return ConsequenceLevel.ROUTINE
+
+
+def action_consequence(
+    tool: str,
+    *,
+    command: str = "",
+    arguments: dict[str, Any] | None = None,
+    workspace_cwd: str | None = None,
+    bash_cwd: str | None = None,
+) -> tuple[ConsequenceLevel, str]:
+    """Return (severity, reason) for a mutating tool call. Routine actions need no prompt in auto/yolo."""
+    args = arguments or {}
+    if tool in {"write", "edit"}:
+        path = str(args.get("path") or "")
+        if path and workspace_cwd and not _path_in_workspace(path, workspace_cwd):
+            return ConsequenceLevel.CRITICAL, "writes outside the project workspace always need approval"
+        return ConsequenceLevel.ROUTINE, ""
+    if tool != "bash":
+        return ConsequenceLevel.ROUTINE, ""
+    cmd = (command or str(args.get("command") or "")).strip()
+    if not cmd:
+        return ConsequenceLevel.ROUTINE, ""
+    blocked = check_dangerous(cmd)
+    if blocked:
+        reason = blocked.replace("bash command blocked by sandbox: ", "blocked command — ")
+        return ConsequenceLevel.CRITICAL, reason
+    if workspace_cwd and check_command_paths(cmd, workspace_root(workspace_cwd)):
+        return ConsequenceLevel.CRITICAL, "shell paths outside the project workspace always need approval"
+    if workspace_cwd and not _cwd_in_workspace(bash_cwd, workspace_cwd):
+        return ConsequenceLevel.CRITICAL, "shell outside the project workspace always needs approval"
+    if is_benign_cache_delete(cmd):
+        return ConsequenceLevel.ROUTINE, ""
+    if _CRITICAL_BASH.search(cmd):
+        if re.search(r"(?i)\b(sudo|su|doas)\b", cmd):
+            return ConsequenceLevel.CRITICAL, "privileged commands always need approval"
+        return ConsequenceLevel.CRITICAL, "high-risk remote or privileged command always needs approval"
+    if is_git_read(cmd):
+        return ConsequenceLevel.ROUTINE, ""
+    if is_git_write(cmd):
+        level = _git_bash_consequence(cmd)
+        if level is ConsequenceLevel.SERIOUS:
+            return level, "git history or remote changes need approval"
+        return ConsequenceLevel.ROUTINE, ""
+    if _SERIOUS_BASH.search(cmd):
+        if re.search(r"(?i)\b(rm|rmdir|del|remove-item|erase)\b", cmd):
+            return ConsequenceLevel.SERIOUS, "destructive file removal needs approval"
+        if re.search(r"(?i)\b(curl|wget|invoke-webrequest|iwr)\b", cmd):
+            return ConsequenceLevel.SERIOUS, "network fetch commands need approval"
+        if re.search(r"(?i)\b(chmod|chown|chgrp|icacls|takeown)\b", cmd):
+            return ConsequenceLevel.SERIOUS, "permission changes need approval"
+        return ConsequenceLevel.SERIOUS, "high-risk shell command needs approval"
+    return ConsequenceLevel.ROUTINE, ""
+
+
+def consequence_prompt_threshold(approval: ApprovalMode) -> ConsequenceLevel:
+    """Minimum consequence level that triggers a prompt for this autonomy mode."""
+    if approval is ApprovalMode.YOLO:
+        return ConsequenceLevel.CRITICAL
+    if approval in {ApprovalMode.AUTO, ApprovalMode.TRUST}:
+        return ConsequenceLevel.SERIOUS
+    if approval is ApprovalMode.APPROVE:
+        return ConsequenceLevel.ROUTINE
+    return ConsequenceLevel.ROUTINE
+
+
 def mandatory_approval_reason(
     tool: str,
     *,
@@ -166,43 +263,16 @@ def mandatory_approval_reason(
     workspace_cwd: str | None = None,
     bash_cwd: str | None = None,
 ) -> str | None:
-    """Return a user-facing reason when this action must always be approved."""
-    args = arguments or {}
-    if tool in {"write", "edit"}:
-        path = str(args.get("path") or "")
-        if path and workspace_cwd and not _path_in_workspace(path, workspace_cwd):
-            return "writes outside the project workspace always need approval"
-        return None
-    if tool != "bash":
-        return None
-    cmd = (command or str(args.get("command") or "")).strip()
-    if not cmd:
-        return None
-    blocked = check_dangerous(cmd)
-    if blocked:
-        return blocked.replace("bash command blocked by sandbox: ", "blocked command — ")
-    if workspace_cwd and check_command_paths(cmd, workspace_root(workspace_cwd)):
-        return "shell paths outside the project workspace always need approval"
-    if is_git_write(cmd):
-        return "git history changes always need approval"
-    # Known relative caches (.pytest_cache, .ruff_cache, …) — auto/yolo may proceed;
-    # supervised still prompts via ApprovalMode.APPROVE, not this mandatory gate.
-    if is_benign_cache_delete(cmd):
-        return None
-    if _MANDATORY_BASH.search(cmd):
-        if _PACKAGE_INSTALL.search(cmd):
-            return "package installs always need approval"
-        if re.search(r"(?i)\b(rm|rmdir|del|remove-item|erase)\b", cmd):
-            return "destructive file removal always needs approval"
-        if re.search(r"(?i)\b(sudo|su|doas)\b", cmd):
-            return "privileged commands always need approval"
-        if re.search(r"(?i)\b(curl|wget|invoke-webrequest|iwr)\b", cmd):
-            return "network fetch commands always need approval"
-        if re.search(r"(?i)\b(chmod|chown|chgrp|icacls|takeown)\b", cmd):
-            return "permission changes always need approval"
-        return "high-risk shell command always needs approval"
-    if workspace_cwd and not _cwd_in_workspace(bash_cwd, workspace_cwd):
-        return "shell outside the project workspace always needs approval"
+    """Return a reason only for critical-tier actions (always prompt, even in yolo)."""
+    level, reason = action_consequence(
+        tool,
+        command=command,
+        arguments=arguments,
+        workspace_cwd=workspace_cwd,
+        bash_cwd=bash_cwd,
+    )
+    if level is ConsequenceLevel.CRITICAL and reason:
+        return reason
     return None
 
 
@@ -214,13 +284,14 @@ def is_mandatory_approval(
     workspace_cwd: str | None = None,
     bash_cwd: str | None = None,
 ) -> bool:
-    return mandatory_approval_reason(
+    level, _ = action_consequence(
         tool,
         command=command,
         arguments=arguments,
         workspace_cwd=workspace_cwd,
         bash_cwd=bash_cwd,
-    ) is not None
+    )
+    return level is ConsequenceLevel.CRITICAL
 
 
 _SAFE_BASH = re.compile(
@@ -340,6 +411,30 @@ def _needs_approval_by_mode(
     return None
 
 
+def _effect_consequence(
+    effects: tuple[str, ...],
+    *,
+    tool: str,
+    args: dict[str, Any],
+) -> tuple[ConsequenceLevel, str]:
+    """Map canonical tool effects to consequence tiers."""
+    from kite.application.tools import mandatory_reason as canonical_mandatory_reason
+
+    reason = canonical_mandatory_reason(effects, tool=tool, args=args)
+    if not reason:
+        return ConsequenceLevel.ROUTINE, ""
+    low = reason.lower()
+    if "outside" in low or "privileged" in low or "blocked" in low:
+        return ConsequenceLevel.CRITICAL, reason
+    if "nested agent" in low or "durable memory" in low:
+        return ConsequenceLevel.SERIOUS, reason
+    if "package" in low or "skill install" in low:
+        return ConsequenceLevel.ROUTINE, ""
+    if "network" in low or "destructive" in low:
+        return ConsequenceLevel.SERIOUS, reason
+    return ConsequenceLevel.SERIOUS, reason
+
+
 def needs_approval(
     tool: str,
     mode: AgentMode,
@@ -350,39 +445,43 @@ def needs_approval(
     trusted_paths: list[str] | None = None,
     workspace_cwd: str | None = None,
     bash_cwd: str | None = None,
+    effects: tuple[str, ...] | None = None,
 ) -> bool:
     args = arguments or {}
     if tool not in MUTATING_TOOLS:
+        if effects:
+            level, _ = _effect_consequence(effects, tool=tool, args=args)
+            return level >= consequence_prompt_threshold(approval)
         return False
-    if is_mandatory_approval(
+    if tool == "bash" and (is_git_read(command) or is_inspection_bash(command)):
+        return False
+    plan = _needs_approval_plan(tool, mode, command)
+    if plan is not None:
+        return plan
+    if approval is ApprovalMode.READONLY:
+        return True
+    level, _ = action_consequence(
         tool,
         command=command,
         arguments=args,
         workspace_cwd=workspace_cwd,
         bash_cwd=bash_cwd,
-    ):
-        return True
-    if tool == "bash":
-        kind = git_bash_kind(command)
-        if kind == "read":
-            return False
-        if kind == "write":
-            return True
-    plan = _needs_approval_plan(tool, mode, command)
-    if plan is not None:
-        return plan
-    by_mode = _needs_approval_by_mode(
-        tool,
-        approval,
-        command=command,
-        args=args,
-        trusted_paths=trusted_paths,
-        workspace_cwd=workspace_cwd,
-        bash_cwd=bash_cwd,
     )
-    if by_mode is not None:
-        return by_mode
-    return True
+    if effects:
+        effect_level, _ = _effect_consequence(effects, tool=tool, args=args)
+        level = max(level, effect_level, key=int)
+    if approval is ApprovalMode.TRUST and tool == "bash":
+        if trusted_paths and workspace_cwd:
+            from kite.guardrails.sandbox import clamp_cwd, cwd_in_trusted, workspace_root
+
+            root = workspace_root(workspace_cwd)
+            workdir, _ = clamp_cwd(bash_cwd, root)
+            if workdir and cwd_in_trusted(workdir, root, trusted_paths) and _is_safe_bash(command):
+                return False
+        if _cwd_in_workspace(bash_cwd, workspace_cwd) and _is_safe_bash(command):
+            return False
+    threshold = consequence_prompt_threshold(approval)
+    return level >= threshold
 
 
 _GIT_WRITE_BASH = re.compile(r"(?i)bash:git\s+(commit|push|reset|rebase)")
@@ -609,25 +708,26 @@ def make_approver(
 
     def approve(tool: str, arguments: dict[str, Any], extra: dict[str, Any] | None = None) -> Decision:
         from kite.application.tools import ToolCall, derive_effects
-        from kite.application.tools import mandatory_reason as canonical_mandatory_reason
 
         extra = extra or {}
         cmd = str(arguments.get("command") or "")
-        effects = set(derive_effects(ToolCall("approval", tool, arguments)))
-        mandatory_reason = mandatory_approval_reason(
+        bash_cwd = str(arguments.get("cwd") or "") or None
+        effects = tuple(derive_effects(ToolCall("approval", tool, arguments)))
+        level, reason = action_consequence(
             tool,
             command=cmd,
             arguments=arguments,
             workspace_cwd=workspace_cwd,
-            bash_cwd=str(arguments.get("cwd") or "") or None,
+            bash_cwd=bash_cwd,
         )
-        mandatory_reason = mandatory_reason or canonical_mandatory_reason(
-            tuple(effects),
-            tool=tool,
-            args=arguments,
-        )
+        effect_level, effect_reason = _effect_consequence(effects, tool=tool, args=arguments)
+        if tool == "bash" and level is ConsequenceLevel.ROUTINE:
+            reason = reason or effect_reason
+        else:
+            level = max(level, effect_level, key=int)
+            reason = reason or effect_reason
         mutates = bool(
-            effects & {"durable_memory", "destructive", "package_or_skill_install"}
+            set(effects) & {"durable_memory", "destructive", "package_or_skill_install"}
             or tool in MUTATING_TOOLS
             or (
                 "workspace_write" in effects
@@ -642,14 +742,9 @@ def make_approver(
                 return "deny"
         if approval is ApprovalMode.READONLY and mutates:
             return "deny"
-        if mandatory_reason:
-            return _prompt_or_coordinate(
-                tool,
-                arguments,
-                extra,
-                reason=mandatory_reason,
-                mandatory=True,
-            )
+        threshold = consequence_prompt_threshold(approval)
+        if level < threshold:
+            return "allow"
         if not needs_approval(
             tool,
             mode,
@@ -658,20 +753,21 @@ def make_approver(
             arguments=arguments,
             trusted_paths=trusted_paths,
             workspace_cwd=workspace_cwd,
-            bash_cwd=str(arguments.get("cwd") or "") or None,
+            bash_cwd=bash_cwd,
+            effects=effects,
         ):
             return "allow"
         pattern = action_pattern(tool, arguments)
-        if policy.remembered(pattern):
+        if policy.remembered(pattern) and level < ConsequenceLevel.CRITICAL:
             return "allow"
         if not interactive:
-            return "deny" if is_git_write(cmd) or approval is ApprovalMode.APPROVE else "allow"
+            return "deny" if level >= threshold else "allow"
         return _prompt_or_coordinate(
             tool,
             arguments,
             extra,
-            reason=str(extra.get("reason") or ""),
-            mandatory=False,
+            reason=reason or str(extra.get("reason") or ""),
+            mandatory=level >= ConsequenceLevel.CRITICAL,
         )
 
     return approve
