@@ -37,7 +37,8 @@ kite                          # open REPL
 Q: I just installed Kite. What do I type first?
 A: kite setup, then kite. In the REPL try:
      /status        — model, mode, cost, session id
-     /help          — full map + shortcuts
+     /help          — essential commands
+     /help all      — full map + shortcuts
      /plan          — explore before editing
      /build         — apply changes
 ```

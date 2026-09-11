@@ -486,10 +486,18 @@ def _path_completions(prefix: str, start: int):
 
 
 def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[SlashSpec]:
+    from kite.ui.commands import LEGACY_ALIASES, is_primary_slash
+
     rows: list[SlashSpec] = []
     seen: set[str] = set()
     for spec in index.specs.values():
         if spec.name in seen:
+            continue
+        if spec.name in LEGACY_ALIASES:
+            continue
+        if spec.kind == "control" and not is_primary_slash(spec.name):
+            continue
+        if spec.kind == "prompt":
             continue
         if spec.name in {"thinking", "fast"} and not support.can_both:
             continue
@@ -499,7 +507,7 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
             continue
         seen.add(spec.name)
         rows.append(spec)
-    rows.sort(key=lambda s: (0 if s.kind == "control" else 1, s.name))
+    rows.sort(key=lambda s: s.name)
     return rows
 
 
@@ -543,32 +551,29 @@ def _toolbar_hint_line(bits: list[str]) -> str:
 
 def _toolbar_html(state: SessionUiState) -> Any:
     ui = ui_colors()
+    if state.awaiting_approval:
+        hints = _toolbar_hint_line(_toolbar_approval_bits(state))
+        return HTML(f"<style fg='{ui.accent}'>{_escape_html(hints.strip())}</style>")
+
     tail = format_status_tail(state)
     flash = ""
     if state.flash:
         flash = (
             f"  {glyph('sep')} <style fg='{ui.accent}'><b>{_escape_html(state.flash)}</b></style>"
         )
-    if state.awaiting_approval:
-        hints = _toolbar_hint_line(_toolbar_approval_bits(state))
-    elif state.busy:
-        hints = _toolbar_hint_line(_toolbar_busy_bits(state))
-    else:
-        hints = ""
+    hints = _toolbar_hint_line(_toolbar_busy_bits(state)) if state.busy else ""
     main = (
         f"<style fg='{brand_fg()}'><b>kite</b></style>"
         f"<style fg='{ui.muted}'> {glyph('sep')} {_escape_html(tail)}{flash}{hints}</style>"
     )
     lines: list[str] = []
-    running = format_running_status(state)
-    if running:
-        lines.append(
-            f"<style fg='{ui.accent}'>●</style>"
-            f"<style fg='{ui.muted}'> {_escape_html(running)}</style>"
-        )
-    metrics = format_metrics_tail(state)
-    if metrics:
-        lines.append(f"<style fg='{ui.muted}'>{_escape_html(metrics)}</style>")
+    if state.busy:
+        running = format_running_status(state)
+        if running:
+            lines.append(
+                f"<style fg='{ui.accent}'>●</style>"
+                f"<style fg='{ui.muted}'> {_escape_html(running)}</style>"
+            )
     lines.append(main)
     return HTML("\n".join(lines))
 
