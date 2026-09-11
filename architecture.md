@@ -27,7 +27,7 @@ Deeper references: [kite_commands.md](kite_commands.md) (CLI/REPL) · [CONTEXT.m
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  CLI + UI          cli/run.py · ui/repl.py · ui/render.py     │
-│  argparse, slash commands, Rich TUI, approval prompts        │
+│  argparse, slash commands, Rich TUI, cockpit, approval cards │
 └────────────────────────────┬─────────────────────────────────┘
                              │  Event(kind, payload) / EventEnvelope
                              ▼
@@ -71,7 +71,7 @@ Deeper references: [kite_commands.md](kite_commands.md) (CLI/REPL) · [CONTEXT.m
    - `model.query(messages)` — streaming assistant + tool calls
    - `execute_actions()` — `PolicyEngine.authorize` → approval gate → **`ToolExecutor`** → `env.execute()` → observations appended; **`verification_status`** events on state change
 5. **Persist** — Messages append to `~/.kite/sessions/<id>.jsonl`; optional trajectory JSON; audit log entries.
-6. **Render** — `RunDisplay` in `ui/render.py` maps events to chips, diffs, spinner, footer meter.
+6. **Render** — `RunDisplay` in `ui/render.py` maps events to chips, diffs, spinner, footer meter. In parallel, `RunCockpitReducer` (`ui/cockpit/`) projects the same events into `RunViewModel` for the optional cockpit layout (`/cockpit`, `Ctrl+Space`).
 
 Exit paths: **`submit`** tool or bash submit marker, step/cost/time limits, user interrupt (Ctrl+C), submit blocked (verification), or unrecoverable format errors.
 
@@ -111,6 +111,8 @@ Exit paths: **`submit`** tool or bash submit marker, step/cost/time limits, user
 | `plugins/extensions.py` | `.kite/extensions` `register_tool` loader |
 | `skills/` | Load `SKILL.md`; install npm/git or **symlink** a local folder into `~/.kite/skills` |
 | `ui/repl.py` | prompt_toolkit REPL, slash expansion, keybindings |
+| `ui/cockpit/` | Run-centric view model, semantic timeline, cockpit layout, review/approval surfaces |
+| `application/ui.py` | `ReplEventReducer` + `RunViewReducer` (envelope → presentation / view model) |
 
 ---
 
@@ -170,21 +172,29 @@ Tools implement a common `Tool.run(args) → {ok, output, …}` contract. Produc
 
 ## Event-driven UI
 
-The agent emits events; the UI never polls internal state.
+The agent emits events; the UI never polls internal state. **Event log is truth; rendered UI is a projection.**
+
+```
+Events → RunCockpitReducer → RunViewModel → Compact TUI / Cockpit
+              ↘ RunDisplay (transcript cells, tool cards, footer)
+```
 
 | Event | UI effect |
 |-------|-----------|
 | `stream_delta` / `stream_reasoning` | Live assistant text |
-| `tool_start` / `tool_progress` / `tool_end` | Tool chips, spinner, write/edit diff preview, collapsed output |
-| `subagent_start` / `subagent_end` | Crew board rows; `/live agents` streams nested activity |
+| `tool_start` / `tool_progress` / `tool_end` | Tool chips (with duration on done), spinner, write/edit diff preview, collapsed output |
+| `subagent_start` / `subagent_end` | Crew board rows; cockpit Inspect panel; `/live agents` streams nested activity |
 | `job_output` | Background bash/subagent line streaming (redacted) |
-| `context` | Footer token meter |
-| `compact` | Compaction notice (`↻ before → after`) |
+| `context` | Footer token meter; cockpit context % |
+| `compact` | Compaction notice (`↻ before → after`); timeline checkpoint entry |
 | `checkpoint` | Context snapshot saved (`◇ checkpoint`) |
-| `approval` | Inline approve/deny prompt |
-| `submit_blocked` | Verification gate rejected completion; reason in stream |
-| `verification_status` | Footer updates (`verified`, `changed_unverified`, `failed`, …) |
-| `todo` | Live plan checklist |
+| `approval` | Foreground approval card + inline prompt |
+| `submit_blocked` | Verification gate rejected completion; cockpit shows **Unverified** |
+| `verification_status` / `verification_record` | Footer + cockpit verification panel |
+| `todo` | Live plan checklist; cockpit plan progress |
+| `diff` | Git-stat diff preview; cockpit Changes panel |
+
+**Display modes:** **compact** (default) — dense transcript. **cockpit** — three-column layout (Work · Run · Inspect) when terminal ≥100×30; toggle with `/cockpit` or `Ctrl+Space`.
 
 Streaming uses stderr for loaders; stdout stays clean for copy/paste.
 

@@ -46,7 +46,7 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 - **Skill trust** — bundled skills are trusted; npm/git/project skills are labeled untrusted with provenance metadata.
 - **Global identity memory** — `~/.kite/memory/USER.md`, `PROFILE.md`, `WORKING.md` (always global, never per-repo); injected as soft untrusted context when present.
 - **Subagent orchestration** — bundled personas + custom `~/.kite/subagents/*.md` (`kite subagents --init`, `/agents init`), `profile`/`role` dispatch, `/agents` crew board, `/live agents` streaming.
-- **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, write/edit diff previews, git-stat diffs, theme/font switching, and a context-usage meter.
+- **Rich TUI** — streaming, collapsed tool blocks, live plan checklist, write/edit diff previews, git-stat diffs, theme/font switching, context-usage meter, and an optional **run cockpit** (`/cockpit`, `Ctrl+Space`) with timeline, changes, and verification panels.
 - **Portable** — install once, then run `kite` from any project directory via `--cwd`.
 
 ## Setup
@@ -145,7 +145,7 @@ kite models -p nvidia --select       # NVIDIA NIM (NVIDIA_API_KEY)
 kite runtime-config
 ```
 
-**REPL shortcuts:** `Ctrl+O` expand tool output · `Ctrl+P` plan · `Ctrl+B` build · `Ctrl+S` status · type `/` for commands
+**REPL shortcuts:** `Ctrl+O` expand tool output · `Ctrl+Space` cockpit · `Ctrl+P` plan · `Ctrl+B` build · `F2` status · type `/` for commands
 
 ### Use Kite on any project 
 
@@ -213,7 +213,7 @@ kite resume <session-id>
 kite resume <session-id> "also update the README"
 ```
 
-In the REPL: `/help` for commands · `/user` `/profile` `/working` · `/agents profiles` · `/live` and `/live agents` · `/plan` `/build` · Ctrl+C interrupts the turn. Shortcuts: Ctrl+O expand · Ctrl+P plan · Ctrl+B build · Ctrl+S status.
+In the REPL: `/help` for commands · `/cockpit` for run layout · `/user` `/profile` `/working` · `/agents profiles` · `/live` and `/live agents` · `/plan` `/build` · Ctrl+C interrupts the turn. Shortcuts: Ctrl+O expand · Ctrl+Space cockpit · Ctrl+P plan · Ctrl+B build · F2 status.
 
 Approval modes: `auto` · `approve` · `trust` · `readonly`. Set `KITE_LOADER=grid|dots|orbit|wave|spin` for terminal loader style.
 

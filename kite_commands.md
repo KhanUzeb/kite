@@ -254,6 +254,23 @@ These never go to the model.
 
 Ctrl+C stops the **current turn**, not the process.
 
+### Run cockpit (`/cockpit`)
+
+Kite is **run-centric**: the primary object is a **Run** (goal → plan → tools → changes → verification → result), not a chat scrollback.
+
+| Mode | When | Layout |
+|------|------|--------|
+| **Compact** | Default; any terminal | Dense transcript, footer meter, collapsed tool output |
+| **Cockpit** | `/cockpit` or `Ctrl+Space`; terminal ≥100×30 | Work · Run · Inspect panels: timeline, changes (+/−), verification, crew, composer pills |
+
+```text
+/cockpit           toggle compact ↔ cockpit
+/cockpit on|off    explicit mode
+/cockpit refresh   redraw cockpit without toggling
+```
+
+On terminals smaller than 100×30 columns × 30 rows, cockpit stays in compact mode. Both modes read the same event stream — switching does not reset the run.
+
 ### Keyboard shortcuts (composer)
 
 | Shortcut | Action |
