@@ -127,6 +127,8 @@ class KiteApp(App[None]):
         Binding("f2", "flash_status", "Status"),
         Binding("tab", "accept_completion", "Complete", show=False),
         Binding("ctrl+\\\\", "toggle_sidebar", "Sidebar"),
+        Binding("ctrl+g", "steer_turn", "Steer", show=False),
+        Binding("ctrl+u", "dequeue_turn", "Dequeue", show=False),
     ]
 
     def __init__(self, session: ChatSession) -> None:
@@ -217,6 +219,9 @@ class KiteApp(App[None]):
             self.session.state.clear_running()
             self.session.display.flush_transcript_buffer()
             self._refresh_status()
+            self._update_composer_hint()
+        else:
+            self._update_composer_hint()
 
     def _maybe_show_approval(self) -> None:
         req = self.session._approval_coordinator.pending
@@ -248,6 +253,7 @@ class KiteApp(App[None]):
     def wait_for_turn(self, done: threading.Event) -> None:
         self._turn_done = done
         self._turn_waiting = True
+        self._update_composer_hint()
 
     def _composer_line_prefix(self) -> str:
         composer = self.query_one("#composer", Composer)
@@ -299,15 +305,51 @@ class KiteApp(App[None]):
         if event.row is not None:
             self._apply_completion(event.row)
 
+    def _is_busy(self) -> bool:
+        return bool(self.session._busy or self._turn_waiting)
+
+    def _update_composer_hint(self) -> None:
+        composer = self.query_one("#composer", Composer)
+        if self._is_busy():
+            composer.placeholder = "working… Enter queues · Esc stop · Ctrl+G steer · Ctrl+U dequeue · /tasks"
+        else:
+            composer.placeholder = "Ask kite…  (Enter send · Alt+Enter newline · /help)"
+
+    def _dispatch_busy_line(self, text: str) -> bool:
+        """Handle composer input while a turn is in flight. True = stop waiting."""
+        from kite.ui.complete import BusyComposerHandlers, apply_busy_composer_result, classify_busy_line
+
+        def _slash_hint() -> None:
+            self.post_message(StatusFlashMessage("still working — /tasks · /status · /help"))
+
+        handlers = BusyComposerHandlers(
+            on_queue=self.session._queue_message,
+            on_stop=self.session._request_stop,
+            on_steer=self.session._queue_steer,
+            on_slash_while_busy=_slash_hint,
+            on_busy_slash=self.session._handle_slash_while_busy,
+            on_eof=lambda: setattr(self.session, "_quit_after_turn", True),
+            on_empty=lambda: self.post_message(StatusFlashMessage("Enter queues · Esc stop · Ctrl+G steer")),
+            on_dequeue=self._dequeue_to_composer,
+        )
+        return apply_busy_composer_result(classify_busy_line(text), handlers)
+
+    def _dequeue_to_composer(self) -> None:
+        restored = self.session._dequeue_to_composer()
+        if restored:
+            self.query_one("#composer", Composer).text = restored
+
     @on(Composer.Submitted, "#composer")
     def _submit(self, event: Composer.Submitted) -> None:
         self.query_one("#complete-popup", CompletePopup).hide()
         text = event.text.strip()
         if not text:
+            if self._is_busy():
+                self.post_message(StatusFlashMessage("Enter queues · Esc stop · Ctrl+G steer"))
             return
-        if self.session._busy or self._turn_waiting:
-            self.session._queue_message(text)
-            self.post_message(StatusFlashMessage(f"queued: {text[:60]}"))
+        if self._is_busy():
+            if self._dispatch_busy_line(text):
+                self.session._request_stop()
             return
         from kite.cli.slash import resolve_slash
 
@@ -339,9 +381,27 @@ class KiteApp(App[None]):
         self.post_message(StatusFlashMessage("toggled expand"))
 
     def action_stop_turn(self) -> None:
-        if self.session._busy:
+        if self._is_busy():
             self.session._request_stop()
             self.post_message(StatusFlashMessage("stopping…"))
+
+    def action_steer_turn(self) -> None:
+        if not self._is_busy():
+            return
+        composer = self.query_one("#composer", Composer)
+        text = composer.text.strip()
+        composer.text = ""
+        if not text:
+            self.post_message(StatusFlashMessage("type steer text, then Ctrl+G or /steer …"))
+            return
+        self.session._queue_steer(text)
+        self.session._request_stop()
+        self.post_message(StatusFlashMessage(f"steer: {text[:60]}"))
+
+    def action_dequeue_turn(self) -> None:
+        if not self._is_busy():
+            return
+        self._dequeue_to_composer()
 
     def action_flash_status(self) -> None:
         from kite.ui.status import format_status_tail
