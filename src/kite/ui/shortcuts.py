@@ -19,8 +19,18 @@ composer (idle)
   Ctrl+T / F7     toggle thinking trace
   F2              flash status footer
   F5              refresh models, then pick
-  Ctrl+Space      toggle fullscreen workbench
   @path           attach file inline (e.g. fix @src/foo.py)
+"""
+
+TEXTUAL_SHORTCUTS = """\
+Textual TUI (default)
+  Enter           send · Alt+Enter newline
+  Tab             accept completion
+  Ctrl+\\          toggle sidebar (sessions / crew / changes)
+  Ctrl+G          steer (while busy)
+  Ctrl+U          dequeue (while busy)
+  Ctrl+P / B      plan / build mode
+  KITE_LEGACY_TUI=1  Rich scrollback REPL (no sidebar)
 """
 
 BUSY_SHORTCUTS = """\

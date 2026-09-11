@@ -121,11 +121,6 @@ class ChatSession:
         self._composer_wake = False
         self._approval_panel_id: str | None = None
         self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
-        from kite.ui.fullscreen import FullscreenReducer
-        from kite.ui.fullscreen.mode import UiDisplayMode
-
-        self._fullscreen = FullscreenReducer()
-        self._display_mode: UiDisplayMode = "compact"
         self._textual_app = None
         from kite.tools.jobs import JobRegistry
 
@@ -319,9 +314,6 @@ class ChatSession:
             self._apply_ui_event(event)
 
     def _apply_ui_event(self, event) -> None:
-        self._fullscreen.apply_event(event)
-        if self._display_mode == "fullscreen":
-            self._maybe_refresh_fullscreen(event.kind)
         self.display(event)
 
     def _drain_ui_queue(self, *, limit: int = 500) -> None:
@@ -1050,7 +1042,6 @@ class ChatSession:
             on_status=lambda: self._flash_note(_status()),
             on_attach_clipboard=lambda: self._flash_note(self._attach_clipboard_shortcut()),
             on_clear_screen=lambda: self.console.clear(),
-            on_toggle_fullscreen=lambda: self._flash_note(self._toggle_fullscreen_mode()),
             is_busy=lambda: self._busy,
             is_awaiting_approval=lambda: bool(self.state.awaiting_approval),
             can_remember_approval=lambda: bool(
@@ -1307,109 +1298,13 @@ class ChatSession:
         show_all = (arg or "").strip().lower() in {"all", "full", "advanced"}
         self.console.print(help_text(self._index(), all=show_all), style="kite.muted")
 
-    def _terminal_size(self) -> tuple[int, int]:
-        return self.console.width or 120, self.console.height or 40
-
-    def _sync_fullscreen_session(self) -> None:
-        from pathlib import Path
-
-        from kite.agent.mode import approval_display_name
-
-        repo = Path(self.cwd).name
-        done = sum(1 for item in self.state.todos if item.status == "completed")
-        self._fullscreen.sync_session(
-            mode=self.state.mode.value,
-            provider=self.provider or self.state.provider,
-            model=self.model or self.state.model,
-            branch=self.state.git_branch,
-            repo=repo,
-            approval=approval_display_name(self.state.approval),
-            attachments=[a.name for a in self.attachments],
-            queued=self.state.queued,
-            context_pct=(self.state.context_pct or 0.0) * 100 if self.state.context_pct else 0.0,
-            cost=self.state.cost,
-            turn=self.state.turn,
-            plan_done=done,
-            plan_total=len(self.state.todos),
-            display_mode=self._display_mode,
+    def _slash_fullscreen(self, _arg: str) -> None:
+        if self._textual_app is not None:
+            self.console.print("[kite.muted]fullscreen workbench retired[/]  ·  Ctrl+\\ sidebar")
+            return
+        self.console.print(
+            "[kite.muted]fullscreen workbench retired[/]  ·  default Textual TUI  ·  KITE_LEGACY_TUI=1 for scrollback REPL"
         )
-
-    def _render_fullscreen(self) -> None:
-        from kite.ui.fullscreen import render_fullscreen
-
-        self._sync_fullscreen_session()
-        self._fullscreen.model.display_mode = self._display_mode
-        cols, rows = self._terminal_size()
-        body = render_fullscreen(self.console, self._fullscreen.model, cols=cols, rows=rows)
-        self.console.clear()
-        self.console.print(body)
-
-    def _toggle_fullscreen_mode(self) -> str:
-        from kite.ui.fullscreen import can_show_fullscreen
-
-        cols, rows = self._terminal_size()
-        if self._display_mode == "compact":
-            if not can_show_fullscreen(cols, rows):
-                return "fullscreen needs ≥100×30 — staying compact"
-            self._display_mode = "fullscreen"
-            self.state.fullscreen = True
-            self._render_fullscreen()
-            return "fullscreen on  (Ctrl+Space · /fullscreen off)"
-        self._exit_fullscreen_mode()
-        return "fullscreen off"
-
-    def _exit_fullscreen_mode(self) -> None:
-        self._display_mode = "compact"
-        self.state.fullscreen = False
-        self.display.flush_transcript_buffer()
-
-    def _maybe_refresh_fullscreen(self, kind: str) -> None:
-        if self._display_mode != "fullscreen":
-            return
-        refresh_kinds = {
-            "tool_start",
-            "tool_end",
-            "stream_delta",
-            "diff",
-            "verification_status",
-            "verification_record",
-            "approval",
-            "todo",
-            "agent_end",
-            "turn_end",
-            "submit_blocked",
-            "error",
-        }
-        if kind in refresh_kinds:
-            self._render_fullscreen()
-
-    def _slash_fullscreen(self, arg: str) -> None:
-        from kite.ui.fullscreen import can_show_fullscreen, preferred_display_mode
-
-        token = (arg or "").strip().lower()
-        cols, rows = self._terminal_size()
-        if token in {"on", "enable"}:
-            self._display_mode = preferred_display_mode(preference="fullscreen", cols=cols, rows=rows)
-            if self._display_mode == "compact":
-                self.console.print("[kite.pending]terminal too small for fullscreen (need ≥100×30)[/]")
-                return
-            self.state.fullscreen = True
-            self._render_fullscreen()
-            self.console.print("[kite.muted]fullscreen on[/]")
-            return
-        if token in {"off", "disable"}:
-            self._exit_fullscreen_mode()
-            self.console.print("[kite.muted]fullscreen off[/]")
-            return
-        if token in {"refresh", "redraw"}:
-            if self._display_mode != "fullscreen":
-                self.console.print("[kite.muted]fullscreen is off — /fullscreen on[/]")
-                return
-            self._render_fullscreen()
-            return
-        note = self._toggle_fullscreen_mode()
-        if note:
-            self.console.print(f"[kite.muted]{note}[/]")
 
     def _slash_plan(self, _arg: str) -> None:
         self._apply_plan_mode()

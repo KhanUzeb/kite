@@ -24,27 +24,21 @@ Kite streams work as it happens — tools, diffs, answers — in one fluid trans
 
 Tool output is **collapsed by default**. `Ctrl+O` or `/expand` shows full logs. The footer shows mode, model, and cost; `/status` has the rest.
 
-### Fullscreen workbench (`/fullscreen` or `Ctrl+Space`, terminal ≥100×30)
+### Textual sidebar (`Ctrl+\`)
 
-Optional layout with three panels — same events, no separate app:
+Default interactive UI includes a Tau-style left rail:
 
-```text
-┌ kite · repo · branch · build · model ─────────────────────────┐
-├ WORK ──────┬ STREAM ──────────────────┬ INSPECT ──────────────┤
-│ ● running  │ ● read   src/auth.py     │ VERIFICATION          │
-│ checklist  │ ✓ edit   src/auth.py     │ ✓ pytest  18 passed   │
-│ turn 3     │ • assistant  Done…       │ Changes  1 file       │
-├────────────┴──────────────────────────┴───────────────────────┤
-│ composer below · Ctrl+Space · /fullscreen off                 │
-└───────────────────────────────────────────────────────────────┘
-```
+- **Sessions** — recent transcripts, current session marked
+- **Crew** — subagent workers (`/agents`, `/kill`)
+- **Changes** — `git diff` summary for the workspace
 
 ```text
-/fullscreen on|off|refresh
-Ctrl+Space       toggle
+Ctrl+\     toggle sidebar
+Enter      send · Alt+Enter newline
+Tab        slash / @file completion
 ```
 
-While a turn runs in fullscreen, the stream panel refreshes instead of duplicating tool cards in scrollback.
+Legacy Rich fullscreen workbench (`/fullscreen`) is retired — use the sidebar or `/status`.
 
 ---
 
