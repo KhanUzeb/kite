@@ -275,7 +275,9 @@ time.sleep(120)
     except OSError:
         alive = False
     assert not alive
-    result = ProcessRunner(timeout_seconds=1.0).run(f"{sys.executable} -c \"import time; time.sleep(30)\"")
+    result = ProcessRunner(timeout_seconds=1.0).run(
+        [sys.executable, "-c", "import time; time.sleep(30)"]
+    )
     assert result.exit_code == -1
 
 
