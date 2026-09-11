@@ -76,10 +76,10 @@ PARALLEL_SAFE_TOOLS = frozenset({"read", "grep", "glob", "ls"})
 
 
 def is_parallel_safe(tool: str) -> bool:
-    """True when this tool may run alongside others in the same model turn."""
-    from kite.tools.metadata import is_concurrency_safe
+    """True when this tool is always safe to batch (read-only / network reads)."""
+    from kite.agent.parallel import is_parallel_safe as _static_parallel_safe
 
-    return is_concurrency_safe(tool)
+    return _static_parallel_safe(tool)
 
 # Mutating / side-effecting — gated; write/edit never offered in plan mode.
 # bash is mutating by default but plan mode still exposes it for inspection-only

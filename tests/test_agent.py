@@ -191,6 +191,17 @@ def test_plan_build_tools_and_plan_submit_block(workspace: Path) -> None:
     assert PARALLEL_SAFE_TOOLS.issubset(READONLY_TOOLS)
     assert is_parallel_safe("read") and is_parallel_safe("websearch") and is_parallel_safe("webfetch")
     assert not is_parallel_safe("write") and not is_parallel_safe("bash")
+    from kite.agent.parallel import action_parallel_eligible, can_parallelize_batch
+
+    assert action_parallel_eligible("write") and action_parallel_eligible("edit")
+    cwd = str(workspace)
+    assert can_parallelize_batch(
+        [
+            {"tool": "write", "arguments": {"path": "x.py", "content": "1"}},
+            {"tool": "write", "arguments": {"path": "y.py", "content": "2"}},
+        ],
+        cwd=cwd,
+    )
     assert {"write", "edit", "bash"} <= MUTATING_TOOLS
     assert "Checklist handoff" in load_prompt_template("mode_build")
     plan_prompt = load_prompt_template("mode_plan")
