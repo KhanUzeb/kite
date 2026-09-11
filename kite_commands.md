@@ -2,7 +2,9 @@
 
 Kite is a coding agent. **What lands in git is still yours.** These commands steer the process, not a second commit stream.
 
-**New to Kite?** Start with the visual [guide.md](guide.md) (workflows, example Q&A, cockpit layout). This file is the complete reference.
+**New to Kite?** Start with the visual [guide.md](guide.md) (workflows, example Q&A). This file is the complete reference.
+
+**Progressive disclosure:** `kite --help` and `/help` show only the essentials. Run `kite help all` or `/help all` for the full map (legacy aliases still work).
 
 There are four surfaces:
 
@@ -252,7 +254,7 @@ These never go to the model.
 | `/clip` `/paste` `/clipboard` | Attach clipboard text or image (**F8** or **Esc v**) |
 | `/detach [name\|all]` | Drop queued attachments |
 | `/attachments` | List queued files |
-| `/help` `/h` | Command map, keyboard shortcuts, and remaining docs (`kite_commands.md`, `CONTEXT.md`, `architecture.md`, `SECURITY.md`, current `docs/RELEASE-X.Y.Z.md`) |
+| `/help` `/h` | Essential commands (12). `/help all` adds legacy aliases, shortcuts, and doc pointers (`kite_commands.md`, `CONTEXT.md`, …) |
 | `/quit` `/q` `/exit` | Leave the REPL |
 
 Ctrl+C stops the **current turn**, not the process.
