@@ -14,7 +14,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Header, Input, RichLog, Static
+from textual.widgets import Button, Footer, Header, RichLog, Static
+
+from kite.ui.textual.composer import Composer
 
 from kite.agent.events import Event
 from kite.ui.textual.display import TextualRunDisplay
@@ -40,10 +42,6 @@ Screen {
     color: $text-muted;
 }
 
-#composer {
-    height: 3;
-    border: tall $accent;
-}
 
 #flash {
     height: 1;
@@ -132,7 +130,7 @@ class KiteApp(App[None]):
         yield RichLog(id="transcript", highlight=True, markup=True, wrap=True)
         yield Static("", id="flash")
         yield Static("", id="status-line")
-        yield Input(placeholder="Ask kite…  (build mode · /plan to explore first · /help)", id="composer")
+        yield Composer(id="composer")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -146,7 +144,7 @@ class KiteApp(App[None]):
         self._write_banner()
         self.set_interval(0.12, self._poll_turn)
         self.set_interval(0.4, self._refresh_status)
-        self.query_one("#composer", Input).focus()
+        self.query_one("#composer", Composer).focus()
 
     def _write_banner(self) -> None:
         from kite.config import UserConfig
@@ -229,10 +227,9 @@ class KiteApp(App[None]):
         self._turn_done = done
         self._turn_waiting = True
 
-    @on(Input.Submitted, "#composer")
-    def _submit(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
-        event.input.value = ""
+    @on(Composer.Submitted, "#composer")
+    def _submit(self, event: Composer.Submitted) -> None:
+        text = event.text.strip()
         if not text:
             return
         if self.session._busy or self._turn_waiting:
