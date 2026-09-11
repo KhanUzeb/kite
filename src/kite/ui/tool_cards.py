@@ -137,7 +137,15 @@ def render_stream_tool_preview(name: str, partial_args: str) -> Text:
     return line
 
 
-def render_tool_card_start(card: ToolCard, *, running: bool = True) -> Text:
+def format_duration_ms(duration_ms: int | None) -> str:
+    if duration_ms is None:
+        return ""
+    if duration_ms < 1000:
+        return f"{duration_ms}ms"
+    return f"{duration_ms / 1000:.1f}s"
+
+
+def render_tool_card_start(card: ToolCard, *, running: bool = True, duration_ms: int | None = None) -> Text:
     line = Text()
     prefix = ""
     if card.parallel_batch > 1:
@@ -148,7 +156,10 @@ def render_tool_card_start(card: ToolCard, *, running: bool = True) -> Text:
     if card.detail:
         line.append(f" {glyph('sep')} ", style="kite.muted")
         line.append(card.detail, style="kite.muted")
-    if running:
+    if duration_ms is not None:
+        line.append(f" {glyph('sep')} ", style="kite.muted")
+        line.append(format_duration_ms(duration_ms), style="kite.muted")
+    elif running:
         line.append(f" {glyph('sep')} ", style="kite.muted")
         line.append("running", style="kite.pending italic")
     line.append("\n")
@@ -183,6 +194,7 @@ def render_tool_card_done(
     deleted: int | None = None,
     preview: str = "",
     summary: str = "",
+    duration_ms: int | None = None,
 ) -> Text:
     if warn:
         mark, style = glyph("warn"), "kite.pending"
@@ -193,6 +205,8 @@ def render_tool_card_done(
     line = Text()
     line.append(f"{GUTTER}{mark} ", style=style)
     line.append(tool, style=style)
+    if duration_ms is not None:
+        line.append(f"  {format_duration_ms(duration_ms)}", style="kite.muted")
     if meta:
         line.append(f"  {meta}", style="kite.muted")
     if added is not None or deleted is not None:

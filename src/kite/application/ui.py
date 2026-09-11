@@ -1,4 +1,4 @@
-"""REPL event reducer."""
+"""REPL event reducer — legacy presentation + run-centric view model."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from kite.application.events import EventEnvelope
+from kite.ui.cockpit.reducer import RunCockpitReducer
+from kite.ui.cockpit.view_model import RunViewModel
 
 
 @dataclass
@@ -68,3 +70,10 @@ class ReplEventReducer:
             "tool_active": self.presentation.tool_active,
             "event_count": len(self._events),
         }
+
+
+class RunViewReducer(RunCockpitReducer):
+    """Application-layer alias for the run-centric cockpit reducer."""
+
+    def apply(self, envelope: EventEnvelope) -> RunViewModel:
+        return self.apply_envelope(envelope)

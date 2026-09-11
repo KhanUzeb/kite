@@ -17,6 +17,7 @@ composer (idle)
   Ctrl+P / F3     plan mode
   Ctrl+B / F4     build mode
   Ctrl+T / F7     toggle thinking trace
+  Ctrl+Space      toggle cockpit / compact layout
   F2              flash status footer
   F5              refresh models, then pick
   @path           attach file inline (e.g. fix @src/foo.py)

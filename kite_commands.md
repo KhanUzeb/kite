@@ -226,6 +226,7 @@ These never go to the model.
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Toggle expanded tool output |
+| `/cockpit` | Toggle run-centric cockpit layout (`on`/`off`/`refresh`; needs ≥100×30 terminal) |
 | `/live` | Stream bash output in real time while tools run |
 | `/live agents` | Stream subagent crew tool + shell output with worker prefix |
 | `/collapse` | Collapse tool output (default) |
@@ -268,6 +269,7 @@ Ctrl+C stops the **current turn**, not the process.
 | `Enter` | Send the line. While working, queues a chat follow-up |
 | `@path` | Inline file attach in the composer (e.g. `fix @src/foo.py`) |
 | `Ctrl+O` / `F6` | Toggle expanded tool output (`/expand`) |
+| `Ctrl+Space` | Toggle cockpit / compact layout (`/cockpit`) |
 | `Ctrl+P` / `F3` | Plan mode |
 | `Ctrl+B` / `F4` | Build mode |
 | `Ctrl+T` / `F7` | Toggle thinking trace (expanded by default) |
