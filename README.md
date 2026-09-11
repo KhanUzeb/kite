@@ -179,14 +179,16 @@ pytest                    # guardrails, agent, sessions, git-stat diffs, skills,
 pytest -v                 # verbose
 ```
 
-Coverage focuses on guardrails, approval/trust, loop detection, session I/O, verification, orchestrator dispatch, user context + subagent security (`test_security_*`), 0.9 application adapters (`PolicyEngine`, `ToolExecutor`, replay acceptance), reasoning/setup UX, and status/chip renderers. It is not a full integration suite against live LLM APIs.
+Coverage is a compact ~150-test suite: guardrails/SSRF, approval, agent loop, sessions, verification, orchestrator, credentials/BYOS, CLI/REPL, and `PolicyEngine`/`ToolExecutor`. It is not a full integration suite against live LLM APIs. See `tests/README.md`.
 
 ```bash
-./scripts/lint.sh              # CI parity: sync_version + ruff + pytest + kite bench --check
-pytest tests/test_security_context_subagents.py -q   # memory/profile/subagent hardening only
+python scripts/sync_version.py --check
+ruff check src tests
+pytest -q
+kite bench --check
 ```
 
-**CI:** GitHub Actions runs `pytest` on every push and pull request to `main` (Python 3.11 + 3.12). Details in [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
+**CI:** GitHub Actions (`.github/workflows/tests.yml`) runs `sync_version.py --check`, `ruff check src tests`, `pytest -q`, and `kite bench --check` on Linux and Windows × Python 3.11 and 3.12. Details in [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
 
 ## CLI
 
@@ -277,20 +279,12 @@ Canonical markdown:
 - [`architecture.md`](architecture.md): system overview — layers, lifecycle, memory, extension points
 - `CONTEXT.md`: domain glossary (terms agents and humans share)
 - `AGENTS.md`: how to hack on this repo (map, conventions, tests)
-- `docs/kite-system-design.md`: architecture atlas and tradeoffs
 - [`docs/RELEASE-0.9.6.md`](docs/RELEASE-0.9.6.md): latest release notes
-- [`docs/RELEASE-0.9.0.md`](docs/RELEASE-0.9.0.md): 0.9 release notes
-
-Generated PDFs (gitignored): `docs/kite-system-design.pdf`, `docs/kite_commands.pdf`
-
-```bash
-uv pip install fpdf2
-python scripts/build_design_pdf.py
-```
+- [`CHANGELOG.md`](CHANGELOG.md): version history
 
 ```
 src/kite/
-  application/             # 0.9 RunSpec, PolicyEngine, ToolExecutor, replay, verification
+  application/             # 0.9 contracts as modules: execution, policy, tools, verification, …
   agent/                   # loop, runtime, harness, mode, events, exceptions
   cli/                     # argparse entry, slash index
   ui/                      # Rich TUI (loaders, chips, context meter)
@@ -299,9 +293,9 @@ src/kite/
   providers/
   context/                 # discovery, repomap (git-ranked symbols), workspace
   memory/
-  skills/ commands/ plugins/
-  eval/                    # ReplayBundle + acceptance criteria (no live LLM)
-scripts/
-  install.sh download.sh download-macos.sh install.ps1   # global uv tool CLI (mac/linux/win)
-tests/                     # pytest suite (~440+ tests, no live LLM)
+  skills/ commands/ plugins/   # plugins/extensions.py loads .kite/extensions
+  eval.py                  # ReplayBundle + acceptance criteria (no live LLM)
+  tasks.py                 # kite tasks / --headless batches
+scripts/                   # install + download (unix/win), sync_version.py, bump_release.sh
+tests/                     # pytest suite (~150 tests, no live LLM)
 ```
