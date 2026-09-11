@@ -156,7 +156,7 @@ class LitellmModel:
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
         if self.registry is not None:
-            kwargs["tools"] = self.registry.openai_schemas()
+            kwargs["tools"] = self.registry.tool_schemas()
             kwargs["tool_choice"] = "auto"
         if self.timeout_seconds > 0:
             kwargs["timeout"] = float(self.timeout_seconds)

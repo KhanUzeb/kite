@@ -140,6 +140,20 @@ def test_noninteractive_auto_plan_and_readonly(workspace: Path) -> None:
     coordinator.request.assert_not_called()
 
 
+def test_coding_blanket_windows_commands(workspace: Path) -> None:
+    ws = str(workspace)
+    for cmd in (
+        "Get-ChildItem src",
+        "powershell -Command \"pytest -q\"",
+        "Remove-Item -Recurse -Force .pytest_cache",
+        "Invoke-WebRequest https://example.com",
+    ):
+        assert is_coding_bash(cmd), cmd
+        assert not needs_approval(
+            "bash", AgentMode.BUILD, ApprovalMode.AUTO, command=cmd, workspace_cwd=ws, bash_cwd=ws
+        ), cmd
+
+
 def test_mandatory_still_prompts_when_pattern_remembered(monkeypatch) -> None:
     policy = ApprovalPolicy(session_patterns={"bash:git commit*"})
     calls: list[str] = []

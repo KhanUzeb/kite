@@ -71,6 +71,7 @@ _CRITICAL_BASH = re.compile(
 )
 
 # Coding blanket — routine in-workspace dev commands (Codex workspace-write, OMP write mode).
+# POSIX + Windows/PowerShell — provider-agnostic; any model may emit either style.
 _CODING_BASH = re.compile(
     r"(?i)(?:^|[;&|]\s*)("
     r"pip3?\b|npm\b|yarn\b|pnpm\b|cargo\b|uv\b|apt(?:-get)?\b|brew\b|dnf\b|yum\b"
@@ -79,8 +80,11 @@ _CODING_BASH = re.compile(
     r"|python3?\s+-m\s+(pytest|pip|build|unittest)\b|node\b|npx\b|uvicorn\b|gunicorn\b"
     r"|git\s+(status|diff|log|show|branch|add|commit|checkout|merge|pull|stash|switch|restore|rev-parse|describe|fetch)\b"
     r"|mkdir\b|touch\b|cp\b|mv\b|rm\b|rmdir\b|chmod\b|chown\b|cat\b|head\b|tail\b|tee\b"
-    r"|curl\b|wget\b|rg\b|grep\b|find\b|fd\b|ls\b|pwd\b|echo\b|which\b|wc\b|file\b|stat\b|tree\b"
+    r"|curl\b|wget\b|rg\b|grep\b|find\b|fd\b|ls\b|dir\b|pwd\b|echo\b|which\b|where\b|wc\b|file\b|stat\b|tree\b"
     r"|docker\s+compose\b|docker\s+build\b|kubectl\s+get\b|kubectl\s+describe\b"
+    r"|powershell\b|pwsh\b|cmd(?:\.exe)?\b"
+    r"|get-content\b|get-childitem\b|remove-item\b|new-item\b|copy-item\b|move-item\b|set-content\b"
+    r"|invoke-webrequest\b|iwr\b|select-string\b|test-path\b"
     r")\b"
 )
 

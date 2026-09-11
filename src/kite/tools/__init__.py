@@ -57,7 +57,12 @@ class ToolRegistry:
     def list(self) -> list[Tool]:
         return list(self._tools.values())
 
-    def openai_schemas(self) -> list[dict[str, Any]]:
+    def tool_schemas(self) -> list[dict[str, Any]]:
+        """Provider-neutral tool definitions (OpenAI function schema via LiteLLM)."""
         if self._schema_cache is None:
             self._schema_cache = [t.schema() for t in self._tools.values()]
         return self._schema_cache
+
+    def openai_schemas(self) -> list[dict[str, Any]]:
+        """Alias for tool_schemas — kept for callers expecting the legacy name."""
+        return self.tool_schemas()

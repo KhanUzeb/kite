@@ -179,7 +179,30 @@ def resolve_model(
 
     from kite.providers.capabilities import agent_model_warning
 
-    warning = agent_model_warning(model_name or "")
+    remote_raw: dict[str, Any] | None = None
+    if model_name:
+        try:
+            from kite.providers.list_models import find_remote_model
+
+            remote = find_remote_model(spec, model_name, config=cfg, catalog=cat)
+            if remote is not None:
+                remote_raw = dict(remote.raw)
+        except Exception as exc:  # noqa: BLE001 — resolve must stay non-fatal
+            import logging
+
+            logging.getLogger("kite.providers.resolve").debug(
+                "remote model metadata lookup failed for %s/%s: %s",
+                provider_name,
+                model_name,
+                exc,
+            )
+
+    warning = agent_model_warning(
+        model_name or "",
+        raw=remote_raw,
+        provider=provider_name,
+        litellm_model=litellm_model,
+    )
 
     return ResolvedModel(
         provider=provider_name,
