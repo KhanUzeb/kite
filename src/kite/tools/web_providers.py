@@ -142,16 +142,53 @@ def _normalize_hits(rows: list[dict[str, Any]], *, max_results: int) -> list[dic
     return out
 
 
-def _format_search_output(query: str, results: list[dict[str, str]], *, engine: str) -> str:
-    lines = [f"query: {query}", f"results: {len(results)}", f"engine: {engine}", ""]
-    for i, hit in enumerate(results, 1):
-        lines.append(f"{i}. {hit.get('title') or '(no title)'}")
-        if hit.get("url"):
-            lines.append(f"   {hit['url']}")
-        if hit.get("snippet"):
-            lines.append(f"   {hit['snippet']}")
-        lines.append("")
-    return "\n".join(lines).strip()
+def _format_search_output(
+    query: str,
+    results: list[dict[str, str]],
+    *,
+    engine: str,
+    source: str = "api",
+    urls_only: bool = False,
+    compact: bool = False,
+    max_snippet_chars: int = 220,
+) -> str:
+    from kite.tools.web_format import format_search_output
+
+    return format_search_output(
+        query,
+        results,
+        engine=engine,
+        source=source,
+        urls_only=urls_only,
+        compact=compact,
+        max_snippet_chars=max_snippet_chars,
+    )
+
+
+def _reformat_search(
+    hit: dict[str, Any],
+    *,
+    urls_only: bool,
+    compact: bool,
+    max_snippet_chars: int,
+) -> dict[str, Any]:
+    from kite.tools.web_format import format_search_output, search_summary
+
+    results = hit.get("results") if isinstance(hit.get("results"), list) else []
+    engine = str(hit.get("engine") or "api")
+    query = str(hit.get("query") or "")
+    source = str(hit.get("source") or "api")
+    hit["output"] = format_search_output(
+        query,
+        results,
+        engine=engine,
+        source=source,
+        urls_only=urls_only,
+        compact=compact,
+        max_snippet_chars=max_snippet_chars,
+    )
+    hit["summary"] = search_summary(results, engine=engine)
+    return hit
 
 
 def search_tavily(query: str, *, max_results: int, api_key: str) -> dict[str, Any] | None:
@@ -263,7 +300,15 @@ def search_firecrawl(query: str, *, max_results: int, api_key: str) -> dict[str,
     }
 
 
-def paid_websearch(query: str, *, max_results: int, preference: str = "auto") -> dict[str, Any] | None:
+def paid_websearch(
+    query: str,
+    *,
+    max_results: int,
+    preference: str = "auto",
+    urls_only: bool = False,
+    compact: bool = False,
+    max_snippet_chars: int = 220,
+) -> dict[str, Any] | None:
     """Try configured paid engines; return None to fall through to DuckDuckGo."""
     for engine in resolve_search_engines(preference):
         if engine == "duckduckgo":
@@ -273,19 +318,19 @@ def paid_websearch(query: str, *, max_results: int, preference: str = "auto") ->
             if key:
                 hit = search_tavily(query, max_results=max_results, api_key=key)
                 if hit:
-                    return hit
+                    return _reformat_search(hit, urls_only=urls_only, compact=compact, max_snippet_chars=max_snippet_chars)
         elif engine == "exa":
             key = exa_api_key()
             if key:
                 hit = search_exa(query, max_results=max_results, api_key=key)
                 if hit:
-                    return hit
+                    return _reformat_search(hit, urls_only=urls_only, compact=compact, max_snippet_chars=max_snippet_chars)
         elif engine == "firecrawl":
             key = firecrawl_api_key()
             if key:
                 hit = search_firecrawl(query, max_results=max_results, api_key=key)
                 if hit:
-                    return hit
+                    return _reformat_search(hit, urls_only=urls_only, compact=compact, max_snippet_chars=max_snippet_chars)
     return None
 
 

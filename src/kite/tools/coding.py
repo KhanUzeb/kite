@@ -615,6 +615,10 @@ def make_coding_tools(
         return websearch(
             str(args.get("query") or ""),
             max_results=int(args.get("max_results") or 8),
+            urls_only=bool(args.get("urls_only")),
+            compact=bool(args.get("compact")),
+            max_snippet_chars=int(args.get("max_snippet_chars") or 220),
+            engine=str(args.get("engine") or "auto"),
         )
 
     def web_crawl(args: dict[str, Any]) -> dict[str, Any]:
@@ -626,13 +630,17 @@ def make_coding_tools(
         )
 
     def webfetch(args: dict[str, Any]) -> dict[str, Any]:
+        max_lines_raw = args.get("max_lines")
         return fetch_url(
             str(args.get("url") or ""),
             timeout=int(args.get("timeout") or 15),
-            max_chars=int(args.get("max_chars") or 24_000),
+            max_chars=int(args.get("max_chars") or 16_000),
             extract=bool(args.get("extract", True)),
             include_links=bool(args.get("include_links", False)),
             max_links=int(args.get("max_links") or 12),
+            preview_only=bool(args.get("preview_only")),
+            start=int(args.get("start") or 0),
+            max_lines=int(max_lines_raw) if max_lines_raw is not None else None,
         )
 
     def set_working_directory(args: dict[str, Any]) -> dict[str, Any]:
@@ -945,17 +953,22 @@ def make_coding_tools(
             Tool(
                 name="webfetch",
                 description=(
-                    "Fetch one http(s) URL and return extracted readable text (title, description, body). "
-                    "Uses Firecrawl when FIRECRAWL_API_KEY is set; otherwise stdlib extract. "
-                    "Use after websearch to read a chosen result. Set extract=false for raw bytes as text. "
-                    "Set include_links=true to list outbound links from the page."
+                    "Fetch one http(s) URL and return extracted text. Token-efficient: preview_only=true "
+                    "for title/description only; start/max_chars/max_lines to slice long pages. "
+                    "Firecrawl when keyed. Batch multiple fetches in one turn when URLs differ."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "url": {"type": "string"},
                         "timeout": {"type": "integer", "description": "Seconds (default 15)"},
-                        "max_chars": {"type": "integer", "description": "Max body chars (default 24000)"},
+                        "max_chars": {"type": "integer", "description": "Max body chars (default 16000)"},
+                        "start": {"type": "integer", "description": "Char offset into extracted body"},
+                        "max_lines": {"type": "integer", "description": "Max body lines after extract"},
+                        "preview_only": {
+                            "type": "boolean",
+                            "description": "Metadata only — no body (lowest tokens)",
+                        },
                         "extract": {
                             "type": "boolean",
                             "description": "Strip HTML to readable text (default true)",
@@ -979,15 +992,31 @@ def make_coding_tools(
             Tool(
                 name="websearch",
                 description=(
-                    "Search the web. Uses Tavily / Exa / Firecrawl when API keys are set "
-                    "in ~/.kite/.env (auto order), otherwise DuckDuckGo. Returns titles, URLs, "
-                    "and snippets. Use before webfetch/webcrawl when you need to find sources."
+                    "Search the web (Tavily/Exa/Firecrawl when keyed, else DuckDuckGo). "
+                    "Token-efficient: urls_only or compact=true before webfetch. "
+                    "Batch multiple queries in one turn. engine=auto|tavily|exa|firecrawl|duckduckgo."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "Search query"},
                         "max_results": {"type": "integer", "description": "Max hits (default 8, max 15)"},
+                        "urls_only": {
+                            "type": "boolean",
+                            "description": "Return numbered URLs only — lowest tokens",
+                        },
+                        "compact": {
+                            "type": "boolean",
+                            "description": "Title + URL per line, no snippets",
+                        },
+                        "max_snippet_chars": {
+                            "type": "integer",
+                            "description": "Cap snippet length per result (default 220)",
+                        },
+                        "engine": {
+                            "type": "string",
+                            "description": "auto, tavily, exa, firecrawl, or duckduckgo",
+                        },
                     },
                     "required": ["query"],
                 },

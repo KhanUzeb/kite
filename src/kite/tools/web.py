@@ -35,7 +35,7 @@ _USER_AGENT = f"kite-agent/{__version__} (+https://github.com/KhanUzeb/kite)"
 _MAX_BODY = 120_000
 _FETCH_TIMEOUT = 20
 _MAX_FETCH_TIMEOUT = 45
-_DEFAULT_FETCH_CHARS = 24_000
+_DEFAULT_FETCH_CHARS = 16_000
 _MAX_REDIRECTS = 5
 _CRAWL_MAX_SECONDS = 90
 _CRAWL_MAX_TOTAL_BYTES = 500_000
@@ -319,8 +319,12 @@ def webfetch(
     extract: bool = True,
     include_links: bool = False,
     max_links: int = 12,
+    preview_only: bool = False,
+    start: int = 0,
+    max_lines: int | None = None,
 ) -> dict[str, Any]:
     """Fetch one URL and return readable text (HTML stripped by default)."""
+    from kite.tools.web_format import format_fetch_output, slice_body_text
     target = unwrap_tracking_url(url.strip())
     err = _url_blocked(target)
     if err:
@@ -334,18 +338,37 @@ def webfetch(
             if key:
                 scraped = firecrawl_scrape(target, api_key=key, timeout=max(1, int(timeout)))
                 if scraped:
-                    text = scraped.get("output") or ""
-                    # Re-apply max_chars on markdown body after the header lines.
-                    body = text
-                    if "\n\n" in text:
-                        head, md = text.split("\n\n", 1)
-                        md, truncated = _truncate_middle(md, max(500, min(int(max_chars), 80_000)))
-                        scraped["output"] = head + "\n\n" + md
-                        scraped["truncated"] = truncated
-                        scraped["chars"] = len(md)
-                    if include_links and scraped.get("links"):
-                        pass
-                    elif not include_links:
+                    raw_out = str(scraped.get("output") or "")
+                    md = raw_out
+                    if "\n\n" in raw_out:
+                        _, md = raw_out.split("\n\n", 1)
+                    md, truncated = slice_body_text(
+                        md,
+                        start=max(0, int(start)),
+                        max_chars=max(500, min(int(max_chars), 80_000)) if not preview_only else None,
+                        max_lines=max_lines,
+                    )
+                    if preview_only:
+                        md = ""
+                    output, summary = format_fetch_output(
+                        final_url=str(scraped.get("url") or target),
+                        requested_url=target,
+                        content_type="text/markdown",
+                        title=str(scraped.get("title") or ""),
+                        description=str(scraped.get("description") or ""),
+                        text=md,
+                        engine="firecrawl",
+                        preview_only=preview_only,
+                        include_links=include_links,
+                        outbound_links=scraped.get("links") if isinstance(scraped.get("links"), list) else [],
+                        max_links=max_links,
+                        truncated=truncated,
+                    )
+                    scraped["output"] = output
+                    scraped["summary"] = summary
+                    scraped["truncated"] = truncated
+                    scraped["chars"] = len(md)
+                    if not include_links:
                         scraped["links"] = []
                     return scraped
         except Exception as exc:  # noqa: BLE001
@@ -365,44 +388,43 @@ def webfetch(
     truncated = False
 
     if content_type.startswith("application/json") or target.endswith(".json"):
-        text = _format_json_text(raw, max_chars=max_chars)
+        text = _format_json_text(raw, max_chars=max_chars if not preview_only else 0)
     elif extract and ("html" in content_type or "<html" in raw[:500].lower()):
         body = _decode_body(raw, content_type)
         title, description, text, outbound_links = _extract_page(body, final_url)
-        text, truncated = _truncate_middle(text, max_chars)
     else:
         text = _decode_body(raw, content_type)
-        text, truncated = _truncate_middle(text, max_chars)
 
-    lines = [
-        f"url: {final_url}",
-    ]
-    if final_url != target:
-        lines.append(f"requested: {target}")
-    lines.extend(
-        [
-            f"content-type: {content_type or 'unknown'}",
-            f"chars: {len(text)}",
-        ]
+    if preview_only:
+        text = ""
+        truncated = False
+    else:
+        text, truncated = slice_body_text(
+            text,
+            start=max(0, int(start)),
+            max_chars=max_chars,
+            max_lines=max_lines,
+        )
+
+    output, summary = format_fetch_output(
+        final_url=final_url,
+        requested_url=target,
+        content_type=content_type,
+        title=title,
+        description=description,
+        text=text,
+        engine="stdlib",
+        preview_only=preview_only,
+        include_links=include_links,
+        outbound_links=outbound_links,
+        max_links=max_links,
+        truncated=truncated,
     )
-    if title:
-        lines.append(f"title: {title}")
-    if description:
-        lines.append(f"description: {description}")
-    if truncated:
-        lines.append("truncated: true")
-    if include_links and outbound_links:
-        lines.append(f"links: {len(outbound_links)}")
-        for link in outbound_links[:max_links]:
-            lines.append(f"  - {link}")
-        if len(outbound_links) > max_links:
-            lines.append(f"  … and {len(outbound_links) - max_links} more")
-    lines.extend(["", text])
-    output = "\n".join(lines).strip()
 
     return {
         "ok": True,
         "output": output,
+        "summary": summary,
         "url": final_url,
         "requested_url": target,
         "title": title,
@@ -670,18 +692,36 @@ def _ddg_html_search(query: str) -> tuple[str | None, str, str | None]:
         return None, "", str(e)
 
 
-def websearch(query: str, *, max_results: int = 8) -> dict[str, Any]:
+def websearch(
+    query: str,
+    *,
+    max_results: int = 8,
+    urls_only: bool = False,
+    compact: bool = False,
+    max_snippet_chars: int = 220,
+    engine: str = "auto",
+) -> dict[str, Any]:
     """Search the web — paid providers when keyed, else DuckDuckGo."""
+    from kite.tools.web_format import format_search_output, search_summary
+
     query = query.strip()
     if not query:
         return {"ok": False, "error": "query required", "output": "query required"}
 
     max_results = max(1, min(int(max_results), 15))
+    max_snippet_chars = max(40, min(int(max_snippet_chars), 800))
 
     try:
         from kite.tools.web_providers import paid_websearch
 
-        paid = paid_websearch(query, max_results=max_results, preference="auto")
+        paid = paid_websearch(
+            query,
+            max_results=max_results,
+            preference=engine or "auto",
+            urls_only=urls_only,
+            compact=compact,
+            max_snippet_chars=max_snippet_chars,
+        )
         if paid:
             return paid
     except Exception as exc:  # noqa: BLE001 — never block free search
@@ -714,22 +754,19 @@ def websearch(query: str, *, max_results: int = 8) -> dict[str, Any]:
             "source": source or "instant",
         }
 
-    lines: list[str] = [f"query: {query}", f"results: {len(results)}"]
-    if source:
-        lines.append(f"source: {source}")
-    lines.append("")
-    for i, hit in enumerate(results, 1):
-        lines.append(f"{i}. {hit.get('title') or '(no title)'}")
-        if hit.get("url"):
-            lines.append(f"   {hit['url']}")
-        if hit.get("snippet"):
-            lines.append(f"   {hit['snippet']}")
-        lines.append("")
-
-    output = "\n".join(lines).strip()
+    output = format_search_output(
+        query,
+        results,
+        engine="duckduckgo",
+        source=source or ("instant" if instant_hits and not html_hits else "mixed"),
+        urls_only=urls_only,
+        compact=compact,
+        max_snippet_chars=max_snippet_chars,
+    )
     return {
         "ok": True,
         "output": output,
+        "summary": search_summary(results, engine="duckduckgo"),
         "results": results,
         "count": len(results),
         "engine": "duckduckgo",
