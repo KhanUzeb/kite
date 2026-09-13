@@ -199,6 +199,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 ## Related docs
 
+- [guide.md](guide.md) — visual walkthrough, example Q&A, workflows
 - [AGENTS.md](AGENTS.md) — how to work on this repository
 - [kite_commands.md](kite_commands.md) — full CLI and slash map
 - [architecture.md](architecture.md) — layers and extension points

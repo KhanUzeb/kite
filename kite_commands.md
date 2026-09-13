@@ -2,6 +2,10 @@
 
 Kite is a coding agent. **What lands in git is still yours.** These commands steer the process, not a second commit stream.
 
+**New to Kite?** Start with the visual [guide.md](guide.md) (workflows, example Q&A). This file is the complete reference.
+
+**Progressive disclosure:** `kite --help` and `/help` show only the essentials. Run `kite help all` or `/help all` for the full map (legacy aliases still work).
+
 There are four surfaces:
 
 | Surface | When | Hits the model? |
@@ -18,6 +22,8 @@ Prefix `//` if you need a natural-language line that starts with `/`.
 ---
 
 ## 1. CLI
+
+Default `kite --help` lists six commands (`kite`, `run`, `resume`, `setup`, `sessions`, `tasks`). `kite help all` prints the full map. `chat` and `exec` remain as hidden aliases.
 
 ```
 kite                         # REPL (same as kite chat)
@@ -228,6 +234,7 @@ These never go to the model.
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Toggle expanded tool output |
+| `/fullscreen on\|off\|refresh` | Fullscreen workbench (≥100×30); Ctrl+Space toggles |
 | `/live` | Stream bash output in real time while tools run |
 | `/live agents` | Stream subagent crew tool + shell output with worker prefix |
 | `/collapse` | Collapse tool output (default) |
@@ -250,7 +257,7 @@ These never go to the model.
 | `/clip` `/paste` `/clipboard` | Attach clipboard text or image (**F8** or **Esc v**) |
 | `/detach [name\|all]` | Drop queued attachments |
 | `/attachments` | List queued files |
-| `/help` `/h` | Command map, keyboard shortcuts, and remaining docs (`kite_commands.md`, `CONTEXT.md`, `architecture.md`, `SECURITY.md`, current `docs/RELEASE-X.Y.Z.md`) |
+| `/help` `/h` | Essential commands (12). `/help all` adds legacy aliases, shortcuts, and doc pointers (`kite_commands.md`, `CONTEXT.md`, …) |
 | `/quit` `/q` `/exit` | Leave the REPL |
 
 Ctrl+C stops the **current turn**, not the process.
