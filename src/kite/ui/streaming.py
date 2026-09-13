@@ -109,10 +109,12 @@ class StreamMetrics:
     started_at: float | None = None
 
     def note_first_token(self, *, ttft_ms: int, at: float | None = None) -> None:
+        import time as _time
+
         if self.ttft_ms is None:
             self.ttft_ms = max(0, ttft_ms)
         if self.started_at is None:
-            self.started_at = at
+            self.started_at = at if at is not None else _time.monotonic()
 
     def note_text(self, text: str, *, tokens: int | None = None) -> float:
         import time as _time
@@ -133,9 +135,7 @@ class StreamMetrics:
 
         if self.started_at is None or self.stream_chars <= 0:
             return 0.0
-        elapsed = _time.monotonic() - self.started_at
-        if elapsed <= 0:
-            return 0.0
+        elapsed = max(_time.monotonic() - self.started_at, 1e-6)
         est = self.stream_tokens if self.stream_tokens > 0 else max(1, self.stream_chars // 4)
         return est / elapsed
 

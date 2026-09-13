@@ -44,7 +44,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--cwd` | Workspace |
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
-| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | **Coding blanket** (default `auto`): in-workspace install/test/edit/commit/bash auto-runs; only boundary escapes prompt (outside workspace, sudo, sandbox-blocked). `yolo` = no prompts (guardrails still apply). `trust` = auto + prompts for memory/subagents. `supervised` = prompt all mutations. |
+| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | **Coding blanket** (default `auto`): in-workspace install/test/edit/commit auto-runs; **SERIOUS** tier still prompts for network fetch (`curl`/`wget`/`Invoke-WebRequest`), destructive deletes, `chmod`/`chown`, and shell wrappers (`powershell`/`pwsh`/`cmd`); only **CRITICAL** boundary escapes are denied headless (outside workspace, sudo, sandbox-blocked). `yolo` = skip non-critical prompts (guardrails still apply; sudo/outside-workspace denied). `trust` = auto + prompts for memory/subagents. `supervised` = prompt all mutations. |
 | `--steps` `--cost` `--time` | Limits (honored by `run`, `chat`, and one-shot `resume`) |
 | `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
@@ -63,7 +63,7 @@ One-shot / headless flags (`kite run`, `kite resume <id> "continue"` — not `ki
 
 Persistent compaction is `kite config --auto-compact true|false` (not a run/chat flag).
 
-`--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto`/`yolo` permit routine in-workspace work (installs, tests, commits) while critical gates (outside workspace, sudo, remote shell) fail closed.
+`--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto`/`yolo` permit routine in-workspace work (installs, tests, commits) while **SERIOUS** actions (network fetch, destructive delete, shell wrappers) prompt in `auto` and `yolo` skips those prompts; critical gates (outside workspace, sudo, remote shell) fail closed.
 
 **Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
 
@@ -185,7 +185,7 @@ These never go to the model.
 |---------|----------------|
 | `/plan` `/p` | Read-only: explore + checklist (no edits); switch to `/build` to apply |
 | `/build` `/b` | Apply edits; continues existing plan checklist; approval leaves `readonly` → supervised |
-| `/approve yolo\|auto\|supervised\|trust` | Autonomy. Empty: numbered picker. `auto` (default) = coding blanket; `yolo` = no prompts; `trust` = blanket + memory/subagent gates; `supervised` = approve every mutation |
+| `/approve yolo\|auto\|supervised\|trust` | Autonomy. Empty: numbered picker. `auto` (default) = coding blanket (install/test/edit/commit); prompts for curl/wget/rm/chmod/PowerShell wrappers; `yolo` = skip non-critical prompts; `trust` = blanket + memory/subagent gates; `supervised` = approve every mutation |
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off**). Empty: pick on/off |
 | `/privacy` | Security policy summary; `/privacy sessions` picks full/redacted/disabled |
 | `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |

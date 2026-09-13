@@ -30,9 +30,9 @@ def _skip_path(path: Path) -> bool:
 
 def _rel(path: Path, root: Path) -> str:
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def _format_grouped_hits(rows: list[tuple[str, int, str]], *, max_files: int) -> tuple[str, int, int]:
@@ -59,33 +59,37 @@ def _format_grouped_hits(rows: list[tuple[str, int, str]], *, max_files: int) ->
     return body, len(rows), total_files
 
 
-def _parse_rg_line(raw: str, root: Path) -> tuple[str, int, str] | None:
-    """Parse `path:line:content` or `path:line:col:content`."""
-    if not raw.strip():
+def _parse_rg_count(raw: str) -> int | None:
+    """Parse ripgrep ``--count`` output ``path:count`` (Windows drive letters safe)."""
+    if not raw.strip() or ":" not in raw:
         return None
-    parts = raw.split(":", 2)
-    if len(parts) < 3:
-        return None
-    file_path, line_s, text = parts[0], parts[1], parts[2]
     try:
-        line_no = int(line_s)
+        return int(raw.rsplit(":", 1)[-1])
     except ValueError:
-        # path:line:col:content — re-split from the right
-        bits = raw.split(":")
-        if len(bits) < 4:
-            return None
-        file_path = ":".join(bits[:-3]) if len(bits) > 3 else bits[0]
+        return None
+
+
+def _parse_rg_line(raw: str, root: Path) -> tuple[str, int, str] | None:
+    """Parse ``path:line:content`` or ``path:line:col:content`` (Windows drive letters safe)."""
+    if not raw.strip() or ":" not in raw:
+        return None
+    for n in (2, 3):
+        parts = raw.rsplit(":", n)
+        if len(parts) != n + 1:
+            continue
+        file_path, line_s = parts[0], parts[1]
+        text = parts[-1]
         try:
-            line_no = int(bits[-3])
-            text = ":".join(bits[-2:])
+            line_no = int(line_s)
         except ValueError:
-            return None
-    rel = file_path
-    try:
-        rel = _rel(Path(file_path).resolve(), root.resolve())
-    except OSError:
+            continue
         rel = file_path
-    return rel, line_no, text.rstrip()
+        try:
+            rel = _rel(Path(file_path).resolve(), root.resolve())
+        except OSError:
+            rel = file_path
+        return rel, line_no, text.rstrip()
+    return None
 
 
 def grep_search(
@@ -179,7 +183,7 @@ def grep_search(
             }
         if count_only:
             body = "\n".join(lines[:max_files]) if lines else "(no matches)"
-            total = sum(int(ln.split(":", 1)[-1]) for ln in lines if ":" in ln) if lines else 0
+            total = sum(c for ln in lines if (c := _parse_rg_count(ln)) is not None) if lines else 0
             return {
                 "ok": True,
                 "output": body,
