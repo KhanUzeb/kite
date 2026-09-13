@@ -8,6 +8,8 @@
 - Project trust works like Pi: `~/.kite/trust.json`, `/trust`, or `trust = true` in `.kite/project.toml`. Trusted workspaces skip nested-agent approval prompts.
 - On REPL startup Kite checks GitHub for a newer release (24h cache). Set `KITE_OFFLINE=1` to skip.
 - Textual picks up a few Antigravity habits: `Ctrl+K` for fast-path approval, `Ctrl+J` for the agents panel, and slower poll timers so idle sessions use less CPU.
+- Harness is faster on repeat turns: cached model metadata, static `prepare()` (project context + skills), compaction skips re-serializing tool schemas, and a reused thread pool for parallel tool batches.
+- Textual 8 theme application no longer calls removed `Stylesheet.clear()` — the TUI mounts and the harness runs.
 - Harness bench budgets are a bit tighter. Textual refreshes the sidebar and status line less often.
 
 ## Upgrade
