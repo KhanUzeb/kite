@@ -27,6 +27,7 @@ jobs:
     env:
       KITE_HOME: ${{ matrix.os == 'windows-latest' && 'C:\\Temp\\kite-home' || '/tmp/kite-home' }}
       KITE_SKIP_SETUP: "1"
+      KITE_TYPED_PICK: "1"
     steps:
       - uses: actions/checkout@v4
 

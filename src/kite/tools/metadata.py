@@ -59,7 +59,9 @@ DEFAULT_TOOL_METADATA: dict[str, ToolMetadata] = {
     "write": _meta(mutating=True),
     "edit": _meta(mutating=True),
     "todo_write": _meta(mutating=True),
+    "set_cwd": _meta(mutating=True),
     "bash": _meta(mutating=True, cancellable=True, expensive=True),
+    "submit": _meta(read_only=True),
 }
 
 # Scheduling hints aligned with canonical effects (authorization uses PolicyEngine).

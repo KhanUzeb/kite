@@ -334,6 +334,8 @@ class DefaultAgent:
         self.tool_call_count = 0
         self.tool_counts: dict[str, int] = {}
         self._tool_started_at: float | None = None
+        self._turn_started_at: float | None = None
+        self._turn_tool_names: list[str] = []
         if hasattr(self.model, "should_stop"):
             self.model.should_stop = lambda: self._interrupt
 
@@ -609,12 +611,14 @@ class DefaultAgent:
                     pass
             while True:
                 try:
+                    self._turn_started_at = time.time()
+                    self._turn_tool_names = []
                     self._emit("turn_start")
                     self._maybe_compact()
                     self._inject_turn_followups()
                     self.step()
                     self.n_consecutive_format_errors = 0
-                    self._emit("turn_end")
+                    self._emit("turn_end", **self._turn_metrics())
                     self._maybe_phase_checkpoint()
                 except FormatError as e:
                     self.cost += e.messages[0].get("extra", {}).get("cost", 0.0) if e.messages else 0.0
@@ -625,7 +629,7 @@ class DefaultAgent:
                         self.add_messages(*e.messages)
                 except Interrupted as e:
                     if self._continue_after_steer():
-                        self._emit("turn_end")
+                        self._emit("turn_end", **self._turn_metrics())
                         continue
                     self.add_messages(*e.messages, _exit_msg("Interrupted"))
                 except InterruptAgentFlow as e:
@@ -683,8 +687,29 @@ class DefaultAgent:
             result = {**result, "verification": vsum, "verification_status": vsum.get("status")}
         if self.session is not None:
             self.session.set_exit(str(result.get("exit_status") or ""))
+        result = {**self._run_metrics(), **(result or {})}
         self._emit("agent_end", **result)
         return result
+
+    def _turn_metrics(self) -> dict:
+        started = self._turn_started_at or time.time()
+        names = list(self._turn_tool_names)
+        return {
+            "tools": len(names),
+            "tool_names": names,
+            "duration_ms": int((time.time() - started) * 1000),
+            "cost": self.cost,
+            "n_calls": self.n_calls,
+        }
+
+    def _run_metrics(self) -> dict:
+        return {
+            "tools": self.tool_call_count,
+            "tool_counts": dict(self.tool_counts),
+            "duration_ms": int((time.time() - self._start_time) * 1000),
+            "n_calls": self.n_calls,
+            "cost": self.cost,
+        }
 
     def step(self) -> list[dict]:
         return self.execute_actions(self.query())
@@ -1060,6 +1085,7 @@ class DefaultAgent:
         else:
             self.tool_call_count += 1
             self.tool_counts[tool] = self.tool_counts.get(tool, 0) + 1
+            self._turn_tool_names.append(tool)
         if self._counts_as_tool_failure(tool, args, out):
             self._tool_fail_streak += 1
             if self._tool_fail_streak >= _TOOL_FAIL_STREAK_NUDGE_AFTER:

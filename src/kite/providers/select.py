@@ -35,12 +35,6 @@ def _can_use_radiolist() -> bool:
     return True
 
 
-def _radiolist_pick(title: str, values: list[tuple[str, str]]) -> str | None:
-    from prompt_toolkit.shortcuts import radiolist_dialog
-
-    return radiolist_dialog(title=title, text="↑↓ move · Enter select · Esc cancel", values=values).run()
-
-
 def _numbered_pick(
     console: Console,
     items: list[tuple[str, str]],
@@ -112,10 +106,13 @@ def select_model_interactive(
         console.print(f"[yellow]{spec.display_name}[/] is a flat subscription gateway — no model picker.")
         return 1, None, None
 
+    refresh = False
     while True:
-        clear_model_list_cache(provider)
-        console.print(f"[dim]Fetching models for[/] [bold]{provider}[/]…")
-        result = list_models_for_provider(provider, config=cfg, catalog=catalog, refresh=True)
+        if refresh:
+            clear_model_list_cache(provider)
+        console.print(f"[dim]{'Refreshing' if refresh else 'Loading'} models for[/] [bold]{provider}[/]…")
+        result = list_models_for_provider(provider, config=cfg, catalog=catalog, refresh=refresh)
+        refresh = False
         if result.error:
             console.print(f"[red]{result.error}[/]")
             return 1, None, None
@@ -133,29 +130,17 @@ def select_model_interactive(
             label = f"{m.id}{mark}" + (f"  ({meta})" if meta else "")
             values.append((m.id, label))
 
-        chosen: str | None = None
-        if _can_use_radiolist():
-            try:
-                chosen = _radiolist_pick(f"Select a {provider} model", values)
-            except Exception:
-                chosen = None
-            else:
-                if chosen is None:
-                    console.print("[yellow]Cancelled[/]")
-                    return 130, None, None
-
-        if chosen is None:
-            chosen = _numbered_pick(
-                console,
-                values,
-                current=current,
-                title=f"Select a {provider} model",
-                noun="model",
-                refreshable=True,
-            )
+        chosen = _numbered_pick(
+            console,
+            values,
+            current=current,
+            title=f"Select a {provider} model",
+            noun="model",
+            refreshable=True,
+        )
 
         if chosen == REFRESH_PICK:
-            console.print("[dim]Refreshing from API…[/]")
+            refresh = True
             continue
         if not chosen:
             return 130, None, None
@@ -208,14 +193,6 @@ def select_provider_interactive(
         if note:
             label += f" · {note}"
         values.append((spec.name, label))
-
-    if _can_use_radiolist():
-        try:
-            picked = _radiolist_pick("Select a provider", values)
-        except Exception:
-            picked = None
-        else:
-            return picked
 
     return _numbered_pick(
         console,

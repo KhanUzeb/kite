@@ -252,18 +252,15 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                 if prefix and not (name.startswith(prefix) or prefix in name):
                     continue
                 seen.add(name)
-                meta = (spec.description or spec.source or "").strip()
-                if spec.hint:
-                    meta = f"{spec.hint}  {meta}".strip()
+                extra = ""
                 if spec.name in {"thinking", "fast"}:
                     levels = " ".join(support.levels_for(spec.name))
-                    if levels:
-                        meta = f"{levels}  {meta}".strip()
+                    extra = levels
                 yield Completion(
                     spec.name,
                     start_position=-len(cmd),
                     display=_slash_completion_display(spec, index),
-                    display_meta=meta[:72],
+                    display_meta=_slash_meta(spec, index, extra),
                 )
             return
 
@@ -416,21 +413,79 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             yield Completion(value, start_position=start, display=value, display_meta=meta[:60])
 
 
-def _slash_display(spec: SlashSpec, index: CommandIndex) -> str:
-    mark = ""
+def _slash_origin(spec: SlashSpec, index: CommandIndex) -> str:
+    """Where this slash comes from — used for menu grouping and cues."""
+    if spec.source == "builtin":
+        return "builtin"
     if spec.source == "skill":
         skill = next((s for s in index.skills if s.name.lower() == spec.name), None)
-        if skill is not None and skill.source == "user":
-            mark = f" {glyph('home')}"
-    return f"/{spec.name}{mark}"
+        if skill is None:
+            return "skill-bundled"
+        if skill.source == "user":
+            return "skill-user"
+        if skill.source == "project":
+            return "skill-project"
+        if skill.source == "plugin":
+            return "skill-plugin"
+        return "skill-bundled"
+    if spec.plugin:
+        return "plugin"
+    if spec.source == "user":
+        return "prompt-user"
+    if spec.source == "project":
+        return "prompt-project"
+    if spec.source == "bundled":
+        return "prompt-bundled"
+    return spec.source or "other"
+
+
+_SLASH_CUES: dict[str, tuple[str, str, str]] = {
+    # origin: (prefix glyph, right-column tag, color)
+    "builtin": ("·", "cmd", ""),
+    "prompt-bundled": ("▸", "prompt", "#7aa2f7"),
+    "prompt-user": ("▸", "prompt · you", "#9ece6a"),
+    "prompt-project": ("▸", "prompt · repo", "#9ece6a"),
+    "skill-bundled": ("◆", "skill", "#e0af68"),
+    "skill-user": ("◆", "skill · you", "#9ece6a"),
+    "skill-project": ("◆", "skill · repo", "#9ece6a"),
+    "skill-plugin": ("◈", "skill · plug", "#bb9af7"),
+    "plugin": ("◈", "plug", "#bb9af7"),
+}
+
+
+def _slash_cue(spec: SlashSpec, index: CommandIndex) -> tuple[str, str, str]:
+    origin = _slash_origin(spec, index)
+    mark, tag, color = _SLASH_CUES.get(origin, ("·", origin, "#888888"))
+    if origin == "builtin":
+        color = brand_fg()
+    return mark, tag, color
+
+
+def _slash_display(spec: SlashSpec, index: CommandIndex) -> str:
+    mark, _, _ = _slash_cue(spec, index)
+    return f"{mark} /{spec.name}"
 
 
 def _slash_completion_display(spec: SlashSpec, index: CommandIndex) -> Any:
-    """Colored slash label for the dark completion menu."""
-    label = _slash_display(spec, index)
+    """Colored slash label — glyph marks builtin vs skill vs prompt vs plugin."""
+    mark, _, color = _slash_cue(spec, index)
+    label = f"{mark} /{spec.name}"
     if not _PT:
         return label
-    return HTML(f"<style fg='{brand_fg()}'><b>{_escape_html(label)}</b></style>")
+    return HTML(f"<style fg='{color}'><b>{_escape_html(label)}</b></style>")
+
+
+def _slash_meta(spec: SlashSpec, index: CommandIndex, extra: str = "") -> str:
+    _, tag, _ = _slash_cue(spec, index)
+    desc = (spec.description or "").strip()
+    parts = [tag]
+    if spec.hint:
+        parts.append(spec.hint)
+    if extra:
+        parts.append(extra)
+    if desc:
+        parts.append(desc)
+    return "  ".join(parts)[:80]
 
 
 def _session_rows() -> list[tuple[str, str]]:
@@ -486,7 +541,7 @@ def _path_completions(prefix: str, start: int):
 
 
 def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[SlashSpec]:
-    from kite.ui.commands import LEGACY_ALIASES, is_primary_slash
+    from kite.ui.commands import LEGACY_ALIASES
 
     rows: list[SlashSpec] = []
     seen: set[str] = set()
@@ -495,26 +550,38 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
             continue
         if spec.name in LEGACY_ALIASES:
             continue
-        if spec.kind == "control" and not is_primary_slash(spec.name):
-            continue
-        if spec.kind == "prompt":
+        if ":" in spec.name:
             continue
         if spec.name in {"thinking", "fast"} and not support.can_both:
             continue
         if spec.name in {"reasoning", "effort"} and not support.supported:
             continue
-        if ":" in spec.name and spec.source == "skill":
-            continue
         seen.add(spec.name)
         rows.append(spec)
-    rows.sort(key=lambda s: s.name)
+
+    rank = {
+        "builtin": 0,
+        "prompt-bundled": 1,
+        "prompt-user": 2,
+        "prompt-project": 3,
+        "plugin": 4,
+        "skill-bundled": 5,
+        "skill-user": 6,
+        "skill-project": 7,
+        "skill-plugin": 8,
+    }
+
+    def _sort_key(spec: SlashSpec) -> tuple[int, str]:
+        return (rank.get(_slash_origin(spec, index), 9), spec.name)
+
+    rows.sort(key=_sort_key)
     return rows
 
 
 def _toolbar_approval_bits(state: SessionUiState) -> list[str]:
     if state.awaiting_approval_mandatory:
         return ["[a] once", "[n] deny", "[q] stop", "mandatory"]
-    return ["[a] once", "[s] session", "[p] always", "[n] deny", "[q] stop"]
+    return ["[Enter] once", "[s] family", "[p] always", "[n] deny", "[q] stop"]
 
 
 def _toolbar_busy_bits(state: SessionUiState) -> list[str]:
@@ -588,14 +655,13 @@ def history_path() -> Path:
 
 
 def _mouse_support_enabled() -> bool:
-    """Off by default so the terminal keeps drag-select, copy, and right-click paste.
-
-    Set KITE_MOUSE=1 to capture the mouse for slash-menu wheel scrolling
-    (native selection then needs Shift+drag in most terminals).
-    """
+    """Mouse/trackpad for slash-menu scroll. Off with KITE_MOUSE=0 (Shift+drag still copies)."""
     import os
 
-    return os.environ.get("KITE_MOUSE", "").strip().lower() in {"1", "true", "yes", "on"}
+    raw = os.environ.get("KITE_MOUSE", "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return True
 
 
 def make_prompt_session(
@@ -613,9 +679,8 @@ def make_prompt_session(
         "complete_while_typing": True,
         "auto_suggest": AutoSuggestFromHistory(),
         "style": prompt_style(),
-        # False restores OS/terminal copy-paste, drag-select, and right-click.
         "mouse_support": _mouse_support_enabled(),
-        "reserve_space_for_menu": 8,
+        "reserve_space_for_menu": 12,
     }
     if key_bindings is not None:
         kwargs["key_bindings"] = key_bindings
@@ -740,12 +805,13 @@ def make_repl_key_bindings(
 
     @bindings.add("enter", eager=True, filter=awaiting)
     def _approval_enter(event) -> None:  # noqa: ANN001
-        """Approval requires an explicit key; empty Enter keeps waiting."""
+        """Empty Enter = allow once (Pi/Codex). Typed text still submits as a choice."""
         buf = event.current_buffer
         buf.complete_state = None
         text = (buf.text or "").strip().lower()
         if not text:
-            event.app.invalidate()
+            slot["kind"] = "approval"
+            event.app.exit(result="a")
             return
         buf.validate_and_handle()
 
@@ -824,7 +890,7 @@ def make_repl_key_bindings(
     def _copy(event) -> None:  # noqa: ANN001
         _copy_selection(event)
 
-    # Optional mouse wheel for slash menu when KITE_MOUSE=1
+    # Wheel / trackpad through the slash and @file menu (KITE_MOUSE=0 disables).
     if _mouse_support_enabled():
 
         def _scroll_completions(event, *, forward: bool) -> None:  # noqa: ANN001
@@ -970,13 +1036,13 @@ def _prompt_once(
     ui = ui_colors()
     if state.awaiting_approval:
         if state.awaiting_approval_mandatory:
-            placeholder = "[a] once · [n] deny · [q] stop — approval required"
+            placeholder = "[Enter]/[a] once · [n] deny · [q] stop — required"
         else:
-            placeholder = "[a] once · [s] session · [p] always · [n] deny · [q] stop"
+            placeholder = "[Enter] once · [s] family · [p] always · [n] deny · [q] stop"
     elif busy:
         placeholder = "add a follow-up while Kite works…"
     else:
-        placeholder = "/ · @file · Ctrl+V paste · F8 attach clip · Ctrl+D quit · /help"
+        placeholder = "/help  ·  @file  ·  !shell  ·  Ctrl+D quit"
 
     def _toolbar() -> Any:
         if on_poll is not None:

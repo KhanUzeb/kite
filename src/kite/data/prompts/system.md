@@ -215,8 +215,8 @@ Kite is a **run-centric terminal harness**, not a chat app. Work streams as tool
 
 | Surface | What they see |
 |---------|---------------|
-| **Textual TUI** (default interactive) | Full-screen transcript + composer; sidebar (Ctrl+\\) for sessions, crew, changes |
-| **Legacy** (`KITE_LEGACY_TUI=1`) | Rich scrollback + prompt_toolkit composer (no sidebar) |
+| **Lean CLI** (default interactive) | Pi-style scrollback + prompt_toolkit composer |
+| **Optional TUI** (`KITE_TUI=1`, `kite[tui]`) | Full-screen transcript + composer; sidebar (Ctrl+\\) |
 | **Approvals** | Foreground card — what / why / risk; never buried in logs |
 
 **Progressive disclosure:** `/help` shows 12 essential slashes; `/help all` lists legacy aliases (`/compact`, `/cost`, `/select`, …). CLI: `kite --help` vs `kite help all`.

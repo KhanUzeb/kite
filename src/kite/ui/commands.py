@@ -57,6 +57,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
         group="session",
     ),
     BuiltinCommand("reload", "Reload skills, slash commands, and subagent profiles", group="session"),
+    BuiltinCommand("hotkeys", "Keyboard shortcuts (Pi /hotkeys)", group="session", aliases=("keys-help",)),
     BuiltinCommand("restricted", "Path sandbox — off by default (host mode)", hint="[on|off]", aliases=("sandbox",), group="session"),
     BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
     BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),
@@ -196,6 +197,12 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
         visibility="primary",
     ),
     BuiltinCommand("skill", "Run a skill as this turn", hint="name [args]", group="extensions"),
+    BuiltinCommand(
+        "tools",
+        "Built-in agent tools with the same glyphs as the transcript",
+        aliases=("tool",),
+        group="extensions",
+    ),
     BuiltinCommand("commands", "List markdown slash prompts", hint="new name", aliases=("cmd", "cmds"), group="extensions"),
     BuiltinCommand("plugins", "List plugins, or scaffold one", hint="init name", aliases=("plugin",), group="extensions"),
     BuiltinCommand(

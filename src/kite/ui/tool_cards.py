@@ -8,6 +8,7 @@ from typing import Any
 
 from rich.text import Text
 
+from kite.tools.cues import tool_cue
 from kite.ui.diff import render_diff_stat
 from kite.ui.style import GUTTER, PANEL_BAR
 from kite.ui.theme import glyph
@@ -152,9 +153,11 @@ def render_section_break(title: str) -> Text:
 
 def render_stream_tool_preview(name: str, partial_args: str) -> Text:
     line = Text()
-    line.append(f"{GUTTER}{glyph('tool')} ", style="kite.muted")
+    mark, tag = tool_cue(name)
+    line.append(f"{GUTTER}{mark} ", style="kite.muted")
     line.append("preparing ", style="kite.muted")
     line.append(name, style="kite.tool")
+    line.append(f" {tag}", style="kite.muted")
     preview = format_partial_args(partial_args)
     if preview:
         line.append(f"  {preview}", style="kite.muted")
@@ -167,9 +170,11 @@ def render_tool_card_start(card: ToolCard, *, running: bool = True) -> Text:
     prefix = ""
     if card.parallel_batch > 1:
         prefix = f"[{card.parallel_index}/{card.parallel_batch}] "
-    line.append(f"{GUTTER}{glyph('tool')} ", style="kite.muted")
+    mark, tag = tool_cue(card.tool)
+    line.append(f"{GUTTER}{mark} ", style="kite.muted")
     line.append(prefix, style="kite.muted")
     line.append(card.tool, style="kite.tool bold")
+    line.append(f" {glyph('sep')} {tag}", style="kite.muted")
     if card.detail:
         line.append(f" {glyph('sep')} ", style="kite.muted")
         line.append(card.detail, style="kite.muted")
@@ -198,6 +203,38 @@ def render_tool_summary(
     return line
 
 
+def render_run_meter(
+    *,
+    tools: int = 0,
+    duration_ms: int | None = None,
+    cost: float | None = None,
+    tokens: int = 0,
+    n_calls: int = 0,
+) -> Text | None:
+    """One-line run footer (Pi/Codex: tools · time · cost)."""
+    bits: list[str] = []
+    if tools:
+        bits.append(f"{tools} tool{'s' if tools != 1 else ''}")
+    if n_calls:
+        bits.append(f"{n_calls} model")
+    if duration_ms is not None:
+        if duration_ms < 1000:
+            bits.append(f"{duration_ms}ms")
+        else:
+            bits.append(f"{duration_ms / 1000:.1f}s")
+    if tokens:
+        bits.append(f"{tokens:,} tok")
+    if cost is not None and cost > 0:
+        bits.append(f"${cost:.3f}")
+    if not bits:
+        return None
+    line = Text()
+    line.append(f"{GUTTER}", style="kite.muted")
+    line.append(" · ".join(bits), style="kite.muted")
+    line.append("\n")
+    return line
+
+
 def render_tool_card_done(
     tool: str,
     *,
@@ -216,8 +253,11 @@ def render_tool_card_done(
     else:
         mark, style = glyph("fail"), "kite.error"
     line = Text()
+    cue, tag = tool_cue(tool)
     line.append(f"{GUTTER}{mark} ", style=style)
+    line.append(f"{cue} ", style="kite.muted")
     line.append(tool, style=style)
+    line.append(f" {tag}", style="kite.muted")
     if meta:
         line.append(f"  {meta}", style="kite.muted")
     if added is not None or deleted is not None:

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
+pytest.importorskip("textual")
+
 from kite.ui.textual.themes import _THEME_CSS_KEY, apply_theme_to_app, textual_css
 from kite.ui.theme import reset_prefs
 

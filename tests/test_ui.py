@@ -59,11 +59,22 @@ def test_render_events_and_busy_spin() -> None:
     assert display.state.tokens == 24_000 and "42 → 12" in buf.getvalue()
     display(Event("submit_blocked", payload={"reason": "tests not run"}))
     assert "submit blocked" in strip_ansi(buf.getvalue()).lower()
-    display(Event("agent_end", payload={"exit_status": "LimitsExceeded", "content": "step budget 40/40", "limit_kind": "steps", "steps": 40, "step_limit": 40}))
+    display(Event("agent_end", payload={"exit_status": "LimitsExceeded", "content": "step budget 40/40", "limit_kind": "steps", "steps": 40, "step_limit": 40, "tools": 2, "duration_ms": 1400, "n_calls": 3, "cost": 0.02}))
     assert "continue" in buf.getvalue().lower()
+    assert "2 tools" in strip_ansi(buf.getvalue())
     display.state.busy = True
     display._spin(True, "thinking")
     assert display._spinner_on is False and display.state.running_label == "thinking"
+
+
+def test_quiet_inspect_tools_skip_running_row() -> None:
+    buf = StringIO()
+    display = RunDisplay(Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME), state=SessionUiState())
+    display(Event("tool_start", payload={"tool": "read", "arguments": {"path": "src/kite/cli/run.py"}}))
+    display(Event("tool_end", payload={"tool": "read", "ok": True, "preview": "ok", "output": "line\n"}))
+    plain = strip_ansi(buf.getvalue())
+    assert "running" not in plain
+    assert "read" in plain
 
 
 def test_theme_palettes_and_status() -> None:

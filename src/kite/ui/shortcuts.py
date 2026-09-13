@@ -6,6 +6,8 @@ IDLE_SHORTCUTS = """\
 composer (idle)
   Enter           send message
   Tab             cycle / and @file completions
+  Wheel / trackpad  scroll the / and @file menus (KITE_MOUSE=0 to opt out)
+  ↑↓ / number       CLI pickers (models, sessions, providers)
   Ctrl+V          paste OS clipboard into composer
   F8 / Esc v      attach clipboard to next turn (/clip)
   Ctrl+Insert     copy composer selection to clipboard
@@ -20,17 +22,18 @@ composer (idle)
   F2              flash status footer
   F5              refresh models, then pick
   @path           attach file inline (e.g. fix @src/foo.py)
+  !command        run a shell command and send output to the model (Pi)
+  !!command       run a shell command without adding it to context
 """
 
 TEXTUAL_SHORTCUTS = """\
-Textual TUI (default)
+optional fullscreen TUI (KITE_TUI=1 and kite[tui])
   Enter           send · Alt+Enter newline
   Tab             accept completion
   Ctrl+\\          toggle sidebar (sessions / crew / changes)
   Ctrl+G          steer (while busy)
   Ctrl+U          dequeue (while busy)
   Ctrl+P / B      plan / build mode
-  KITE_LEGACY_TUI=1  Rich scrollback REPL (no sidebar)
 """
 
 BUSY_SHORTCUTS = """\
@@ -47,7 +50,9 @@ while a turn is running
 
 APPROVAL_SHORTCUTS = """\
 approval prompt
-  a / Enter       allow once (hotkeys only when composer is empty)
+  Enter / a       allow this exact command for the rest of the session
+  s               allow this command family for the session
+  p               remember always (~/.kite/approvals.json)
   s               allow this session
   p               allow always (when offered)
   n               deny

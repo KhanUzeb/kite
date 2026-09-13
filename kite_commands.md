@@ -4,7 +4,7 @@ Kite is a coding agent. **What lands in git is still yours.** These commands ste
 
 **New to Kite?** Start with the visual [guide.md](guide.md) (workflows, example Q&A). This file is the complete reference.
 
-**Progressive disclosure:** `kite --help` and `/help` show only the essentials. Run `kite help all` or `/help all` for the full map (legacy aliases still work).
+**Help:** `kite --help` lists every shipped subcommand. `/help` stays brief in the REPL; `/help all` and `kite help all` print the full map.
 
 There are four surfaces:
 
@@ -23,12 +23,23 @@ Prefix `//` if you need a natural-language line that starts with `/`.
 
 ## 1. CLI
 
-Default `kite --help` lists six commands (`kite`, `run`, `resume`, `setup`, `sessions`, `tasks`). `kite help all` prints the full map. `chat` and `exec` remain as hidden aliases.
+`kite --help` lists the full command surface. `chat` and `exec` are first-class (exec is the CI one-shot).
 
-**Interactive TUI:** `kite` launches a **Textual** full-screen interface (Pi/Tau-style transcript + composer). Set `KITE_LEGACY_TUI=1` to use the older Rich + prompt_toolkit scrollback REPL.
+**Interactive session:** `kite` is a lean Pi-style REPL (Rich + prompt_toolkit): one-line header, composer, footer. Optional fullscreen TUI is **not** in the default package — `pip install kite[tui]` and `KITE_TUI=1`.
+
+Pi-shaped shortcuts:
 
 ```
-kite                         # REPL (same as kite chat)
+kite                         # lean REPL
+kite "fix the tests"         # opening prompt (TTY → chat, else run)
+kite -c                      # continue latest session
+kite -r                      # browse sessions
+!pytest -q                   # in REPL: run shell, send output to the model
+!!git status                 # run shell only
+/hotkeys                     # keyboard map
+```
+
+```
 kite --version
 kite chat [--mode plan|build] [--approval auto|approve|trust|readonly] [--session id]
 kite run "task"              # one-shot
@@ -52,7 +63,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--cwd` | Workspace |
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
-| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | **Coding blanket** (default `auto`): in-workspace install/test/edit/commit auto-runs; **SERIOUS** tier still prompts for network fetch (`curl`/`wget`/`Invoke-WebRequest`), destructive deletes, `chmod`/`chown`, and shell wrappers (`powershell`/`pwsh`/`cmd`); only **CRITICAL** boundary escapes are denied headless (outside workspace, sudo, sandbox-blocked). `yolo` = skip non-critical prompts (guardrails still apply; sudo/outside-workspace denied). `trust` = auto + prompts for memory/subagents. `supervised` = prompt all mutations. |
+| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | **Coding blanket** (default `auto`): in-workspace install/test/edit/commit auto-runs, including `powershell -Command` / `cmd /c` wrapping those tools. **SERIOUS** still prompts for network fetch, destructive deletes, `chmod`. **Enter** / `a` allows that exact command for the rest of the session; `s` allows the command family; `p` persists to `~/.kite/approvals.json`. CRITICAL (outside workspace, sudo) always prompts / denies headless. |
 | `--steps` `--cost` `--time` | Limits (honored by `run`, `chat`, and one-shot `resume`) |
 | `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
@@ -243,6 +254,7 @@ These never go to the model.
 | `/live agents` | Stream subagent crew tool + shell output with worker prefix |
 | `/collapse` | Collapse tool output (default) |
 | `/trace` | Last traceback |
+| `/tools` | Built-in agent tools grouped by family (○ inspect · ✎ edit · $ shell · ↗ net · ◈ crew) |
 | `/skills [name]` | List skills (trust/origin column), or print one. Empty: pick to show. User-home skills show `~` (`~/.kite/skills`, `~/.agents/skills`) |
 | `/skills add pkg\|path` | Install npm/npx/GitHub into `~/.kite/skills` (**untrusted** — provenance in `.kite-provenance.json`), or **link** a local skill folder |
 | `/commands` | List markdown slash prompts |
@@ -291,7 +303,7 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+\` | Toggle sidebar (sessions / crew / changes) |
 | `Tab` | Cycle slash completions (`Enter` always submits) |
 
-Drag-select, copy, and right-click paste stay with the terminal (mouse capture off by default). Set `KITE_MOUSE=1` for slash-menu wheel scroll (then use Shift+drag to select in most terminals).
+Model/provider/session pickers (`kite models --select`, `kite select`, `kite -r`, `/select`, setup, web-keys) use a **console list**, not a prompt_toolkit overlay (that broke Windows). On a TTY: **↑↓** / Page Up/Down, type to filter, type a **number** then Enter, `r` refresh (live models), Esc/`q` cancel. Non-TTY and CI (`KITE_TYPED_PICK=1`) use the typed prompt (`+/−` pages). Slash and `@file` menus can wheel-scroll; set `KITE_MOUSE=0` to leave the mouse with the terminal (Shift+drag still copies).
 
 While a turn runs, the bottom toolbar shows a **running line** (`[HH:MM:SS] label running`) and, when bash or background jobs stream output, the latest sanitized line as `› …`. Model streaming shows `streaming` with **ttft** (time-to-first-token) on early tokens, then **tok/s** from provider usage when available. Reasoning and answer text use separate channels; tool-call JSON streams as throttled `preparing` previews. Queued messages show separate **steer** and **follow-up** counts plus `next steer:` / `next follow-up:` preview. Provider retries tick down in the running line. Auto-compaction shows `compacting context`. Metrics row: tok/s, cache %, context meter, and session cost.
 

@@ -91,6 +91,13 @@ def _chat_session_from_args(args: argparse.Namespace, *, attachments: list | Non
     approval = _parse_approval(getattr(args, "approval", None), mode)
     if getattr(args, "approval", None) is None:
         approval = default_approval(mode)
+    task = getattr(args, "task", None)
+    if isinstance(task, list):
+        task = " ".join(str(part) for part in task if part).strip()
+    elif isinstance(task, str):
+        task = task.strip()
+    else:
+        task = ""
     return ChatSession(
         cwd=getattr(args, "cwd", None) or os.getcwd(),
         provider=getattr(args, "provider", None),
@@ -109,6 +116,7 @@ def _chat_session_from_args(args: argparse.Namespace, *, attachments: list | Non
         role=getattr(args, "role", "auto") or "auto",
         long_task=bool(getattr(args, "long", False)),
         attachments=attachments,
+        initial_prompt=task or None,
     )
 
 
@@ -1222,6 +1230,20 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="store_true", help="Print version")
+    parser.add_argument(
+        "-c",
+        "--continue",
+        dest="continue_last",
+        action="store_true",
+        help="Resume the latest session (Pi -c)",
+    )
+    parser.add_argument(
+        "-r",
+        "--recent",
+        dest="resume_pick",
+        action="store_true",
+        help="Browse saved sessions (Pi -r)",
+    )
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     help_p = sub.add_parser("help", help="Print CLI quick reference")
@@ -1239,7 +1261,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_run_flags(run)
     run.set_defaults(func=cmd_run)
 
-    chat = sub.add_parser("chat", help="Interactive REPL (default when bare `kite`)")
+    chat = sub.add_parser("chat", help="Lean REPL (default when bare `kite`)")
+    chat.add_argument("task", nargs="*", help="Optional opening prompt")
     _add_model_workspace_flags(chat)
     _add_budget_flags(chat)
     _add_interactive_flags(chat)
@@ -1466,32 +1489,40 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_bench_parser(sub)
 
-    from kite.cli.help_map import CLI_HIDDEN_ALIASES, CLI_PRIMARY_COMMANDS
-
-    for name in list(sub.choices):
-        if name not in CLI_PRIMARY_COMMANDS:
-            _hide_subcommand_from_help(sub, name)
-    for alias in CLI_HIDDEN_ALIASES:
-        if alias in sub.choices:
-            _hide_subcommand_from_help(sub, alias)
+    _hide_subcommand_from_help(sub, "maintainer")
 
     return parser
 
 
+def rewrite_implicit_task(argv: list[str]) -> list[str]:
+    """Codex/Pi: a first token that is not a subcommand is an opening prompt."""
+    from kite.cli.help_map import CLI_COMMANDS
+
+    if not argv:
+        return argv
+    first = argv[0]
+    if first.startswith("-") or first in CLI_COMMANDS:
+        return argv
+    oneshot = any(a in {"--headless", "--json", "-q", "--quiet", "--no-stream"} for a in argv)
+    verb = "run" if oneshot or not sys.stdin.isatty() else "chat"
+    return [verb, *argv]
+
+
 def main(argv: list[str] | None = None) -> int:
-    raw = list(sys.argv[1:] if argv is None else argv)
+    raw = rewrite_implicit_task(list(sys.argv[1:] if argv is None else argv))
     if raw in (["--version"], ["-V"]):
         from kite import __version__
 
         print(__version__)
         return 0
 
-    from kite.providers.credentials import load_kite_env
+    if raw and raw[0] not in {"-h", "--help", "help"}:
+        from kite.providers.credentials import load_kite_env
 
-    load_kite_env()
+        load_kite_env()
 
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw)
 
     if args.version:
         from kite import __version__
@@ -1499,8 +1530,72 @@ def main(argv: list[str] | None = None) -> int:
         print(__version__)
         return 0
 
-    # Bare `kite` → interactive chat (cold-start REPL). `kite --help` still works.
+    # Bare `kite` → lean REPL. `-c` / `-r` match Pi continue / session browse.
     if args.command is None:
+        if getattr(args, "continue_last", False):
+            return cmd_resume(
+                argparse.Namespace(
+                    session=None,
+                    message=None,
+                    task=None,
+                    last=True,
+                    retry=False,
+                    provider=None,
+                    model=None,
+                    cwd=os.getcwd(),
+                    config=None,
+                    mode="build",
+                    approval=None,
+                    verbose=False,
+                    steps=None,
+                    cost=None,
+                    time=0,
+                    no_context=False,
+                    no_compact=False,
+                    no_guardrails=False,
+                    role="auto",
+                    long=False,
+                    attach=[],
+                    headless=False,
+                    quiet=False,
+                    json=False,
+                    output=None,
+                    no_stream=False,
+                    label="",
+                )
+            )
+        if getattr(args, "resume_pick", False):
+            return cmd_resume(
+                argparse.Namespace(
+                    session=None,
+                    message=None,
+                    task=None,
+                    last=False,
+                    retry=False,
+                    provider=None,
+                    model=None,
+                    cwd=os.getcwd(),
+                    config=None,
+                    mode="build",
+                    approval=None,
+                    verbose=False,
+                    steps=None,
+                    cost=None,
+                    time=0,
+                    no_context=False,
+                    no_compact=False,
+                    no_guardrails=False,
+                    role="auto",
+                    long=False,
+                    attach=[],
+                    headless=False,
+                    quiet=False,
+                    json=False,
+                    output=None,
+                    no_stream=False,
+                    label="",
+                )
+            )
         from kite.cli.setup import maybe_run_first_setup
         from kite.ui.style import make_console
 
@@ -1528,6 +1623,7 @@ def main(argv: list[str] | None = None) -> int:
                 role="auto",
                 long=False,
                 attach=[],
+                task=None,
             )
         )
 

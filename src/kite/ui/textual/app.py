@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import sys
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -535,12 +533,6 @@ class KiteApp(App[None]):
 
 
 def should_use_textual_tui() -> bool:
-    if os.environ.get("KITE_LEGACY_TUI", "").strip().lower() in {"1", "true", "yes"}:
-        return False
-    if not sys.stdin.isatty():
-        return False
-    try:
-        import textual  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    from kite.ui.tui_gate import should_use_textual_tui as _gate
+
+    return _gate()
