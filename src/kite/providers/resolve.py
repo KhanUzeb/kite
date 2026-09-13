@@ -119,21 +119,6 @@ def resolve_model(
         or ""
     )
 
-    if not model_name:
-        try:
-            from kite.providers.list_models import list_models_for_provider
-
-            live = list_models_for_provider(spec, config=cfg, catalog=cat)
-            if live.ok:
-                model_name = live.models[0].id
-        except Exception as exc:  # noqa: BLE001 — resolve must stay non-fatal
-            import logging
-
-            logging.getLogger("kite.providers.resolve").debug(
-                "live model list failed for %s: %s", provider_name, exc
-            )
-            model_name = ""
-
     api_base = (
         cfg.api_bases.get(provider_name)
         or cfg.api_bases.get(requested)
@@ -180,30 +165,10 @@ def resolve_model(
 
     from kite.providers.capabilities import agent_model_warning
 
+    # Name-only warning — do not fetch live catalogs or import LiteLLM here.
+    # Those belong in the model picker / first model call, not every `kite` launch.
+    warning = agent_model_warning(model_name or "")
     remote_raw: dict[str, Any] | None = None
-    if model_name:
-        try:
-            from kite.providers.list_models import find_remote_model
-
-            remote = find_remote_model(spec, model_name, config=cfg, catalog=cat)
-            if remote is not None:
-                remote_raw = dict(remote.raw)
-        except Exception as exc:  # noqa: BLE001 — resolve must stay non-fatal
-            import logging
-
-            logging.getLogger("kite.providers.resolve").debug(
-                "remote model metadata lookup failed for %s/%s: %s",
-                provider_name,
-                model_name,
-                exc,
-            )
-
-    warning = agent_model_warning(
-        model_name or "",
-        raw=remote_raw,
-        provider=provider_name,
-        litellm_model=litellm_model,
-    )
 
     return ResolvedModel(
         provider=provider_name,

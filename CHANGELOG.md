@@ -4,6 +4,20 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [0.9.8.5] - 2026-09-13
+
+### Changed
+- Lean CLI is the default surface (Pi-style header, `!` / `!!` shell, `-c` / `-r`). Fullscreen Textual TUI is opt-in (`kite[tui]` + `KITE_TUI=1`).
+- `kite --help` lists every shipped subcommand so each one is discoverable and callable.
+- Unknown first tokens are treated as an opening prompt (Codex/Pi).
+
+### Added
+- `docs/RELEASE-0.9.8.5.md`.
+- `scripts/ci_check.sh` / `scripts/ci_check.ps1` — same gates as GitHub Actions (`sync_version`, ruff, pytest, `kite bench --check`).
+
+### Fixed
+- CLI pick/select lists (`kite models --select`, `kite select`, sessions, setup) no longer use a prompt_toolkit overlay that cancelled immediately on Windows. Typed + arrow picker; CI sets `KITE_TYPED_PICK=1`.
+
 ## [0.9.8] - 2026-09-13
 
 ### Added

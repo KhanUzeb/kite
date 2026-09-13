@@ -12,7 +12,7 @@ Or: `uv pip install -e ".[dev]"` → `pytest`. No live LLM calls. `conftest.py` 
 
 ## CI
 
-`.github/workflows/tests.yml` runs pytest on Linux and Windows × Python 3.11 and 3.12, plus `ruff check src tests`, `sync_version.py --check`, and `kite bench --check`.
+`.github/workflows/tests.yml` runs pytest on Linux and Windows × Python 3.11 and 3.12, plus `ruff check src tests`, `sync_version.py --check`, and `kite bench --check`. Env: `KITE_HOME`, `KITE_SKIP_SETUP=1`, `KITE_TYPED_PICK=1`. Locally: `./scripts/ci_check.sh` or `.\scripts\ci_check.ps1`.
 
 ## Layout (~150 collected tests)
 
@@ -27,7 +27,7 @@ Prefer one module per domain. Combine related asserts in a single test (or a loo
 | `test_application.py` | RunSpec, PolicyEngine, ToolExecutor, verification, nested policy |
 | `test_providers.py` | BYOS OAuth, select, reasoning, Codex LiteLLM flatten |
 | `test_credentials.py` | `~/.kite/.env` keys, web-tool keys, Claude usable vs linked |
-| `test_cli.py` | apply/diff, slash help, chat/resume flags |
+| `test_cli.py` | apply/diff, slash help, chat/resume flags, numbered pickers |
 | `test_headless_tasks.py` | JSONL tasks, Submitted-only success, non-interactive approval |
 | `test_ui.py` | render, theme, REPL slash/jobs, attach, preview |
 | `test_composer.py` | Ctrl-C steer/stop, queue, approval composer |

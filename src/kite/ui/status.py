@@ -195,11 +195,14 @@ def status_segments(state: SessionUiState) -> list[tuple[str, str]]:
             (cost, "kite.muted"),
         ]
 
-    return [
+    idle = [
         (mode_label, mode_style(state)),
         (model, "kite.muted"),
         (cost, "kite.muted"),
     ]
+    if state.window and state.tokens:
+        idle.append((f"ctx {state.context_pct:.0%}" if state.context_pct is not None else f"{state.tokens} tok", "kite.muted"))
+    return idle
 
 
 def status_detail_lines(state: SessionUiState) -> list[str]:

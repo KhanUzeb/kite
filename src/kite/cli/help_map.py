@@ -1,19 +1,46 @@
-"""Short CLI help — grouped quick reference for `kite help` and `--help` epilog."""
+"""CLI help — Codex/Pi-style grouped map. Every shipped command is listed."""
 
 from __future__ import annotations
 
-# Shown in `kite --help` / `kite help` (everything else: `kite help all`).
-CLI_PRIMARY_COMMANDS: frozenset[str] = frozenset({
-    "run",
-    "resume",
-    "setup",
-    "sessions",
-    "tasks",
+# Compatibility aliases stay registered; they remain in --help so they are usable.
+CLI_HIDDEN_ALIASES: frozenset[str] = frozenset()
+
+# Every argparse subcommand except maintainer (gated).
+CLI_COMMANDS: frozenset[str] = frozenset({
     "help",
+    "run",
+    "chat",
+    "resume",
+    "sessions",
+    "providers",
+    "setup",
+    "login",
+    "logout",
+    "keys",
+    "web-keys",
+    "models",
+    "config",
+    "privacy",
+    "context",
+    "skills",
+    "commands",
+    "plugins",
+    "memory",
+    "runtime-config",
+    "apply",
+    "import",
+    "exec",
+    "audit",
+    "dashboard",
+    "cloud",
+    "bench",
+    "tasks",
+    "subagents",
+    "maintainer",
 })
 
-# Compatibility aliases — still work, hidden from default help.
-CLI_HIDDEN_ALIASES: frozenset[str] = frozenset({"chat", "exec"})
+# Shown first in `kite --help` (full list still appears below).
+CLI_PRIMARY_COMMANDS: frozenset[str] = CLI_COMMANDS - frozenset({"maintainer"})
 
 
 def docs_help() -> str:
@@ -29,30 +56,43 @@ def docs_help() -> str:
     )
 
 
-CLI_EPILOG = """commands:
-  kite                 interactive session
-  kite run             one-shot or headless task
-  kite resume          continue work
-  kite setup           onboarding
-  kite sessions        history
-  kite tasks           batches
+CLI_EPILOG = """
+session
+  kite [prompt]        interactive session (optional opening task)
+  kite chat [prompt]   same as bare kite
+  kite run "task"      one-shot (CI: --headless --json)
+  kite exec "task"     CI alias for run (auto, quiet)
+  kite resume [id]     continue a session (--last)
+  kite sessions        list / show / delete transcripts
 
-run `kite help all` for the full map  ·  in REPL type /help all
+setup
+  kite setup | login | logout | keys | web-keys | providers | models
+  kite config | privacy
+
+project
+  kite context | skills | commands | plugins | memory | subagents
+
+ops
+  kite tasks | bench | apply | import | audit | dashboard | cloud | runtime-config
+
+unknown first word is treated as a prompt (Codex/Pi).  kite help  ·  /help
 """
 
 
 def cli_help_brief() -> str:
     return """Kite CLI
 
-  kite                 interactive session
-  kite run             one-shot or headless task
-  kite resume          continue work
-  kite setup           onboarding
-  kite sessions        history
-  kite tasks           batches
+  kite [prompt]              lean interactive session
+  kite run "task"            one-shot / headless
+  kite resume [id]           continue work
+  kite setup                 onboarding
+  kite sessions              history
+  kite tasks                 batches
+  kite models | keys | config | skills | …
 
-More: kite help all
-REPL:  /help  ·  /help all
+  kite --help                every subcommand
+  kite help all              this map plus flags
+  REPL: /help  ·  /help all
 """
 
 
@@ -60,13 +100,15 @@ def cli_help_text() -> str:
     return """Kite CLI - full reference
 
 Session
-  kite | kite chat              REPL (plan/build, /slash commands)
+  kite | kite chat [prompt]     lean REPL (plan/build, /slash commands)
   kite run "task"               one-shot
   kite resume [id] [message]    continue session (omit id to pick)
   kite sessions                 pick a transcript to open / show / delete
 
 Setup & model
   kite setup                    first-run wizard
+  kite login [provider]         BYOK key or BYOS OAuth
+  kite logout [provider]        unlink BYOS
   kite keys [--set [provider]]  API keys - also tavily|exa|firecrawl
   kite web-keys [status|set|logout]  optional paid web tool keys
   kite providers                status, then pick to connect
@@ -85,12 +127,12 @@ Advanced
   kite runtime-config           merged agent TOML
   kite bench [--json] [--compare file]
   kite tasks init | kite tasks run <file> [--steps N] [--cost $] [--time S]
-  kite apply | kite import | kite exec | kite audit | kite cloud
-  kite exec "task"          CI one-shot (headless, quiet, same flags as run)
+  kite apply | kite import | kite exec | kite audit | kite cloud | kite dashboard
+  kite exec "task"              CI one-shot (headless, quiet, same flags as run)
 
 REPL essentials (type /help in chat, /help all for everything)
   /build /plan                  apply edits (default) vs opt-in checklist-only
-  /model [list|select|groq/id]  model picker
+  /model [list|select|groq/id]  model picker (wheel / trackpad / ↑↓)
   /login /keys /select          credentials
   /checkpoint /handoff /compact session continuity
   /session list | /resume <id>  transcripts
@@ -99,6 +141,7 @@ REPL essentials (type /help in chat, /help all for everything)
   /stop /steer                  stop turn or redirect (session stays)
   /goal [text]            persistent objective; /goal pause|resume|clear
   /jobs /agents /kill [id|all]  crew board; /agents profiles|init|show
+  /tools                        built-in agent tools (same glyphs as the transcript)
 
 Flags on run: -p provider  -m model  --cwd PATH  --mode plan|build
   --approval auto|approve|supervised|yolo|trust|readonly  --headless  --no-stream

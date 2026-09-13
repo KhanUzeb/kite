@@ -42,6 +42,38 @@ def test_apply_diff_and_pickers(tmp_path: Path) -> None:
     assert numbered_pick(console, [("a", "alpha"), ("b", "beta")], current="a", title="t", noun="model") == "b"
     console.input.return_value = ""
     assert numbered_pick(console, [("a", "alpha")], current=None, title="t", noun="item") is None
+    console.input.side_effect = ["gpt", "2"]
+    assert numbered_pick(
+        console,
+        [("gpt-4", "gpt-4"), ("gpt-4o", "gpt-4o"), ("claude", "claude")],
+        current=None,
+        title="t",
+        noun="model",
+    ) == "gpt-4o"
+    from unittest.mock import patch
+
+    from kite.ui.pick import _console_is_scripted
+
+    assert _console_is_scripted(console) is True
+    with patch("kite.ui.pick.can_scroll_pick", return_value=True), patch(
+        "kite.ui.pick._console_is_scripted", return_value=False
+    ), patch("kite.ui.pick._raw_pick", return_value="gpt-4") as raw:
+        assert numbered_pick(console, [("gpt-4", "gpt-4")], current=None, title="t", noun="model") == "gpt-4"
+        raw.assert_called_once()
+    items = [(str(i), f"m{i}") for i in range(1, 6)]
+    console.input.side_effect = ["+", "1"]
+    assert numbered_pick(console, items, current=None, title="t", noun="model", show=2) == "3"
+    from kite.ui.pick import REFRESH_PICK, can_scroll_pick
+
+    console.input.side_effect = None
+    console.input.return_value = "r"
+    assert numbered_pick(console, [("a", "a")], current=None, title="t", noun="model", refreshable=True) == REFRESH_PICK
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setenv("KITE_TYPED_PICK", "1")
+        assert can_scroll_pick() is False
+    finally:
+        monkeypatch.undo()
 
 
 def test_slash_help_and_legacy_routing() -> None:
@@ -138,7 +170,7 @@ def test_chat_flags_rejects_and_resume(monkeypatch, tmp_path: Path, kite_home) -
     assert [flag for flag in flags if flag not in combined] == []
     help_text_cli = parser.format_help()
     assert "maintainer" not in help_text_cli
-    assert "models" not in help_text_cli
+    assert "models" in help_text_cli
     assert "run" in help_text_cli
     assert parser.parse_args(["maintainer", "dashboard"]).command == "maintainer"
     from kite.cli.run import cmd_resume as _resume
@@ -212,10 +244,15 @@ def test_ci_workflows_run_ruff_pytest_and_bench() -> None:
     root = Path(__file__).resolve().parents[1]
     tests_yml = (root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     release_yml = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "KITE_TYPED_PICK" in tests_yml
     for body in (tests_yml, release_yml):
         assert "ruff check src tests" in body
         assert "pytest -q" in body
         assert "bench --check" in body
+    check = (root / "scripts" / "ci_check.sh").read_text(encoding="utf-8")
+    assert "sync_version.py --check" in check
+    assert "ruff check src tests" in check
+    assert "bench --check" in check
 
 
 def test_scripts_dir_keeps_only_supported_files() -> None:
@@ -225,9 +262,22 @@ def test_scripts_dir_keeps_only_supported_files() -> None:
         "download.ps1",
         "download.sh",
         "install.ps1",
+        "ci_check.ps1",
+        "ci_check.sh",
         "install.sh",
         "sync_version.py",
     }
+
+
+def test_implicit_prompt_rewrites_like_pi() -> None:
+    from kite.cli.run import rewrite_implicit_task
+
+    assert rewrite_implicit_task(["run", "x"]) == ["run", "x"]
+    assert rewrite_implicit_task(["--help"]) == ["--help"]
+    rewritten = rewrite_implicit_task(["fix", "the", "tests"])
+    assert rewritten[0] in {"chat", "run"}
+    assert rewritten[1:] == ["fix", "the", "tests"]
+    assert rewrite_implicit_task(["fix", "--headless"])[0] == "run"
 
 
 def test_parser_skips_heavy_backend_imports() -> None:

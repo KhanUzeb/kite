@@ -267,7 +267,10 @@ def test_reasoning_levels_and_slash_visibility() -> None:
     }
     index = CommandIndex(specs=specs)
     names = {s.name for s in _visible_specs(index, support=ReasoningSupport(True, False, True, True))}
-    assert "thinking" not in names and "reasoning" not in names
+    assert "thinking" not in names and "fast" not in names
+    assert "reasoning" in names
+    names_off = {s.name for s in _visible_specs(index, support=ReasoningSupport(False, False, False, False))}
+    assert "reasoning" not in names_off
 
 
 def test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -27,16 +27,17 @@ def test_cli_brief_and_full_help() -> None:
     assert "interactive session" in CLI_EPILOG
 
 
-def test_cli_parser_hides_secondary_commands() -> None:
+def test_cli_parser_lists_usable_commands() -> None:
     parser = build_parser()
     help_text_cli = parser.format_help()
-    for name in ("run", "resume", "setup", "sessions", "tasks", "help"):
-        assert f"  {name}" in help_text_cli
-    for hidden in ("models", "chat", "exec", "maintainer", "config", "bench"):
-        assert f"  {hidden} " not in help_text_cli
+    for name in ("run", "resume", "setup", "sessions", "tasks", "help", "models", "chat", "exec", "config", "bench"):
+        assert name in help_text_cli
+    assert "maintainer" not in help_text_cli
     assert parser.parse_args(["chat"]).command == "chat"
     assert parser.parse_args(["exec", "task"]).command == "exec"
     assert parser.parse_args(["help", "all"]).topic == "all"
+    assert parser.parse_args(["-c"]).continue_last is True
+    assert parser.parse_args(["-r"]).resume_pick is True
 
 
 def test_repl_help_primary_vs_all() -> None:
@@ -63,16 +64,34 @@ def test_legacy_slash_still_dispatches() -> None:
     assert is_primary_slash("plan")
 
 
-def test_completion_hides_advanced_aliases() -> None:
+def test_completion_lists_commands_and_skills_with_cues() -> None:
     index = CommandIndex.load(".")
     from kite.models.reasoning import ReasoningSupport
+    from kite.ui.complete import _slash_display, _slash_meta, _slash_origin
 
     support = ReasoningSupport(False, False, False, False, source="none")
-    names = {spec.name for spec in _visible_specs(index, support=support)}
+    specs = _visible_specs(index, support=support)
+    names = {spec.name for spec in specs}
     assert "plan" in names and "model" in names
-    assert "compact" not in names
+    assert "compact" in names
+    assert "explain" in names
+    assert "commit" in names
     assert "cost" not in names
-    assert "explain" not in names
+
+    origins = {_slash_origin(s, index) for s in specs}
+    assert "builtin" in origins
+    assert "prompt-bundled" in origins
+    assert "skill-bundled" in origins
+
+    plan = next(s for s in specs if s.name == "plan")
+    explain = next(s for s in specs if s.name == "explain")
+    commit = next(s for s in specs if s.name == "commit")
+    assert _slash_display(plan, index).startswith("· /plan")
+    assert _slash_display(explain, index).startswith("▸ /explain")
+    assert _slash_display(commit, index).startswith("◆ /commit")
+    assert _slash_meta(plan, index).startswith("cmd")
+    assert "prompt" in _slash_meta(explain, index)
+    assert _slash_meta(commit, index).startswith("skill")
 
     completer = SlashCompleter(lambda: index)
     completions = list(
@@ -83,7 +102,47 @@ def test_completion_hides_advanced_aliases() -> None:
     )
     completion_names = {c.text for c in completions}
     assert "plan" in completion_names
-    assert "compact" not in completion_names
+    assert "compact" in completion_names
+    assert "explain" in completion_names
+    assert "commit" in completion_names
+    assert "tools" in names
+
+
+def test_mouse_scroll_defaults_on() -> None:
+    import os
+
+    from kite.ui.complete import _mouse_support_enabled
+
+    prev = os.environ.get("KITE_MOUSE")
+    os.environ.pop("KITE_MOUSE", None)
+    try:
+        assert _mouse_support_enabled() is True
+        os.environ["KITE_MOUSE"] = "0"
+        assert _mouse_support_enabled() is False
+    finally:
+        if prev is None:
+            os.environ.pop("KITE_MOUSE", None)
+        else:
+            os.environ["KITE_MOUSE"] = prev
+
+
+def test_builtin_tool_catalog_cues() -> None:
+    from kite.tools.cues import format_tool_catalog, tool_cue
+    from kite.ui.tool_cards import ToolCard, render_tool_card_done, render_tool_card_start
+
+    assert tool_cue("read") == ("○", "read")
+    assert tool_cue("edit") == ("✎", "edit")
+    assert tool_cue("bash") == ("$", "sh")
+    assert tool_cue("websearch") == ("↗", "net")
+    assert tool_cue("subagent") == ("◈", "crew")
+    catalog = format_tool_catalog()
+    assert "○ read" in catalog
+    assert "$ bash" in catalog
+    assert "◈ subagent" in catalog
+    start = render_tool_card_start(ToolCard(tool="grep", detail="foo"), running=False).plain
+    assert "○" in start and "grep" in start and "read" in start
+    done = render_tool_card_done("write", ok=True).plain
+    assert "✎" in done and "write" in done and "edit" in done
 
 
 def test_status_footer_modes() -> None:

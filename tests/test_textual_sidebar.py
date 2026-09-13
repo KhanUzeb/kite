@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
+pytest.importorskip("textual")
+
 from kite.ui.textual.sidebar import Sidebar
 
 

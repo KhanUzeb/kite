@@ -701,9 +701,9 @@ def make_coding_tools(
             Tool(
                 name="read",
                 description=(
-                    "Bounded file read — fallback when bash peek is not enough. "
-                    "Prefer bash (rg, head, sed -n, wc -l) for search and peeking; "
-                    "read adds line numbers only when numbered=true. Large files auto-truncate."
+                    "Bounded file read — fallback when a bash peek is not enough. "
+                    "Prefer bash (rg, head, sed -n, wc -l) for search; "
+                    "set numbered=true only when you need line numbers. Large files auto-truncate."
                 ),
                 parameters={
                     "type": "object",
@@ -722,7 +722,7 @@ def make_coding_tools(
             "write",
             Tool(
                 name="write",
-                description="Create or overwrite a text file. Prefer edit for existing files.",
+                description="Create or overwrite a text file. Use edit for existing files so the UI can show a diff.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -739,7 +739,7 @@ def make_coding_tools(
             "edit",
             Tool(
                 name="edit",
-                description="Replace an exact string in a file (unique match unless replace_all). Diff is shown in the UI.",
+                description="Replace an exact string in a file (must be unique unless replace_all=true). Diff is shown in the UI.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -760,10 +760,9 @@ def make_coding_tools(
                 name="bash",
                 description=(
                     "Primary inspection and execution tool. Fresh subprocess each call — "
-                    "use set_cwd or cwd= for directory changes. "
-                    "Token-efficient reads: rg/grep/find, wc -l, head/tail, sed -n '10,40p', "
-                    "cat only for small files. Tests, git, builds, and edits via shell when needed. "
-                    "Set background=true for long-running servers; track with /jobs and /kill."
+                    "use set_cwd or cwd= to change directory. "
+                    "Token-efficient reads: rg, wc -l, head/tail, sed -n '10,40p'; cat only small files. "
+                    "background=true for servers; track with /jobs and /kill."
                 ),
                 parameters={
                     "type": "object",
@@ -787,9 +786,8 @@ def make_coding_tools(
             Tool(
                 name="grep",
                 description=(
-                    "Search file contents (ripgrep). Token-efficient modes: files_only=true lists paths "
-                    "without line text; count_only=true gives per-file counts. Batch multiple greps in one turn "
-                    "when paths differ. Use context for small surrounding slices; fixed=true for literal strings."
+                    "Search file contents (ripgrep). files_only=true lists paths; count_only=true is counts only. "
+                    "Batch greps in one turn when paths differ. context= for a small slice; fixed=true for literals."
                 ),
                 parameters={
                     "type": "object",

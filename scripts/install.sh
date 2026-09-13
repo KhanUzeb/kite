@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 0.9.8
+# kite-release-version: 0.9.8.5
 # Install Kite as a global CLI (default) or editable checkout (--dev).
 #
 # Compatible with: macOS (bash 3.2+), Ubuntu/Debian Linux, WSL, other Unix.
@@ -41,7 +41,7 @@ Options:
   --no-clone       With --dev: install from existing checkout only
   --no-dev         With --dev: omit pytest extra in local .venv
   --force          Reinstall / overwrite existing kite tool entry
-  --verify         Run pytest after --dev install
+  --verify         Run CI gates after --dev install (ci_check.sh)
   --setup          Run `kite setup` after install (interactive TTY only)
   -h, --help       Show this help
 
@@ -399,12 +399,11 @@ install_dev_editable() {
   fi
 
   if [[ "${VERIFY}" -eq 1 ]]; then
-    echo "Running pytest (smoke check)..."
-    # Prefer venv pytest without requiring shell activate
-    if [[ -x .venv/bin/pytest ]]; then
-      .venv/bin/pytest -q
+    echo "Running CI gates (sync_version, ruff, pytest, bench)..."
+    if [[ -x .venv/bin/python ]]; then
+      PYTHON=.venv/bin/python bash scripts/ci_check.sh
     else
-      uv run --python .venv pytest -q
+      bash scripts/ci_check.sh
     fi
   fi
 

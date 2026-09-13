@@ -6,7 +6,7 @@ Instructions for coding agents (Cursor, Claude Code, Kite itself, etc.) hacking 
 
 ## What this repo is
 
-**Kite** v0.9.8 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
+**Kite** v0.9.8.5 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
 
 - **Engine:** mini-swe-agent style loop (`agent/loop.py`) — query → tools → observe → repeat
 - **Cockpit:** tau-inspired assembly — catalog providers, skills, guardrails, Rich TUI, JSONL sessions
@@ -124,6 +124,7 @@ kite run --headless "task"      # single headless run with stderr event log
 pytest -q                       # verify changes
 pytest tests/test_bench.py -q   # harness timing budgets
 kite bench --check              # same budgets from CLI
+./scripts/ci_check.sh           # all CI gates (Windows: .\\scripts\\ci_check.ps1)
 ```
 
 Full map: [kite_commands.md](kite_commands.md).
@@ -137,7 +138,7 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 - Importing Rich or prompt_toolkit inside `agent/loop.py`
 - Storing API keys in repo or printing them in logs
 - Breaking sandbox: allowing **writes** outside the workspace (global skill **reads** under `~/.kite/skills` are a documented exception)
-- Reverting to prompt_toolkit/Rich scrollback for interactive REPL (`KITE_LEGACY_TUI=1` only)
+- Shipping Textual as a required dependency (TUI is optional `kite[tui]` + `KITE_TUI=1`)
 - Changing default prompts to wrap casual chat (`hi`) as “solve this task” — chat stays literal
 - Skipping `pytest` when touching guardrails, sessions, approval, or render
 - Running with `--no-guardrails` on untrusted tasks (disables path/bash/secret protections)
@@ -151,7 +152,7 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 | [architecture.md](architecture.md) | Layers, lifecycle, extension points |
 | [kite_commands.md](kite_commands.md) | CLI/REPL command reference |
 | [CONTEXT.md](CONTEXT.md) | Term definitions |
-| [docs/RELEASE-0.9.8.md](docs/RELEASE-0.9.8.md) | Current version release notes |
+| [docs/RELEASE-0.9.8.5.md](docs/RELEASE-0.9.8.5.md) | Current version release notes |
 
 ---
 

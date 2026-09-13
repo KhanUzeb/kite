@@ -152,8 +152,16 @@ def test_coding_blanket_windows_commands(workspace: Path) -> None:
     assert not needs_approval(
         "bash", AgentMode.BUILD, ApprovalMode.AUTO, command="Get-ChildItem src", workspace_cwd=ws, bash_cwd=ws
     )
+    assert is_coding_bash('powershell -Command "pytest -q"')
+    assert not needs_approval(
+        "bash",
+        AgentMode.BUILD,
+        ApprovalMode.AUTO,
+        command='powershell -Command "pytest -q"',
+        workspace_cwd=ws,
+        bash_cwd=ws,
+    )
     for cmd in (
-        'powershell -Command "pytest -q"',
         "Remove-Item -Recurse -Force node_modules",
         "Invoke-WebRequest https://example.com",
     ):
@@ -185,3 +193,24 @@ def test_mandatory_still_prompts_when_pattern_remembered(monkeypatch) -> None:
     calls.clear()
     allow = prompt_approval(_Console(), "bash", {"command": "git commit -m x"}, policy=policy, mandatory=False)
     assert calls == [] and allow == "allow"
+
+
+def test_once_remembers_exact_command_for_session(monkeypatch) -> None:
+    from kite.ui.approval import exact_action_key
+
+    policy = ApprovalPolicy()
+    monkeypatch.setattr("kite.ui.approval.Prompt.ask", lambda *_a, **_k: "a")
+
+    class _Console:
+        def print(self, *_a, **_k) -> None:
+            pass
+
+    args = {"command": "curl https://example.com/a"}
+    assert prompt_approval(_Console(), "bash", args, policy=policy) == "allow"
+    assert policy.remembered(exact_action_key("bash", args))
+    assert prompt_approval(_Console(), "bash", args, policy=policy) == "allow"
+    other = {"command": "curl https://example.com/other"}
+    asked: list[str] = []
+    monkeypatch.setattr("kite.ui.approval.Prompt.ask", lambda *_a, **_k: asked.append("x") or "n")
+    assert prompt_approval(_Console(), "bash", other, policy=policy) == "deny"
+    assert asked == ["x"]

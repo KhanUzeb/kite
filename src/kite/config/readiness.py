@@ -209,7 +209,7 @@ def offer_setup_interactive(console) -> bool:
         return False
     if not is_interactive_tty():
         return False
-    if assess_setup_status().ready:
+    if assess_setup_status_fast().ready:
         return False
     try:
         raw = console.input("[kite.brand]First run?[/] Run [cyan]kite setup[/] now? [Y/n] ").strip().lower()

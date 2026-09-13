@@ -1,4 +1,4 @@
-# kite-release-version: 0.9.8
+# kite-release-version: 0.9.8.5
 # Install Kite as a global CLI (default via irm|iex) or editable checkout (-Dev).
 #
 # Windows / PowerShell. If ExecutionPolicy blocks you, use:
@@ -57,7 +57,7 @@ Options:
   -NoClone         With -Dev: install from existing checkout only
   -NoDev           With -Dev: omit pytest extra in local .venv
   -Force           Reinstall / overwrite existing kite tool entry
-  -Verify          Run pytest after -Dev install
+  -Verify          Run CI gates after -Dev install (ci_check.ps1)
   -Setup           Run kite setup after install (interactive console only)
 
 Examples:
@@ -330,9 +330,10 @@ function Install-DevEditable {
     }
 
     if ($Verify) {
-        Write-Host "Running pytest (smoke check)..."
-        $pytest = Join-Path $installRoot ".venv\Scripts\pytest.exe"
-        if (Test-Path $pytest) { & $pytest -q } else { uv run --python $venvPy pytest -q }
+        Write-Host "Running CI gates (sync_version, ruff, pytest, bench)..."
+        $env:PYTHON = $venvPy
+        & (Join-Path $installRoot "scripts\ci_check.ps1")
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 
     if ($Setup -and [Console]::IsInputRedirected -eq $false) {

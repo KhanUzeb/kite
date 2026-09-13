@@ -25,6 +25,13 @@ uv tool uninstall kite
 Then run the suite (same gates as CI):
 
 ```bash
+./scripts/ci_check.sh          # macOS/Linux
+# .\scripts\ci_check.ps1       # Windows
+```
+
+Or the same commands by hand:
+
+```bash
 python scripts/sync_version.py --check
 ruff check src tests
 pytest -q
@@ -40,7 +47,7 @@ Workflow: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
 | **Push** or **pull request** to `main` | pytest on **Linux and Windows** × Python 3.11 and 3.12 (~150 tests in `tests/`); `ruff check src tests`; `python scripts/sync_version.py --check`; `kite bench --check` |
 | **Actions → Tests → Run workflow** | manual re-run anytime |
 
-CI sets `KITE_HOME` to an isolated temp directory and `KITE_SKIP_SETUP=1` so tests never prompt for onboarding.
+CI sets `KITE_HOME` to an isolated temp directory, `KITE_SKIP_SETUP=1` so tests never prompt for onboarding, and `KITE_TYPED_PICK=1` so model/session pickers stay on the scripted prompt (no TTY overlay).
 
 Always run `pytest -q`, `ruff check src tests`, and `kite bench --check` locally before opening a PR.
 

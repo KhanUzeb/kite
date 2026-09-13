@@ -171,7 +171,7 @@ def test_approval_wake_empty_does_not_deny(monkeypatch) -> None:
     assert result.text == ""
 
 
-def test_approval_enter_empty_requires_explicit_key() -> None:
+def test_approval_enter_empty_allows_once() -> None:
     from prompt_toolkit.keys import Keys
 
     from kite.ui.complete import make_repl_key_bindings
@@ -191,8 +191,8 @@ def test_approval_enter_empty_requires_explicit_key() -> None:
 
     enter.handler(event)
 
-    assert action_slot == {"kind": "submit"}
-    event.app.exit.assert_not_called()
+    assert action_slot == {"kind": "approval"}
+    event.app.exit.assert_called_once_with(result="a")
 
 
 def test_toolbar_busy_and_approval_states() -> None:
@@ -226,7 +226,7 @@ def test_toolbar_busy_and_approval_states() -> None:
     approval = SessionUiState(awaiting_approval="bash", awaiting_approval_mandatory=True)
     approval_html = str(_toolbar_html(approval))
     assert "[a] once" in approval_html
-    assert "/Enter" not in approval_html
+    assert "[Enter] once" not in approval_html
     assert "Enter queue" not in approval_html
 
     idle_html = str(_toolbar_html(SessionUiState(busy=False)))

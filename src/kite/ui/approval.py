@@ -188,6 +188,33 @@ def action_pattern(tool: str, arguments: dict[str, Any]) -> str:
     return f"{tool}:*"
 
 
+def exact_action_key(tool: str, arguments: dict[str, Any]) -> str:
+    """Exact command/path key — Enter/once remembers this for the rest of the session."""
+    if tool == "bash":
+        cmd = " ".join(str(arguments.get("command") or "").split())
+        return f"bash={cmd}" if cmd else "bash="
+    path = arguments.get("path") or arguments.get("root") or ""
+    if path:
+        return f"{tool}={path}"
+    return f"{tool}="
+
+
+_PS_WRAP = re.compile(
+    r'(?is)^\s*(?:powershell|pwsh)(?:\.exe)?(?:\s+-NoProfile)?\s+(?:-Command|-c)\s+["\']?(.*?)["\']?\s*$'
+)
+_CMD_WRAP = re.compile(r'(?is)^\s*cmd(?:\.exe)?\s+/c\s+["\']?(.*?)["\']?\s*$')
+
+
+def unwrap_shell_wrapper(command: str) -> str:
+    """Inner command for `powershell -Command` / `cmd /c` (Windows low-friction)."""
+    cmd = (command or "").strip()
+    for pattern in (_PS_WRAP, _CMD_WRAP):
+        match = pattern.match(cmd)
+        if match and match.group(1):
+            return match.group(1).strip()
+    return cmd
+
+
 def _git_bash_consequence(command: str) -> ConsequenceLevel:
     """Classify git subcommands by consequence — commit/add/checkout are routine dev work."""
     tokens = _git_command_tokens(command)
@@ -216,7 +243,7 @@ def _git_bash_consequence(command: str) -> ConsequenceLevel:
 
 def is_coding_bash(command: str) -> bool:
     """True when bash looks like routine in-workspace development work."""
-    cmd = (command or "").strip()
+    cmd = unwrap_shell_wrapper(command or "")
     if not cmd or check_dangerous(cmd):
         return False
     if _CRITICAL_BASH.search(cmd):
@@ -272,6 +299,9 @@ def action_consequence(
         return ConsequenceLevel.CRITICAL, "shell paths outside the project workspace always need approval"
     if workspace_cwd and not _cwd_in_workspace(bash_cwd, workspace_cwd):
         return ConsequenceLevel.CRITICAL, "shell outside the project workspace always needs approval"
+    inner = unwrap_shell_wrapper(cmd)
+    if inner != cmd and _in_workspace_coding_blanket(inner, workspace_cwd=workspace_cwd, bash_cwd=bash_cwd):
+        return ConsequenceLevel.ROUTINE, ""
     if _CRITICAL_BASH.search(cmd):
         if re.search(r"(?i)\b(sudo|su|doas)\b", cmd):
             return ConsequenceLevel.CRITICAL, "privileged commands always need approval"
@@ -657,11 +687,11 @@ def render_approval_panel(
 
     body.append(f"{GUTTER}{APPROVAL_BAR}\n", style="kite.muted")
     body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
-    body.append("[a]", style="kite.success")
-    body.append(" once  ", style="kite.muted")
+    body.append("[Enter]", style="kite.success")
+    body.append(" / [a] once  ", style="kite.muted")
     if not mandatory:
         body.append("[s]", style="kite.success")
-        body.append(" session  ", style="kite.muted")
+        body.append(" family  ", style="kite.muted")
         body.append("[p]", style="kite.success")
         body.append(" always  ", style="kite.muted")
     body.append("[n]", style="kite.pending")
@@ -683,7 +713,8 @@ def prompt_approval(
 ) -> Decision:
     policy = policy or ApprovalPolicy()
     pattern = action_pattern(tool, arguments)
-    if not mandatory and policy.remembered(pattern):
+    exact = exact_action_key(tool, arguments)
+    if not mandatory and (policy.remembered(pattern) or policy.remembered(exact)):
         return "allow"
 
     console.print(render_approval_panel(tool, arguments, diff=diff, reason=reason, mandatory=mandatory))
@@ -692,7 +723,7 @@ def prompt_approval(
         choice = Prompt.ask(
             "Decision",
             choices=choices,
-            default="n",
+            default="n" if mandatory else "a",
             console=console,
             show_choices=False,
         ).strip().lower()
@@ -700,6 +731,8 @@ def prompt_approval(
         return "stop"
 
     if choice == "a":
+        if not mandatory:
+            policy.remember(exact, always=False)
         return "allow"
     if not mandatory and choice == "s":
         policy.remember(pattern, always=False)
@@ -815,7 +848,8 @@ def make_approver(
         ):
             return "allow"
         pattern = action_pattern(tool, arguments)
-        if policy.remembered(pattern) and level < ConsequenceLevel.CRITICAL:
+        exact = exact_action_key(tool, arguments)
+        if level < ConsequenceLevel.CRITICAL and (policy.remembered(pattern) or policy.remembered(exact)):
             return "allow"
         if not interactive:
             return "deny" if level >= threshold else "allow"

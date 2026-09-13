@@ -151,6 +151,8 @@ def render_pick_list(
     extra: int = 0,
     noun: str = "item",
     refreshable: bool = False,
+    page_hint: bool = False,
+    cursor: int | None = None,
 ) -> Text:
     """Left-bar numbered picker, same visual language as login panels."""
     body = Text()
@@ -159,18 +161,24 @@ def render_pick_list(
     body.append("\n", style="kite.muted")
     for i, (item_id, label) in enumerate(items, start=1):
         is_current = bool(current and item_id == current)
+        is_cursor = cursor is not None and (i - 1) == cursor
         mark = " *" if is_current and "*" not in label else ""
+        prefix = "▸ " if is_cursor else "  "
         body.append(f"{GUTTER}┊ ", style="kite.muted")
-        body.append(f"{i:>3}  ", style="kite.pick")
-        body.append(f"{label}{mark}\n", style="kite.pick.current" if is_current else "")
+        body.append(f"{prefix}{i:>3}  ", style="kite.pick")
+        body.append(
+            f"{label}{mark}\n",
+            style="kite.pick.current" if (is_current or is_cursor) else "",
+        )
     body.append(f"{GUTTER}┊\n", style="kite.muted")
     body.append(f"{GUTTER}┊ ", style="kite.muted")
     bits: list[str] = []
     if refreshable:
         bits.append("r = refresh from API")
     if extra > 0:
+        more = " · +/− page · wheel in TTY picker" if page_hint else ""
         bits.append(
-            f"showing {len(items)} of {len(items) + extra} — type an id to pick any · empty/q = cancel"
+            f"showing {len(items)} of {len(items) + extra}{more} — type an id · empty/q = cancel"
         )
     else:
         bits.append(f"* = current · number or {noun} id · empty/q = cancel")

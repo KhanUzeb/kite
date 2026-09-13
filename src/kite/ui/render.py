@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -41,12 +42,15 @@ from kite.ui.tool_cards import (
     render_bash_command_block,
     render_code_edit_preview,
     render_parallel_batch_header,
+    render_run_meter,
     render_section_break,
     render_stream_tool_preview,
     render_tool_card_done,
     render_tool_card_start,
     render_tool_summary,
 )
+
+_QUIET_START_TOOLS = frozenset({"read", "grep", "glob", "ls"})
 
 
 def _subagent_prefix(p: dict[str, Any]) -> str:
@@ -257,6 +261,8 @@ class RunDisplay:
         self._fence_lang: str = ""
         self._tool_preview_at: float = 0.0
         self._tool_preview_chars: int = 0
+        self._run_tools: int = 0
+        self._run_t0: float | None = None
         self._transcript_buffer: list[Any] = []
         self._event_handlers: dict[str, Callable[[dict[str, Any]], None]] = {
             kind: getattr(self, f"_on_{kind}")  # noqa: SLF001
@@ -537,6 +543,8 @@ class RunDisplay:
         self.print_plan()
         self._channel = None
         self._saw_answer = False
+        self._run_tools = 0
+        self._run_t0 = time.monotonic()
         self._spin(True, "thinking")
 
     def _on_stream_start(self, p: dict[str, Any]) -> None:
@@ -613,6 +621,15 @@ class RunDisplay:
         self._end_stream_line()
         self._spin(True, "thinking")
         self._touch_state()
+        if self.verbose and int(p.get("tools") or 0) > 0:
+            meter = render_run_meter(
+                tools=int(p.get("tools") or 0),
+                duration_ms=p.get("duration_ms"),
+                cost=p.get("cost"),
+                n_calls=int(p.get("n_calls") or 0),
+            )
+            if meter is not None:
+                self._print(meter)
 
     def _on_tool_start(self, p: dict[str, Any]) -> None:
         self._flush_stream_buffers()
@@ -647,20 +664,22 @@ class RunDisplay:
             detail = tool
         self.state.set_running(label=detail, kind=tool)
         self.state.touch(force=True)
+        quiet = tool in _QUIET_START_TOOLS and not self.verbose
         sub_prefix = _subagent_prefix(p)
         if sub_prefix and self.state.live_subagents:
             self._print(
                 Text(f"{GUTTER}{sub_prefix}{tool}", style="kite.plan")
             )
-        self._print(render_tool_card_start(card))
-        if reason:
-            self._print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted italic"))
-        if tool == "bash" and args.get("command"):
-            self._print(render_bash_command_block(str(args["command"])))
-        elif tool in {"write", "edit"}:
-            preview = render_code_edit_preview(tool, args)
-            if preview is not None:
-                self._print(preview)
+        if not quiet:
+            self._print(render_tool_card_start(card))
+            if reason:
+                self._print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted italic"))
+            if tool == "bash" and args.get("command"):
+                self._print(render_bash_command_block(str(args["command"])))
+            elif tool in {"write", "edit"}:
+                preview = render_code_edit_preview(tool, args)
+                if preview is not None:
+                    self._print(preview)
         self._spin(True, f"working  {tool}")
 
     def _on_tool_progress(self, p: dict[str, Any]) -> None:
@@ -712,6 +731,7 @@ class RunDisplay:
         self._end_stream_line()
         self._spin(False)
         self._parallel_batch = 0
+        self._run_tools += 1
         tool = str(p.get("tool") or "tool")
         ok = p.get("ok", True)
         blocked = bool(p.get("blocked"))
@@ -1103,7 +1123,27 @@ class RunDisplay:
         self.state.clear_running()
         self._touch_state()
         self._render_agent_end_status(p)
+        self._print_run_meter(p)
         self.print_status()
+
+    def _print_run_meter(self, p: dict[str, Any]) -> None:
+        tools = int(p.get("tools") or self._run_tools or 0)
+        duration = p.get("duration_ms")
+        if duration is None and self._run_t0 is not None:
+            duration = int((time.monotonic() - self._run_t0) * 1000)
+        try:
+            cost = float(p.get("cost") if p.get("cost") is not None else self.state.cost)
+        except (TypeError, ValueError):
+            cost = self.state.cost
+        meter = render_run_meter(
+            tools=tools,
+            duration_ms=int(duration) if duration is not None else None,
+            cost=cost,
+            tokens=int(self.state.tokens or 0),
+            n_calls=int(p.get("n_calls") or self.state.n_calls or 0),
+        )
+        if meter is not None:
+            self._print(meter)
 
     def _on_error(self, p: dict[str, Any]) -> None:
         self._end_stream_line()

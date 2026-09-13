@@ -73,6 +73,7 @@ class ChatSession:
         role: str = "auto",
         long_task: bool = False,
         attachments: list | None = None,
+        initial_prompt: str | None = None,
     ):
         self.cwd = cwd
         self.provider = provider
@@ -100,6 +101,7 @@ class ChatSession:
         self._memory = None
         self._memory_in_prompt = False
         self.attachments: list = list(attachments or [])
+        self.initial_prompt = (initial_prompt or "").strip() or None
         self._session_id: str | None = None
         self._harness = None
         self._harness_key: tuple | None = None
@@ -255,20 +257,32 @@ class ChatSession:
         self._flash_note("reloaded skills index, slash commands, subagent profiles")
 
     def _startup_banner(self) -> None:
+        from kite import __version__
         from kite.config.readiness import assess_setup_status_fast, format_setup_banner
 
         cfg = UserConfig.load()
         prov = self.provider or cfg.default_provider or "—"
         mod = self.model or cfg.default_model or "—"
-        model_line = f"{prov}/{mod}"
-
+        cwd = Path(self.cwd)
+        context_bits: list[str] = []
+        for name in ("AGENTS.md", "KITE.md", "CLAUDE.md"):
+            if (cwd / name).is_file():
+                context_bits.append(name)
         banner = Text()
         banner.append("kite", style="kite.brand")
+        banner.append(f" {__version__}", style="kite.muted")
         banner.append(" · ", style="kite.muted")
-        banner.append(model_line, style="kite.highlight")
+        banner.append(f"{prov}/{mod}", style="kite.highlight")
         banner.append(" · ", style="kite.muted")
-        banner.append("/help", style="kite.brand")
+        banner.append(cwd.name or str(cwd), style="kite.muted")
         self.console.print(banner)
+
+        hints = Text()
+        hints.append("/help", style="kite.brand")
+        hints.append("  /hotkeys  !cmd  @file  kite -c  kite -r", style="kite.muted")
+        self.console.print(hints)
+        if context_bits:
+            self.console.print("[kite.muted]" + " · ".join(context_bits) + "[/]")
 
         status = assess_setup_status_fast(provider=self.provider, model=self.model)
         if not status.ready:
@@ -359,6 +373,10 @@ class ChatSession:
         if decision in {"session", "always"} and not req.mandatory:
             pattern = action_pattern(req.tool, req.arguments)
             self.policy.remember(pattern, always=(decision == "always"))
+        if decision == "allow" and not req.mandatory:
+            from kite.ui.approval import exact_action_key
+
+            self.policy.remember(exact_action_key(req.tool, req.arguments), always=False)
         mapped = decision if decision in {"allow", "session", "always", "deny", "stop"} else "deny"
         self._approval_coordinator.resolve(mapped, request_id=req.request_id)
         self._approval_panel_id = None
@@ -1261,22 +1279,25 @@ class ChatSession:
         self._invalidate_completer_cache()
 
     def _prewarm_composer(self) -> None:
-        """Load slash index + prompt session before the first `/` menu opens."""
+        """Open the composer quickly; load slash index off the critical path."""
         import threading
 
         try:
-            self._index()
             self._ensure_prompt()
         except Exception:
             pass
 
-        def _warm_reasoning() -> None:
+        def _warm() -> None:
+            try:
+                self._index()
+            except Exception:
+                pass
             try:
                 self._reasoning_info()
             except Exception:
                 pass
 
-        threading.Thread(target=_warm_reasoning, name="kite-reasoning-prewarm", daemon=True).start()
+        threading.Thread(target=_warm, name="kite-prewarm", daemon=True).start()
 
     def _normalize_slash_cmd(self, cmd: str, arg: str) -> tuple[str, str]:
         if cmd == "mode" and arg in {"plan", "build"}:
@@ -1297,6 +1318,7 @@ class ChatSession:
         clip = self._attach_clipboard
         handlers = {
             "help": self._slash_help,
+            "hotkeys": self._slash_hotkeys,
             "plan": self._slash_plan,
             "build": self._slash_build,
             "approve": self._slash_approve,
@@ -1337,6 +1359,8 @@ class ChatSession:
             "attachments": self._show_attachments,
             "skills": self._show_skills,
             "skill": self._run_skill,
+            "tools": self._slash_tools,
+            "tool": self._slash_tools,
             "commands": self._handle_commands,
             "plugins": self._handle_plugins,
             "memory": self._slash_memory,
@@ -1383,12 +1407,53 @@ class ChatSession:
         show_all = (arg or "").strip().lower() in {"all", "full", "advanced"}
         self.console.print(help_text(self._index(), all=show_all), style="kite.muted")
 
+    def _slash_hotkeys(self, _arg: str) -> None:
+        from kite.ui.shortcuts import shortcuts_help_text
+
+        self.console.print(shortcuts_help_text(), style="kite.muted")
+
+    def _run_bang_command(self, line: str) -> None:
+        """Pi-style `!cmd` (send to model) and `!!cmd` (local only)."""
+        import subprocess
+
+        send = not line.startswith("!!")
+        command = line[2:].strip() if line.startswith("!!") else line[1:].strip()
+        if not command:
+            self.console.print("[kite.muted]usage: !command   or   !!command[/]")
+            return
+        self.console.print(f"[kite.muted]![/] {command}")
+        try:
+            completed = subprocess.run(
+                command,
+                shell=True,
+                cwd=self.cwd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            self.console.print("[kite.error]shell timed out (120s)[/]")
+            return
+        except OSError as e:
+            self.console.print(f"[kite.error]{e}[/]")
+            return
+        out = (completed.stdout or "") + (completed.stderr or "")
+        if not out.strip():
+            out = f"(exit {completed.returncode}, no output)"
+        preview = out if len(out) <= 4000 else out[:4000] + "\n…"
+        self.console.print(preview, style="kite.muted")
+        if send:
+            self._run_task(
+                f"I ran this shell command in the workspace:\n\n```\n{command}\n```\n\n"
+                f"Output (exit {completed.returncode}):\n\n```\n{preview}\n```"
+            )
+
     def _slash_fullscreen(self, _arg: str) -> None:
         if self._textual_app is not None:
             self.console.print("[kite.muted]fullscreen workbench retired[/]  ·  Ctrl+\\ sidebar")
             return
         self.console.print(
-            "[kite.muted]fullscreen workbench retired[/]  ·  default Textual TUI  ·  KITE_LEGACY_TUI=1 for scrollback REPL"
+            "[kite.muted]lean CLI is the default[/]  ·  optional TUI: KITE_TUI=1 with kite[tui]"
         )
 
     def _slash_plan(self, _arg: str) -> None:
@@ -2277,6 +2342,11 @@ class ChatSession:
         self.console.print(f"[kite.muted]/skill {name}[/]")
         self._run_task(prompt)
 
+    def _slash_tools(self, _arg: str) -> None:
+        from kite.tools.cues import format_tool_catalog
+
+        self.console.print(format_tool_catalog(), style="kite.muted")
+
     def _show_skills(self, name: str) -> None:
         raw = (name or "").strip()
         verb, _, rest = raw.partition(" ")
@@ -2895,7 +2965,7 @@ class ChatSession:
                 pass
 
     def run(self) -> int:
-        from kite.ui.textual.app import should_use_textual_tui
+        from kite.ui.tui_gate import should_use_textual_tui
 
         if should_use_textual_tui():
             from kite.ui.textual.run import run_textual_session
@@ -2913,6 +2983,10 @@ class ChatSession:
         if self._pending_open:
             self._open_session(self._pending_open)
             self._pending_open = None
+        if self.initial_prompt:
+            opening = self.initial_prompt
+            self.initial_prompt = None
+            self._run_task(opening)
 
         while True:
             if self._quit_after_turn:
@@ -2941,6 +3015,9 @@ class ChatSession:
                 if not line or not str(line).strip():
                     self.console.print("[kite.muted]empty — type a task or /help[/]")
                     continue
+            if str(line).lstrip().startswith("!"):
+                self._run_bang_command(str(line).lstrip())
+                continue
             parsed = resolve_slash(line, self._index())
             if parsed.kind != "not_slash":
                 if not self._handle_slash(line, parsed):
