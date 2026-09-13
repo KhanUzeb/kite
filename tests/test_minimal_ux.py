@@ -6,7 +6,7 @@ from io import StringIO
 
 from rich.console import Console
 
-from kite.agent.mode import AgentMode, ApprovalMode
+from kite.agent.mode import AgentMode
 from kite.cli.help_map import CLI_EPILOG, cli_help_brief, cli_help_text
 from kite.cli.run import build_parser
 from kite.cli.slash import CommandIndex, help_text

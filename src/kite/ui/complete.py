@@ -13,7 +13,7 @@ from kite.models.reasoning import ReasoningSupport
 from kite.ui.attach import IMAGE_EXTS
 from kite.ui.commands import ALIASES, ARG_CHOICES
 from kite.ui.state import SessionUiState
-from kite.ui.status import format_metrics_tail, format_running_status, format_status_tail
+from kite.ui.status import format_running_status, format_status_tail
 from kite.ui.theme import brand_fg, glyph, pt_style_dict, ui_colors
 
 try:

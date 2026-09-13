@@ -1378,7 +1378,7 @@ class ChatSession:
             self._render_fullscreen()
 
     def _slash_fullscreen(self, arg: str) -> None:
-        from kite.ui.fullscreen import can_show_fullscreen, preferred_display_mode
+        from kite.ui.fullscreen import preferred_display_mode
 
         token = (arg or "").strip().lower()
         cols, rows = self._terminal_size()

@@ -100,7 +100,7 @@ def render_footer(model: FullscreenModel) -> Text:
         pills.append((model.model.split("/")[-1][:20], "kite.muted"))
     if model.composer.approval:
         pills.append((model.composer.approval, "kite.pending"))
-    for i, (text, style) in enumerate(pills):
+    for _i, (text, style) in enumerate(pills):
         line.append("  ", style="")
         line.append("[", style="kite.muted")
         line.append(text, style=style)
