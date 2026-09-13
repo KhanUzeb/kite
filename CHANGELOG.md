@@ -14,8 +14,12 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - `docs/RELEASE-0.9.8.md`.
 
 ### Changed
+- Harness performance: cached LiteLLM capability probes, static `prepare()` cache, compaction tool-token reuse, prompt-cache memoization, lazy loop prompt loading, shared parallel tool executor.
 - Textual poll intervals for status and sidebar (less idle CPU).
 - Tighter `cli_import` and `repl_chat_init` budgets in `kite bench --check`.
+
+### Fixed
+- Textual 8: theme CSS applies via stable `read_from` key + `refresh_css` (removed `Stylesheet.clear()` crash on mount).
 
 ## [0.9.7] - 2026-09-11
 
