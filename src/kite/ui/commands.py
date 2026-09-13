@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
+
+Visibility = Literal["primary", "advanced"]
 
 
 @dataclass(frozen=True)
@@ -12,11 +15,40 @@ class BuiltinCommand:
     hint: str = ""
     group: str = "session"
     aliases: tuple[str, ...] = ()
+    visibility: Visibility = "advanced"
+
+
+PRIMARY_SLASH_COMMANDS: frozenset[str] = frozenset({
+    "plan",
+    "build",
+    "status",
+    "model",
+    "session",
+    "memory",
+    "agents",
+    "attach",
+    "skills",
+    "theme",
+    "help",
+    "quit",
+})
 
 
 BUILTINS: tuple[BuiltinCommand, ...] = (
-    BuiltinCommand("plan", "Read-only — explore, checklist, then stop", aliases=("p",), group="session"),
-    BuiltinCommand("build", "Apply edits from the checklist", aliases=("b",), group="session"),
+    BuiltinCommand(
+        "plan",
+        "Read-only — explore, checklist, then stop",
+        aliases=("p",),
+        group="session",
+        visibility="primary",
+    ),
+    BuiltinCommand(
+        "build",
+        "Apply edits from the checklist",
+        aliases=("b",),
+        group="session",
+        visibility="primary",
+    ),
     BuiltinCommand("approve", "Autonomy: yolo|auto|supervised", hint="[yolo|auto|supervised]", group="session"),
     BuiltinCommand("restricted", "Path sandbox — off by default (host mode)", hint="[on|off]", aliases=("sandbox",), group="session"),
     BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
@@ -26,6 +58,12 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("handoff", "Export context for another agent", hint="[dir]", group="session"),
     BuiltinCommand("expand", "Toggle expanded tool output", group="session"),
     BuiltinCommand(
+        "fullscreen",
+        "Fullscreen workbench — stream, changes, verification (≥100×30)",
+        hint="on|off|refresh",
+        group="session",
+    ),
+    BuiltinCommand(
         "live",
         "Stream output live — /live (bash) or /live agents (subagent crew)",
         hint="[agents]",
@@ -33,7 +71,12 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     ),
     BuiltinCommand("expand-thinking", "Show or hide model thinking trace (expanded by default)", hint="collapse", group="session"),
     BuiltinCommand("collapse", "Collapse tool output (default)", group="session"),
-    BuiltinCommand("status", "Mode, model, effort, cost, session id, privacy", group="session"),
+    BuiltinCommand(
+        "status",
+        "Mode, model, cost, shortcuts, paths, privacy",
+        group="session",
+        visibility="primary",
+    ),
     BuiltinCommand(
         "privacy",
         "Session persistence and security policy",
@@ -52,19 +95,45 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("jobs", "List background bash jobs and live subagents", group="session"),
     BuiltinCommand(
         "agents",
-        "Subagent crew board or manage personas (not global /profile)",
+        "Crew, jobs, tasks, kill, personas",
         hint="profiles|show <id>|init <id>|reload",
         group="session",
+        visibility="primary",
     ),
     BuiltinCommand("kill", "Kill a background job or subagent", hint="[id|all]", group="session"),
-    BuiltinCommand("session", "Show, list, open, or delete transcripts", hint="[list|show|open|delete]", aliases=("sessions",), group="session"),
+    BuiltinCommand(
+        "session",
+        "Resume, clear, compact, checkpoint, handoff, privacy",
+        hint="[list|show|open|delete]",
+        aliases=("sessions",),
+        group="session",
+        visibility="primary",
+    ),
     BuiltinCommand("resume", "Continue a saved session", hint="[id]", group="session"),
     BuiltinCommand("init", "Write KITE.md project memory", group="session"),
     BuiltinCommand("trace", "Last error traceback", group="session"),
     BuiltinCommand("home", "Show ~/.kite paths", group="session"),
-    BuiltinCommand("help", "Command map, shortcuts, and remaining docs", aliases=("h",), group="session"),
-    BuiltinCommand("quit", "Leave the REPL", aliases=("q", "exit"), group="session"),
-    BuiltinCommand("theme", "Color palette", hint="auto|kite|dark|light|dim|mono|monochrome|catppuccin|ember|forest|hues|transparent", group="session"),
+    BuiltinCommand(
+        "help",
+        "Essential commands; /help all for the full map",
+        aliases=("h",),
+        group="session",
+        visibility="primary",
+    ),
+    BuiltinCommand(
+        "quit",
+        "Leave the REPL",
+        aliases=("q", "exit"),
+        group="session",
+        visibility="primary",
+    ),
+    BuiltinCommand(
+        "theme",
+        "Color palette",
+        hint="auto|kite|dark|light|dim|mono|monochrome|catppuccin|ember|forest|hues|transparent",
+        group="session",
+        visibility="primary",
+    ),
     BuiltinCommand("font", "Glyphs for this terminal", hint="unicode|ascii", group="session"),
     BuiltinCommand("setup", "First-run wizard (BYOK key or BYOS OAuth + model)", group="model"),
     BuiltinCommand(
@@ -82,13 +151,26 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
         group="model",
     ),
     BuiltinCommand("keys", "Show BYOK keys and BYOS OAuth link status", group="model"),
-    BuiltinCommand("model", "Show, set, list, or pick model", hint="list|select|provider/id", group="model"),
+    BuiltinCommand(
+        "model",
+        "Provider, login, keys, model pick, reasoning",
+        hint="list|select|provider/id",
+        group="model",
+        visibility="primary",
+    ),
     BuiltinCommand("models", "Pick a live model and save it to config", hint="[provider|refresh]", group="model"),
     BuiltinCommand("select", "Interactive model picker (saved to ~/.kite/config.toml)", hint="[provider]", group="model"),
     BuiltinCommand("provider", "Show or pick provider, then a model", hint="[name]", group="model"),
     BuiltinCommand("refresh", "Re-fetch live models from the API, then pick", hint="[provider]", group="model"),
     BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
-    BuiltinCommand("memory", "Semantic MEMORY.md + episodic log", hint="semantic|episodic", aliases=("mem",), group="memory"),
+    BuiltinCommand(
+        "memory",
+        "User, profile, working style, remember, forget",
+        hint="semantic|episodic",
+        aliases=("mem",),
+        group="memory",
+        visibility="primary",
+    ),
     BuiltinCommand("user", "Global identity (~/.kite/memory/USER.md)", hint="[add text]", group="memory"),
     BuiltinCommand(
         "profile",
@@ -99,11 +181,23 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("working", "Fluid working rhythm (~/.kite/memory/WORKING.md)", hint="[add text]", group="memory"),
     BuiltinCommand("remember", "Append a semantic note", hint="[user|project] text", group="memory"),
     BuiltinCommand("forget", "Drop matching notes or episodes", hint="id|substring", group="memory"),
-    BuiltinCommand("skills", "List, show, or install a skill", hint="[add pkg]|name", group="extensions"),
+    BuiltinCommand(
+        "skills",
+        "List, show, or install a skill",
+        hint="[add pkg]|name",
+        group="extensions",
+        visibility="primary",
+    ),
     BuiltinCommand("skill", "Run a skill as this turn", hint="name [args]", group="extensions"),
     BuiltinCommand("commands", "List markdown slash prompts", hint="new name", aliases=("cmd", "cmds"), group="extensions"),
     BuiltinCommand("plugins", "List plugins, or scaffold one", hint="init name", aliases=("plugin",), group="extensions"),
-    BuiltinCommand("attach", "Attach a file or image to the next turn", hint="path", group="attach"),
+    BuiltinCommand(
+        "attach",
+        "Files, clipboard, list, detach",
+        hint="path",
+        group="attach",
+        visibility="primary",
+    ),
     BuiltinCommand("clip", "Attach the clipboard (text or image)", aliases=("clipboard", "paste"), group="attach"),
     BuiltinCommand("detach", "Drop a pending attachment", hint="name|all", group="attach"),
     BuiltinCommand("attachments", "List files queued for the next turn", group="attach"),
@@ -115,6 +209,20 @@ ALIASES: dict[str, str] = {}
 for _b in BUILTINS:
     for _a in _b.aliases:
         ALIASES[_a] = _b.name
+
+
+def resolve_slash_name(name: str) -> str:
+    key = (name or "").strip().lower()
+    return ALIASES.get(key, key)
+
+
+def is_primary_slash(name: str) -> bool:
+    return resolve_slash_name(name) in PRIMARY_SLASH_COMMANDS
+
+
+def primary_builtins() -> tuple[BuiltinCommand, ...]:
+    return tuple(b for b in BUILTINS if b.visibility == "primary")
+
 
 # Legacy shortcuts — still parsed; listed under “legacy aliases” in /help.
 LEGACY_ALIASES: dict[str, str] = {
