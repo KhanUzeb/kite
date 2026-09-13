@@ -253,9 +253,10 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                     continue
                 seen.add(name)
                 extra = ""
-                if spec.name in {"thinking", "fast"}:
-                    levels = " ".join(support.levels_for(spec.name))
-                    extra = levels
+                if spec.name == "thinking":
+                    from kite.models.reasoning import thinking_level_menu
+
+                    extra = " ".join(pi for pi, _ in thinking_level_menu(support))
                 yield Completion(
                     spec.name,
                     start_position=-len(cmd),
@@ -278,8 +279,14 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         choices: list[tuple[str, str]] = []
         routed = legacy_cmd or cmd
 
-        if routed in {"thinking", "fast"}:
-            choices = effort_menu(self._support(), routed)
+        if cmd == "thinking" or routed == "fast":
+            from kite.models.reasoning import thinking_level_menu
+
+            info = self._support()
+            menu = thinking_level_menu(info)
+            choices = [(pi, _LEVEL_META.get(pi, pi)) for pi, _ in menu] if menu else list(ARG_CHOICES.get("thinking", ()))
+        elif routed in {"reasoning", "effort"}:
+            choices = list(ARG_CHOICES.get("reasoning", ()))
         elif cmd == "model" or routed in {"models", "select", "provider", "refresh"}:
             yield from self._model_arg_completions(cmd, rest, routed=routed)
             return
@@ -552,9 +559,9 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
             continue
         if ":" in spec.name:
             continue
-        if spec.name in {"thinking", "fast"} and not support.can_both:
+        if spec.name == "thinking" and not support.supported:
             continue
-        if spec.name in {"reasoning", "effort"} and not support.supported:
+        if spec.name in {"reasoning", "effort", "fast"}:
             continue
         seen.add(spec.name)
         rows.append(spec)
@@ -655,13 +662,14 @@ def history_path() -> Path:
 
 
 def _mouse_support_enabled() -> bool:
-    """Mouse/trackpad for slash-menu scroll. Off with KITE_MOUSE=0 (Shift+drag still copies)."""
+    """Off by default — capturing the mouse on Windows garbles the Rich banner.
+
+    Set KITE_MOUSE=1 for slash-menu wheel (then Shift+drag to copy).
+    Pickers use their own console mouse (click / drag) and do not need this.
+    """
     import os
 
-    raw = os.environ.get("KITE_MOUSE", "").strip().lower()
-    if raw in {"0", "false", "no", "off"}:
-        return False
-    return True
+    return os.environ.get("KITE_MOUSE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def make_prompt_session(

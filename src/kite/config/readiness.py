@@ -49,6 +49,13 @@ def is_fresh_install() -> bool:
     return not has_any_api_key()
 
 
+def is_first_run(status: SetupStatus | None = None) -> bool:
+    """True only before the user has completed setup (any key, OAuth, or config.toml)."""
+    if status is not None:
+        return not status.has_config_file and not status.configured_providers
+    return is_fresh_install() and not configured_provider_names()
+
+
 def assess_setup_status(
     *,
     provider: str | None = None,
@@ -192,14 +199,17 @@ def assess_setup_status_fast(
 
 
 def format_setup_banner(status: SetupStatus) -> str:
-    if status.ready:
+    if status.ready or not is_first_run(status):
         return ""
-    lines = ["[kite.pending]Setup needed[/] — Kite cannot run tasks yet."]
+    lines = ["[kite.pending]Setup needed[/] - Kite cannot run tasks yet."]
     for b in status.blockers[:2]:
         lines.append(f"  [kite.muted]{b}[/]")
     for h in status.hints[:3]:
         lines.append(f"  [kite.brand]{h}[/]")
-    lines.append("  [kite.muted]Fix:[/] [kite.brand]/setup[/]  or  [kite.brand]kite setup[/]  ·  [kite.brand]/login[/]  ·  [kite.brand]/select[/]")
+    lines.append(
+        "  [kite.muted]Fix:[/] [kite.brand]/setup[/]  or  [kite.brand]kite setup[/]"
+        "  |  [kite.brand]/login[/]  |  [kite.brand]/select[/]"
+    )
     return "\n".join(lines)
 
 
@@ -209,7 +219,7 @@ def offer_setup_interactive(console) -> bool:
         return False
     if not is_interactive_tty():
         return False
-    if assess_setup_status_fast().ready:
+    if not is_first_run():
         return False
     try:
         raw = console.input("[kite.brand]First run?[/] Run [cyan]kite setup[/] now? [Y/n] ").strip().lower()

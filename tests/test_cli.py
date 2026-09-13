@@ -74,11 +74,19 @@ def test_apply_diff_and_pickers(tmp_path: Path) -> None:
         assert can_scroll_pick() is False
     finally:
         monkeypatch.undo()
+    from kite.ui.pick import _posix_mouse, view_index_from_mouse
+
+    assert view_index_from_mouse(mouse_y=12, item_y0=10, n_view=5) == 2
+    assert view_index_from_mouse(mouse_y=9, item_y0=10, n_view=5) is None
+    drawn = {"item_y0": 10, "n_view": 4}
+    assert _posix_mouse("\x1b[<32;4;13M", drawn) == "goto:2"
+    assert _posix_mouse("\x1b[<0;4;12m", drawn) == "pick:1"
+    assert _posix_mouse("\x1b[<64;4;12M", drawn) == "up"
 
 
 def test_slash_help_and_legacy_routing() -> None:
     assert parse_slash("/select groq").command == "select"
-    assert parse_slash("/thinking").command == "reasoning"
+    assert parse_slash("/thinking").command == "thinking"
     assert parse_slash("/skill commit").command == "skill"
     assert parse_slash("/collapse").command == "collapse"
     assert "skill" not in LEGACY_ALIASES

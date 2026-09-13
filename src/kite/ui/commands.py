@@ -170,7 +170,20 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("select", "Interactive model picker (saved to ~/.kite/config.toml)", hint="[provider]", group="model"),
     BuiltinCommand("provider", "Show or pick provider, then a model", hint="[name]", group="model"),
     BuiltinCommand("refresh", "Re-fetch live models from the API, then pick", hint="[provider]", group="model"),
-    BuiltinCommand("reasoning", "auto | off | fast | thinking", hint="auto|off|fast|thinking", aliases=("effort",), group="model"),
+    BuiltinCommand(
+        "thinking",
+        "off | minimal | low | medium | high — empty cycles (Pi-style)",
+        hint="off|minimal|low|medium|high",
+        group="model",
+        visibility="primary",
+    ),
+    BuiltinCommand(
+        "reasoning",
+        "Legacy effort modes — prefer /thinking",
+        hint="auto|off|fast|thinking",
+        aliases=("effort",),
+        group="model",
+    ),
     BuiltinCommand(
         "memory",
         "User, profile, working style, remember, forget",
@@ -241,16 +254,14 @@ def primary_builtins() -> tuple[BuiltinCommand, ...]:
 # Legacy shortcuts — still parsed; listed under “legacy aliases” in /help.
 LEGACY_ALIASES: dict[str, str] = {
     "cost": "status",
-    "thinking": "reasoning",
-    "fast": "reasoning",
+    "fast": "thinking",
     "semantic": "memory",
     "episodic": "memory",
 }
 
 LEGACY_HELP: dict[str, str] = {
     "cost": "→ /status (includes cost)",
-    "thinking": "→ /reasoning thinking",
-    "fast": "→ /reasoning fast",
+    "fast": "→ /thinking low",
     "semantic": "→ /memory semantic",
     "episodic": "→ /memory episodic",
 }
@@ -267,6 +278,15 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "restricted": [
         ("on", "clamp paths to session cwd"),
         ("off", "host mode (default)"),
+    ],
+    "thinking": [
+        ("off", "disable extended thinking"),
+        ("minimal", "least thinking / lowest latency"),
+        ("low", "low effort / low latency"),
+        ("medium", "balanced"),
+        ("high", "extended thinking"),
+        ("xhigh", "max thinking (when supported)"),
+        ("max", "max thinking (when supported)"),
     ],
     "reasoning": [
         ("auto", "provider default"),
@@ -338,6 +358,7 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
 }
 
 ARG_CHOICES["effort"] = ARG_CHOICES["reasoning"]
+ARG_CHOICES["fast"] = ARG_CHOICES["thinking"]
 ARG_CHOICES["sandbox"] = ARG_CHOICES["restricted"]
 
 

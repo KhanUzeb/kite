@@ -191,7 +191,9 @@ def render_tool_summary(
     summary: str = "",
     line_count: int | None = None,
 ) -> Text | None:
-    text = (summary or preview or "").strip().replace("\n", " ")
+    from kite.ui.output_view import format_viewable_output
+
+    text = format_viewable_output(summary or preview).strip().replace("\n", " ")
     if line_count is not None and line_count > 0:
         text = f"{line_count} lines" + (f"  ·  {truncate_preview(text, 56)}" if text else "")
     if not text:

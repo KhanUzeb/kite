@@ -67,6 +67,37 @@ def test_render_events_and_busy_spin() -> None:
     assert display._spinner_on is False and display.state.running_label == "thinking"
 
 
+def test_tool_output_unwraps_json_and_uses_full_width() -> None:
+    from kite.ui.output_view import format_viewable_output, render_output_block
+    from kite.ui.render import _collapse_text
+
+    envelope = '{"ok": true, "output": "hello\\nworld"}'
+    assert format_viewable_output(envelope) == "hello\nworld\n"
+    nested = '{"ok": true, "output": "{\\"n\\": 1}"}'
+    assert '"n": 1' in format_viewable_output(nested)
+    assert format_viewable_output("plain line") == "plain line"
+    block = render_output_block(envelope, expanded=True)
+    assert "hello" in block.plain and "{" not in block.plain
+    collapsed = _collapse_text(envelope, expanded=True)
+    assert collapsed.plain.startswith("hello")
+
+
+def test_thinking_unwraps_json_and_is_full_width() -> None:
+    from kite.ui.output_view import format_thinking_text, render_thinking_block
+    from kite.ui.render import render_reasoning_block
+
+    blob = '{"reasoning": "check the tests first"}'
+    assert format_thinking_text(blob).strip() == "check the tests first"
+    wrapped = '{"ok": true, "output": "look at grep"}'
+    assert "look at grep" in format_thinking_text(wrapped)
+    block = render_thinking_block(blob)
+    assert block.plain.startswith("check the tests first")
+    assert not block.plain.startswith("…")
+    shown = render_reasoning_block(blob)
+    assert "check the tests first" in shown.plain
+    assert shown.plain.find("check") < 8
+
+
 def test_quiet_inspect_tools_skip_running_row() -> None:
     buf = StringIO()
     display = RunDisplay(Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME), state=SessionUiState())
@@ -336,6 +367,83 @@ def test_reasoning_picker_hides_off_when_not_disableable(tmp_path, kite_home) ->
     keys = [key for key, _ in session._reasoning_picker_choices()]
     assert "off" not in keys
     assert "auto" in keys
+
+
+def test_slash_thinking_sets_level_and_invalidates_harness(tmp_path, kite_home) -> None:
+    from kite.models.reasoning import ReasoningSupport
+
+    buf = StringIO()
+    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
+    session.console = Console(file=buf, force_terminal=False)
+    session._reasoning_support = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium", "high"),
+    )
+    session._harness = MagicMock()
+    session._harness_key = ("groq", "llama-3.3-70b", "build", "auto", False, None, None, "auto", True, "", "", None, None, None, False, False, False, "auto", False)
+
+    session._slash_thinking("high")
+    assert session.state.reasoning == "thinking:high"
+    assert session._harness is None
+    assert "thinking" in strip_ansi(buf.getvalue()).lower()
+
+    session._slash_thinking("")
+    assert session.state.reasoning == "off"
+
+    session._slash_fast("")
+    assert session.state.reasoning == "fast:low"
+
+
+def test_slash_reasoning_legacy_modes(tmp_path, kite_home) -> None:
+    from kite.models.reasoning import ReasoningSupport
+
+    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
+    session.console = Console(file=StringIO(), force_terminal=False)
+    session._reasoning_support = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium", "high"),
+    )
+
+    session._slash_reasoning("fast")
+    assert session.state.reasoning == "fast:low"
+
+    session._slash_reasoning("auto")
+    assert session.state.reasoning == "auto"
+
+
+def test_handle_slash_dispatches_thinking_and_fast(tmp_path, kite_home) -> None:
+    from kite.models.reasoning import ReasoningSupport
+
+    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
+    session.console = Console(file=StringIO(), force_terminal=False)
+    session._reasoning_support = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium", "high"),
+    )
+
+    assert session._handle_slash("/thinking medium") is True
+    assert session.state.reasoning == "thinking:medium"
+
+    assert session._handle_slash("/fast") is True
+    assert session.state.reasoning == "fast:low"
+
+    assert session._handle_slash("/reasoning thinking:high") is True
+    assert session.state.reasoning == "thinking:high"
 
 
 def test_empty_repl_enter_does_not_run(tmp_path, kite_home) -> None:
