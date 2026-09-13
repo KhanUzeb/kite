@@ -22,6 +22,7 @@ from kite.providers.byos import (
     logout_oauth,
     register_oauth_model_fetcher,
 )
+from kite.providers.capabilities import agent_model_warning, model_supports_parallel_tool_calls, model_supports_tools
 from kite.providers.catalog import load_catalog
 from kite.providers.credentials import (
     api_key_fingerprint,
@@ -38,7 +39,6 @@ from kite.providers.credentials import (
     web_tool_api_key,
     write_api_key,
 )
-from kite.providers.capabilities import agent_model_warning, model_supports_parallel_tool_calls, model_supports_tools
 from kite.providers.resolve import missing_credentials, resolve_model
 from kite.providers.select import _can_use_radiolist, _numbered_pick, select_model_interactive
 
