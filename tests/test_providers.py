@@ -22,6 +22,7 @@ from kite.providers.byos import (
     logout_oauth,
     register_oauth_model_fetcher,
 )
+from kite.providers.capabilities import agent_model_warning, model_supports_parallel_tool_calls, model_supports_tools
 from kite.providers.catalog import load_catalog
 from kite.providers.credentials import (
     api_key_fingerprint,
@@ -185,7 +186,8 @@ def test_byos_oauth_session_and_login_hints(kite_home: Path) -> None:
             assert logout_oauth(spec) is True
     with patch("kite.providers.resolve.has_oauth_session", return_value=False):
         with patch("kite.providers.resolve.subscription_login_hint", side_effect=lambda s: f"Run: kite login {s.name}"):
-            msg = missing_credentials(resolve_model(provider="chatgpt"))
+            with patch("kite.providers.capabilities._tools_from_litellm", return_value=None):
+                msg = missing_credentials(resolve_model(provider="chatgpt"))
             assert msg and "kite login" in msg
     register_oauth_model_fetcher("chatgpt", lambda: ("gpt-5.6-luna", "gpt-5.3-codex"))
     assert fetch_oauth_model_ids(spec, refresh=True) == ("gpt-5.6-luna", "gpt-5.3-codex")
@@ -291,3 +293,18 @@ def test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: py
     (codex_home / "auth.json").write_text(json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
     with pytest.raises(CodexLitellmAuthError):
         codex_litellm.materialize_litellm_chatgpt_auth()
+
+
+def test_model_tool_support_is_metadata_driven() -> None:
+    assert agent_model_warning("") == "No model selected — agent mode requires a tool-capable chat model."
+    assert agent_model_warning("text-embedding-3-small") is not None
+    assert agent_model_warning("my-custom-agent-model") is None
+    assert agent_model_warning("custom-model", raw={"capabilities": {"tools": False}}) is not None
+    assert model_supports_tools(raw={"supported_parameters": ["tools", "tool_choice"]}) is True
+    assert model_supports_tools(raw={"capabilities": {"tools": True}}) is True
+    from kite.providers.list_models import RemoteModel
+
+    remote = RemoteModel(id="vendor/foo", raw={"supported_parameters": ["tools"]})
+    assert remote.supports_tools() is True
+    assert model_supports_parallel_tool_calls(raw={"supported_parameters": ["parallel_tool_calls", "tools"]}) is True
+    assert model_supports_parallel_tool_calls(raw={"capabilities": {"tools": False}}) is False

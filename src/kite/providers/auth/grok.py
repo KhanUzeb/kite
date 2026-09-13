@@ -89,8 +89,10 @@ class GrokCliAuthProvider:
             extra="Opening xAI sign-in…" if not use_device else "Use the device code shown below.",
         )
 
+        login_timeout = 600.0 if is_interactive_tty(require_stdout=False) else 30.0
+
         def _run_login():
-            return run_cli(*cmd, timeout=600.0)
+            return run_cli(*cmd, timeout=login_timeout)
 
         try:
             proc = wait_with_status(

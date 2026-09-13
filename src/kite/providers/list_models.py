@@ -100,6 +100,12 @@ class RemoteModel:
                     return True
         return False
 
+    def supports_tools(self) -> bool | None:
+        """True/False from live provider metadata; None when unknown."""
+        from kite.providers.capabilities import model_supports_tools
+
+        return model_supports_tools(raw=self.raw)
+
 
 @dataclass(frozen=True)
 class ListModelsResult:

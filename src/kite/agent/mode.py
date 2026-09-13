@@ -11,7 +11,15 @@ class AgentMode(StrEnum):
 
 
 class ApprovalMode(StrEnum):
-    """How much autonomy is granted — surfaced in the prompt itself."""
+    """How much autonomy is granted — surfaced in the prompt itself.
+
+    Tier model (aligned with Codex workspace-write, OpenCode --auto, OMP write/yolo):
+    - auto: coding blanket — in-workspace install/test/edit/commit auto-runs; boundary escapes prompt
+    - yolo: no approval prompts (sandbox/guardrail deny rules still apply)
+    - trust: auto + prompts for durable memory and nested agents
+    - approve/supervised: prompt all mutations
+    - readonly: block mutations
+    """
 
     AUTO = "auto"
     TRUST = "trust"
@@ -63,7 +71,15 @@ READONLY_TOOLS = frozenset(
 )
 
 # Read-only tools safe to run concurrently in one model turn (deterministic order preserved).
+# Prefer is_parallel_safe() — derives from tool metadata (any provider/model may batch these).
 PARALLEL_SAFE_TOOLS = frozenset({"read", "grep", "glob", "ls"})
+
+
+def is_parallel_safe(tool: str) -> bool:
+    """True when this tool is always safe to batch (read-only / network reads)."""
+    from kite.agent.parallel import is_parallel_safe as _static_parallel_safe
+
+    return _static_parallel_safe(tool)
 
 # Mutating / side-effecting — gated; write/edit never offered in plan mode.
 # bash is mutating by default but plan mode still exposes it for inspection-only
@@ -78,7 +94,7 @@ BUILD_TOOLS = frozenset({*READONLY_TOOLS, *MUTATING_TOOLS, "todo_write", "todo_r
 
 
 def default_approval(mode: AgentMode) -> ApprovalMode:
-    return ApprovalMode.READONLY if mode is AgentMode.PLAN else ApprovalMode.APPROVE
+    return ApprovalMode.READONLY if mode is AgentMode.PLAN else ApprovalMode.AUTO
 
 
 def filter_enabled(enabled: list[str], allowed: frozenset[str]) -> list[str]:
