@@ -152,6 +152,9 @@ class KiteApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        from kite.ui.textual.themes import apply_theme_to_app
+
+        apply_theme_to_app(self)
         self.session._textual_app = self
         self.session.display = TextualRunDisplay(self, verbose=self.session.verbose, state=self.session.state)
         self.session.console = self.rich_console
