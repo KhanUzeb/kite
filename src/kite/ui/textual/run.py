@@ -16,5 +16,8 @@ def run_textual_session(session: ChatSession) -> int:
         session._pending_open = None
 
     app = KiteApp(session)
-    app.run()
+    try:
+        app.run()
+    finally:
+        session._teardown_jobs()
     return 0

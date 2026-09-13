@@ -79,6 +79,18 @@ Files under `~/.kite/memory/` (`USER.md`, `PROFILE.md`, `WORKING.md`, `MEMORY.md
 
 Background job output (`job_output`) is redacted before display, matching foreground bash streaming.
 
+## Project trust
+
+Repo-local plugins and extensions can execute code from the workspace. Kite gates them until you trust the project (Pi-style).
+
+| Source | Stored in | Effect |
+|--------|-----------|--------|
+| `/trust on` | `~/.kite/trust.json` | cwd recorded as trusted |
+| `.kite/project.toml` → `[project] trust = true` | in repo | auto-trusted for anyone who clones it |
+| First-run prompt | — | Shown when `.kite/plugins` or `.kite/extensions` exist and cwd is not trusted |
+
+Trusted projects skip nested-agent approval prompts in `auto`, `trust`, and `yolo` modes. They do **not** disable path sandbox, bash deny patterns, or critical gates (sudo, outside workspace). Set `[project] nested_agents = "prompt"` in `project.toml` to keep prompting even when trusted.
+
 ## Child process environment
 
 Before spawning subprocesses, Kite filters credential-like keys from the parent environment. Keys passed via `extra` env overrides that match sensitive patterns (e.g. `OPENAI_API_KEY`, `GITHUB_TOKEN`) are **refused** — they cannot reintroduce secrets after filtering.

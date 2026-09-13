@@ -48,6 +48,16 @@ class CacheStats:
         }
 
 
+def _tail_signature(messages: list[dict]) -> int:
+    """Cheap fingerprint of conversation length + last message (invalidates on append)."""
+    if not messages:
+        return 0
+    last = messages[-1]
+    content = last.get("content")
+    snippet = content[:240] if isinstance(content, str) else str(content)[:240]
+    return hash((len(messages), last.get("role"), snippet))
+
+
 def _hash_prefix(messages: list[dict]) -> str:
     """Stable hash of the stable prefix (system + first user if compacted)."""
     parts: list[str] = []
@@ -157,10 +167,24 @@ class PromptCacheManager:
     enabled: bool = True
     session: CacheStats = field(default_factory=CacheStats)
     _prefix_hash: str = ""
+    _tail_sig: int = 0
+    _prepared_messages: list[dict] | None = field(default=None, init=False)
 
     def prepare(self, messages: list[dict]) -> list[dict]:
-        self._prefix_hash = _hash_prefix(messages)
-        return apply_cache_breakpoints(messages, provider=self.provider, enabled=self.enabled)
+        prefix_hash = _hash_prefix(messages)
+        tail_sig = _tail_signature(messages)
+        if (
+            prefix_hash == self._prefix_hash
+            and tail_sig == self._tail_sig
+            and self._prepared_messages is not None
+        ):
+            return self._prepared_messages
+        self._prefix_hash = prefix_hash
+        self._tail_sig = tail_sig
+        self._prepared_messages = apply_cache_breakpoints(
+            messages, provider=self.provider, enabled=self.enabled
+        )
+        return self._prepared_messages
 
     def record(self, usage: Any, hidden: dict[str, Any] | None = None) -> CacheStats:
         parsed = parse_cache_usage(usage, hidden)

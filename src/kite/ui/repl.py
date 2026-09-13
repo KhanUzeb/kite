@@ -183,6 +183,77 @@ class ChatSession:
         except Exception:
             return provider or "", model or ""
 
+    def _maybe_prompt_project_trust(self) -> None:
+        import sys
+
+        from kite.guardrails.project_trust import (
+            is_project_trusted,
+            mark_project_trusted,
+            project_has_local_code,
+            project_requires_trust_prompt,
+        )
+
+        if not sys.stdin.isatty() or not project_requires_trust_prompt(self.cwd):
+            return
+        self.console.print(
+            "[kite.pending]This project has local .kite plugins/extensions.[/]  "
+            "Trust it to skip nested-agent approval prompts?"
+        )
+        try:
+            answer = Prompt.ask(
+                "Trust project",
+                choices=["y", "n"],
+                default="n",
+                show_choices=False,
+            )
+        except (EOFError, KeyboardInterrupt):
+            return
+        if answer.lower().startswith("y"):
+            mark_project_trusted(self.cwd, note="interactive prompt")
+            self._flash_note("project trusted — nested agents run without extra prompts")
+        elif project_has_local_code(self.cwd) and not is_project_trusted(self.cwd):
+            self._flash_note("project not trusted — /trust on when ready")
+
+    def _slash_trust(self, arg: str) -> None:
+        from kite.guardrails.project_trust import (
+            is_project_trusted,
+            mark_project_trusted,
+            project_has_local_code,
+            revoke_project_trust,
+            trust_store_path,
+        )
+
+        word = (arg or "status").strip().lower()
+        if word in {"on", "yes", "trust", "enable"}:
+            path = mark_project_trusted(self.cwd, note="/trust on")
+            self.console.print(f"[kite.success]trusted[/]  {self.cwd}  ·  stored in {path}")
+            return
+        if word in {"off", "no", "revoke", "disable"}:
+            if revoke_project_trust(self.cwd):
+                self.console.print("[kite.success]trust revoked[/] for this project")
+            else:
+                self.console.print("[kite.muted]project was not in trust store[/]")
+            return
+        trusted = is_project_trusted(self.cwd)
+        local = project_has_local_code(self.cwd)
+        state = "trusted" if trusted else "not trusted"
+        self.console.print(f"[kite.highlight]project[/]  {self.cwd}")
+        self.console.print(f"  status: {state}")
+        self.console.print(f"  local .kite code: {'yes' if local else 'no'}")
+        self.console.print(f"  store: {trust_store_path()}")
+        self.console.print("[kite.muted]/trust on · /trust off[/]  ·  or set trust=true in .kite/project.toml")
+
+    def _slash_reload(self, _arg: str) -> None:
+        from kite.agent.subagent_profiles import reload_profiles
+        from kite.cli.slash import invalidate_command_index
+
+        invalidate_command_index()
+        reload_profiles()
+        if self._harness is not None and getattr(self._harness, "_runtime", None) is not None:
+            self._harness._runtime.invalidate_prepare_cache()
+        self._invalidate_completer_cache()
+        self._flash_note("reloaded skills index, slash commands, subagent profiles")
+
     def _startup_banner(self) -> None:
         from kite.config.readiness import assess_setup_status_fast, format_setup_banner
 
@@ -216,6 +287,15 @@ class ChatSession:
     def _flash_note(self, text: str) -> None:
         self.state.set_flash(text)
         self.state.touch()
+
+    def _schedule_release_check_legacy(self) -> None:
+        from kite.cli.release_check import schedule_release_check
+
+        def _on_msg(msg: str | None) -> None:
+            if msg:
+                self._flash_note(msg)
+
+        schedule_release_check(_on_msg)
 
     @property
     def memory(self):
@@ -1274,6 +1354,8 @@ class ChatSession:
             "tasks": self._slash_tasks,
             "jobs": self._slash_jobs,
             "agents": self._slash_agents,
+            "trust": self._slash_trust,
+            "reload": self._slash_reload,
             "kill": self._slash_kill,
             "resume": self._slash_resume,
             "goal": self._slash_goal,
@@ -1695,79 +1777,52 @@ class ChatSession:
             label = "steer" if is_steer else "follow-up"
             self.console.print(f"  {i}. [{label}] {preview}")
 
-    def _slash_agents(self, arg: str) -> None:
+    def _slash_agents_profiles(self) -> None:
         from kite.agent.subagent_profiles import (
             format_profile_trust,
-            get_profile,
-            init_user_profile,
             list_profiles,
             reload_profiles,
             user_profiles_dir,
         )
         from kite.ui.theme import glyph
 
-        text = (arg or "").strip()
-        parts = text.split(None, 1)
-        sub = parts[0].lower() if parts else ""
-        rest = parts[1].strip() if len(parts) > 1 else ""
-
-        if sub in {"profiles", "personas", "list"}:
-            reload_profiles()
-            profiles = list_profiles()
-            if not profiles:
-                self.console.print("[kite.muted]no profiles[/]  · /agents init my-role")
-                return
-            table = kite_table("subagent profiles")
-            table.add_column("id")
-            table.add_column("label")
-            table.add_column("role")
-            table.add_column("trust")
-            table.add_column("description")
-            for p in profiles:
-                mark = f"{p.id} {glyph('home')}" if not p.bundled else p.id
-                desc = p.description or p.prompt.split("\n", 1)[0][:50]
-                table.add_row(mark, p.label, p.role, format_profile_trust(p), desc)
-            self.console.print(table)
-            self.console.print(
-                f"[kite.muted]custom[/]  {user_profiles_dir()}/*.md  "
-                "· /agents init <id>  · /agents show <id>"
-            )
+        reload_profiles()
+        profiles = list_profiles()
+        if not profiles:
+            self.console.print("[kite.muted]no profiles[/]  · /agents init my-role")
             return
+        table = kite_table("subagent profiles")
+        table.add_column("id")
+        table.add_column("label")
+        table.add_column("role")
+        table.add_column("trust")
+        table.add_column("description")
+        for p in profiles:
+            mark = f"{p.id} {glyph('home')}" if not p.bundled else p.id
+            desc = p.description or p.prompt.split("\n", 1)[0][:50]
+            table.add_row(mark, p.label, p.role, format_profile_trust(p), desc)
+        self.console.print(table)
+        self.console.print(
+            f"[kite.muted]custom[/]  {user_profiles_dir()}/*.md  "
+            "· /agents init <id>  · /agents show <id>"
+        )
 
-        if sub == "init":
-            name = rest or ""
-            if not name:
-                self.console.print("[kite.error]/agents init <id>[/]  · e.g. /agents init auditor")
-                return
-            try:
-                path = init_user_profile(name)
-            except (ValueError, FileExistsError, OSError) as e:
-                self.console.print(f"[kite.error]{e}[/]")
-                return
-            self.console.print(
-                f"[kite.success]wrote[/] {path}  · edit markdown, then subagent profile={path.stem}"
-            )
+    def _slash_agents_init(self, name: str) -> None:
+        from kite.agent.subagent_profiles import init_user_profile
+
+        if not name:
+            self.console.print("[kite.error]/agents init <id>[/]  · e.g. /agents init auditor")
             return
-
-        if sub == "show":
-            pid = rest or ""
-            if not pid:
-                self.console.print("[kite.error]/agents show <id>[/]")
-                return
-            self._agents_show_profile(pid)
+        try:
+            path = init_user_profile(name)
+        except (ValueError, FileExistsError, OSError) as e:
+            self.console.print(f"[kite.error]{e}[/]")
             return
+        self.console.print(
+            f"[kite.success]wrote[/] {path}  · edit markdown, then subagent profile={path.stem}"
+        )
 
-        if sub == "reload":
-            reload_profiles()
-            self.console.print("[kite.success]reloaded[/] subagent profiles")
-            return
-
-        if sub and sub not in {"crew", "board"}:
-            prof = get_profile(sub)
-            if prof is not None:
-                self._agents_show_profile(sub)
-                return
-
+    def _slash_agents_board(self) -> None:
         rows = [job for job in self.jobs.list(active_only=False) if job.kind == "subagent"]
         active = [job for job in rows if job.status == "running"]
         if not rows and not self.state.active_subagents:
@@ -1797,6 +1852,35 @@ class ChatSession:
             self.console.print(f"[kite.muted]{len(active)} running[/]  · /kill to stop one or all")
         else:
             self.console.print("[kite.muted]crew idle[/]  · /agents profiles to list personas")
+
+    def _slash_agents(self, arg: str) -> None:
+        from kite.agent.subagent_profiles import get_profile, reload_profiles
+
+        text = (arg or "").strip()
+        parts = text.split(None, 1)
+        sub = parts[0].lower() if parts else ""
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if sub in {"profiles", "personas", "list"}:
+            self._slash_agents_profiles()
+            return
+        if sub == "init":
+            self._slash_agents_init(rest)
+            return
+        if sub == "show":
+            if not rest:
+                self.console.print("[kite.error]/agents show <id>[/]")
+                return
+            self._agents_show_profile(rest)
+            return
+        if sub == "reload":
+            reload_profiles()
+            self.console.print("[kite.success]reloaded[/] subagent profiles")
+            return
+        if sub and sub not in {"crew", "board"} and get_profile(sub) is not None:
+            self._agents_show_profile(sub)
+            return
+        self._slash_agents_board()
 
     def _agents_show_profile(self, profile_id: str) -> None:
         from kite.agent.subagent_profiles import (
@@ -2816,12 +2900,15 @@ class ChatSession:
         if should_use_textual_tui():
             from kite.ui.textual.run import run_textual_session
 
+            self._maybe_prompt_project_trust()
             return run_textual_session(self)
 
         from kite.ui.git import git_branch
 
         self.state.git_branch = git_branch(self.cwd)
         self._startup_banner()
+        self._maybe_prompt_project_trust()
+        self._schedule_release_check_legacy()
         self._prewarm_composer()
         if self._pending_open:
             self._open_session(self._pending_open)

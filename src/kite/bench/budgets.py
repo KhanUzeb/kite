@@ -7,12 +7,12 @@ from kite.bench.suite import BenchmarkReport
 # Median wall-time ceilings for CI / local regression gates (no live LLM).
 # Generous enough for Windows CI; tighten over time as the harness gets faster.
 BUDGETS_MS: dict[str, float] = {
-    "cli_import": 1200.0,
+    "cli_import": 900.0,
     "config_load": 80.0,
     "user_config_load": 50.0,
     "catalog_load": 120.0,
-    "skills_load": 400.0,
-    "repl_chat_init": 600.0,
+    "skills_load": 350.0,
+    "repl_chat_init": 450.0,
     "model_resolve": 400.0,
     "slash_index": 500.0,
     "repo_map": 800.0,

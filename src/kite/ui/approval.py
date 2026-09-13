@@ -479,6 +479,30 @@ def _effect_consequence(
     return ConsequenceLevel.SERIOUS, reason
 
 
+_TRUSTED_NESTED_MODES = frozenset({ApprovalMode.AUTO, ApprovalMode.TRUST, ApprovalMode.YOLO})
+
+
+def _non_mutating_needs_approval(
+    effects: tuple[str, ...],
+    *,
+    tool: str,
+    args: dict[str, Any],
+    approval: ApprovalMode,
+    workspace_cwd: str | None,
+) -> bool:
+    from kite.guardrails.project_trust import skips_nested_agent_approval
+
+    if (
+        "nested_agent" in effects
+        and workspace_cwd
+        and skips_nested_agent_approval(workspace_cwd)
+        and approval in _TRUSTED_NESTED_MODES
+    ):
+        return False
+    level, _ = _effect_consequence(effects, tool=tool, args=args)
+    return level >= consequence_prompt_threshold(approval)
+
+
 def needs_approval(
     tool: str,
     mode: AgentMode,
@@ -494,8 +518,13 @@ def needs_approval(
     args = arguments or {}
     if tool not in MUTATING_TOOLS:
         if effects:
-            level, _ = _effect_consequence(effects, tool=tool, args=args)
-            return level >= consequence_prompt_threshold(approval)
+            return _non_mutating_needs_approval(
+                effects,
+                tool=tool,
+                args=args,
+                approval=approval,
+                workspace_cwd=workspace_cwd,
+            )
         return False
     if tool == "bash" and (is_git_read(command) or is_inspection_bash(command)):
         return False

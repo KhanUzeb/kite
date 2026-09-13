@@ -46,6 +46,8 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Approval** — Coding blanket autonomy (like Codex workspace-write, OpenCode `--auto`, OMP `write`/`yolo`): `auto` (default) auto-runs in-workspace install/test/edit/commit and prompts on **SERIOUS** actions (network fetch, destructive delete, `chmod`, shell wrappers like `powershell`/`cmd`); **CRITICAL** boundary escapes (outside workspace, sudo, sandbox-blocked) are denied headless; `yolo` skips non-critical prompts but still denies sudo/outside-workspace; `trust` adds memory/subagent gates; `approve`/`supervised` prompts every mutation; `readonly` blocks writes. Blanket covers routine POSIX and Windows read-only inspection commands — not network fetch or shell wrappers.
 
+**Project trust** — Pi-style workspace trust separate from the `trust` approval mode. Stored in `~/.kite/trust.json` (`/trust on`) or declared in `.kite/project.toml` (`[project] trust = true`). Trusted projects skip nested-agent approval prompts. First interactive run may prompt when repo-local `.kite/plugins` or `.kite/extensions` exist.
+
 **Tool-capable models** — Kite does not maintain a model-name allowlist. Suitability warnings use live provider metadata (`supported_parameters`, `capabilities.tools`) and LiteLLM `get_supported_openai_params`; unknown models are allowed to try tool calling.
 
 **Role** — Optional persona (`architect`, `implementer`, `debugger`) that adjusts the system prompt fragment.
@@ -102,7 +104,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Subagent profile** — Bundled persona (`scout`, `reviewer`, `shell`, `coder`, `context`) or custom `~/.kite/subagents/<id>.md` (user overrides bundled ids). Create with `kite subagents --init <id>` or `/agents init <id>`. Passed as `profile=` on the `subagent` tool; composes system prompt + task. Custom profiles are untrusted. Not the same as global **Profile** (`PROFILE.md` / `/profile`).
 
-**Subagent crew** — Parallel or background nested harness runs via `subagent` tool. Max 12 workers per dispatch; nested workers cannot recurse (`subagent` stripped) or write global memory (`memory` stripped). Monitor with `/agents`; stop with `/kill`.
+**Subagent crew** — Parallel or background nested harness runs via `subagent` tool. Max 12 workers per dispatch; nested workers cannot recurse (`subagent` stripped) or write global memory (`memory` stripped). Optional per-worker `model=` / `provider=` overrides (arrays for crews). Monitor with `/agents` or Textual `Ctrl+J`; stop with `/kill`.
 
 **Context checkpoint** — Named snapshot of the full model transcript (and todos) at a point in time. Distinct from git undo. Stored under `~/.kite/checkpoints/<session>/`.
 
@@ -203,4 +205,4 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 - [AGENTS.md](AGENTS.md) — how to work on this repository
 - [kite_commands.md](kite_commands.md) — full CLI and slash map
 - [architecture.md](architecture.md) — layers and extension points
-- [docs/RELEASE-0.9.7.md](docs/RELEASE-0.9.7.md) — current release notes
+- [docs/RELEASE-0.9.8.md](docs/RELEASE-0.9.8.md) — current release notes

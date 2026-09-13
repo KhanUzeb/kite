@@ -239,6 +239,7 @@ def estimate_usage(
     system: str,
     messages: list[dict],
     tool_schemas: list[dict] | None = None,
+    tool_tokens: int | None = None,
     window: int = DEFAULT_WINDOW,
 ) -> ContextUsage:
     system_tokens = estimate_text_tokens(system)
@@ -249,7 +250,8 @@ def estimate_usage(
             continue
         msg_tokens += estimate_message_tokens(m)
         count += 1
-    tool_tokens = estimate_tool_schema_tokens(tool_schemas or [])
+    if tool_tokens is None:
+        tool_tokens = estimate_tool_schema_tokens(tool_schemas or [])
     total = system_tokens + msg_tokens + tool_tokens
     if messages and messages[0].get("role") == "system" and system:
         total -= estimate_text_tokens(str(messages[0].get("content") or ""))

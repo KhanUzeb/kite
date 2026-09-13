@@ -54,10 +54,24 @@ OptionList > .option-list--option-highlighted {{
 """
 
 
+_THEME_CSS_KEY = ("kite-theme", "")
+
+
+def _refresh_app_stylesheet(app, *, animate: bool = False) -> None:
+    """Re-apply stylesheet after dynamic CSS changes (Textual 8+ removed Stylesheet.clear)."""
+    refresh = getattr(app, "refresh_css", None)
+    if callable(refresh):
+        refresh(animate=animate)
+        return
+    update = getattr(app.stylesheet, "update", None)
+    if callable(update):
+        update(app, animate=animate)
+
+
 def apply_theme_to_app(app, theme_name: str | None = None) -> str:
     """Register palette CSS on a Textual app; returns resolved theme name."""
     ensure_prefs()
     name = resolved_theme(theme_name)
-    app.stylesheet.clear()
-    app.stylesheet.add_source(textual_css(name))
+    app.stylesheet.add_source(textual_css(name), read_from=_THEME_CSS_KEY)
+    _refresh_app_stylesheet(app, animate=False)
     return name

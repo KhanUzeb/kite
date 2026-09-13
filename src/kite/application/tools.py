@@ -202,9 +202,19 @@ MANDATORY_EFFECTS: frozenset[SideEffect] = frozenset({
 })
 
 
-def tool_requires_approval_gate(tool: str, arguments: dict[str, Any]) -> bool:
+def tool_requires_approval_gate(
+    tool: str,
+    arguments: dict[str, Any],
+    *,
+    workspace_cwd: str | None = None,
+) -> bool:
     """True when a tool call must pass the approval gate (beyond policy deny)."""
-    effects = set(derive_effects(ToolCall("gate", tool, arguments)))
+    from kite.guardrails.project_trust import without_nested_agent_if_trusted
+
+    effects = without_nested_agent_if_trusted(
+        set(derive_effects(ToolCall("gate", tool, arguments))),
+        workspace_cwd,
+    )
     if effects & MANDATORY_EFFECTS:
         return True
     if "workspace_write" in effects or "long_running" in effects:

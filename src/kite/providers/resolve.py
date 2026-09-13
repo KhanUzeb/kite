@@ -28,6 +28,7 @@ class ResolvedModel:
     spec: ProviderSpec
     api_style: str = "chat"  # chat | messages | responses
     agent_warning: str | None = None
+    raw: dict[str, Any] | None = None  # live catalog payload from resolve (avoids re-fetch)
 
     def litellm_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"model": self.litellm_model}
@@ -214,6 +215,7 @@ def resolve_model(
         spec=spec,
         api_style=api_style,
         agent_warning=warning,
+        raw=remote_raw,
     )
 
 

@@ -1,6 +1,6 @@
 # Kite architecture
 
-**Version:** 0.9.7 · Python 3.11+ · Entry: `kite.cli.run:main`
+**Version:** 0.9.8 · Python 3.11+ · Entry: `kite.cli.run:main`
 
 Kite is a **slim hybrid coding-agent harness**: a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) style control loop wrapped in tau-inspired **runtime assembly** (providers, tools, guardrails, compaction, sessions). 0.9 adds an **application layer** (`RunSpec`, `ApplicationRunService`, `PolicyEngine`, `ToolExecutor`) while `Harness` remains the compatibility adapter. The brain never renders UI; the CLI never calls LiteLLM directly.
 
@@ -159,10 +159,11 @@ Tools implement a common `Tool.run(args) → {ok, output, …}` contract. Produc
 
 - **PolicyEngine** — path containment, restricted-mode network block (loop entry)
 - **Plan mode** — blocked unless `/build` (todo_write still allowed)
-- **Approval** — `auto` / `approve` / `trust` / `readonly`; preview diffs for write/edit
+- **Approval** — `auto` / `approve` / `trust` / `readonly`; preview diffs for write/edit; Textual `Ctrl+K` fast-path for non-mandatory gates
 - **Guardrails** — bash deny patterns, env-dump block, secret write blocking, output redaction (inside tools)
+- **Project trust** — `guardrails/project_trust.py`; trusted cwd skips nested-agent approval (see `~/.kite/trust.json`, `/trust`, `.kite/project.toml`)
 
-**Subagent** — `subagent` tool spawns a bounded nested harness run (max 12 per dispatch, no recursion, no nested `memory`). Prefer bundled `profile=` personas over JIT microscopic workers. `task` is a lighter glob+grep fan-out.
+**Subagent** — `subagent` tool spawns a bounded nested harness run (max 12 per dispatch, no recursion, no nested `memory`). Prefer bundled `profile=` personas over JIT microscopic workers. Per-worker `model` / `provider` overrides pass through the orchestrator. `task` is a lighter glob+grep fan-out.
 
 **User context** — `USER.md` + `PROFILE.md` + `WORKING.md` under `~/.kite/memory/` only; injected as untrusted soft context on the main agent, skipped for nested subagents.
 
@@ -181,7 +182,8 @@ The agent emits events; the UI never polls internal state.
 | `context` | Footer token meter |
 | `compact` | Compaction notice (`↻ before → after`) |
 | `checkpoint` | Context snapshot saved (`◇ checkpoint`) |
-| `approval` | Inline approve/deny prompt |
+| `approval` | Inline approve/deny prompt; Textual modal + `Ctrl+K` fast-path |
+| `orchestrator_start` / `orchestrator_end` | Parallel crew dispatch summary |
 | `submit_blocked` | Verification gate rejected completion; reason in stream |
 | `verification_status` | Footer updates (`verified`, `changed_unverified`, `failed`, …) |
 | `todo` | Live plan checklist |

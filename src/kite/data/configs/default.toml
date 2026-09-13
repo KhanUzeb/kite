@@ -35,7 +35,9 @@ enabled = true
 sandbox_to_cwd = true
 allow_paths_outside_cwd = false
 execution_mode = "host"  # restricted | host — host allows paths outside session cwd (default)
-trusted_paths = []  # relative subtrees with elevated trust (e.g. "src/", "tests/")
+trusted_paths = []  # relative subtrees with elevated bash trust (e.g. "src/", "tests/")
+# Project trust: ~/.kite/trust.json or .kite/project.toml with [project] trust = true
+# Trusted projects skip nested-agent approval prompts (Pi/Codex-style).
 deny_bash_patterns = [
   "git\\s+push",
   "git\\s+push\\s+--force",

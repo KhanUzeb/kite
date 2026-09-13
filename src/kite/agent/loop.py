@@ -23,7 +23,7 @@ from kite.agent.exceptions import (
 )
 from kite.agent.loop_guard import LoopGuard
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
-from kite.agent.parallel import can_parallelize_batch, plan_execution_batches
+from kite.agent.parallel import plan_execution_batches
 from kite.agent.queue import RunMessageQueue
 from kite.agent.verification import VerificationCollector
 from kite.application.verification import looks_like_test
@@ -37,15 +37,42 @@ try:
 except Exception:  # pragma: no cover
     __version__ = "unknown"
 
-try:
-    SYSTEM_PROMPT = load_prompt_template("system")
-except Exception:  # pragma: no cover
-    SYSTEM_PROMPT = "You are a coding agent. Use tools. Submit with COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT."
+_SYSTEM_PROMPT: str | None = None
+_INSTANCE_PROMPT: str | None = None
+_PARALLEL_POOL = None
+_PARALLEL_POOL_LOCK = threading.Lock()
 
-try:
-    INSTANCE_PROMPT = load_prompt_template("instance")
-except Exception:  # pragma: no cover
-    INSTANCE_PROMPT = "{task}\n"
+
+def _system_prompt() -> str:
+    global _SYSTEM_PROMPT
+    if _SYSTEM_PROMPT is None:
+        try:
+            _SYSTEM_PROMPT = load_prompt_template("system")
+        except Exception:  # pragma: no cover
+            _SYSTEM_PROMPT = (
+                "You are a coding agent. Use tools. Submit with COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT."
+            )
+    return _SYSTEM_PROMPT
+
+
+def _instance_prompt() -> str:
+    global _INSTANCE_PROMPT
+    if _INSTANCE_PROMPT is None:
+        try:
+            _INSTANCE_PROMPT = load_prompt_template("instance")
+        except Exception:  # pragma: no cover
+            _INSTANCE_PROMPT = "{task}\n"
+    return _INSTANCE_PROMPT
+
+
+def _parallel_executor():
+    from concurrent.futures import ThreadPoolExecutor
+
+    global _PARALLEL_POOL
+    with _PARALLEL_POOL_LOCK:
+        if _PARALLEL_POOL is None:
+            _PARALLEL_POOL = ThreadPoolExecutor(max_workers=8)  # type: ignore[assignment]
+        return _PARALLEL_POOL
 
 
 def _exit_msg(status: str, *, content: str | None = None, submission: str = "", **extra) -> dict:
@@ -209,8 +236,8 @@ class DefaultAgent:
         model,
         env,
         *,
-        system_prompt: str = SYSTEM_PROMPT,
-        instance_prompt: str = INSTANCE_PROMPT,
+        system_prompt: str | None = None,
+        instance_prompt: str | None = None,
         project_context: str = "",
         step_limit: int = 40,
         cost_limit: float = 5.0,
@@ -250,8 +277,8 @@ class DefaultAgent:
     ):
         self.model = model
         self.env = env
-        self.system_prompt = system_prompt
-        self.instance_prompt = instance_prompt
+        self.system_prompt = system_prompt if system_prompt is not None else _system_prompt()
+        self.instance_prompt = instance_prompt if instance_prompt is not None else _instance_prompt()
         self.project_context = project_context
         self.step_limit = step_limit
         self.cost_limit = cost_limit
@@ -809,8 +836,6 @@ class DefaultAgent:
         return self.add_messages({"role": "user", "content": _IDLE_NUDGE})
 
     def _execute_parallel_actions(self, actions: list[dict], outputs: list[dict]) -> None:
-        from concurrent.futures import ThreadPoolExecutor
-
         prepared: list[tuple[str, dict, dict]] = []
         for action in actions:
             if self._interrupt:
@@ -834,10 +859,10 @@ class DefaultAgent:
             return idx, tool, args, action, self._invoke_tool(tool, args, action)
 
         results: dict[int, tuple[str, dict, dict, dict]] = {}
-        with ThreadPoolExecutor(max_workers=min(8, len(prepared))) as pool:
-            for row in pool.map(_worker, list(enumerate(prepared))):
-                idx, tool, args, action, out = row
-                results[idx] = (tool, args, action, out)
+        pool = _parallel_executor()
+        for row in pool.map(_worker, list(enumerate(prepared))):
+            idx, tool, args, action, out = row
+            results[idx] = (tool, args, action, out)
         for idx in range(len(prepared)):
             if idx not in results:
                 continue
@@ -878,7 +903,7 @@ class DefaultAgent:
         outputs: list[dict] = []
         cwd = self._execution_cwd()
         for batch in plan_execution_batches(actions, cwd=cwd):
-            if len(batch) > 1 and can_parallelize_batch(batch, cwd=cwd):
+            if len(batch) > 1:
                 self._execute_parallel_actions(batch, outputs)
             else:
                 self._execute_sequential_actions(batch, outputs)
@@ -1065,7 +1090,9 @@ class DefaultAgent:
 
         args = self._effective_tool_arguments(tool, args)
         action = {**action, "arguments": args}
-        needs_gate = tool in MUTATING_TOOLS or tool_requires_approval_gate(tool, args)
+        needs_gate = tool in MUTATING_TOOLS or tool_requires_approval_gate(
+            tool, args, workspace_cwd=self._execution_cwd()
+        )
         inspection_bash = tool == "bash" and is_inspection_bash(str(args.get("command") or ""))
         if needs_gate and not inspection_bash and self.approver is None:
             return _blocked("approval required but no approver is available")

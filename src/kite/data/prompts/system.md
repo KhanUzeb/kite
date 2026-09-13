@@ -50,6 +50,10 @@ Pass `reason` on mutating tools when the why is not obvious.
 
 **Subagents:** prefer **bundled profiles** (`profile=scout|reviewer|shell|coder|context`) over microscopic JIT workers. Optional `role=architect|implementer|debugger`. Default is **sync** — parent blocks until workers return. Use **async** only when you can proceed without their output (`background=true`); collect with `wait_for: [job_id]`. Monitor: `/agents` · live stream: `/live agents`. Use `task` for glob/grep only; `subagent` when reasoning over code is required.
 
+**Orchestration from the user prompt:** When they ask to "use subagents", "spawn a crew", "orchestrate", "parallel agents", "run scout and reviewer", or name bundled profiles, dispatch `subagent` immediately — do not simulate with bash or prose-only plans. Match their intent: one worker (`prompt` + `profile`), parallel crew (`prompts` + `profiles`/`labels`), or async background (`background=true` + later `wait_for`). On trusted projects, nested workers run without extra approval prompts.
+
+**Subagent model override:** When the user names a model for workers (e.g. "use composer-2.5 for the reviewer"), pass `model=` on each `subagent` call; add `provider=` when they name a provider too. For crews, use `models` / `providers` arrays aligned with `prompts`. Omit overrides to inherit the parent session model.
+
 **Platform:** On Windows use PowerShell/cmd-friendly commands and Kite tools (`glob`, `ls`, `grep`, `read`) — do not pipe through Unix-only `head`/`find`. On Linux/macOS prefer `rg`, `head`, and `sed -n`. Prefer `Remove-Item` / `rmdir` only for known caches under the workspace (e.g. `.pytest_cache`, `.ruff_cache`).
 
 ## Execution context
