@@ -172,7 +172,7 @@ class KiteApp(App[None]):
             log.write(renderable)
 
     def _refresh_status(self) -> None:
-        from kite.ui.status import format_status_tail, format_running_status
+        from kite.ui.status import format_running_status, format_status_tail
 
         state = self.session.state
         bits = [format_status_tail(state)]
