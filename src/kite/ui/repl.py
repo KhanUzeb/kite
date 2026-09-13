@@ -126,6 +126,7 @@ class ChatSession:
 
         self._fullscreen = FullscreenReducer()
         self._display_mode: UiDisplayMode = "compact"
+        self._textual_app = None
         from kite.tools.jobs import JobRegistry
 
         self.jobs = JobRegistry(on_event=self._ui_event_handler)
@@ -1408,7 +1409,7 @@ class ChatSession:
     def _slash_plan(self, _arg: str) -> None:
         self._apply_plan_mode()
         self.console.print(
-            "[kite.plan]plan mode[/]  inspect + checklist only — no edits; /build when ready"
+            "[kite.plan]plan mode[/]  read-only checklist — no edits; /build when ready"
         )
 
     def _slash_build(self, _arg: str) -> None:
@@ -1419,7 +1420,7 @@ class ChatSession:
                 f"[kite.build]build mode[/]  edits on — continuing {n} checklist item(s)"
             )
         else:
-            self.console.print("[kite.build]build mode[/]  edits are on")
+            self.console.print("[kite.build]build mode[/]  default — edits are on")
 
     def _slash_approve(self, arg: str) -> None:
         token = (arg or "").strip()
@@ -2616,7 +2617,11 @@ class ChatSession:
             self._session_id = harness.last_session.id
             self._sync_goal_to_session()
 
-    def _run_task(self, task: str) -> None:
+    def _run_task_textual(self, task: str) -> None:
+        """Run one turn under the Textual app (no prompt_toolkit composer)."""
+        self._run_task(task, textual=True)
+
+    def _run_task(self, task: str, *, textual: bool = False) -> None:
         from kite.ui.attach import collect_turn_attachments
 
         try:
@@ -2663,7 +2668,7 @@ class ChatSession:
         continues_used = 0
         run_task = task
         box: dict = {}
-        session = self._ensure_prompt()
+        session = None if textual else self._ensure_prompt()
 
         def _slash_busy_hint() -> None:
             self._flash_note("Enter queues · Esc stop · Ctrl+G steer")
@@ -2696,7 +2701,9 @@ class ChatSession:
                     self._wake_composer()
 
             threading.Thread(target=worker, daemon=True, name="kite-turn").start()
-            if session is not None:
+            if textual and self._textual_app is not None:
+                self._textual_app.wait_for_turn(done)
+            elif session is not None:
                 read_repl_busy_composer(
                     session=session,
                     state=self.state,
@@ -2875,6 +2882,13 @@ class ChatSession:
                 pass
 
     def run(self) -> int:
+        from kite.ui.textual.app import should_use_textual_tui
+
+        if should_use_textual_tui():
+            from kite.ui.textual.run import run_textual_session
+
+            return run_textual_session(self)
+
         from kite.ui.git import git_branch
 
         self.state.git_branch = git_branch(self.cwd)

@@ -49,7 +49,10 @@ def test_repl_help_primary_vs_all() -> None:
     assert "/select" not in brief
     assert "/compact" in full
     assert "/select" in full
-    assert len(primary_builtins()) == 12
+    primary = primary_builtins()
+    assert len(primary) == 12
+    assert primary[0].name == "build"
+    assert primary[1].name == "plan"
 
 
 def test_legacy_slash_still_dispatches() -> None:

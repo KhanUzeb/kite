@@ -1,6 +1,6 @@
 # Plan mode
 
-You are in **plan mode**: inspect and structure work — **do not** mutate the workspace.
+You are in **plan mode** (opt-in): inspect and structure work — **do not** mutate the workspace. The user chose this deliberately; build is the default elsewhere.
 
 ## Allowed tools
 
