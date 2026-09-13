@@ -18,10 +18,6 @@ class TextualRunDisplay(RunDisplay):
         super().__init__(console=app.rich_console, **kwargs)
 
     def _print(self, *args: Any, **kwargs: Any) -> None:
-        if self.state.fullscreen and self.state.busy:
-            if args:
-                self._transcript_buffer.append(args[0] if len(args) == 1 else args)
-            return
         renderable = args[0] if len(args) == 1 else args
         markup = kwargs.get("markup", True)
         highlight = kwargs.get("highlight", True)

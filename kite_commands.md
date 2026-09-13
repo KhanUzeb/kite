@@ -236,7 +236,7 @@ These never go to the model.
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Toggle expanded tool output |
-| `/fullscreen on\|off\|refresh` | Fullscreen workbench (≥100×30); Ctrl+Space toggles |
+| `/fullscreen` | Retired — use Textual sidebar (`Ctrl+\`) |
 | `/live` | Stream bash output in real time while tools run |
 | `/live agents` | Stream subagent crew tool + shell output with worker prefix |
 | `/collapse` | Collapse tool output (default) |
