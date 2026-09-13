@@ -45,17 +45,26 @@ def test_prompt_cache_manager_memoizes_prepare():
 
 
 def test_runtime_prepare_static_cache():
+    from unittest.mock import MagicMock, patch
+
     from kite.config import UserConfig
 
+    resolved = MagicMock(provider="test", model="m", context_window=128_000)
     rt = AgentRuntime(options=RuntimeOptions(cwd=".", no_context=True, label="test"))
     ucfg = UserConfig.load()
     cwd = "."
-    first = rt._prepare_static(ucfg, cwd)
-    second = rt._prepare_static(ucfg, cwd)
+    with patch("kite.agent.runtime.resolve_model", return_value=resolved):
+        with patch("kite.providers.resolve.missing_credentials", return_value=None):
+            with patch("kite.providers.resolve.missing_model", return_value=None):
+                first = rt._prepare_static(ucfg, cwd)
+                second = rt._prepare_static(ucfg, cwd)
     assert first[0] is second[0]
     assert first[1] is second[1]
     rt.invalidate_prepare_cache()
-    third = rt._prepare_static(ucfg, cwd)
+    with patch("kite.agent.runtime.resolve_model", return_value=resolved):
+        with patch("kite.providers.resolve.missing_credentials", return_value=None):
+            with patch("kite.providers.resolve.missing_model", return_value=None):
+                third = rt._prepare_static(ucfg, cwd)
     assert third[1].model == first[1].model
 
 
