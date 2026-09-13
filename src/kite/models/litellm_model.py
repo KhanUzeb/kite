@@ -144,7 +144,18 @@ class LitellmModel:
             api_messages.append(clean)
         return api_messages
 
-    def _completion_kwargs(self, messages: list[dict], *, stream: bool) -> dict[str, Any]:
+    def _completion_kwargs(
+        self,
+        messages: list[dict],
+        *,
+        stream: bool,
+        overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        o = overrides or {}
+        temperature = o["temperature"] if "temperature" in o else self.temperature
+        reasoning_mode = o.get("reasoning_mode", self.reasoning_mode)
+        reasoning_effort = o.get("reasoning_effort", self.reasoning_effort)
+        drop_reasoning = o.get("drop_reasoning", self._drop_reasoning)
         api_messages = self._api_messages(messages)
         if self.prompt_cache is not None:
             api_messages = self.prompt_cache.prepare(api_messages)
@@ -154,8 +165,8 @@ class LitellmModel:
             "num_retries": self.max_retries,
             "stream": stream,
         }
-        if self.temperature is not None:
-            kwargs["temperature"] = self.temperature
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         if self.registry is not None:
             kwargs["tools"] = self.registry.tool_schemas()
             kwargs["tool_choice"] = "auto"
@@ -170,9 +181,9 @@ class LitellmModel:
         return apply_reasoning(
             kwargs,
             self.reasoning_support,
-            self.reasoning_mode,
-            effort=self.reasoning_effort,
-            drop_reasoning=self._drop_reasoning,
+            reasoning_mode,
+            effort=reasoning_effort,
+            drop_reasoning=drop_reasoning,
         )
 
     def _record_usage(self, usage: Any, hidden: dict[str, Any] | None) -> None:
@@ -263,7 +274,7 @@ class LitellmModel:
         self._emit("stream_first_token", ttft_ms=ttft_ms, channel=channel)
         return True
 
-    def _query_stream(self, messages: list[dict]) -> dict:
+    def _query_stream(self, messages: list[dict], *, overrides: dict[str, Any] | None = None) -> dict:
         import litellm
 
         self._emit(
@@ -279,7 +290,7 @@ class LitellmModel:
         first_token = False
 
         try:
-            stream = litellm.completion(**self._completion_kwargs(messages, stream=True))
+            stream = litellm.completion(**self._completion_kwargs(messages, stream=True, overrides=overrides))
             for chunk in stream:
                 if self.should_stop():
                     self._emit("interrupt")
@@ -359,7 +370,7 @@ class LitellmModel:
         )
         return self._build_assistant(content=content, tool_calls_acc=tool_calls_acc, cost=cost, reasoning=reasoning)
 
-    def _query_blocking(self, messages: list[dict]) -> dict:
+    def _query_blocking(self, messages: list[dict], *, overrides: dict[str, Any] | None = None) -> dict:
         import litellm
 
         self._emit(
@@ -367,7 +378,7 @@ class LitellmModel:
             provider=self.resolved.provider,
             model=self.resolved.model,
         )
-        response = litellm.completion(**self._completion_kwargs(messages, stream=False))
+        response = litellm.completion(**self._completion_kwargs(messages, stream=False, overrides=overrides))
         choice = response.choices[0]
         message = choice.message
         usage = getattr(response, "usage", None)
@@ -408,19 +419,18 @@ class LitellmModel:
             raise
         except Exception as e:
             if looks_like_temperature_reasoning_error(e) and self.temperature is not None:
-                self.temperature = None
+                no_temp = {"temperature": None}
                 try:
-                    return self._query_stream(messages)
+                    return self._query_stream(messages, overrides=no_temp)
                 except Exception:
-                    return self._query_blocking(messages)
+                    return self._query_blocking(messages, overrides=no_temp)
             if not looks_like_reasoning_error(e):
                 raise
-            self.reasoning_mode = "off"
-            self._drop_reasoning = True
+            no_reasoning = {"reasoning_mode": "off", "drop_reasoning": True}
             try:
-                return self._query_stream(messages)
+                return self._query_stream(messages, overrides=no_reasoning)
             except Exception:
-                return self._query_blocking(messages)
+                return self._query_blocking(messages, overrides=no_reasoning)
     def query(self, messages: list[dict]) -> dict:
         import litellm
 

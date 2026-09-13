@@ -532,7 +532,8 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 
         console.print(f"[bold]{session.id}[/]  {format_session_resume_hint(session.meta)}")
         console.print(Panel(json.dumps(session.meta.to_dict(), indent=2), title="meta"))
-        for i, m in enumerate(session.messages[-args.tail :], 1):
+        shown = session.messages if args.tail == 0 else session.messages[-args.tail :]
+        for i, m in enumerate(shown, 1):
             role = m.get("role")
             content = (m.get("content") or "")[:200].replace("\n", " ")
             console.print(f"[dim]{i}[/] [cyan]{role}[/] {content}")
@@ -1267,7 +1268,7 @@ def build_parser() -> argparse.ArgumentParser:
     sessions.add_argument("-q", "--query", dest="search", help="Filter sessions (same as positional query)")
     sessions.add_argument("--limit", type=int, default=30)
     sessions.add_argument("--show", help="Show session id (full transcript tail)")
-    sessions.add_argument("--tail", type=int, default=12, help="Messages to show with --show")
+    sessions.add_argument("--tail", type=int, default=12, help="Messages to show with --show (0 = full)")
     sessions.add_argument(
         "--no-pick",
         action="store_true",
