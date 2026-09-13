@@ -96,6 +96,103 @@ class AgentRuntime:
     tool_executor_override: Any = None
     policy_engine_override: Any = None
     message_queue: RunMessageQueue | None = None
+    _static_prepare_cache: tuple[Any, ...] | None = field(default=None, init=False)
+
+    def invalidate_prepare_cache(self) -> None:
+        """Drop cached project context / skills / resolve (e.g. after /reload)."""
+        self._static_prepare_cache = None
+
+    def _static_prepare_key(self, cwd: str) -> tuple[Any, ...]:
+        o = self.options
+        return (
+            cwd,
+            o.config_name,
+            o.provider,
+            o.model,
+            o.no_context,
+            o.mode,
+            o.role,
+            o.long_task,
+            o.goal_objective,
+            o.label,
+        )
+
+    def _prepare_static(
+        self, ucfg: UserConfig, cwd: str
+    ) -> tuple[AgentRuntimeConfig, ResolvedModel, list[Any], Any, list[str]]:
+        key = self._static_prepare_key(cwd)
+        if self._static_prepare_cache is not None and self._static_prepare_cache[0] == key:
+            _, rcfg, resolved, skills, project_ctx, extra_sections = self._static_prepare_cache
+            self.runtime_config = rcfg
+            self.last_resolved = resolved
+            self._prepared_skills = skills
+            return rcfg, resolved, skills, project_ctx, list(extra_sections)
+
+        rcfg = load_runtime_config(self.options.config_name)
+        resolved = resolve_model(
+            provider=self.options.provider,
+            model=self.options.model,
+            config=ucfg,
+        )
+        missing = missing_credentials(resolved)
+        if missing:
+            raise RuntimeError(missing)
+        no_model = missing_model(resolved)
+        if no_model:
+            raise RuntimeError(no_model)
+
+        skills = load_skills(cwd, extra_dirs=rcfg.skills.dirs) if rcfg.skills.enabled else []
+        project_ctx = None
+        if not self.options.no_context:
+            project_ctx = gather_project_context(
+                cwd,
+                include_git=rcfg.context.include_git_status and ucfg.include_git_status,
+                include_tree=rcfg.context.include_tree_snippet and ucfg.include_tree_snippet,
+                tree_max_entries=rcfg.context.tree_max_entries,
+            )
+
+        extra_sections: list[str] = []
+        mode = (self.options.mode or "build").lower()
+        role = parse_role(self.options.role or rcfg.role, mode=mode)
+        try:
+            extra_sections.append(load_prompt_template(f"mode_{mode}"))
+        except (FileNotFoundError, OSError):
+            pass
+        if role is not AgentRole.AUTO:
+            try:
+                extra_sections.append(load_prompt_template(f"role_{role.value}"))
+            except (FileNotFoundError, OSError):
+                pass
+        if self.options.long_task:
+            try:
+                extra_sections.append(load_prompt_template("mode_long"))
+            except (FileNotFoundError, OSError):
+                pass
+        goal_text = (self.options.goal_objective or "").strip()
+        if goal_text and self.options.label != "subagent":
+            try:
+                extra_sections.append(load_prompt_template("mode_goal"))
+            except (FileNotFoundError, OSError):
+                pass
+            from kite.memory.goal import format_goal_section
+
+            extra_sections.append(format_goal_section(goal_text))
+
+        if self.options.label != "subagent":
+            try:
+                from kite.agent.subagent_profiles import profiles_for_orchestrator
+
+                catalog = profiles_for_orchestrator()
+                if catalog.strip():
+                    extra_sections.append(catalog)
+            except Exception:
+                pass
+
+        self.runtime_config = rcfg
+        self.last_resolved = resolved
+        self._prepared_skills = skills
+        self._static_prepare_cache = (key, rcfg, resolved, skills, project_ctx, tuple(extra_sections))
+        return rcfg, resolved, skills, project_ctx, extra_sections
 
     def request_interrupt(self) -> None:
         if self.last_agent is not None:
@@ -166,61 +263,8 @@ class AgentRuntime:
     def prepare(self) -> tuple[AgentRuntimeConfig, ResolvedModel, str]:
         ensure_home()
         ucfg = self.user_config or UserConfig.load()
-        rcfg = load_runtime_config(self.options.config_name)
-        self.runtime_config = rcfg
         cwd = str(Path(self.options.cwd or ".").resolve())
-
-        resolved = resolve_model(
-            provider=self.options.provider,
-            model=self.options.model,
-            config=ucfg,
-        )
-        missing = missing_credentials(resolved)
-        if missing:
-            raise RuntimeError(missing)
-        no_model = missing_model(resolved)
-        if no_model:
-            raise RuntimeError(no_model)
-        self.last_resolved = resolved
-
-        skills = load_skills(cwd, extra_dirs=rcfg.skills.dirs) if rcfg.skills.enabled else []
-        self._prepared_skills = skills
-
-        project_ctx = None
-        if not self.options.no_context:
-            project_ctx = gather_project_context(
-                cwd,
-                include_git=rcfg.context.include_git_status and ucfg.include_git_status,
-                include_tree=rcfg.context.include_tree_snippet and ucfg.include_tree_snippet,
-                tree_max_entries=rcfg.context.tree_max_entries,
-            )
-
-        extra_sections: list[str] = []
-        mode = (self.options.mode or "build").lower()
-        role = parse_role(self.options.role or rcfg.role, mode=mode)
-        try:
-            extra_sections.append(load_prompt_template(f"mode_{mode}"))
-        except (FileNotFoundError, OSError):
-            pass
-        if role is not AgentRole.AUTO:
-            try:
-                extra_sections.append(load_prompt_template(f"role_{role.value}"))
-            except (FileNotFoundError, OSError):
-                pass
-        if self.options.long_task:
-            try:
-                extra_sections.append(load_prompt_template("mode_long"))
-            except (FileNotFoundError, OSError):
-                pass
-        goal_text = (self.options.goal_objective or "").strip()
-        if goal_text and self.options.label != "subagent":
-            try:
-                extra_sections.append(load_prompt_template("mode_goal"))
-            except (FileNotFoundError, OSError):
-                pass
-            from kite.memory.goal import format_goal_section
-
-            extra_sections.append(format_goal_section(goal_text))
+        rcfg, resolved, skills, project_ctx, extra_sections = self._prepare_static(ucfg, cwd)
 
         memory_store = MemoryStore.open(cwd) if self.slots.memory is None else self.slots.memory
         inject_memory = rcfg.memory.inject == "always" or self.options.memory_in_prompt
@@ -232,16 +276,6 @@ class AgentRuntime:
                 from kite.memory.user_context import render_user_context
 
                 user_context_text = render_user_context(memory_store)
-            except Exception:
-                pass
-
-        if self.options.label != "subagent":
-            try:
-                from kite.agent.subagent_profiles import profiles_for_orchestrator
-
-                catalog = profiles_for_orchestrator()
-                if catalog.strip():
-                    extra_sections.append(catalog)
             except Exception:
                 pass
 
@@ -389,11 +423,14 @@ class AgentRuntime:
             label: str = "subagent",
             subagent_id: str = "",
             glyph: str = "◆",
+            provider: str = "",
+            model: str = "",
         ) -> dict:
             from kite.agent.harness import Harness
             from kite.agent.harness_build import build_harness_config
             from kite.application.cli import execute_harness_task, legacy_result_from_run
             from kite.application.policy import child_inherits_parent_policy
+            from kite.providers.resolve import resolve_model
 
             inherited = child_inherits_parent_policy(
                 parent_approval=self.options.approval or "auto",
@@ -403,11 +440,21 @@ class AgentRuntime:
                 child_overrides={"mode": "plan", "approval": "readonly"},
             )
             child_role = (role or "auto").strip().lower()
+            child_provider = (provider or "").strip() or resolved.provider
+            child_model = (model or "").strip() or resolved.model
+            if provider or model:
+                child_resolved = resolve_model(
+                    provider=child_provider or None,
+                    model=child_model or None,
+                    config=ucfg,
+                )
+                child_provider = child_resolved.provider
+                child_model = child_resolved.model
             h = Harness(
                 build_harness_config(
                     cwd=cwd,
-                    provider=resolved.provider,
-                    model_name=resolved.model,
+                    provider=child_provider,
+                    model_name=child_model,
                     step_limit=min(rcfg.orchestrator_step_limit, rcfg.step_limit),
                     cost_limit=min(rcfg.orchestrator_cost_limit, rcfg.cost_limit),
                     approval=str(inherited["approval"]),

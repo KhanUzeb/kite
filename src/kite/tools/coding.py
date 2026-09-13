@@ -1051,6 +1051,7 @@ def make_coding_tools(
                     "• Crew: prompts + labels/profiles/roles (sync by default)\n"
                     "• Async: background=true or wait=false; returns job_id immediately\n"
                     "• Collect: wait_for=[job_id, ...] (cannot combine with new prompts)\n"
+                    "• Model override: model= + optional provider= (arrays for crews)\n"
                     "Prefer bundled profiles over microscopic JIT workers.\n"
                     "Monitor: /agents · /live agents · Stop: /kill"
                 ),
@@ -1100,6 +1101,24 @@ def make_coding_tools(
                         "timeout_seconds": {
                             "type": "integer",
                             "description": "Max seconds when waiting for background workers",
+                        },
+                        "provider": {
+                            "type": "string",
+                            "description": "Provider override for nested worker (inherits parent when omitted)",
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "Model override for nested worker (e.g. composer-2.5)",
+                        },
+                        "providers": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Per-worker provider overrides for parallel crews",
+                        },
+                        "models": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Per-worker model overrides for parallel crews",
                         },
                     },
                 },

@@ -71,6 +71,53 @@ Screen {
 """
 
 
+class AgentsScreen(ModalScreen[None]):
+    """Antigravity-style crew manager — active subagents at a glance."""
+
+    BINDINGS = [
+        ("escape", "close", "Close"),
+        ("q", "close", "Close"),
+        ("k", "kill_selected", "Kill"),
+    ]
+
+    def __init__(self, tasks: list[dict]) -> None:
+        super().__init__()
+        self._tasks = tasks
+        self._index = 0
+
+    def compose(self) -> ComposeResult:
+        lines = ["[bold cyan]Active subagents[/]", ""]
+        if not self._tasks:
+            lines.append("[dim]no workers — subagent tool or /agents[/]")
+        else:
+            for i, row in enumerate(self._tasks):
+                mark = "▸" if i == self._index else " "
+                glyph = row.get("glyph") or "◆"
+                label = row.get("label") or row.get("id") or "worker"
+                status = row.get("status") or "?"
+                profile = row.get("profile") or ""
+                model = row.get("model") or ""
+                extra = f" · {profile}" if profile else ""
+                if model:
+                    extra += f" · {model}"
+                lines.append(f"{mark} {glyph} [bold]{label}[/] [{status}]{extra}")
+            lines.append("")
+            lines.append("[dim]k kill · Esc close · /live agents for stream[/]")
+        yield Static("\n".join(lines), classes="approval-dialog")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    def action_kill_selected(self) -> None:
+        if not self._tasks or self._index >= len(self._tasks):
+            return
+        task_id = str(self._tasks[self._index].get("id") or "")
+        orch = getattr(self.app.session, "_orchestrator", None)
+        if orch is not None and task_id:
+            orch.kill(task_id)
+        self.dismiss(None)
+
+
 class ApprovalScreen(ModalScreen[str]):
     """Foreground approval card — Pi-style, never buried in logs."""
 
@@ -129,6 +176,8 @@ class KiteApp(App[None]):
         Binding("ctrl+\\\\", "toggle_sidebar", "Sidebar"),
         Binding("ctrl+g", "steer_turn", "Steer", show=False),
         Binding("ctrl+u", "dequeue_turn", "Dequeue", show=False),
+        Binding("ctrl+k", "fast_approve", "Approve", show=False),
+        Binding("ctrl+j", "agents_panel", "Agents", show=False),
     ]
 
     def __init__(self, session: ChatSession) -> None:
@@ -165,10 +214,12 @@ class KiteApp(App[None]):
 
         self.session.state.git_branch = git_branch(self.session.cwd)
         self._write_banner()
-        self.set_interval(0.12, self._poll_turn)
-        self.set_interval(0.4, self._refresh_status)
-        self.set_interval(2.0, self._refresh_sidebar)
+        self.set_interval(0.25, self._poll_turn)
+        self.set_interval(0.6, self._refresh_status)
+        self.set_interval(4.0, self._refresh_sidebar)
         self.query_one("#composer", Composer).focus()
+        self._schedule_release_check()
+        self._maybe_flash_pending_approval()
 
     def _write_banner(self) -> None:
         from kite.config import UserConfig
@@ -223,11 +274,28 @@ class KiteApp(App[None]):
         else:
             self._update_composer_hint()
 
+    def _schedule_release_check(self) -> None:
+        from kite.cli.release_check import schedule_release_check
+
+        def _on_msg(msg: str | None) -> None:
+            if msg:
+                self.call_from_thread(lambda: self.post_message(StatusFlashMessage(msg)))
+
+        schedule_release_check(_on_msg)
+
+    def _maybe_flash_pending_approval(self) -> None:
+        req = self.session._approval_coordinator.pending
+        if req is not None:
+            self.post_message(StatusFlashMessage(f"approval pending — Ctrl+K allow · {req.tool}"))
+
     def _maybe_show_approval(self) -> None:
         req = self.session._approval_coordinator.pending
         if req is None or isinstance(self.screen, ApprovalScreen):
             return
         if self.session.state.awaiting_approval:
+            if not getattr(self.session.state, "_approval_flash_sent", False):
+                self.session.state._approval_flash_sent = True
+                self.post_message(StatusFlashMessage(f"approval — Ctrl+K allow once · {req.tool}"))
             self.push_screen(
                 ApprovalScreen(req.tool, req.reason or "", mandatory=bool(getattr(req, "mandatory", False))),
                 self._resolve_approval,
@@ -242,6 +310,32 @@ class KiteApp(App[None]):
         self.session._approval_coordinator.resolve(decision, request_id=req.request_id)
         self.session.state.awaiting_approval = ""
         self.session.state.awaiting_approval_mandatory = False
+        self.session.state._approval_flash_sent = False
+
+    def action_fast_approve(self) -> None:
+        req = self.session._approval_coordinator.pending
+        if req is None:
+            self.post_message(StatusFlashMessage("no pending approval"))
+            return
+        if getattr(req, "mandatory", False):
+            self.post_message(StatusFlashMessage("mandatory approval — use the dialog"))
+            self._maybe_show_approval()
+            return
+        self.session._approval_coordinator.resolve("allow", request_id=req.request_id)
+        self.session.state.awaiting_approval = ""
+        self.session.state.awaiting_approval_mandatory = False
+        self.session.state._approval_flash_sent = False
+        self.post_message(StatusFlashMessage("allowed once"))
+
+    def action_agents_panel(self) -> None:
+        tasks: list[dict] = []
+        harness = getattr(self.session, "_harness", None)
+        runtime = getattr(harness, "_runtime", None) if harness else None
+        orch = getattr(runtime, "orchestrator", None) if runtime else None
+        if orch is not None:
+            tasks = orch.manager_view()
+        self.session._orchestrator = orch
+        self.push_screen(AgentsScreen(tasks))
 
     @on(AgentEventMessage)
     def _on_agent_event(self, message: AgentEventMessage) -> None:

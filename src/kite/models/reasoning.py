@@ -10,6 +10,7 @@ rejects it as an unsupported parameter.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -238,6 +239,17 @@ def _params_from_remote(raw: dict[str, Any]) -> tuple[set[str], list[str], bool]
     return params, efforts, mandatory
 
 
+@functools.lru_cache(maxsize=256)
+def _litellm_reasoning_params(model: str, provider: str) -> frozenset[str]:
+    """Cached reasoning-related OpenAI params from LiteLLM."""
+    from kite.providers.capabilities import _litellm_openai_params
+
+    norm = _litellm_openai_params(model, provider)
+    if not norm:
+        return frozenset()
+    return frozenset(_norm_params(norm) & _REASONING_PARAMS)
+
+
 def _params_from_litellm(provider: str, model: str, litellm_model: str) -> set[str]:
     """Collect reasoning *request* params LiteLLM lists for this model.
 
@@ -246,22 +258,10 @@ def _params_from_litellm(provider: str, model: str, litellm_model: str) -> set[s
     `include_reasoning` — NVIDIA NIM rejects both even when LiteLLM says
     the model supports reasoning.
     """
-    try:
-        import litellm
-    except Exception:
+    mid = (litellm_model or model or "").strip()
+    if not mid:
         return set()
-    mid = litellm_model or model
-    attempts: list[dict[str, Any]] = []
-    if provider:
-        attempts.append({"custom_llm_provider": provider})
-    attempts.append({})
-    for kwargs in attempts:
-        try:
-            params = litellm.get_supported_openai_params(model=mid, **kwargs)
-            return _norm_params(params) & _REASONING_PARAMS
-        except Exception:
-            continue
-    return set()
+    return set(_litellm_reasoning_params(mid, provider or ""))
 
 
 def _kwargs_from_params(

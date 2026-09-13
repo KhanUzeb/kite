@@ -66,6 +66,24 @@ def evaluate_subagent_result(result: dict[str, Any]) -> tuple[bool, str, str]:
     return False, "failed", empty
 
 
+def _str_arg_list(args: dict[str, Any], key: str) -> list[str] | None:
+    raw = args.get(key)
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    return None
+
+
+def _repeat_or_none(single: str, n: int) -> list[str] | None:
+    return [single] * n if single else None
+
+
+def _label_list(args: dict[str, Any]) -> list[str] | None:
+    labels = args.get("labels")
+    if isinstance(labels, list):
+        return [str(x) for x in labels]
+    return None
+
+
 def _format_sections(
     header: str,
     rows: list[tuple[str, bool, str, str, int | None]],
@@ -96,10 +114,12 @@ class SubagentTask:
     started_at: float = 0.0
     elapsed_ms: int = 0
     background: bool = False
+    provider: str = ""
+    model: str = ""
     cancel: CancelToken | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        row = {
             "id": self.id,
             "label": self.label,
             "profile": self.profile,
@@ -114,6 +134,11 @@ class SubagentTask:
             "elapsed_ms": self.elapsed_ms,
             "background": self.background,
         }
+        if self.provider:
+            row["provider"] = self.provider
+        if self.model:
+            row["model"] = self.model
+        return row
 
     def as_result(self) -> dict[str, Any]:
         return {
@@ -193,6 +218,8 @@ class SubagentOrchestrator:
             "label": task.label,
             "subagent_id": task.id,
             "glyph": task.glyph,
+            "provider": task.provider,
+            "model": task.model,
         }
         try:
             return self.runner(composed, **kwargs)
@@ -357,6 +384,8 @@ class SubagentOrchestrator:
         worker: int = 0,
         glyph: str = "",
         background: bool = False,
+        provider: str = "",
+        model: str = "",
     ) -> SubagentTask:
         tid = uuid.uuid4().hex[:8]
         prompt = _clamp_prompt(prompt)
@@ -376,6 +405,8 @@ class SubagentOrchestrator:
             glyph=glyph or worker_glyph(worker),
             started_at=time.monotonic(),
             background=background,
+            provider=provider,
+            model=model,
         )
         self.tasks.append(task)
         if self.jobs is not None:
@@ -409,6 +440,8 @@ class SubagentOrchestrator:
         role: str = "",
         worker: int,
         glyph: str,
+        provider: str = "",
+        model: str = "",
     ) -> dict[str, Any]:
         task = self._begin_task(
             prompt,
@@ -418,6 +451,8 @@ class SubagentOrchestrator:
             worker=worker,
             glyph=glyph,
             background=False,
+            provider=provider,
+            model=model,
         )
         return self._execute_task(task)
 
@@ -430,6 +465,8 @@ class SubagentOrchestrator:
         role: str = "",
         worker: int = 0,
         glyph: str = "",
+        provider: str = "",
+        model: str = "",
     ) -> dict[str, Any]:
         if not worker:
             worker, glyph = self._next_worker()
@@ -440,6 +477,8 @@ class SubagentOrchestrator:
             role=role,
             worker=worker,
             glyph=glyph,
+            provider=provider,
+            model=model,
         )
 
     def run_one_background(
@@ -449,6 +488,8 @@ class SubagentOrchestrator:
         label: str = "",
         profile: str = "",
         role: str = "",
+        provider: str = "",
+        model: str = "",
     ) -> dict[str, Any]:
         task = self._begin_task(
             prompt,
@@ -456,6 +497,8 @@ class SubagentOrchestrator:
             profile=profile,
             role=role,
             background=True,
+            provider=provider,
+            model=model,
         )
 
         def _work() -> None:
@@ -546,6 +589,8 @@ class SubagentOrchestrator:
         labels: list[str] | None = None,
         profiles: list[str] | None = None,
         roles: list[str] | None = None,
+        providers: list[str] | None = None,
+        models: list[str] | None = None,
     ) -> dict[str, Any]:
         if not prompts:
             return {"ok": False, "error": "prompts required", "output": "prompts required"}
@@ -556,6 +601,8 @@ class SubagentOrchestrator:
         labels = labels or [f"worker-{i}" for i in range(1, len(prompts) + 1)]
         profiles = profiles or [""] * len(prompts)
         roles = roles or [""] * len(prompts)
+        providers = providers or [""] * len(prompts)
+        models = models or [""] * len(prompts)
         self._emit(
             "orchestrator_start",
             total=len(prompts),
@@ -576,6 +623,8 @@ class SubagentOrchestrator:
                     role=str(roles[i - 1]) if i - 1 < len(roles) else "",
                     worker=worker_slots[i - 1][0],
                     glyph=worker_slots[i - 1][1],
+                    provider=str(providers[i - 1]) if i - 1 < len(providers) else "",
+                    model=str(models[i - 1]) if i - 1 < len(models) else "",
                 ): i
                 for i, p in enumerate(prompts, 1)
             }
@@ -626,6 +675,8 @@ class SubagentOrchestrator:
         labels: list[str] | None = None,
         profiles: list[str] | None = None,
         roles: list[str] | None = None,
+        providers: list[str] | None = None,
+        models: list[str] | None = None,
     ) -> dict[str, Any]:
         if not prompts:
             return {"ok": False, "error": "prompts required", "output": "prompts required"}
@@ -635,6 +686,8 @@ class SubagentOrchestrator:
         labels = labels or [f"worker-{i}" for i in range(1, len(prompts) + 1)]
         profiles = profiles or [""] * len(prompts)
         roles = roles or [""] * len(prompts)
+        providers = providers or [""] * len(prompts)
+        models = models or [""] * len(prompts)
         spawned: list[dict[str, Any]] = []
         for i, prompt in enumerate(prompts, 1):
             spawned.append(
@@ -643,6 +696,8 @@ class SubagentOrchestrator:
                     label=str(labels[i - 1]),
                     profile=str(profiles[i - 1]) if i - 1 < len(profiles) else "",
                     role=str(roles[i - 1]) if i - 1 < len(roles) else "",
+                    provider=str(providers[i - 1]) if i - 1 < len(providers) else "",
+                    model=str(models[i - 1]) if i - 1 < len(models) else "",
                 )
             )
         job_ids = [str(s["job_id"]) for s in spawned]
@@ -665,80 +720,103 @@ class SubagentOrchestrator:
             out["dispatch_hint"] = hint
             out["output"] = f"{hint}\n{out.get('output', '')}"
 
-    def dispatch(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Tool entrypoint: prompt(s), optional labels, wait_for, background/wait."""
+    def _dispatch_wait_for(self, args: dict[str, Any]) -> dict[str, Any] | None:
         wait_for = args.get("wait_for") or args.get("job_ids")
-        if isinstance(wait_for, list) and wait_for:
-            if args.get("prompt") or args.get("prompts"):
-                msg = "wait_for cannot be combined with prompt/prompts — collect existing workers only"
-                return {"ok": False, "error": msg, "output": msg}
-            timeout = float(args.get("timeout_seconds") or args.get("timeout") or self.timeout_seconds)
-            return self.wait_for([str(x) for x in wait_for], timeout_seconds=timeout)
+        if not isinstance(wait_for, list) or not wait_for:
+            return None
+        if args.get("prompt") or args.get("prompts"):
+            msg = "wait_for cannot be combined with prompt/prompts — collect existing workers only"
+            return {"ok": False, "error": msg, "output": msg}
+        timeout = float(args.get("timeout_seconds") or args.get("timeout") or self.timeout_seconds)
+        return self.wait_for([str(x) for x in wait_for], timeout_seconds=timeout)
 
-        background, dispatch_reason = resolve_dispatch_mode(args)
-        profile = str(args.get("profile") or "")
-        role = str(args.get("role") or "")
-        profiles = args.get("profiles")
-        roles = args.get("roles")
-        if isinstance(profiles, list):
-            profiles = [str(x) for x in profiles]
-        else:
-            profiles = None
-        if isinstance(roles, list):
-            roles = [str(x) for x in roles]
-        else:
-            roles = None
+    def _dispatch_crew(
+        self,
+        prompts: list[Any],
+        args: dict[str, Any],
+        *,
+        background: bool,
+        profile: str,
+        role: str,
+        provider: str,
+        model: str,
+        dispatch_reason: str,
+    ) -> dict[str, Any]:
+        n = len(prompts)
+        crew_kwargs = {
+            "labels": _label_list(args),
+            "profiles": _str_arg_list(args, "profiles") or _repeat_or_none(profile, n),
+            "roles": _str_arg_list(args, "roles") or _repeat_or_none(role, n),
+            "providers": _str_arg_list(args, "providers") or _repeat_or_none(provider, n),
+            "models": _str_arg_list(args, "models") or _repeat_or_none(model, n),
+        }
+        runner = self.run_parallel_background if background else self.run_parallel
+        out = runner([str(p) for p in prompts], **crew_kwargs)
+        out["dispatch_reason"] = dispatch_reason
+        self._attach_dispatch_hint(out, dispatch_reason)
+        return out
 
-        prompts = args.get("prompts") or args.get("tasks")
-        if isinstance(prompts, list) and prompts:
-            labels = args.get("labels")
-            if isinstance(labels, list):
-                labels = [str(x) for x in labels]
-            else:
-                labels = None
-            crew_profiles = profiles or ([profile] * len(prompts) if profile else None)
-            crew_roles = roles or ([role] * len(prompts) if role else None)
-            if background:
-                out = self.run_parallel_background(
-                    [str(p) for p in prompts],
-                    labels=labels,
-                    profiles=crew_profiles,
-                    roles=crew_roles,
-                )
-            else:
-                out = self.run_parallel(
-                    [str(p) for p in prompts],
-                    labels=labels,
-                    profiles=crew_profiles,
-                    roles=crew_roles,
-                )
-            out["dispatch_reason"] = dispatch_reason
-            self._attach_dispatch_hint(out, dispatch_reason)
-            return out
-
+    def _dispatch_single(
+        self,
+        args: dict[str, Any],
+        *,
+        background: bool,
+        profile: str,
+        role: str,
+        provider: str,
+        model: str,
+        dispatch_reason: str,
+    ) -> dict[str, Any]:
         prompt = _clamp_prompt(str(args.get("prompt") or ""))
         if not prompt:
             msg = "subagent needs prompt (one worker) or prompts (parallel crew)"
             return {"ok": False, "error": msg, "output": msg}
-
-        if background:
-            out = self.run_one_background(
-                prompt,
-                label=str(args.get("label") or ""),
-                profile=profile,
-                role=role,
-            )
-        else:
-            out = self.run_one(
-                prompt,
-                label=str(args.get("label") or ""),
-                profile=profile,
-                role=role,
-            )
+        common = {
+            "label": str(args.get("label") or ""),
+            "profile": profile,
+            "role": role,
+            "provider": provider,
+            "model": model,
+        }
+        out = self.run_one_background(prompt, **common) if background else self.run_one(prompt, **common)
         out["dispatch"] = "async" if background else "sync"
         out["dispatch_reason"] = dispatch_reason
         self._attach_dispatch_hint(out, dispatch_reason)
         return out
+
+    def dispatch(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Tool entrypoint: prompt(s), optional labels, wait_for, background/wait."""
+        collected = self._dispatch_wait_for(args)
+        if collected is not None:
+            return collected
+
+        background, dispatch_reason = resolve_dispatch_mode(args)
+        profile = str(args.get("profile") or "")
+        role = str(args.get("role") or "")
+        provider = str(args.get("provider") or "")
+        model = str(args.get("model") or "")
+
+        prompts = args.get("prompts") or args.get("tasks")
+        if isinstance(prompts, list) and prompts:
+            return self._dispatch_crew(
+                prompts,
+                args,
+                background=background,
+                profile=profile,
+                role=role,
+                provider=provider,
+                model=model,
+                dispatch_reason=dispatch_reason,
+            )
+        return self._dispatch_single(
+            args,
+            background=background,
+            profile=profile,
+            role=role,
+            provider=provider,
+            model=model,
+            dispatch_reason=dispatch_reason,
+        )
 
     def kill(self, task_id: str) -> bool:
         for task in self.tasks:

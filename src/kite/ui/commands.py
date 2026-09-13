@@ -50,6 +50,13 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
         visibility="primary",
     ),
     BuiltinCommand("approve", "Autonomy: yolo|auto|supervised", hint="[yolo|auto|supervised]", group="session"),
+    BuiltinCommand(
+        "trust",
+        "Trust this project — skip nested-agent approval; load .kite/plugins freely",
+        hint="[on|off|status]",
+        group="session",
+    ),
+    BuiltinCommand("reload", "Reload skills, slash commands, and subagent profiles", group="session"),
     BuiltinCommand("restricted", "Path sandbox — off by default (host mode)", hint="[on|off]", aliases=("sandbox",), group="session"),
     BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
     BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),

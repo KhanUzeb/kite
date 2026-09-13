@@ -4,6 +4,19 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-09-13
+
+### Added
+- Subagent model override on the `subagent` tool (`model` / `provider` and crew arrays). The system prompt dispatches workers when users ask for parallel agents or name a model.
+- Project trust via `~/.kite/trust.json`, `/trust`, or `.kite/project.toml` with `[project] trust = true`. Trusted workspaces skip nested-agent approval.
+- Release notifications from GitHub on interactive startup (24h cache; `KITE_OFFLINE=1` disables).
+- Textual: `Ctrl+K` fast-path approval, `Ctrl+J` agents panel, `/reload` for skills and slash index.
+- `docs/RELEASE-0.9.8.md`.
+
+### Changed
+- Textual poll intervals for status and sidebar (less idle CPU).
+- Tighter `cli_import` and `repl_chat_init` budgets in `kite bench --check`.
+
 ## [0.9.7] - 2026-09-11
 
 ### Added

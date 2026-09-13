@@ -106,10 +106,22 @@ class LitellmModel:
         self.on_event = on_event
         self.stream = stream
         self.reasoning_mode, self.reasoning_effort = split_reasoning(reasoning)
+        remote = None
+        if resolved.raw:
+            from kite.providers.list_models import RemoteModel
+
+            remote = RemoteModel(id=resolved.model, raw=resolved.raw)
         self.reasoning_support = detect_reasoning(
             resolved.provider,
             resolved.model,
             litellm_model=resolved.litellm_model,
+            remote=remote,
+        )
+        self._parallel_tool_calls = model_supports_parallel_tool_calls(
+            provider=resolved.provider,
+            model=resolved.model,
+            litellm_model=resolved.litellm_model,
+            raw=resolved.raw,
         )
         self._drop_reasoning = False
         self.cost = 0.0
@@ -170,11 +182,7 @@ class LitellmModel:
         if self.registry is not None:
             kwargs["tools"] = self.registry.tool_schemas()
             kwargs["tool_choice"] = "auto"
-            if model_supports_parallel_tool_calls(
-                provider=self.resolved.provider,
-                model=self.resolved.model,
-                litellm_model=self.resolved.litellm_model,
-            ):
+            if self._parallel_tool_calls:
                 kwargs["parallel_tool_calls"] = True
         if self.timeout_seconds > 0:
             kwargs["timeout"] = float(self.timeout_seconds)

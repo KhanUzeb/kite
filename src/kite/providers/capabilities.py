@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 # Substrings that usually indicate non-agent models (embeddings, audio, legacy completion).
@@ -49,12 +50,14 @@ def _tools_from_raw(raw: dict[str, Any] | None) -> bool | None:
     return None
 
 
-def _tools_from_litellm(provider: str, model: str, litellm_model: str) -> bool | None:
+@functools.lru_cache(maxsize=256)
+def _litellm_openai_params(model: str, provider: str) -> frozenset[str] | None:
+    """Cached LiteLLM supported OpenAI params — expensive on cold start."""
     try:
         import litellm
     except Exception:
         return None
-    mid = (litellm_model or model or "").strip()
+    mid = (model or "").strip()
     if not mid:
         return None
     attempts: list[dict[str, Any]] = []
@@ -64,11 +67,21 @@ def _tools_from_litellm(provider: str, model: str, litellm_model: str) -> bool |
     for kwargs in attempts:
         try:
             params = litellm.get_supported_openai_params(model=mid, **kwargs)
-            norm = {str(p).lower().replace("-", "_") for p in params}
-            if norm & _TOOL_PARAM_NAMES:
-                return True
+            return frozenset(str(p).lower().replace("-", "_") for p in params)
         except Exception:
             continue
+    return None
+
+
+def _tools_from_litellm(provider: str, model: str, litellm_model: str) -> bool | None:
+    mid = (litellm_model or model or "").strip()
+    if not mid:
+        return None
+    norm = _litellm_openai_params(mid, provider or "")
+    if norm is None:
+        return None
+    if norm & _TOOL_PARAM_NAMES:
+        return True
     return None
 
 
@@ -83,25 +96,14 @@ def model_supports_parallel_tool_calls(
     from_meta = _tools_from_raw(raw)
     if from_meta is False:
         return False
-    try:
-        import litellm
-    except Exception:
-        return True
     mid = (litellm_model or model or "").strip()
     if not mid:
         return True
-    attempts: list[dict[str, Any]] = []
-    if provider:
-        attempts.append({"custom_llm_provider": provider})
-    attempts.append({})
-    for kwargs in attempts:
-        try:
-            params = litellm.get_supported_openai_params(model=mid, **kwargs)
-            norm = {str(p).lower().replace("-", "_") for p in params}
-            if "parallel_tool_calls" in norm:
-                return True
-        except Exception:
-            continue
+    norm = _litellm_openai_params(mid, provider or "")
+    if norm is not None and "parallel_tool_calls" in norm:
+        return True
+    if norm is None:
+        return True
     # Optimistic default — most chat/agent APIs accept multiple tool calls per turn.
     return model_supports_tools(provider=provider, model=model, litellm_model=litellm_model, raw=raw) is not False
 

@@ -179,7 +179,7 @@ kite subagents --show scout                 # full prompt body
 kite subagents --init auditor --role debugger --label "Auditor"
 ```
 
-Dispatch at runtime: `subagent` tool with `profile=<id>` and `prompt=…`. User-authored profiles are wrapped as untrusted content.
+Dispatch at runtime: `subagent` tool with `profile=<id>` and `prompt=…`. Optional per-worker **`model=`** and **`provider=`** (or `models` / `providers` arrays for parallel crews). When you ask for crews or name profiles in plain language, the agent should dispatch `subagent` directly. User-authored profiles are wrapped as untrusted content.
 
 `kite dashboard` is per-user: it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
 
@@ -194,6 +194,8 @@ These never go to the model.
 | `/build` `/b` | **Default** — apply edits, run tests, submit; continues any plan checklist |
 | `/plan` `/p` | **Opt-in** — read-only explore + checklist; switch to `/build` to apply |
 | `/approve yolo\|auto\|supervised\|trust` | Autonomy. Empty: numbered picker. `auto` (default) = coding blanket (install/test/edit/commit); prompts for curl/wget/rm/chmod/PowerShell wrappers; `yolo` = skip non-critical prompts; `trust` = blanket + memory/subagent gates; `supervised` = approve every mutation |
+| `/trust [on\|off\|status]` | **Project trust** (Pi-style). Trusted cwd skips nested-agent approval prompts. First run may prompt when `.kite/plugins` or `.kite/extensions` exist |
+| `/reload` | Reload skills index, slash commands, and subagent profiles without restart |
 | `/restricted on\|off` `/sandbox` | Path sandbox (default **off**). Empty: pick on/off |
 | `/privacy` | Security policy summary; `/privacy sessions` picks full/redacted/disabled |
 | `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |
@@ -284,6 +286,9 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+T` / `F7` | Toggle thinking trace (collapsed by default — one-line summary) |
 | `F2` | Flash status on the footer (`Ctrl+S` is not bound; terminals use it for XOFF) |
 | `F5` | Refresh live models from the API, then pick |
+| `Ctrl+K` | **Textual only:** fast-path allow-once for pending approval (flash line also hints) |
+| `Ctrl+J` | **Textual only:** agents panel — active subagents, `k` to kill highlighted worker |
+| `Ctrl+\` | Toggle sidebar (sessions / crew / changes) |
 | `Tab` | Cycle slash completions (`Enter` always submits) |
 
 Drag-select, copy, and right-click paste stay with the terminal (mouse capture off by default). Set `KITE_MOUSE=1` for slash-menu wheel scroll (then use Shift+drag to select in most terminals).
@@ -406,8 +411,11 @@ Keys: `kite web-keys set tavily|exa|firecrawl` or `kite keys --set …` → `~/.
   memory/episodes.sqlite
   sessions/*.jsonl
   approvals.json
+  trust.json                # trusted project roots (Pi-style; /trust on writes here)
+  release_check.json        # cached GitHub latest-release check (24h TTL)
 
 <repo>/.kite/
+  project.toml              # optional: [project] trust = true skips nested-agent approval
   SYSTEM.md                 # optional: replace bundled system prompt (pi/Prime style)
   APPEND_SYSTEM.md          # optional: append after the base prompt
   verification.toml         # optional: per-repo verification overrides (monorepo)
@@ -426,6 +434,16 @@ Keys: `kite web-keys set tavily|exa|firecrawl` or `kite keys --set …` → `~/.
 | `.kite/APPEND_SYSTEM.md` or `~/.kite/APPEND_SYSTEM.md` | Append after the base (project wins); skills/context still follow |
 
 Harness override (`--system-prompt` / config) still beats discovered `SYSTEM.md`.
+
+**Project trust** (optional, Pi/Codex-style):
+
+| Mechanism | Effect |
+|-----------|--------|
+| `/trust on` | Record cwd in `~/.kite/trust.json` |
+| `.kite/project.toml` → `[project] trust = true` | Repo declares itself trusted (checked in git) |
+| Trusted project | Nested `subagent` spawns skip the approval prompt in `auto` / `trust` / `yolo` |
+
+Set `KITE_OFFLINE=1` to skip the background GitHub release check on REPL startup.
 
 Human commits are the source of truth for the project. Checkpoint `kite:` commits exist so `/undo` can revert agent edits without touching your own history.
 

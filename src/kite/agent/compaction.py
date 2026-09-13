@@ -9,6 +9,7 @@ from typing import Any
 from kite.agent.events import Event
 from kite.context.window import (
     ContextUsage,
+    estimate_tool_schema_tokens,
     estimate_usage,
     should_compact,
 )
@@ -63,19 +64,29 @@ class LoopCompactor:
         self.extra_facts = list(extra_facts or [])
         self.last_usage: ContextUsage | None = None
         self._checkpoint_keys: set[str] = set()
+        self._tool_tokens = estimate_tool_schema_tokens(self.tool_schemas)
+        self._last_msg_count = 0
 
     def _emit(self, kind: str, **payload: Any) -> None:
         if self.on_event:
             self.on_event(Event(kind=kind, payload=payload))  # type: ignore[arg-type]
 
     def measure(self, messages: list[dict]) -> ContextUsage:
+        msg_count = sum(1 for m in messages if m.get("role") != "exit")
+        if (
+            self.last_usage is not None
+            and msg_count == self._last_msg_count
+            and self.last_usage.message_count == msg_count
+        ):
+            return self.last_usage
         usage = estimate_usage(
             system=self.system,
             messages=messages,
-            tool_schemas=self.tool_schemas,
+            tool_tokens=self._tool_tokens,
             window=self.config.window,
         )
         self.last_usage = usage
+        self._last_msg_count = msg_count
         self._emit(
             "context",
             total_tokens=usage.total_tokens,
