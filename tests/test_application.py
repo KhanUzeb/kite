@@ -21,7 +21,9 @@ from kite.application.state import RunState, can_transition
 from kite.application.tools import ToolCall, derive_effects, normalize_legacy_effect
 from kite.application.verification import (
     CheckSpec,
+    PackageUnit,
     VerificationRecord,
+    WorkspaceProfile,
     build_verification_plan,
     classify_path,
     html_parse_ok,
@@ -215,6 +217,37 @@ def test_verification_plans_and_replay(workspace: Path, tmp_path: Path) -> None:
         acceptance={"content_contains": "expected phrase"},
     )
     assert not run_replay(fail)["ok"]
+
+def test_verification_normalizes_absolute_package_paths(tmp_path: Path) -> None:
+    profile = WorkspaceProfile(
+        workspace_root=str(tmp_path),
+        packages=(
+            PackageUnit(
+                key="foo",
+                root="packages/foo",
+                ecosystems=frozenset({"python"}),
+                test_command="cd packages/foo && pytest -q",
+            ),
+        ),
+    )
+    absolute = tmp_path / "packages" / "foo" / "src" / "app.py"
+
+    plan = build_verification_plan((str(absolute),), profile=profile)
+
+    assert plan.touched_paths == ("packages/foo/src/app.py",)
+    assert len(plan.required_checks) == 1
+    assert plan.required_checks[0].package_root == "packages/foo"
+    assert plan.required_checks[0].command == "cd packages/foo && pytest -q"
+
+    collector = VerificationCollector(workspace_root=str(tmp_path))
+    collector.on_tool_end(
+        "edit",
+        {"path": str(absolute)},
+        {"ok": True, "path": str(absolute), "diff": "d"},
+    )
+
+    assert collector.paths_touched == {"packages/foo/src/app.py"}
+    assert collector.artifacts[-1].path == str(absolute)
 
 
 def test_effects_nested_policy_and_coordinator(workspace: Path) -> None:

@@ -10,7 +10,13 @@ from kite.agent.events import Event
 from kite.agent.exceptions import FormatError
 from kite.context.observation import observation_content
 from kite.models.cache import PromptCacheManager, parse_cache_usage
-from kite.models.reasoning import apply_reasoning, detect_reasoning, looks_like_reasoning_error, split_reasoning
+from kite.models.reasoning import (
+    apply_reasoning,
+    detect_reasoning,
+    looks_like_reasoning_error,
+    looks_like_temperature_reasoning_error,
+    split_reasoning,
+)
 from kite.models.tool_args import repair_tool_arguments
 from kite.providers.byos import ensure_oauth_env, is_oauth_provider
 from kite.providers.resolve import ResolvedModel
@@ -82,7 +88,7 @@ class LitellmModel:
         self,
         resolved: ResolvedModel,
         registry: ToolRegistry | None = None,
-        temperature: float = 0.0,
+        temperature: float | None = None,
         max_retries: int = 3,
         on_event: Callable[[Event], None] | None = None,
         stream: bool = True,
@@ -144,10 +150,11 @@ class LitellmModel:
         kwargs: dict[str, Any] = {
             **self.resolved.litellm_kwargs(),
             "messages": api_messages,
-            "temperature": self.temperature,
             "num_retries": self.max_retries,
             "stream": stream,
         }
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
         if self.registry is not None:
             kwargs["tools"] = self.registry.openai_schemas()
             kwargs["tool_choice"] = "auto"
@@ -350,6 +357,12 @@ class LitellmModel:
         except FormatError:
             raise
         except Exception as e:
+            if looks_like_temperature_reasoning_error(e) and self.temperature is not None:
+                self.temperature = None
+                try:
+                    return self._query_stream(messages)
+                except Exception:
+                    return self._query_blocking(messages)
             if not looks_like_reasoning_error(e):
                 raise
             self.reasoning_mode = "off"
@@ -358,7 +371,6 @@ class LitellmModel:
                 return self._query_stream(messages)
             except Exception:
                 return self._query_blocking(messages)
-
     def query(self, messages: list[dict]) -> dict:
         import litellm
 
