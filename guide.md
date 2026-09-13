@@ -57,17 +57,18 @@ kite                          # open REPL
 
 ```text
 Q: I just installed Kite. What do I type first?
-A: kite setup, then kite. In the REPL try:
+A: kite setup, then kite. You start in **build** mode — just type a task.
      /status        — model, mode, cost, session id
      /help          — essential commands
      /help all      — full map + shortcuts
-     /plan          — explore before editing
-     /build         — apply changes
+     /plan          — opt-in: explore + checklist before editing (larger tasks)
 ```
 
 ---
 
-## Plan → Build (recommended workflow)
+## Plan → Build (optional workflow for larger tasks)
+
+Build is the default. Use plan when you want a read-only checklist before any edits.
 
 ```text
          ┌─────────┐
