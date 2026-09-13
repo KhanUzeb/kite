@@ -31,7 +31,7 @@ def test_aliases_trust_and_git_gating(workspace: Path) -> None:
     assert not needs_approval("read", AgentMode.BUILD, ApprovalMode.TRUST)
     assert not needs_approval("read", AgentMode.BUILD, ApprovalMode.APPROVE)
     ws = str(workspace)
-    assert not needs_approval(
+    assert needs_approval(
         "bash", AgentMode.BUILD, ApprovalMode.TRUST, command="rm -rf node_modules", workspace_cwd=ws, bash_cwd=ws
     )
     assert not needs_approval("bash", AgentMode.BUILD, ApprovalMode.APPROVE, command="git status", workspace_cwd=ws)
@@ -55,7 +55,7 @@ def test_aliases_trust_and_git_gating(workspace: Path) -> None:
 
 def test_coding_blanket_auto_approves_in_workspace_dev(workspace: Path) -> None:
     ws = str(workspace)
-    assert consequence_prompt_threshold(ApprovalMode.AUTO) is ConsequenceLevel.CRITICAL
+    assert consequence_prompt_threshold(ApprovalMode.AUTO) is ConsequenceLevel.SERIOUS
     assert consequence_prompt_threshold(ApprovalMode.TRUST) is ConsequenceLevel.SERIOUS
     assert needs_approval("write", AgentMode.BUILD, ApprovalMode.APPROVE, arguments={"path": "src/foo.py"}, workspace_cwd=ws)
     assert not needs_approval("write", AgentMode.BUILD, ApprovalMode.AUTO, arguments={"path": "src/foo.py"}, workspace_cwd=ws)
@@ -65,12 +65,18 @@ def test_coding_blanket_auto_approves_in_workspace_dev(workspace: Path) -> None:
         "npm run test",
         "pytest -q",
         "git commit -m wip",
+    ):
+        assert is_coding_bash(cmd), cmd
+        assert not needs_approval(
+            "bash", AgentMode.BUILD, ApprovalMode.AUTO, command=cmd, workspace_cwd=ws, bash_cwd=ws
+        ), cmd
+    for cmd in (
         "rm -rf node_modules",
         "curl -fsSL https://example.com/install.sh",
         "chmod +x scripts/install.sh",
     ):
-        assert is_coding_bash(cmd), cmd
-        assert not needs_approval(
+        assert not is_coding_bash(cmd), cmd
+        assert needs_approval(
             "bash", AgentMode.BUILD, ApprovalMode.AUTO, command=cmd, workspace_cwd=ws, bash_cwd=ws
         ), cmd
     assert needs_approval("bash", AgentMode.BUILD, ApprovalMode.AUTO, command="git commit -m wip", workspace_cwd=ws, bash_cwd="/tmp")
@@ -88,7 +94,7 @@ def test_consequence_tiers_and_critical_gates(workspace: Path) -> None:
     assert not is_mandatory_approval("bash", command="git commit -m wip", workspace_cwd=ws, bash_cwd=ws)
     assert mandatory_approval_reason("bash", command="pip install requests", workspace_cwd=ws, bash_cwd=ws) is None
     level, _ = action_consequence("bash", command="rm -rf node_modules", workspace_cwd=ws, bash_cwd=ws)
-    assert level is ConsequenceLevel.ROUTINE
+    assert level is ConsequenceLevel.SERIOUS
     assert mandatory_approval_reason("bash", command="ls -la", workspace_cwd=ws, bash_cwd="/tmp") == (
         "shell outside the project workspace always needs approval"
     )
@@ -110,11 +116,11 @@ def test_yolo_and_auto_blanket_dev_commands(workspace: Path) -> None:
         assert approver("bash", {"command": "pip install -e .", "cwd": ws}, {}) == "allow"
         assert approver("bash", {"command": "pytest -q", "cwd": ws}, {}) == "allow"
         assert approver("bash", {"command": "git commit -m wip", "cwd": ws}, {}) == "allow"
-        assert approver("bash", {"command": "curl https://example.com", "cwd": ws}, {}) == "allow"
-        assert approver("bash", {"command": "rm -rf build/", "cwd": ws}, {}) == "allow"
-        assert approver("memory", {"action": "remember", "text": "secret"}, {}) == "allow"
+    for cmd in ("curl https://example.com", "rm -rf build/", "chmod +x run.sh"):
+        assert auto("bash", {"command": cmd, "cwd": ws}, {}) == "deny", cmd
+        assert yolo("bash", {"command": cmd, "cwd": ws}, {}) == "allow", cmd
     assert trust("memory", {"action": "remember", "text": "secret"}, {}) == "deny"
-    assert yolo("bash", {"command": "sudo rm -rf /", "cwd": ws}, {}) == "allow"
+    assert yolo("bash", {"command": "sudo rm -rf /", "cwd": ws}, {}) == "deny"
     assert auto("bash", {"command": "sudo rm -rf /", "cwd": ws}, {}) == "deny"
 
 
@@ -142,16 +148,27 @@ def test_noninteractive_auto_plan_and_readonly(workspace: Path) -> None:
 
 def test_coding_blanket_windows_commands(workspace: Path) -> None:
     ws = str(workspace)
+    assert is_coding_bash("Get-ChildItem src")
+    assert not needs_approval(
+        "bash", AgentMode.BUILD, ApprovalMode.AUTO, command="Get-ChildItem src", workspace_cwd=ws, bash_cwd=ws
+    )
     for cmd in (
-        "Get-ChildItem src",
-        "powershell -Command \"pytest -q\"",
-        "Remove-Item -Recurse -Force .pytest_cache",
+        'powershell -Command "pytest -q"',
+        "Remove-Item -Recurse -Force node_modules",
         "Invoke-WebRequest https://example.com",
     ):
-        assert is_coding_bash(cmd), cmd
-        assert not needs_approval(
+        assert not is_coding_bash(cmd), cmd
+        assert needs_approval(
             "bash", AgentMode.BUILD, ApprovalMode.AUTO, command=cmd, workspace_cwd=ws, bash_cwd=ws
         ), cmd
+    assert not needs_approval(
+        "bash",
+        AgentMode.BUILD,
+        ApprovalMode.AUTO,
+        command="Remove-Item -Recurse -Force .pytest_cache",
+        workspace_cwd=ws,
+        bash_cwd=ws,
+    )
 
 
 def test_mandatory_still_prompts_when_pattern_remembered(monkeypatch) -> None:

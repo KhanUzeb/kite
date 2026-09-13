@@ -186,7 +186,8 @@ def test_byos_oauth_session_and_login_hints(kite_home: Path) -> None:
             assert logout_oauth(spec) is True
     with patch("kite.providers.resolve.has_oauth_session", return_value=False):
         with patch("kite.providers.resolve.subscription_login_hint", side_effect=lambda s: f"Run: kite login {s.name}"):
-            msg = missing_credentials(resolve_model(provider="chatgpt"))
+            with patch("kite.providers.capabilities._tools_from_litellm", return_value=None):
+                msg = missing_credentials(resolve_model(provider="chatgpt"))
             assert msg and "kite login" in msg
     register_oauth_model_fetcher("chatgpt", lambda: ("gpt-5.6-luna", "gpt-5.3-codex"))
     assert fetch_oauth_model_ids(spec, refresh=True) == ("gpt-5.6-luna", "gpt-5.3-codex")

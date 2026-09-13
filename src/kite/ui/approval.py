@@ -36,7 +36,7 @@ GitBashKind = Literal["read", "write", "other"]
 class ConsequenceLevel(IntEnum):
     """How serious a mutating action is — higher tiers prompt in more autonomy modes."""
 
-    ROUTINE = 0   # in-workspace coding: install, test, edit, commit, rm, curl
+    ROUTINE = 0   # in-workspace coding: install, test, edit, commit
     SERIOUS = 1   # durable memory, nested agents — prompt in trust/supervised
     CRITICAL = 2  # outside workspace, sudo, sandbox-blocked — prompt in auto; deny headless
 
@@ -71,22 +71,32 @@ _CRITICAL_BASH = re.compile(
 )
 
 # Coding blanket — routine in-workspace dev commands (Codex workspace-write, OMP write mode).
-# POSIX + Windows/PowerShell — provider-agnostic; any model may emit either style.
+# POSIX + Windows read-only inspection — excludes network fetch, deletes, chmod, shells.
 _CODING_BASH = re.compile(
     r"(?i)(?:^|[;&|]\s*)("
-    r"pip3?\b|npm\b|yarn\b|pnpm\b|cargo\b|uv\b|apt(?:-get)?\b|brew\b|dnf\b|yum\b"
+    r"pip3?\b|npm\b|yarn\b|pnpm\b|cargo\b|uv\b"
     r"|pytest\b|jest\b|mocha\b|vitest\b|cargo\s+(test|build|run|check)\b|go\s+(test|build|run)\b"
     r"|make\b|cmake\b|ninja\b|gradle\b|mvn\b|npm\s+(test|run|start|ci)\b|yarn\s+(test|run)\b"
     r"|python3?\s+-m\s+(pytest|pip|build|unittest)\b|node\b|npx\b|uvicorn\b|gunicorn\b"
     r"|git\s+(status|diff|log|show|branch|add|commit|checkout|merge|pull|stash|switch|restore|rev-parse|describe|fetch)\b"
-    r"|mkdir\b|touch\b|cp\b|mv\b|rm\b|rmdir\b|chmod\b|chown\b|cat\b|head\b|tail\b|tee\b"
-    r"|curl\b|wget\b|rg\b|grep\b|find\b|fd\b|ls\b|dir\b|pwd\b|echo\b|which\b|where\b|wc\b|file\b|stat\b|tree\b"
-    r"|docker\s+compose\b|docker\s+build\b|kubectl\s+get\b|kubectl\s+describe\b"
-    r"|powershell\b|pwsh\b|cmd(?:\.exe)?\b"
-    r"|get-content\b|get-childitem\b|remove-item\b|new-item\b|copy-item\b|move-item\b|set-content\b"
-    r"|invoke-webrequest\b|iwr\b|select-string\b|test-path\b"
+    r"|mkdir\b|touch\b|cp\b|mv\b|cat\b|head\b|tail\b|tee\b"
+    r"|rg\b|grep\b|find\b|fd\b|ls\b|dir\b|pwd\b|echo\b|which\b|where\b|wc\b|file\b|stat\b|tree\b"
+    r"|get-childitem\b|select-string\b|test-path\b"
+    r"|docker\s+build\b"
     r")\b"
 )
+
+# Network fetch, privilege mutation, shell wrappers — prompt in auto; not blanket ROUTINE.
+_SERIOUS_BASH = re.compile(
+    r"(?i)\b("
+    r"curl\b|wget\b|invoke-webrequest\b|iwr\b"
+    r"|chmod\b|chown\b"
+    r"|powershell\b|pwsh\b|cmd(?:\.exe)?\b"
+    r"|docker\s+compose\b|kubectl\s+(get|describe)\b"
+    r")\b"
+)
+
+_DESTRUCTIVE_DELETE = re.compile(r"(?i)\b(rm\b|rmdir\b|remove-item\b|\bri\b|del\b)")
 
 
 def _git_command_tokens(command: str) -> list[str]:
@@ -272,6 +282,10 @@ def action_consequence(
         level = _git_bash_consequence(cmd)
         if level is ConsequenceLevel.SERIOUS:
             return level, "git history or remote changes need approval"
+    if _SERIOUS_BASH.search(cmd):
+        return ConsequenceLevel.SERIOUS, "network or system command needs approval"
+    if _DESTRUCTIVE_DELETE.search(cmd) and not is_benign_cache_delete(cmd):
+        return ConsequenceLevel.SERIOUS, "destructive delete needs approval"
     return ConsequenceLevel.ROUTINE, ""
 
 
@@ -280,7 +294,7 @@ def consequence_prompt_threshold(approval: ApprovalMode) -> int:
     if approval is ApprovalMode.YOLO:
         return _NEVER_PROMPT
     if approval is ApprovalMode.AUTO:
-        return ConsequenceLevel.CRITICAL
+        return ConsequenceLevel.SERIOUS
     if approval is ApprovalMode.TRUST:
         return ConsequenceLevel.SERIOUS
     if approval is ApprovalMode.APPROVE:
@@ -749,6 +763,13 @@ def make_approver(
                 return "deny"
         if approval is ApprovalMode.READONLY and mutates:
             return "deny"
+        if approval is ApprovalMode.YOLO:
+            if tool == "bash" and (check_dangerous(cmd) or _CRITICAL_BASH.search(cmd)):
+                return "deny"
+            if tool == "bash" and workspace_cwd and not _cwd_in_workspace(bash_cwd, workspace_cwd):
+                return "deny"
+            if tool in {"write", "edit"} and level >= ConsequenceLevel.CRITICAL:
+                return "deny"
         threshold = consequence_prompt_threshold(approval)
         if level < threshold:
             return "allow"

@@ -16,6 +16,7 @@ permissions:
 jobs:
   verify-and-publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -29,15 +30,22 @@ jobs:
       - name: Verify version stamps
         run: python scripts/sync_version.py --check
 
+      - name: Ruff
+        run: python -m ruff check src tests
+
       - name: Run tests
         env:
           KITE_HOME: /tmp/kite-home-release
           KITE_SKIP_SETUP: "1"
         run: |
           mkdir -p "$KITE_HOME"
-          ruff check src tests
-          pytest -q
-          python -m kite.cli.run bench --check
+          python -m pytest -q --tb=short -p faulthandler
+
+      - name: Bench
+        env:
+          KITE_HOME: /tmp/kite-home-release
+          KITE_SKIP_SETUP: "1"
+        run: python -m kite.cli.run bench --check
 
       - name: Resolve release version
         id: meta
