@@ -10,6 +10,7 @@
 - **Faster, quieter startup** — CLI and config skip heavy imports until needed; REPL blank Enter does nothing; setup banner no longer false-alarms on an empty catalog default.
 - **Credentials** — Claude login copy says you still need `ANTHROPIC_API_KEY`; Codex/ChatGPT BYOS flattens tokens for LiteLLM.
 - **Paid web backends** — optional Tavily / Exa / Firecrawl keys via `kite web-keys`.
+- **Approval tightening** — `auto` coding blanket prompts for network fetch, destructive delete, and shell wrappers; Windows CI path normalization for search tools.
 
 ## Upgrade
 

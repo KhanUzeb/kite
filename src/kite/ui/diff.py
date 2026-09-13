@@ -10,11 +10,14 @@ from rich.text import Text
 from kite.ui.style import (
     DIFF_PREVIEW_LINES,
     GUTTER,
+    PANEL_BAR,
     PREVIEW_CHUNK_BYTES,
     PREVIEW_FILE_MAX_BYTES,
     SYMBOL_COLLAPSE,
     SYMBOL_EXPAND,
 )
+
+_DIFF_BAR = PANEL_BAR
 
 
 def make_unified_diff(path: str, before: str, after: str) -> str:
@@ -177,10 +180,28 @@ def render_diff_stat(
     return t
 
 
+def _diff_line_style(line: str) -> tuple[str, str, str]:
+    """Return (bar_prefix, body, rich_style) for one unified-diff line."""
+    if line.startswith("+++") or line.startswith("---"):
+        return _DIFF_BAR, line, "kite.diff.meta"
+    if line.startswith("@@"):
+        return _DIFF_BAR, line, "kite.diff.hunk"
+    if line.startswith("+") and not line.startswith("+++"):
+        return f"{_DIFF_BAR}+ ", line[1:], "kite.diff.add"
+    if line.startswith("-") and not line.startswith("---"):
+        return f"{_DIFF_BAR}− ", line[1:], "kite.diff.del"
+    if line.startswith(" "):
+        return f"{_DIFF_BAR}  ", line[1:], "kite.diff.ctx"
+    if not line:
+        return _DIFF_BAR, "", "kite.diff.ctx"
+    return _DIFF_BAR, line, "kite.diff.meta"
+
+
 def render_diff(
     diff: str,
     *,
     collapsed: bool = False,
+    max_lines: int | None = None,
     language: str | None = None,
     theme: str = "ansi_dark",
 ):
@@ -189,33 +210,34 @@ def render_diff(
         return t
 
     lines = diff.splitlines()
-    shown = lines if not collapsed else lines[:DIFF_PREVIEW_LINES]
+    cap = max_lines if max_lines is not None else DIFF_PREVIEW_LINES
+    shown = lines if not collapsed else lines[:cap]
     body = Text()
     added, deleted = count_diff_lines(diff)
-    if added or deleted:
-        body.append(GUTTER + GUTTER)
-        body.append_text(render_diff_stat(added, deleted, path=diff_path(diff)))
+    path = diff_path(diff)
+    if path or added or deleted:
+        body.append(GUTTER)
+        body.append(_DIFF_BAR, style="kite.muted")
+        if path:
+            body.append(path, style="kite.tool bold")
+            if added or deleted:
+                body.append("  ", style="")
+        if added or deleted:
+            body.append_text(render_diff_stat(added, deleted, bar=True))
         body.append("\n")
     for line in shown:
-        if line.startswith("+++") or line.startswith("---"):
-            style = "kite.diff.meta"
-        elif line.startswith("@@"):
-            style = "kite.diff.hunk"
-        elif line.startswith("+"):
-            style = "kite.diff.add"
-        elif line.startswith("-"):
-            style = "kite.diff.del"
-        elif line.startswith(" ") or not line:
-            style = "kite.diff.ctx"
+        bar, content, style = _diff_line_style(line)
+        body.append(GUTTER)
+        body.append(bar, style="kite.muted" if style == "kite.diff.ctx" else style)
+        if content:
+            body.append(content + "\n", style=style)
         else:
-            style = "kite.diff.meta"
-        body.append(GUTTER + GUTTER)
-        body.append(line + "\n", style=style)
+            body.append("\n", style=style)
     extra = len(lines) - len(shown)
     if extra > 0:
         glyph = SYMBOL_EXPAND if not collapsed else SYMBOL_COLLAPSE
         hint = "/expand" if collapsed else "/collapse"
-        body.append(f"{GUTTER}{GUTTER}{glyph} +{extra} lines  {hint}\n", style="kite.muted")
+        body.append(f"{GUTTER}{_DIFF_BAR}{glyph} +{extra} lines  {hint}\n", style="kite.muted")
     return body
 
 

@@ -111,9 +111,13 @@ class ClaudeCodeAuthProvider:
         if console is not None:
             console.print("[dim]Starting Claude Code login (`claude auth login`)…[/]")
 
+        from kite.util.tty import is_interactive_tty
+
+        login_timeout = 600.0 if is_interactive_tty(require_stdout=False) else 30.0
+
         try:
             # Official CLI login — no homemade OAuth client.
-            proc = _run_claude_auth("auth", "login", timeout=600.0)
+            proc = _run_claude_auth("auth", "login", timeout=login_timeout)
         except KeyboardInterrupt:
             return LoginResult(130, "cancelled")
         except subprocess.TimeoutExpired:

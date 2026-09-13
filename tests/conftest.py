@@ -41,3 +41,24 @@ def _stop_kite_spinners():
     from kite.ui.spinner import stop_all_spinners
 
     stop_all_spinners()
+
+
+@pytest.fixture(autouse=True)
+def _stub_oauth_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never call real Codex / Claude / Grok CLIs during pytest (CI hang)."""
+    from unittest.mock import MagicMock
+
+    from kite.providers.auth.base import AuthStatus, LoginResult
+
+    stub = MagicMock()
+    stub.status.return_value = AuthStatus(False, "not linked (test stub)", method="subscription")
+    stub.fetch_model_ids.return_value = ("stub-model",)
+    stub.login.return_value = LoginResult(2, "not linked (test stub)")
+    stub.logout.return_value = False
+    stub.litellm_env.return_value = {}
+    stub.litellm_extras.return_value = {}
+
+    monkeypatch.setattr("kite.providers.auth.get_auth_provider", lambda _key: stub)
+    monkeypatch.setattr("kite.providers.byos.get_auth_provider", lambda _key: stub)
+    # LiteLLM ChatGPT OAuth device-code login hangs pytest when resolving model capabilities.
+    monkeypatch.setattr("kite.providers.capabilities._tools_from_litellm", lambda *_a, **_k: None)

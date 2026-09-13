@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import importlib.metadata
 import shutil
 from typing import TYPE_CHECKING
@@ -158,8 +159,17 @@ class CodexAuthProvider:
                     extra="Opening ChatGPT sign-in…" if not use_device else "",
                 )
 
+                wait_timeout = 600.0 if is_interactive_tty(require_stdout=False) else 30.0
+
                 def _wait():
-                    result = login.wait()
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(login.wait)
+                        try:
+                            result = future.result(timeout=wait_timeout)
+                        except concurrent.futures.TimeoutError as exc:
+                            raise TimeoutError(
+                                f"ChatGPT sign-in timed out after {int(wait_timeout)}s."
+                            ) from exc
                     if not getattr(result, "success", True):
                         raise RuntimeError("ChatGPT sign-in was not completed.")
                     return result
@@ -176,6 +186,8 @@ class CodexAuthProvider:
                 return LoginResult(0, "ChatGPT / Codex subscription linked.")
         except KeyboardInterrupt:
             return LoginResult(130, "cancelled")
+        except TimeoutError as exc:
+            return LoginResult(2, str(exc))
         except CodexSdkError as exc:
             return LoginResult(2, str(exc))
         except Exception as exc:  # noqa: BLE001

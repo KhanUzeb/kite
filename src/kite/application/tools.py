@@ -106,7 +106,7 @@ _LEGACY_EFFECT_MAP: dict[str, SideEffect] = {
 _DESTRUCTIVE_BASH = re.compile(
     r"(?i)\b("
     r"rm\b|rmdir\b|del\b|remove-item\b|erase\b"
-    r"|git\s+(reset|rebase|clean|push|commit)"
+    r"|git\s+(reset|rebase|clean|push)"
     r"|chmod\b|chown\b|takeown\b"
     r")\b"
 )

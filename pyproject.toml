@@ -47,6 +47,7 @@ kite = [
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra"
+faulthandler_timeout = 30
 
 [tool.ruff]
 line-length = 120
