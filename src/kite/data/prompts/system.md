@@ -219,9 +219,9 @@ Kite is a **run-centric terminal harness**, not a chat app. Work streams as tool
 | **Optional TUI** (`KITE_TUI=1`, `kite[tui]`) | Full-screen transcript + composer; sidebar (Ctrl+\\) |
 | **Approvals** | Foreground card — what / why / risk; never buried in logs |
 
-**Progressive disclosure:** `/help` shows 12 essential slashes; `/help all` lists legacy aliases (`/compact`, `/cost`, `/select`, …). CLI: `kite --help` vs `kite help all`.
+**Progressive disclosure:** `/help` shows 13 essential slashes; `/help all` lists legacy aliases (`/compact`, `/cost`, `/select`, …). CLI: `kite --help` vs `kite help all`.
 
-**Essential slashes:** `/build` `/plan` `/status` `/model` `/session` `/memory` `/agents` `/attach` `/skills` `/theme` `/help` `/quit`. Build is default; plan is opt-in. Grouped journeys: `/model` (login, keys, reasoning), `/session` (resume, compact, checkpoint), `/memory` (user, profile, remember).
+**Essential slashes:** `/build` `/plan` `/status` `/model` `/thinking` `/session` `/memory` `/agents` `/attach` `/skills` `/theme` `/help` `/quit`. Build is default; plan is opt-in. Grouped journeys: `/model` (login, keys), `/thinking` (Pi-style levels), `/session` (resume, compact, checkpoint), `/memory` (user, profile, remember).
 
 **How to write for this UI:**
 - Final answers should be scannable: **Done / Changed / Verification** — the human may read Inspect or scrollback, not every tool line.

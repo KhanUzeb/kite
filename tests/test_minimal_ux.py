@@ -51,14 +51,18 @@ def test_repl_help_primary_vs_all() -> None:
     assert "/compact" in full
     assert "/select" in full
     primary = primary_builtins()
-    assert len(primary) == 12
+    assert len(primary) == 13
     assert primary[0].name == "build"
     assert primary[1].name == "plan"
+    assert any(b.name == "thinking" for b in primary)
 
 
 def test_legacy_slash_still_dispatches() -> None:
     assert parse_slash("/compact").command == "compact"
-    assert parse_slash("/thinking").command == "reasoning"
+    assert parse_slash("/thinking").command == "thinking"
+    assert parse_slash("/reasoning").command == "reasoning"
+    assert parse_slash("/fast").command == "thinking"
+    assert parse_slash("/fast").legacy == "fast"
     assert parse_slash("/cost").command == "status"
     assert not is_primary_slash("compact")
     assert is_primary_slash("plan")
@@ -108,7 +112,7 @@ def test_completion_lists_commands_and_skills_with_cues() -> None:
     assert "tools" in names
 
 
-def test_mouse_scroll_defaults_on() -> None:
+def test_composer_mouse_defaults_off() -> None:
     import os
 
     from kite.ui.complete import _mouse_support_enabled
@@ -116,9 +120,9 @@ def test_mouse_scroll_defaults_on() -> None:
     prev = os.environ.get("KITE_MOUSE")
     os.environ.pop("KITE_MOUSE", None)
     try:
-        assert _mouse_support_enabled() is True
-        os.environ["KITE_MOUSE"] = "0"
         assert _mouse_support_enabled() is False
+        os.environ["KITE_MOUSE"] = "1"
+        assert _mouse_support_enabled() is True
     finally:
         if prev is None:
             os.environ.pop("KITE_MOUSE", None)

@@ -6,10 +6,11 @@ IDLE_SHORTCUTS = """\
 composer (idle)
   Enter           send message
   Tab             cycle / and @file completions
-  Wheel / trackpad  scroll the / and @file menus (KITE_MOUSE=0 to opt out)
-  ↑↓ / number       CLI pickers (models, sessions, providers)
+  ↑↓ / number / drag  CLI pickers — click or drag the mouse to highlight, release to select
+  KITE_MOUSE=1        slash-menu wheel (off by default so the welcome banner stays readable)
   Ctrl+V          paste OS clipboard into composer
   F8 / Esc v      attach clipboard to next turn (/clip)
+  Drag-select     copy transcript text (mouse stays with the terminal)
   Ctrl+Insert     copy composer selection to clipboard
   Shift+Insert    paste OS clipboard
   Ctrl+C          clear line (does not quit)

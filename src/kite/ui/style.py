@@ -108,7 +108,7 @@ SYMBOL_REASON = _Glyph("reason")
 
 CHANNEL_PREFIX = _ChannelPrefix()
 
-COLLAPSE_LINES = 4
+COLLAPSE_LINES = 12
 DIFF_PREVIEW_LINES = 40
 PREVIEW_FILE_MAX_BYTES = 64_000
 PREVIEW_CHUNK_BYTES = 65_536
@@ -130,7 +130,7 @@ def make_console(*, stderr: bool = False, quiet: bool = False) -> Console:
         quiet=quiet,
         theme=rich_theme(),
         highlight=False,
-        soft_wrap=False,
+        soft_wrap=True,
     )
 
 

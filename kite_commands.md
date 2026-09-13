@@ -212,7 +212,7 @@ These never go to the model.
 | `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |
 | `/theme [auto\|kite\|dark\|light\|dim\|mono\|monochrome\|catppuccin\|ember\|forest\|hues\|transparent]` | Color palette. Empty: pick |
 | `/font [unicode\|ascii]` | Glyph pack. Empty: pick |
-| `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort. Empty: pick. `off` hidden when the model cannot disable reasoning |
+| `/thinking` `[off\|minimal\|low\|medium\|high\|…]` | Pi-style thinking level for the current model. Empty: **cycle** to the next level. `off` hidden when the model cannot disable reasoning |
 | `/model [provider/id]` | Show or set model |
 | `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
 | `/select [provider]` | Pick provider if needed, login if unlinked, then pick a live model (saved) |
@@ -224,7 +224,8 @@ These never go to the model.
 | `/sessions` `/session list` | Numbered picker: open / show / delete |
 | `/session open [id]` `/resume [id]` | Continue that chat (prints full transcript); omit id to pick |
 | `/keys` | Credential status with type (BYOK/BYOS), masked key fingerprint, OAuth link state |
-| `/thinking` `/fast` | Effort shortcuts (`/reasoning thinking` / `/reasoning fast`) |
+| `/reasoning` `/effort` | Legacy effort modes (`auto\|off\|fast\|thinking`) — prefer `/thinking` |
+| `/fast` | Legacy shortcut → `/thinking low` |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
 | `/clear` `/new` | Fresh chat session (memory notes stay) |
 | `/compact` | Summarize older turns now; ctx meter updates immediately |
@@ -273,7 +274,7 @@ These never go to the model.
 | `/clip` `/paste` `/clipboard` | Attach clipboard text or image (**F8** or **Esc v**) |
 | `/detach [name\|all]` | Drop queued attachments |
 | `/attachments` | List queued files |
-| `/help` `/h` | Essential commands (12). `/help all` adds legacy aliases, shortcuts, and doc pointers (`kite_commands.md`, `CONTEXT.md`, …) |
+| `/help` `/h` | Essential commands (13). `/help all` adds legacy aliases, shortcuts, and doc pointers (`kite_commands.md`, `CONTEXT.md`, …) |
 | `/quit` `/q` `/exit` | Leave the REPL |
 
 Ctrl+C stops the **current turn**, not the process.
@@ -303,11 +304,11 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+\` | Toggle sidebar (sessions / crew / changes) |
 | `Tab` | Cycle slash completions (`Enter` always submits) |
 
-Model/provider/session pickers (`kite models --select`, `kite select`, `kite -r`, `/select`, setup, web-keys) use a **console list**, not a prompt_toolkit overlay (that broke Windows). On a TTY: **↑↓** / Page Up/Down, type to filter, type a **number** then Enter, `r` refresh (live models), Esc/`q` cancel. Non-TTY and CI (`KITE_TYPED_PICK=1`) use the typed prompt (`+/−` pages). Slash and `@file` menus can wheel-scroll; set `KITE_MOUSE=0` to leave the mouse with the terminal (Shift+drag still copies).
+Model/provider/session pickers (`kite models --select`, `kite select`, `kite -r`, `/select`, setup, web-keys) use a **console list**. On a TTY: **↑↓**, Page Up/Down, **click or drag** a row then release to select, type to filter, type a **number** then Enter, `r` refresh, Esc/`q` cancel. CI/`KITE_TYPED_PICK=1` uses the typed prompt (`+/−` pages). Composer mouse capture is **off** by default so the welcome banner stays readable on Windows; `KITE_MOUSE=1` enables slash-menu wheel (Shift+drag to copy).
 
 While a turn runs, the bottom toolbar shows a **running line** (`[HH:MM:SS] label running`) and, when bash or background jobs stream output, the latest sanitized line as `› …`. Model streaming shows `streaming` with **ttft** (time-to-first-token) on early tokens, then **tok/s** from provider usage when available. Reasoning and answer text use separate channels; tool-call JSON streams as throttled `preparing` previews. Queued messages show separate **steer** and **follow-up** counts plus `next steer:` / `next follow-up:` preview. Provider retries tick down in the running line. Auto-compaction shows `compacting context`. Metrics row: tok/s, cache %, context meter, and session cost.
 
-`/thinking` and `/fast` appear in the menu only when the current model’s API advertises both effort modes (e.g. OpenRouter, Groq, Nemotron). Use `/reasoning` when only one mode exists.
+`/thinking` appears in the slash menu when the current model advertises reasoning/thinking support. Levels shown match what the API exposes (e.g. `off low medium high` on OpenRouter/Groq/Nemotron). Empty `/thinking` cycles like Pi; set explicitly with `/thinking high` or `/thinking off`.
 
 ---
 

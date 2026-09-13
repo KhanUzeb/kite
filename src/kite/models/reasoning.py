@@ -164,6 +164,120 @@ def reasoning_badge(raw: str | None) -> str:
     return mode
 
 
+# Pi-style unified levels (off → minimal → low → medium → high → xhigh → max).
+_PI_ORDER = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+_FAST_TO_PI = {"minimal": "minimal", "min": "minimal", "low": "low", "on": "low"}
+_THINK_TO_PI = {"medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max", "on": "high"}
+
+
+def thinking_level_menu(info: ReasoningSupport) -> tuple[tuple[str, str], ...]:
+    """(pi_level, encoded_reasoning) pairs in Pi cycle order."""
+    if not info.supported:
+        return ()
+    rows: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    if info.can_disable:
+        rows.append(("off", "off"))
+    for lv in info.fast_levels():
+        pi = _FAST_TO_PI.get(lv.lower(), lv.lower())
+        if pi in _PI_ORDER and pi not in seen:
+            seen.add(pi)
+            rows.append((pi, encode_reasoning("fast", lv)))
+    for lv in info.thinking_levels():
+        pi = _THINK_TO_PI.get(lv.lower(), lv.lower())
+        if pi in _PI_ORDER and pi not in seen:
+            seen.add(pi)
+            rows.append((pi, encode_reasoning("thinking", lv)))
+    if not rows and info.can_thinking:
+        rows.append(("high", "thinking"))
+    elif not rows and info.can_fast:
+        rows.append(("low", "fast"))
+    order = {name: idx for idx, name in enumerate(_PI_ORDER)}
+    return tuple(sorted(rows, key=lambda pair: order.get(pair[0], len(_PI_ORDER))))
+
+
+def reasoning_to_thinking_level(raw: str | None, info: ReasoningSupport) -> str:
+    """Map internal encoding to a Pi-style level label."""
+    mode, effort = split_reasoning(raw)
+    if mode == "auto":
+        return "auto"
+    if mode == "off":
+        return "off"
+    menu = {enc: pi for pi, enc in thinking_level_menu(info)}
+    if raw in menu:
+        return menu[raw]
+    if effort:
+        if mode == "fast":
+            return _FAST_TO_PI.get(effort.lower(), effort.lower())
+        return _THINK_TO_PI.get(effort.lower(), effort.lower())
+    return mode
+
+
+def fallback_thinking_level(raw: str) -> str | None:
+    """Best-effort encode when live model metadata is missing."""
+    token = (raw or "").strip().lower()
+    if not token:
+        return None
+    if token in {"auto", "default"}:
+        return "auto"
+    if token in {"off", "none", "disable", "disabled"}:
+        return "off"
+    if token in _PI_ORDER:
+        if token == "off":
+            return "off"
+        if token in _FAST_EFFORTS or token in {"minimal", "min", "low"}:
+            effort = "minimal" if token == "minimal" else ("low" if token in {"low", "min"} else token)
+            return encode_reasoning("fast", effort)
+        if token in _THINKING_EFFORTS or token in {"medium", "high", "xhigh", "max"}:
+            return encode_reasoning("thinking", token if token != "on" else "high")
+    mode, effort = split_reasoning(token)
+    if mode in MODES:
+        return encode_reasoning(mode, effort) if mode in {"fast", "thinking"} and effort else mode
+    return None
+
+
+def resolve_thinking_level(raw: str, info: ReasoningSupport | None) -> str | None:
+    """Parse a Pi-style level (or legacy fast/thinking tokens) → encoded reasoning."""
+    token = (raw or "").strip().lower()
+    if not token:
+        return None
+    if token in {"auto", "default"}:
+        return "auto"
+    if token in {"off", "none", "disable", "disabled"}:
+        if info is not None and info.supported and not info.can_disable:
+            return None
+        return "off"
+    if info is not None and info.supported:
+        menu = thinking_level_menu(info)
+        for pi, enc in menu:
+            if token == pi:
+                return enc
+    mode, effort = split_reasoning(token)
+    if mode in {"fast", "thinking"}:
+        return encode_reasoning(mode, effort) if effort else mode
+    return fallback_thinking_level(token)
+
+
+def cycle_thinking_level(current: str | None, info: ReasoningSupport) -> str | None:
+    """Advance to the next Pi level; wraps. Returns None when unsupported."""
+    menu = thinking_level_menu(info)
+    if not menu:
+        return None
+    encoded = (current or "auto").strip()
+    encodings = [enc for _, enc in menu]
+    if encoded not in encodings:
+        return menu[0][1]
+    idx = encodings.index(encoded)
+    return encodings[(idx + 1) % len(encodings)]
+
+
+def thinking_level_badge(raw: str | None, info: ReasoningSupport) -> str:
+    level = reasoning_to_thinking_level(raw, info)
+    if level in {"", "auto"}:
+        return ""
+    return level
+
+
 def _norm_params(values: Any) -> set[str]:
     out: set[str] = set()
     if isinstance(values, dict):

@@ -182,13 +182,30 @@ def _raw_pick(
             sys.stderr.write("\n")
         sys.stderr.flush()
         drawn["lines"] = text.count("\n") + (0 if text.endswith("\n") else 1)
+        drawn["n_view"] = len(view)
+        end_y = _stderr_cursor_y()
+        if end_y is not None:
+            drawn["start_y"] = end_y - drawn["lines"]
+            drawn["item_y0"] = drawn["start_y"] + 1
 
     paint()
-    reader = _event_reader()
+    reader = _event_reader(drawn)
     try:
         while True:
             ev = reader()
             if ev is None:
+                continue
+            if isinstance(ev, str) and ev.startswith(("goto:", "pick:")):
+                try:
+                    vis = int(ev.split(":", 1)[1])
+                except ValueError:
+                    continue
+                rows = clamp()
+                if 0 <= vis < min(show, len(rows)):
+                    state["cursor"] = state["offset"] + vis
+                    if ev.startswith("pick:"):
+                        return rows[state["cursor"]][0]
+                    paint()
                 continue
             if ev in {"esc", "ctrl-c"}:
                 console.print("[kite.pending]Cancelled[/]")
@@ -239,14 +256,45 @@ def _raw_pick(
             close()
 
 
-def _event_reader():
+def view_index_from_mouse(*, mouse_y: int, item_y0: int, n_view: int) -> int | None:
+    """Map a console row to a visible pick-list index (title is above the items)."""
+    if n_view <= 0:
+        return None
+    idx = int(mouse_y) - int(item_y0)
+    if 0 <= idx < n_view:
+        return idx
+    return None
+
+
+def _stderr_cursor_y() -> int | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        from prompt_toolkit.win32_types import CONSOLE_SCREEN_BUFFER_INFO
+
+        k32 = ctypes.windll.kernel32
+        buf = CONSOLE_SCREEN_BUFFER_INFO()
+        handle = k32.GetStdHandle(-12)
+        if k32.GetConsoleScreenBufferInfo(handle, ctypes.byref(buf)):
+            return int(buf.dwCursorPosition.Y)
+    except Exception:
+        return None
+    return None
+
+
+def _event_reader(drawn: dict):
     if sys.platform == "win32":
-        return _WinEvents()
-    return _PosixEvents()
+        try:
+            return _WinEvents(drawn)
+        except OSError:
+            return _WinKeyOnly()
+    return _PosixEvents(drawn)
 
 
-class _WinEvents:
-    """Windows keys via msvcrt — does not take over the console (PT Application did)."""
+class _WinKeyOnly:
+    """msvcrt fallback when console mouse mode cannot be enabled."""
 
     def __init__(self) -> None:
         import msvcrt
@@ -279,16 +327,113 @@ class _WinEvents:
         return None
 
 
+class _WinEvents:
+    """Windows keys + click/drag/wheel via ReadConsoleInput (picker only)."""
+
+    def __init__(self, drawn: dict) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        from prompt_toolkit.win32_types import INPUT_RECORD
+
+        self._drawn = drawn
+        self._k32 = ctypes.windll.kernel32
+        self._h = self._k32.GetStdHandle(-10)
+        self._old = wintypes.DWORD()
+        if not self._k32.GetConsoleMode(self._h, ctypes.byref(self._old)):
+            raise OSError("no console")
+        # Mouse on, Quick Edit off so drag events reach us (restored on close).
+        mode = (int(self._old.value) | 0x0010 | 0x0008 | 0x0080 | 0x0001) & ~0x0040 & ~0x0002 & ~0x0004
+        if not self._k32.SetConsoleMode(self._h, mode):
+            raise OSError("console mode")
+        self._IR = INPUT_RECORD
+        self._down = False
+        self._closed = False
+
+    def __call__(self) -> str | None:
+        import ctypes
+        from ctypes import wintypes
+
+        rec = self._IR()
+        n = wintypes.DWORD()
+        if not self._k32.ReadConsoleInputW(self._h, ctypes.byref(rec), 1, ctypes.byref(n)) or n.value != 1:
+            return None
+        if rec.EventType == 1:
+            key = rec.Event.KeyEvent
+            if not key.KeyDown:
+                return None
+            vk = int(key.VirtualKeyCode)
+            ch = key.uChar.UnicodeChar or ""
+            mapped = {
+                38: "up",
+                40: "down",
+                33: "pageup",
+                34: "pagedown",
+                36: "home",
+                35: "end",
+                13: "enter",
+                27: "esc",
+                8: "backspace",
+            }.get(vk)
+            if mapped:
+                return mapped
+            if vk == 67 and (int(key.ControlKeyState) & 0x0008):
+                return "ctrl-c"
+            if vk == 82 and (int(key.ControlKeyState) & 0x0008):
+                return "refresh"
+            return ch if ch and ch.isprintable() else None
+        if rec.EventType == 2:
+            return self._mouse(rec.Event.MouseEvent)
+        return None
+
+    def _mouse(self, mouse) -> str | None:
+        import ctypes
+
+        flags = int(mouse.EventFlags)
+        buttons = int(mouse.ButtonState)
+        if flags & 0x0004:  # WHEELED
+            delta = ctypes.c_short((buttons >> 16) & 0xFFFF).value
+            return "up" if delta > 0 else "down"
+        y = int(mouse.MousePosition.Y)
+        vis = view_index_from_mouse(
+            mouse_y=y,
+            item_y0=int(self._drawn.get("item_y0", -1)),
+            n_view=int(self._drawn.get("n_view", 0)),
+        )
+        left = bool(buttons & 0x1)
+        if left:
+            self._down = True
+            if vis is not None:
+                return f"goto:{vis}"
+            return None
+        if self._down:
+            self._down = False
+            if vis is not None:
+                return f"goto:{vis}"
+            return "enter"
+        return None
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._k32.SetConsoleMode(self._h, self._old)
+        except Exception:
+            pass
+
+
 class _PosixEvents:
-    def __init__(self) -> None:
+    def __init__(self, drawn: dict) -> None:
         import termios
         import tty
 
+        self._drawn = drawn
         self._fd = sys.stdin.fileno()
         self._termios = termios
         self._old = termios.tcgetattr(self._fd)
         tty.setcbreak(self._fd)
-        sys.stderr.write("\x1b[?1000h\x1b[?1006h")
+        sys.stderr.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h")
         sys.stderr.flush()
         self._closed = False
         self._buf = ""
@@ -321,7 +466,7 @@ class _PosixEvents:
                 "\x1b[H": "home",
                 "\x1b[F": "end",
                 "\x1b": "esc",
-            }.get(seq) or _posix_mouse(seq)
+            }.get(seq) or _posix_mouse(seq, self._drawn)
         if chunk in "\r\n":
             return "enter"
         if chunk == "\x03":
@@ -337,27 +482,35 @@ class _PosixEvents:
             return
         self._closed = True
         try:
-            sys.stderr.write("\x1b[?1006l\x1b[?1000l")
+            sys.stderr.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l")
             sys.stderr.flush()
             self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._old)
         except Exception:
             pass
 
 
-def _posix_mouse(seq: str) -> str | None:
-    # SGR: ESC [ < btn ; x ; y M/m
+def _posix_mouse(seq: str, drawn: dict) -> str | None:
+    # SGR: ESC [ < btn ; x ; y M/m  — drag uses 1002 (code + 32).
     if not seq.startswith("\x1b[<") or len(seq) < 6:
         return None
     end = seq[-1]
     try:
-        btn, _x, _y = seq[3:-1].split(";")
+        btn, _x, y_s = seq[3:-1].split(";")
         code = int(btn)
+        y = int(y_s) - 1
     except ValueError:
         return None
     if code & 64:
         return "down" if code & 1 else "up"
-    if end == "M" and (code & 3) == 0:
-        return "enter"
+    vis = view_index_from_mouse(
+        mouse_y=y,
+        item_y0=int(drawn.get("item_y0", -1)),
+        n_view=int(drawn.get("n_view", 0)),
+    )
+    if (code & 3) == 0 and end == "M":
+        return f"goto:{vis}" if vis is not None else None
+    if (code & 3) == 0 and end == "m":
+        return f"pick:{vis}" if vis is not None else "enter"
     return None
 
 

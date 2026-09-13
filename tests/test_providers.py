@@ -149,6 +149,10 @@ def test_fast_setup_ready_with_key_but_no_saved_model(monkeypatch, kite_home) ->
     assert still.ready is True
     explicit = assess_setup_status_fast(provider="claude", config=claude_default)
     assert explicit.ready is False
+    from kite.config.readiness import is_first_run
+
+    assert is_first_run(explicit) is False
+    assert format_setup_banner(explicit) == ""
 
 
 def test_claude_login_mentions_api_key_when_unusable(monkeypatch, kite_home) -> None:
@@ -252,7 +256,17 @@ def test_select_model_byos_and_windows_picker(kite_home, monkeypatch) -> None:
 
 def test_reasoning_levels_and_slash_visibility() -> None:
     from kite.cli.slash import CommandIndex, SlashSpec
-    from kite.models.reasoning import ReasoningSupport, apply_reasoning, encode_reasoning, split_reasoning
+    from kite.models.reasoning import (
+        ReasoningSupport,
+        apply_reasoning,
+        cycle_thinking_level,
+        encode_reasoning,
+        fallback_thinking_level,
+        reasoning_to_thinking_level,
+        resolve_thinking_level,
+        split_reasoning,
+        thinking_level_menu,
+    )
     from kite.ui.complete import _visible_specs
 
     info = ReasoningSupport(True, True, True, True, thinking_kwargs={"reasoning_effort": "high"}, fast_kwargs={"reasoning_effort": "low"}, efforts=("none", "low", "medium", "high"))
@@ -260,6 +274,14 @@ def test_reasoning_levels_and_slash_visibility() -> None:
     assert split_reasoning("thinking:high") == ("thinking", "high")
     assert encode_reasoning("thinking", "high") == "thinking:high"
     assert apply_reasoning({}, info, "thinking", effort="medium")["reasoning_effort"] == "medium"
+    menu = thinking_level_menu(info)
+    assert [pi for pi, _ in menu] == ["off", "low", "medium", "high"]
+    assert resolve_thinking_level("high", info) == "thinking:high"
+    assert resolve_thinking_level("low", info) == "fast:low"
+    assert reasoning_to_thinking_level("thinking:high", info) == "high"
+    assert cycle_thinking_level("off", info) == "fast:low"
+    assert fallback_thinking_level("high") == "thinking:high"
+    assert resolve_thinking_level("high", None) == "thinking:high"
     specs = {
         "thinking": SlashSpec("thinking", "control", "builtin", "t"),
         "fast": SlashSpec("fast", "control", "builtin", "f"),
@@ -267,10 +289,9 @@ def test_reasoning_levels_and_slash_visibility() -> None:
     }
     index = CommandIndex(specs=specs)
     names = {s.name for s in _visible_specs(index, support=ReasoningSupport(True, False, True, True))}
-    assert "thinking" not in names and "fast" not in names
-    assert "reasoning" in names
+    assert "thinking" in names and "reasoning" not in names and "fast" not in names
     names_off = {s.name for s in _visible_specs(index, support=ReasoningSupport(False, False, False, False))}
-    assert "reasoning" not in names_off
+    assert "thinking" not in names_off
 
 
 def test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

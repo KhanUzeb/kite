@@ -24,7 +24,6 @@ from kite.ui.style import (
     GUTTER,
     SYMBOL_COLLAPSE,
     SYMBOL_COMPACT,
-    SYMBOL_EXPAND,
     SYMBOL_FAIL,
     SYMBOL_OK,
     SYMBOL_REASON,
@@ -94,13 +93,12 @@ def render_thinking_summary(chars: int, lines: int, *, expanded_hint: bool = Tru
     return t
 
 def render_reasoning_block(text: str, *, step: int | None = None) -> Text:
+    from kite.ui.output_view import render_thinking_block
+
     t = Text()
-    prefix = f"{SYMBOL_REASON} "
     if step is not None:
-        prefix = f"{SYMBOL_REASON} [{step}] "
-    for i, line in enumerate(text.splitlines() or [text]):
-        t.append(prefix if i == 0 else "    ", style="kite.thinking")
-        t.append(line + "\n", style="kite.thinking")
+        t.append(f"[{step}]\n", style="kite.muted")
+    t.append_text(render_thinking_block(text))
     return t
 
 def render_loop_warning(message: str) -> Text:
@@ -112,23 +110,9 @@ def render_loop_warning(message: str) -> Text:
     return t
 
 def _collapse_text(text: str, *, expanded: bool, limit: int = COLLAPSE_LINES) -> Text:
-    raw = text.rstrip("\n")
-    if not raw:
-        return Text()
-    lines = raw.splitlines()
-    out = Text()
-    shown = lines if expanded else lines[:limit]
-    for line in shown:
-        out.append(f"{GUTTER}{GUTTER}{line}\n", style="kite.muted")
-    extra = len(lines) - len(shown)
-    if extra > 0:
-        glyph = SYMBOL_EXPAND if expanded else SYMBOL_COLLAPSE
-        hint = "/collapse" if expanded else "/expand"
-        out.append(
-            f"{GUTTER}{GUTTER}{glyph} +{extra} lines  {hint}\n",
-            style="kite.muted",
-        )
-    return out
+    from kite.ui.output_view import render_output_block
+
+    return render_output_block(text, expanded=expanded, limit=limit)
 
 def render_compact_boundary(
     before: int | str,
@@ -312,8 +296,11 @@ class RunDisplay:
             self._saw_answer = True
             self._stream_write_answer(text)
             return
+        if channel == "thinking":
+            self._stream_write_thinking(text)
+            return
         self._ensure_channel(channel)
-        style = "kite.thinking" if channel == "thinking" else "kite.answer"
+        style = "kite.answer"
         prefix = CHANNEL_PREFIX.get(channel, "  ")
         block = Text()
         parts = text.split("\n")
@@ -328,6 +315,30 @@ class RunDisplay:
                 self._did_first_line = True
             if part:
                 block.append(part, style=style)
+                self._streaming = True
+            elif i > 0:
+                self._streaming = True
+        if block.plain:
+            self._print(block, end="", highlight=False, markup=False)
+
+    def _stream_write_thinking(self, text: str) -> None:
+        """Thinking uses the full width — no … gutter (same idea as tool output)."""
+        from kite.ui.output_view import format_thinking_text
+
+        self._ensure_channel("thinking")
+        chunk = text
+        if text.lstrip().startswith("{") and text.rstrip().endswith("}"):
+            chunk = format_thinking_text(text)
+        block = Text()
+        parts = chunk.split("\n")
+        for i, part in enumerate(parts):
+            if i > 0:
+                block.append("\n")
+                self._need_prefix = True
+            if part:
+                block.append(part, style="kite.thinking")
+                self._need_prefix = False
+                self._did_first_line = True
                 self._streaming = True
             elif i > 0:
                 self._streaming = True
@@ -399,11 +410,14 @@ class RunDisplay:
             self._thinking_buf.clear()
             self._thinking_open = False
             return
-        self.state.last_thinking = text
-        lines = len([ln for ln in text.splitlines() if ln.strip()]) or 1
-        chars = len(text)
+        from kite.ui.output_view import format_thinking_text
+
+        view = format_thinking_text(text).rstrip()
+        self.state.last_thinking = view or text
+        lines = len([ln for ln in self.state.last_thinking.splitlines() if ln.strip()]) or 1
+        chars = len(self.state.last_thinking)
         if self.state.thinking_expanded:
-            self._stream_write(text, channel="thinking")
+            self._stream_write(self.state.last_thinking, channel="thinking")
             self._end_stream_line()
         else:
             self._print(render_thinking_summary(chars, lines), highlight=False)
@@ -417,13 +431,13 @@ class RunDisplay:
         self.state.last_thinking = self._thinking_text()
         if self.state.thinking_expanded:
             if not self._thinking_open:
-                self._print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
+                self._print(Text("Thinking", style="kite.thinking bold"))
                 self._thinking_open = True
             self._coalesced_stream("thinking", text)
             return
         chars = len(self.state.last_thinking)
         if not self._thinking_open:
-            self._print(Text(f"{GUTTER}Thinking", style="kite.thinking bold"))
+            self._print(Text("Thinking", style="kite.thinking bold"))
             self._thinking_open = True
         self._spin(True, f"thinking  {chars:,} chars")
 
@@ -706,7 +720,7 @@ class RunDisplay:
             return
         prefix = _subagent_prefix(p)
         self._print(
-            Text(f"{GUTTER}{GUTTER}{prefix}{line}", style="kite.terminal"),
+            Text(f"{prefix}{line}", style="kite.terminal"),
             highlight=False,
         )
 
@@ -723,7 +737,7 @@ class RunDisplay:
         job_id = str(p.get("id") or "")
         prefix = _subagent_prefix(p) or (f"[{job_id}] " if job_id else "")
         self._print(
-            Text(f"{GUTTER}{GUTTER}{prefix}{line}", style="kite.terminal"),
+            Text(f"{prefix}{line}", style="kite.terminal"),
             highlight=False,
         )
 

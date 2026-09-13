@@ -169,6 +169,9 @@ class ChatSession:
     def _invalidate_harness(self) -> None:
         self._harness = None
         self._harness_key = None
+        self._invalidate_completer_cache()
+
+    def _invalidate_reasoning_support(self) -> None:
         self._reasoning_support = None
         self._invalidate_completer_cache()
 
@@ -258,7 +261,7 @@ class ChatSession:
 
     def _startup_banner(self) -> None:
         from kite import __version__
-        from kite.config.readiness import assess_setup_status_fast, format_setup_banner
+        from kite.config.readiness import assess_setup_status_fast, format_setup_banner, is_first_run
 
         cfg = UserConfig.load()
         prov = self.provider or cfg.default_provider or "—"
@@ -285,14 +288,27 @@ class ChatSession:
             self.console.print("[kite.muted]" + " · ".join(context_bits) + "[/]")
 
         status = assess_setup_status_fast(provider=self.provider, model=self.model)
-        if not status.ready:
-            self.console.print(
-                "[kite.brand]Welcome![/]  Run [kite.brand]/setup[/] "
-                "or [kite.brand]kite setup[/] to add an API key and pick a model."
-            )
+        if is_first_run(status):
+            welcome = Text()
+            welcome.append("Welcome!  ", style="kite.brand")
+            welcome.append("Run ")
+            welcome.append("/setup", style="kite.brand")
+            welcome.append(" or ")
+            welcome.append("kite setup", style="kite.brand")
+            welcome.append(" to add an API key and pick a model.")
+            self.console.print(welcome)
             note = format_setup_banner(status)
             if note:
-                self.console.print(note)
+                self.console.print(note, highlight=False)
+        elif not status.ready and status.configured_providers:
+            tip = Text()
+            tip.append("Using ", style="kite.muted")
+            tip.append(status.default_provider or "this provider", style="kite.pending")
+            tip.append(" needs a key — ", style="kite.muted")
+            tip.append("/select", style="kite.brand")
+            tip.append(" a ready provider or ", style="kite.muted")
+            tip.append("/login", style="kite.brand")
+            self.console.print(tip)
         elif not cfg.default_model:
             self.console.print(
                 "[kite.muted]Tip:[/]  [kite.brand]/model select[/] or [kite.brand]kite models -p groq --select[/]"
@@ -593,6 +609,7 @@ class ChatSession:
             return self._reasoning_support
         from kite.models.reasoning import detect_reasoning
 
+        self._ensure_model_resolved()
         provider, model = self._effective_model_pair()
         if not provider or not model:
             return None
@@ -603,8 +620,9 @@ class ChatSession:
         return self._reasoning_support
 
     def _set_reasoning(self, raw: str, *, command: str = "") -> None:
-        from kite.models.reasoning import encode_reasoning, reasoning_badge, split_reasoning
+        from kite.models.reasoning import encode_reasoning, fallback_thinking_level, reasoning_badge, split_reasoning
 
+        self._ensure_model_resolved()
         info = self._reasoning_info()
         if command in {"thinking", "fast"}:
             if info is None or not info.can_both:
@@ -616,8 +634,11 @@ class ChatSession:
             match = self._match_effort(info, command, token)
             if match is None:
                 return
-            self.state.reasoning = encode_reasoning(command, match)
-            self.console.print(f"[kite.muted]effort[/]  {reasoning_badge(self.state.reasoning)}")
+            self._commit_reasoning(
+                encode_reasoning(command, match),
+                label="effort",
+                badge=reasoning_badge(encode_reasoning(command, match)),
+            )
             return
 
         mode, effort = split_reasoning(raw)
@@ -626,7 +647,11 @@ class ChatSession:
             return
         if mode not in {"auto", "off"} and info is not None:
             if not info.supported:
-                self.console.print("[kite.muted]this model does not advertise thinking/fast[/]")
+                fallback = fallback_thinking_level(raw)
+                if fallback is None:
+                    self.console.print("[kite.muted]this model does not advertise thinking/fast[/]")
+                    return
+                self._commit_reasoning(fallback, label="effort")
                 return
             if mode == "thinking" and not info.can_thinking:
                 self.console.print("[kite.muted]no extended thinking on this model[/]")
@@ -640,8 +665,24 @@ class ChatSession:
                     return
                 effort = match
         encoded = encode_reasoning(mode, effort) if mode in {"thinking", "fast"} else mode
+        self._commit_reasoning(encoded, label="effort", badge=reasoning_badge(encoded) or mode)
+
+    def _commit_reasoning(self, encoded: str, *, label: str = "thinking", badge: str = "") -> None:
+        from kite.models.reasoning import reasoning_badge, reasoning_to_thinking_level
+
         self.state.reasoning = encoded
-        self.console.print(f"[kite.muted]effort[/]  {reasoning_badge(encoded) or mode}")
+        self._invalidate_harness()
+        self.state.touch()
+        if not badge:
+            info = self._reasoning_info()
+            if info is not None and info.supported:
+                from kite.models.reasoning import thinking_level_badge
+
+                badge = thinking_level_badge(encoded, info) or reasoning_to_thinking_level(encoded, info)
+            else:
+                badge = reasoning_badge(encoded) or encoded
+        shown = badge or encoded
+        self.console.print(f"[kite.muted]{label}[/]  {shown}")
 
     def _match_effort(self, info, mode: str, token: str) -> str | None:
         effort = info.default_effort(mode) if not token else token
@@ -997,8 +1038,8 @@ class ChatSession:
             return "status", arg
         if legacy == "collapse":
             return "collapse", arg
-        if legacy in {"thinking", "fast"}:
-            return "reasoning", legacy if not arg else arg
+        if legacy == "fast":
+            return "thinking", arg or "low"
         return cmd, arg
 
     def _model_cmd(self, arg: str) -> None:
@@ -1054,6 +1095,7 @@ class ChatSession:
             self._model_cache_provider = None
             self._model_resolved = False
             self._invalidate_harness()
+            self._invalidate_reasoning_support()
             self.console.print(f"[kite.muted]provider[/]  {name}  ·  /select or /login to continue")
             return
 
@@ -1074,6 +1116,7 @@ class ChatSession:
             self._model_cache_provider = None
             self._model_resolved = True
             self._invalidate_harness()
+            self._invalidate_reasoning_support()
             if save:
                 cfg = UserConfig.load()
                 cfg.default_provider = self.provider or cfg.default_provider
@@ -1215,6 +1258,7 @@ class ChatSession:
         self._model_cache_provider = None
         self._model_resolved = True
         self._invalidate_harness()
+        self._invalidate_reasoning_support()
 
     def _connect_flow(self, provider: str | None = None, *, force_login: bool = False) -> None:
         from kite.providers.select import connect_interactive
@@ -1678,11 +1722,55 @@ class ChatSession:
             return
         self._connect_flow()
 
+    def _thinking_picker_choices(self) -> list[tuple[str, str]]:
+        from kite.models.reasoning import thinking_level_menu
+        from kite.ui.commands import ARG_CHOICES
+        from kite.ui.complete import _LEVEL_META
+
+        info = self._reasoning_info()
+        if info is None or not info.supported:
+            return list(ARG_CHOICES["thinking"])
+        menu = thinking_level_menu(info)
+        if not menu:
+            return list(ARG_CHOICES["thinking"])
+        return [(pi, _LEVEL_META.get(pi, pi)) for pi, _ in menu]
+
+    def _apply_thinking_level(self, raw: str) -> None:
+        from kite.models.reasoning import (
+            cycle_thinking_level,
+            fallback_thinking_level,
+            resolve_thinking_level,
+            thinking_level_menu,
+        )
+
+        self._ensure_model_resolved()
+        info = self._reasoning_info()
+        token = raw.strip()
+        if not token:
+            if info is None or not info.supported:
+                self.console.print("[kite.muted]this model does not advertise thinking levels[/]")
+                return
+            next_enc = cycle_thinking_level(self.state.reasoning, info)
+            if next_enc is None:
+                self.console.print("[kite.muted]this model does not advertise thinking levels[/]")
+                return
+            self._commit_reasoning(next_enc)
+            return
+        encoded = resolve_thinking_level(token, info)
+        if encoded is None and (info is None or not info.supported):
+            encoded = fallback_thinking_level(token)
+        if encoded is None:
+            menu = thinking_level_menu(info) if info is not None and info.supported else ()
+            hint = "|".join(pi for pi, _ in menu) or "off|low|medium|high"
+            self.console.print(f"[kite.muted]/thinking {hint}[/]")
+            return
+        self._commit_reasoning(encoded)
+
     def _slash_thinking(self, arg: str) -> None:
-        self._set_reasoning(arg, command="thinking")
+        self._apply_thinking_level(arg)
 
     def _slash_fast(self, arg: str) -> None:
-        self._set_reasoning(arg, command="fast")
+        self._apply_thinking_level(arg or "low")
 
     def _reasoning_picker_choices(self) -> list[tuple[str, str]]:
         from kite.ui.commands import ARG_CHOICES
