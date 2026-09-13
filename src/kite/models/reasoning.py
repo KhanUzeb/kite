@@ -503,3 +503,18 @@ def looks_like_reasoning_error(exc: BaseException) -> bool:
         token in text
         for token in ("reasoning", "thinking", "budget_tokens", "reasoning_effort", "include_reasoning")
     )
+def looks_like_temperature_reasoning_error(exc: BaseException) -> bool:
+    """Return whether reasoning is active but the temperature parameter is illegal."""
+    text = str(exc).lower()
+    return (
+        "temperature" in text
+        and ("reasoning" in text or "thinking" in text)
+        and any(
+            marker in text
+            for marker in (
+                "only temperature=1",
+                "doesn't support temperature",
+                "unsupported parameter",
+            )
+        )
+    )
