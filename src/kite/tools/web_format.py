@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 
 def _clamp_snippet(snippet: str, max_chars: int) -> str:
     text = (snippet or "").strip().replace("\n", " ")

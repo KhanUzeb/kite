@@ -26,13 +26,12 @@ from kite.ui.attach import (
 )
 from kite.ui.complete import read_repl_line
 from kite.ui.diff import count_diff_lines, make_unified_diff, preview_mutating_diff, preview_patch_diff, render_diff
-from kite.ui.streaming import StreamCoalescer
-from kite.ui.tool_cards import render_code_edit_preview
 from kite.ui.empty import render_empty
 from kite.ui.render import RunDisplay
 from kite.ui.repl import ChatSession
 from kite.ui.state import SessionUiState, TodoItem
 from kite.ui.status import format_status_tail, render_status, status_segments
+from kite.ui.streaming import StreamCoalescer
 from kite.ui.style import KITE_THEME
 from kite.ui.theme import (
     THEME_NAMES,
@@ -43,6 +42,7 @@ from kite.ui.theme import (
     resolved_theme,
     set_theme,
 )
+from kite.ui.tool_cards import render_code_edit_preview
 from tests.conftest import strip_ansi
 
 

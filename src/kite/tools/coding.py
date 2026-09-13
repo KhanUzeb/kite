@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import difflib
 import os
-import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -18,8 +16,8 @@ from kite.guardrails import GuardrailPolicy, redact_secrets
 from kite.memory.store import MemoryScope, MemoryStore
 from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
-from kite.tools.store import TodoStore
 from kite.tools.search import glob_search, grep_search, ls_search
+from kite.tools.store import TodoStore
 from kite.tools.web import webcrawl, websearch
 from kite.tools.web import webfetch as fetch_url
 

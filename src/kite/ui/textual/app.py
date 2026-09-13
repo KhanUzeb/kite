@@ -21,8 +21,8 @@ from kite.ui.textual.complete_data import PlainCompletion, plain_completions
 from kite.ui.textual.complete_popup import CompletePopup
 from kite.ui.textual.composer import Composer
 from kite.ui.textual.display import TextualRunDisplay
-from kite.ui.textual.sidebar import Sidebar
 from kite.ui.textual.messages import AgentEventMessage, StatusFlashMessage
+from kite.ui.textual.sidebar import Sidebar
 
 if TYPE_CHECKING:
     from kite.ui.repl import ChatSession
@@ -194,7 +194,7 @@ class KiteApp(App[None]):
             log.write(renderable)
 
     def _refresh_status(self) -> None:
-        from kite.ui.status import format_status_tail, format_running_status
+        from kite.ui.status import format_running_status, format_status_tail
 
         state = self.session.state
         bits = [format_status_tail(state)]
