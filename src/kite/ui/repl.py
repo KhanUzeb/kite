@@ -531,6 +531,9 @@ class ChatSession:
             return
 
         mode, effort = split_reasoning(raw)
+        if mode == "off" and info is not None and not info.can_disable:
+            self.console.print("[kite.muted]this model cannot disable reasoning[/]")
+            return
         if mode not in {"auto", "off"} and info is not None:
             if not info.supported:
                 self.console.print("[kite.muted]this model does not advertise thinking/fast[/]")
@@ -1634,12 +1637,19 @@ class ChatSession:
     def _slash_fast(self, arg: str) -> None:
         self._set_reasoning(arg, command="fast")
 
+    def _reasoning_picker_choices(self) -> list[tuple[str, str]]:
+        from kite.ui.commands import ARG_CHOICES
+
+        choices = list(ARG_CHOICES["reasoning"])
+        info = self._reasoning_info()
+        if info is not None and not info.can_disable:
+            choices = [(key, label) for key, label in choices if key != "off"]
+        return choices
+
     def _slash_reasoning(self, arg: str) -> None:
         if not arg:
-            from kite.ui.commands import ARG_CHOICES
-
             picked = self._pick(
-                ARG_CHOICES["reasoning"],
+                self._reasoning_picker_choices(),
                 title="Effort",
                 current=self.state.reasoning.split(":", 1)[0],
                 noun="effort",
@@ -2083,12 +2093,30 @@ class ChatSession:
         self.attachments = []
         self.state.pending_attach = 0
 
-    def _print_session(self, session, *, tail: int = 12) -> None:
+    def _parse_session_show_tail(self, raw: str, *, default: int = 20) -> tuple[str, int | None]:
+        """Parse optional ``--tail N`` (``0`` = full transcript)."""
+        parts = raw.split()
+        tail = default
+        kept: list[str] = []
+        i = 0
+        while i < len(parts):
+            if parts[i] == "--tail" and i + 1 < len(parts):
+                tail = int(parts[i + 1])
+                i += 2
+                continue
+            kept.append(parts[i])
+            i += 1
+        target = " ".join(kept).strip()
+        if tail == 0:
+            return target, None
+        return target, tail
+
+    def _print_session(self, session, *, tail: int | None = 12) -> None:
         from kite.memory.session_format import format_session_resume_hint
 
         meta = session.meta
         self.console.print(f"[kite.muted]{session.id}[/]  {format_session_resume_hint(meta)}")
-        shown = session.messages[-tail:]
+        shown = session.messages if tail is None else session.messages[-tail:]
         if not shown:
             self.console.print("[kite.muted](empty transcript)[/]")
             return
@@ -2143,7 +2171,7 @@ class ChatSession:
         if session.meta.model:
             self.model = session.meta.model
             self.state.model = session.meta.model
-        self._print_session(session, tail=8)
+        self._print_session(session, tail=None)
         self.console.print(
             f"[kite.success]opened[/] {session.id}  — type to continue  "
             f"[kite.muted]· kite resume {session.id}[/]"
@@ -2201,16 +2229,17 @@ class ChatSession:
                 self.console.print(f"[kite.success]removed[/] {gone.id}{extra}")
             return
         if verb in {"show", "cat", "view"}:
-            target = rest or self._session_id
+            target, tail = self._parse_session_show_tail(rest)
+            target = target or self._session_id
             if not target:
-                self.console.print("[kite.error]no session yet[/]  ·  /session show <id>")
+                self.console.print("[kite.error]no session yet[/]  ·  /session show [id] [--tail N][/]")
                 return
             try:
                 session = load_session(target)
             except (OSError, ValueError) as e:
                 self.console.print(f"[kite.error]{e}[/]")
                 return
-            self._print_session(session, tail=20)
+            self._print_session(session, tail=tail)
             return
         if verb in {"open", "resume", "use"}:
             if not rest:

@@ -40,7 +40,7 @@ kite sessions                            # table: date, time, title, model, stat
 kite sessions humanize                   # filter by title, cwd, date, or id prefix
 kite sessions -q docs                    # same filter flag
 kite sessions --no-pick                  # print table only (no picker)
-kite sessions --show <id> [--tail N]     # meta + transcript tail + resume hint
+kite sessions --show <id> [--tail N]     # meta + transcript tail + resume hint (`--tail 0` = full)
 ```
 
 Shared flags on `run` / `chat` / `resume`:
@@ -199,7 +199,7 @@ These never go to the model.
 | `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |
 | `/theme [auto\|kite\|dark\|light\|dim\|mono\|monochrome\|catppuccin\|ember\|forest\|hues\|transparent]` | Color palette. Empty: pick |
 | `/font [unicode\|ascii]` | Glyph pack. Empty: pick |
-| `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort. Empty: pick |
+| `/reasoning` `/effort auto\|off\|fast\|thinking` | Set effort. Empty: pick. `off` hidden when the model cannot disable reasoning |
 | `/model [provider/id]` | Show or set model |
 | `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
 | `/select [provider]` | Pick provider if needed, login if unlinked, then pick a live model (saved) |
@@ -209,7 +209,7 @@ These never go to the model.
 | `/login [provider]` | Always (re)link credentials, then pick a model. BYOS opens a browser + device code |
 | `/logout [provider]` | Unlink; omit provider to pick |
 | `/sessions` `/session list` | Numbered picker: open / show / delete |
-| `/session open [id]` `/resume [id]` | Continue that chat; omit id to pick |
+| `/session open [id]` `/resume [id]` | Continue that chat (prints full transcript); omit id to pick |
 | `/keys` | Credential status with type (BYOK/BYOS), masked key fingerprint, OAuth link state |
 | `/thinking` `/fast` | Effort shortcuts (`/reasoning thinking` / `/reasoning fast`) |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
@@ -232,7 +232,7 @@ These never go to the model.
 | `/agents <id>` | Shortcut for `/agents show <id>` |
 | `/kill [id\|all]` | Kill one background job/subagent, or all. Empty: pick |
 | `/session` | Current session id |
-| `/session show [id]` | Print a transcript (current if omitted) |
+| `/session show [id] [--tail N]` | Preview transcript (default 20 messages; `--tail 0` = full) |
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Toggle expanded tool output |

@@ -276,6 +276,57 @@ def test_approval_panel_includes_diff_stat() -> None:
     assert "+1" in panel and "-1" in panel
 
 
+def test_print_session_full_transcript_on_resume(tmp_path, kite_home) -> None:
+    from io import StringIO
+
+    from kite.memory.session import Session, SessionMeta
+
+    session = ChatSession(cwd=str(tmp_path))
+    buf = StringIO()
+    session.console = Console(file=buf, force_terminal=False)
+    meta = SessionMeta(
+        id="abc12345",
+        created_at=1.0,
+        updated_at=2.0,
+        cwd=str(tmp_path),
+        provider="p",
+        model="m",
+        task="demo",
+    )
+    loaded = Session(
+        meta=meta,
+        messages=[{"role": "user", "content": f"msg-{i}"} for i in range(15)],
+    )
+    session._print_session(loaded, tail=None)
+    out = buf.getvalue()
+    assert "earlier messages" not in out
+    assert "msg-0" in out
+    assert "msg-14" in out
+
+
+def test_session_show_tail_parsing(tmp_path, kite_home) -> None:
+    session = ChatSession(cwd=str(tmp_path))
+    assert session._parse_session_show_tail("abc --tail 5") == ("abc", 5)
+    assert session._parse_session_show_tail("abc --tail 0") == ("abc", None)
+    assert session._parse_session_show_tail("abc") == ("abc", 20)
+    assert session._parse_session_show_tail("--tail 3 abc") == ("abc", 3)
+
+
+def test_reasoning_picker_hides_off_when_not_disableable(tmp_path, kite_home) -> None:
+    from kite.models.reasoning import ReasoningSupport
+
+    session = ChatSession(cwd=str(tmp_path))
+    session._reasoning_support = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=False,
+    )
+    keys = [key for key, _ in session._reasoning_picker_choices()]
+    assert "off" not in keys
+    assert "auto" in keys
+
+
 def test_empty_repl_enter_does_not_run(tmp_path, kite_home) -> None:
     from io import StringIO
 
