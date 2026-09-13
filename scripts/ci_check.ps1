@@ -9,7 +9,22 @@ if (-not $env:KITE_HOME) {
     $env:KITE_HOME = Join-Path $env:TEMP "kite-ci-home"
     New-Item -ItemType Directory -Force -Path $env:KITE_HOME | Out-Null
 }
-$Python = if ($env:PYTHON) { $env:PYTHON } else { "py" }
+function Resolve-CiPython {
+    param([string]$Root)
+    if ($env:PYTHON) { return $env:PYTHON }
+    foreach ($candidate in @(
+            (Join-Path $Root ".venv\Scripts\python.exe"),
+            (Join-Path $Root ".venv/bin/python")
+        )) {
+        if (Test-Path $candidate) { return $candidate }
+    }
+    foreach ($name in @("python", "py", "python3")) {
+        if (Get-Command $name -ErrorAction SilentlyContinue) { return $name }
+    }
+    throw "No Python found. Run .\scripts\install.ps1 -Dev or set PYTHON."
+}
+$Python = Resolve-CiPython -Root $Root
+Write-Host "Using Python: $Python"
 Write-Host "== sync_version --check"
 & $Python scripts/sync_version.py --check
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

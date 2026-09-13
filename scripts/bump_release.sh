@@ -21,7 +21,17 @@ NEW="$1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-CURRENT="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+if [[ -z "${PYTHON:-}" ]]; then
+  if [[ -x "$ROOT/.venv/bin/python" ]]; then
+    PYTHON="$ROOT/.venv/bin/python"
+  elif [[ -x "$ROOT/.venv/Scripts/python.exe" ]]; then
+    PYTHON="$ROOT/.venv/Scripts/python.exe"
+  else
+    PYTHON="python3"
+  fi
+fi
+
+CURRENT="$("$PYTHON" -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
 DATE="$(date -u +%Y-%m-%d)"
 
 if [[ "$NEW" == "$CURRENT" ]]; then
@@ -30,7 +40,7 @@ if [[ "$NEW" == "$CURRENT" ]]; then
 fi
 
 echo "syncing version stamps to $NEW ..."
-python scripts/sync_version.py "$NEW"
+"$PYTHON" scripts/sync_version.py "$NEW"
 
 RELEASE_DOC="docs/RELEASE-$NEW.md"
 if [[ ! -f "$RELEASE_DOC" ]]; then
@@ -77,7 +87,7 @@ if ! grep -q "^## \[$NEW\]" "$CHANGELOG"; then
 -
 
 "
-  python - "$CHANGELOG" "$STUB" <<'PY'
+  "$PYTHON" - "$CHANGELOG" "$STUB" <<'PY'
 import sys
 from pathlib import Path
 
@@ -95,7 +105,7 @@ print(f"prepended CHANGELOG section for {stub.splitlines()[0]}")
 PY
 fi
 
-python scripts/sync_version.py --check
+"$PYTHON" scripts/sync_version.py --check
 
 git add pyproject.toml src/kite/__init__.py CHANGELOG.md README.md AGENTS.md architecture.md scripts/ "$RELEASE_DOC"
 git commit -m "chore: release v$NEW"

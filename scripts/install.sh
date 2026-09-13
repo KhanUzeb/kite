@@ -402,6 +402,8 @@ install_dev_editable() {
     echo "Running CI gates (sync_version, ruff, pytest, bench)..."
     if [[ -x .venv/bin/python ]]; then
       PYTHON=.venv/bin/python bash scripts/ci_check.sh
+    elif [[ -x .venv/Scripts/python.exe ]]; then
+      PYTHON=.venv/Scripts/python.exe bash scripts/ci_check.sh
     else
       bash scripts/ci_check.sh
     fi

@@ -257,10 +257,13 @@ def test_ci_workflows_run_ruff_pytest_and_bench() -> None:
         assert "ruff check src tests" in body
         assert "pytest -q" in body
         assert "bench --check" in body
-    check = (root / "scripts" / "ci_check.sh").read_text(encoding="utf-8")
-    assert "sync_version.py --check" in check
-    assert "ruff check src tests" in check
-    assert "bench --check" in check
+    check_sh = (root / "scripts" / "ci_check.sh").read_text(encoding="utf-8")
+    check_ps1 = (root / "scripts" / "ci_check.ps1").read_text(encoding="utf-8")
+    for check in (check_sh, check_ps1):
+        assert "sync_version.py --check" in check
+        assert "ruff check src tests" in check
+        assert "bench --check" in check
+        assert ".venv" in check
 
 
 def test_scripts_dir_keeps_only_supported_files() -> None:

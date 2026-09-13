@@ -10,7 +10,16 @@ if [[ -z "${KITE_HOME:-}" ]]; then
   export KITE_HOME="${TMPDIR:-/tmp}/kite-ci-home"
   mkdir -p "$KITE_HOME"
 fi
-PYTHON="${PYTHON:-python3}"
+if [[ -z "${PYTHON:-}" ]]; then
+  if [[ -x "$ROOT/.venv/bin/python" ]]; then
+    PYTHON="$ROOT/.venv/bin/python"
+  elif [[ -x "$ROOT/.venv/Scripts/python.exe" ]]; then
+    PYTHON="$ROOT/.venv/Scripts/python.exe"
+  else
+    PYTHON="python3"
+  fi
+fi
+echo "Using Python: $PYTHON"
 echo "== sync_version --check"
 "$PYTHON" scripts/sync_version.py --check
 echo "== ruff"
