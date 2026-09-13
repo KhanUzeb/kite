@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from kite.models.litellm_model import LitellmModel
-from kite.models.reasoning import ReasoningSupport, looks_like_temperature_reasoning_error
+from kite.models.reasoning import ReasoningSupport, looks_like_reasoning_error, looks_like_temperature_reasoning_error
 
 _REASONING_ERROR = (
     "gpt-5.6-luna doesn't support temperature=0.0 while reasoning is active. "
@@ -60,10 +60,10 @@ def test_temperature_reasoning_error_is_detected() -> None:
 
 def test_temperature_fallback_preserves_reasoning_and_removes_temperature() -> None:
     model = _model(temperature=0.0)
-    attempts: list[tuple[str, float | None, bool]] = []
+    attempts: list[tuple[str, float | None, bool, dict | None]] = []
 
-    def query(_messages: list[dict]) -> dict:
-        attempts.append((model.reasoning_mode, model.temperature, model._drop_reasoning))
+    def query(_messages: list[dict], *, overrides=None) -> dict:
+        attempts.append((model.reasoning_mode, model.temperature, model._drop_reasoning, overrides))
         if len(attempts) == 1:
             raise RuntimeError(_REASONING_ERROR)
         return {"ok": True}
@@ -71,7 +71,30 @@ def test_temperature_fallback_preserves_reasoning_and_removes_temperature() -> N
     model._query_stream = query  # type: ignore[method-assign]
 
     assert model._query_stream_with_fallback([]) == {"ok": True}
-    assert attempts == [("fast", 0.0, False), ("fast", None, False)]
+    assert attempts[0] == ("fast", 0.0, False, None)
+    assert attempts[1][:3] == ("fast", 0.0, False)
+    assert attempts[1][3] == {"temperature": None}
+    assert model.temperature == 0.0
+
+
+def test_reasoning_fallback_preserves_session_config() -> None:
+    model = _model(mode="fast")
+    attempts: list[tuple[str, float | None, bool]] = []
+    err = RuntimeError("unsupported reasoning_effort for this model")
+    assert looks_like_reasoning_error(err)
+
+    def query(_messages: list[dict], *, overrides=None) -> dict:
+        attempts.append((model.reasoning_mode, model.temperature, model._drop_reasoning))
+        if len(attempts) == 1:
+            raise err
+        return {"ok": True}
+
+    model._query_stream = query  # type: ignore[method-assign]
+
+    assert model._query_stream_with_fallback([]) == {"ok": True}
+    assert attempts == [("fast", None, False), ("fast", None, False)]
+    assert model.reasoning_mode == "fast"
+    assert model._drop_reasoning is False
 
 
 def test_compaction_request_omits_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
