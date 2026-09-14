@@ -446,53 +446,103 @@ def _slash_origin(spec: SlashSpec, index: CommandIndex) -> str:
     return spec.source or "other"
 
 
-_SLASH_CUES: dict[str, tuple[str, str, str]] = {
-    # origin: (prefix glyph, right-column tag, color)
-    "builtin": ("·", "cmd", ""),
-    "prompt-bundled": ("▸", "prompt", "#7aa2f7"),
-    "prompt-user": ("▸", "prompt · you", "#9ece6a"),
-    "prompt-project": ("▸", "prompt · repo", "#9ece6a"),
-    "skill-bundled": ("◆", "skill", "#e0af68"),
-    "skill-user": ("◆", "skill · you", "#9ece6a"),
-    "skill-project": ("◆", "skill · repo", "#9ece6a"),
-    "skill-plugin": ("◈", "skill · plug", "#bb9af7"),
-    "plugin": ("◈", "plug", "#bb9af7"),
+_SLASH_CUES: dict[str, tuple[str, str]] = {
+    # origin: (prefix glyph, color)
+    "builtin": ("", ""),
+    "prompt-bundled": ("▸", "#7aa2f7"),
+    "prompt-user": ("▸", "#9ece6a"),
+    "prompt-project": ("▸", "#9ece6a"),
+    "skill-bundled": ("◆", "#e0af68"),
+    "skill-user": ("◆", "#9ece6a"),
+    "skill-project": ("◆", "#9ece6a"),
+    "skill-plugin": ("◈", "#bb9af7"),
+    "plugin": ("◈", "#bb9af7"),
 }
 
 
-def _slash_cue(spec: SlashSpec, index: CommandIndex) -> tuple[str, str, str]:
+def _slash_cue(spec: SlashSpec, index: CommandIndex) -> tuple[str, str]:
     origin = _slash_origin(spec, index)
-    mark, tag, color = _SLASH_CUES.get(origin, ("·", origin, "#888888"))
+    mark, color = _SLASH_CUES.get(origin, ("·", "#888888"))
     if origin == "builtin":
         color = brand_fg()
-    return mark, tag, color
+    return mark, color
+
+
+def _slash_label(mark: str, name: str) -> str:
+    return f"{mark} /{name}" if mark else f"/{name}"
 
 
 def _slash_display(spec: SlashSpec, index: CommandIndex) -> str:
-    mark, _, _ = _slash_cue(spec, index)
-    return f"{mark} /{spec.name}"
+    mark, _ = _slash_cue(spec, index)
+    return _slash_label(mark, spec.name)
 
 
 def _slash_completion_display(spec: SlashSpec, index: CommandIndex) -> Any:
-    """Colored slash label — glyph marks builtin vs skill vs prompt vs plugin."""
-    mark, _, color = _slash_cue(spec, index)
-    label = f"{mark} /{spec.name}"
+    """Colored slash label — glyph marks non-builtin sources."""
+    mark, color = _slash_cue(spec, index)
+    label = _slash_label(mark, spec.name)
     if not _PT:
         return label
     return HTML(f"<style fg='{color}'><b>{_escape_html(label)}</b></style>")
 
 
 def _slash_meta(spec: SlashSpec, index: CommandIndex, extra: str = "") -> str:
-    _, tag, _ = _slash_cue(spec, index)
+    """Description-first metadata for a compact completion menu."""
     desc = (spec.description or "").strip()
-    parts = [tag]
-    if spec.hint:
-        parts.append(spec.hint)
+    hint = (spec.hint or "").strip()
+    parts = [desc or hint]
     if extra:
         parts.append(extra)
-    if desc:
-        parts.append(desc)
-    return "  ".join(parts)[:80]
+    return "  ".join(part for part in parts if part)[:80]
+
+
+def _slash_completion_state(buffer: Any) -> Any | None:
+    state = getattr(buffer, "complete_state", None)
+    if state is None or not getattr(state, "completions", None):
+        return None
+    try:
+        text = buffer.document.text_before_cursor
+    except Exception:
+        return None
+    return state if text.startswith("/") else None
+
+
+def _select_first_slash_completion(buffer: Any) -> None:
+    state = _slash_completion_state(buffer)
+    if state is None or state.complete_index is not None:
+        return
+    completion = state.completions[0]
+    before = buffer.document.text_before_cursor
+    replaced = before[len(before) + completion.start_position :]
+    if replaced == completion.text:
+        return
+    state.go_to_index(0)
+
+
+def _move_slash_completion(buffer: Any, delta: int, *, wrap: bool = True) -> None:
+    state = _slash_completion_state(buffer)
+    if state is None:
+        return
+    count = len(state.completions)
+    index = state.complete_index
+    if index is None:
+        index = 0 if delta >= 0 else count - 1
+    elif wrap:
+        index = (index + delta) % count
+    else:
+        index = max(0, min(index + delta, count - 1))
+    state.go_to_index(index)
+
+
+def _apply_selected_slash_completion(buffer: Any) -> bool:
+    state = _slash_completion_state(buffer)
+    if state is None or state.complete_index is None:
+        return False
+    completion = state.current_completion
+    if completion is None:
+        return False
+    buffer.apply_completion(completion)
+    return True
 
 
 def _session_rows() -> list[tuple[str, str]]:
@@ -694,7 +744,13 @@ def make_prompt_session(
         kwargs["key_bindings"] = key_bindings
     if CompleteStyle is not None:
         kwargs["complete_style"] = CompleteStyle.COLUMN
-    return PromptSession(**kwargs)
+    session = PromptSession(**kwargs)
+
+    def _select_first(_event: Any = None) -> None:
+        _select_first_slash_completion(session.default_buffer)
+
+    session.default_buffer.on_completions_changed += _select_first
+    return session
 
 
 def make_repl_key_bindings(
@@ -825,12 +881,37 @@ def make_repl_key_bindings(
 
     not_awaiting = Condition(lambda: not _awaiting_approval())
 
+    def _slash_completion_ready() -> bool:
+        try:
+            from prompt_toolkit.application.current import get_app
+
+            return _slash_completion_state(get_app().current_buffer) is not None
+        except Exception:
+            return False
+
+    slash_completion = Condition(_slash_completion_ready)
+
+    @bindings.add("up", eager=True, filter=slash_completion)
+    def _completion_up(event) -> None:  # noqa: ANN001
+        _move_slash_completion(event.current_buffer, -1)
+
+    @bindings.add("down", eager=True, filter=slash_completion)
+    def _completion_down(event) -> None:  # noqa: ANN001
+        _move_slash_completion(event.current_buffer, 1)
+
+    @bindings.add("pageup", eager=True, filter=slash_completion)
+    def _completion_pageup(event) -> None:  # noqa: ANN001
+        _move_slash_completion(event.current_buffer, -5, wrap=False)
+
+    @bindings.add("pagedown", eager=True, filter=slash_completion)
+    def _completion_pagedown(event) -> None:  # noqa: ANN001
+        _move_slash_completion(event.current_buffer, 5, wrap=False)
+
     @bindings.add("enter", eager=True, filter=not_awaiting)
     def _submit(event) -> None:  # noqa: ANN001
-        # complete_while_typing keeps an invisible menu open; default Enter
-        # then "accepts" the completion instead of sending the line.
-        # prompt_toolkit stores this as c-m (ControlM).
+        # Accept the selected slash completion and submit in one keypress.
         buf = event.current_buffer
+        _apply_selected_slash_completion(buf)
         buf.complete_state = None
         buf.validate_and_handle()
 
@@ -838,6 +919,9 @@ def make_repl_key_bindings(
     def _tab_cycle(event) -> None:  # noqa: ANN001
         """Tab cycles slash/@ completions; Enter always sends the line."""
         buf = event.current_buffer
+        if _slash_completion_state(buf) is not None:
+            _move_slash_completion(buf, 1)
+            return
         if buf.complete_state is not None:
             buf.complete_next()
             return

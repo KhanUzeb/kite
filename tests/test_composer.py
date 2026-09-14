@@ -195,6 +195,124 @@ def test_approval_enter_empty_allows_once() -> None:
     event.app.exit.assert_called_once_with(result="a")
 
 
+def test_slash_completion_selection_is_separate_from_input() -> None:
+    from prompt_toolkit.buffer import Buffer, CompletionState
+    from prompt_toolkit.completion import Completion
+    from prompt_toolkit.document import Document
+
+    from kite.ui.complete import _move_slash_completion, _select_first_slash_completion
+
+    buffer = Buffer()
+    buffer.document = Document("/se")
+    state = CompletionState(
+        buffer.document,
+        [
+            Completion("security", start_position=-2),
+            Completion("settings", start_position=-2),
+        ],
+    )
+    buffer.complete_state = state
+
+    _select_first_slash_completion(buffer)
+    assert state.complete_index == 0
+    assert buffer.text == "/se"
+
+    _move_slash_completion(buffer, -1)
+    assert state.complete_index == 1
+    assert buffer.text == "/se"
+
+
+def test_prompt_session_wires_automatic_slash_selection(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from prompt_toolkit.completion import Completion
+
+    import kite.ui.complete as complete
+
+    class Hook:
+        callback = None
+
+        def __iadd__(self, callback):
+            self.callback = callback
+            return self
+
+    completion = Completion("security", start_position=-2)
+    state = SimpleNamespace(
+        completions=[completion],
+        complete_index=None,
+        current_completion=None,
+        go_to_index=lambda index: setattr(state, "complete_index", index),
+    )
+    buffer = SimpleNamespace(
+        complete_state=state,
+        document=SimpleNamespace(text_before_cursor="/se"),
+        on_completions_changed=Hook(),
+    )
+    session = SimpleNamespace(default_buffer=buffer)
+    monkeypatch.setattr(complete, "PromptSession", lambda **_: session)
+
+    complete.make_prompt_session(complete.SlashCompleter(lambda: None))
+    buffer.on_completions_changed.callback(None)
+
+    assert state.complete_index == 0
+
+
+def test_exact_slash_completion_does_not_leave_empty_menu_selected() -> None:
+    from prompt_toolkit.buffer import Buffer, CompletionState
+    from prompt_toolkit.completion import Completion
+    from prompt_toolkit.document import Document
+
+    from kite.ui.complete import _select_first_slash_completion
+
+    buffer = Buffer()
+    buffer.document = Document("/security")
+    state = CompletionState(
+        buffer.document,
+        [Completion("security", start_position=-8)],
+    )
+    buffer.complete_state = state
+
+    _select_first_slash_completion(buffer)
+
+    assert state.complete_index is None
+
+
+def test_enter_applies_selected_slash_completion_before_submit() -> None:
+    from types import SimpleNamespace
+
+    from prompt_toolkit.completion import Completion
+    from prompt_toolkit.keys import Keys
+
+    from kite.ui.complete import make_repl_key_bindings
+
+    completion = Completion("security", start_position=-2)
+    state = SimpleNamespace(
+        completions=[completion],
+        complete_index=0,
+        current_completion=completion,
+    )
+    applied: list[Completion] = []
+    buffer = SimpleNamespace(
+        complete_state=state,
+        document=SimpleNamespace(text_before_cursor="/se"),
+        text="/se",
+        apply_completion=applied.append,
+        validate_and_handle=MagicMock(),
+    )
+    bindings = make_repl_key_bindings()
+    enter = next(
+        binding
+        for binding in bindings.get_bindings_for_keys((Keys.ControlM,))
+        if binding.handler.__name__ == "_submit"
+    )
+
+    enter.handler(SimpleNamespace(current_buffer=buffer))
+
+    assert applied == [completion]
+    assert buffer.complete_state is None
+    buffer.validate_and_handle.assert_called_once_with()
+
+
 def test_toolbar_busy_and_approval_states() -> None:
     from kite.ui.complete import _toolbar_html
     from kite.ui.status import format_running_status
