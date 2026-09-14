@@ -90,12 +90,12 @@ def test_completion_lists_commands_and_skills_with_cues() -> None:
     plan = next(s for s in specs if s.name == "plan")
     explain = next(s for s in specs if s.name == "explain")
     commit = next(s for s in specs if s.name == "commit")
-    assert _slash_display(plan, index).startswith("· /plan")
+    assert _slash_display(plan, index) == "/plan"
     assert _slash_display(explain, index).startswith("▸ /explain")
     assert _slash_display(commit, index).startswith("◆ /commit")
-    assert _slash_meta(plan, index).startswith("cmd")
-    assert "prompt" in _slash_meta(explain, index)
-    assert _slash_meta(commit, index).startswith("skill")
+    assert _slash_meta(plan, index).startswith("Opt-in read-only")
+    assert _slash_meta(explain, index).startswith("Explain the repo")
+    assert not any(_slash_meta(spec, index).startswith(tag) for spec in specs for tag in ("cmd", "prompt", "skill"))
 
     completer = SlashCompleter(lambda: index)
     completions = list(

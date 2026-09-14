@@ -291,7 +291,7 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+L` | Clear screen |
 | `Ctrl+G` | Steer: stop and send the composer text as the next turn |
 | `Ctrl+U` | Dequeue: restore all queued messages into the composer for editing |
-| `Enter` | Send the line. While working, queues a chat follow-up |
+| `Enter` | Send the line. With an open slash menu, accept the highlighted completion first; while working, queues a chat follow-up |
 | `@path` | Inline file attach in the composer (e.g. `fix @src/foo.py`) |
 | `Ctrl+O` / `F6` | Toggle expanded tool output (`/expand`) |
 | `Ctrl+P` / `F3` | Plan mode |
@@ -302,7 +302,9 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+K` | **Textual only:** fast-path allow-once for pending approval (flash line also hints) |
 | `Ctrl+J` | **Textual only:** agents panel — active subagents, `k` to kill highlighted worker |
 | `Ctrl+\` | Toggle sidebar (sessions / crew / changes) |
-| `Tab` | Cycle slash completions (`Enter` always submits) |
+| `Tab` | Cycle slash completion selection without submitting |
+
+Slash completion menus highlight the first match automatically. `↑` / `↓` wrap through matches, Page Up/Down move by a page, and selection leaves the typed input unchanged until `Enter` accepts it.
 
 Model/provider/session pickers (`kite models --select`, `kite select`, `kite -r`, `/select`, setup, web-keys) use a **console list**. On a TTY: **↑↓**, Page Up/Down, **click or drag** a row then release to select, type to filter, type a **number** then Enter, `r` refresh, Esc/`q` cancel. CI/`KITE_TYPED_PICK=1` uses the typed prompt (`+/−` pages). Composer mouse capture is **off** by default so the welcome banner stays readable on Windows; `KITE_MOUSE=1` enables slash-menu wheel (Shift+drag to copy).
 
