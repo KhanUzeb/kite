@@ -74,7 +74,14 @@ def test_apply_diff_and_pickers(tmp_path: Path) -> None:
         assert can_scroll_pick() is False
     finally:
         monkeypatch.undo()
-    from kite.ui.pick import _posix_mouse, view_index_from_mouse
+    from kite.ui.pick import _posix_key, _posix_mouse, view_index_from_mouse
+
+    assert _posix_key("\x1b[A") == "up"
+    assert _posix_key("\x1b[B") == "down"
+    assert _posix_key("\x1bOA") == "up"
+    assert _posix_key("\x1bOB") == "down"
+    assert _posix_key("\x1b[1;5A") == "up"
+    assert _posix_key("\x1b") == "esc"
 
     assert view_index_from_mouse(mouse_y=12, item_y0=10, n_view=5) == 2
     assert view_index_from_mouse(mouse_y=9, item_y0=10, n_view=5) is None
