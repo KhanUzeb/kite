@@ -257,6 +257,32 @@ def test_prompt_session_wires_automatic_slash_selection(monkeypatch) -> None:
     assert state.complete_index == 0
 
 
+def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
+    from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
+
+    import kite.ui.complete as complete
+
+    session = complete.make_prompt_session(complete.SlashCompleter(lambda: None))
+    windows = [
+        window
+        for window in session.layout.find_all_windows()
+        if getattr(getattr(window, "content", None), "buffer", None)
+        is session.default_buffer
+    ]
+    assert windows
+    assert all(window.style == "class:composer" for window in windows)
+    assert all(window.height.min == 1 and window.height.max == 1 for window in windows)
+
+    main = session.layout.container.children[0].alternative_content
+    body = main.content
+    assert any(isinstance(child, (CompletionsMenu, MultiColumnCompletionsMenu)) for child in body.children)
+    assert all(
+        not isinstance(floating.content, (CompletionsMenu, MultiColumnCompletionsMenu))
+        for floating in main.floats
+    )
+    column_menu = next(child for child in body.children if isinstance(child, CompletionsMenu))
+    assert column_menu.content.right_margins == []
+
 def test_exact_slash_completion_does_not_leave_empty_menu_selected() -> None:
     from prompt_toolkit.buffer import Buffer, CompletionState
     from prompt_toolkit.completion import Completion

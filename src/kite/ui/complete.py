@@ -22,9 +22,10 @@ try:
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.layout.dimension import Dimension
+    from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
     from prompt_toolkit.shortcuts import CompleteStyle
     from prompt_toolkit.styles import Style
-
     _PT = True
 except Exception:  # pragma: no cover
     Completer = object  # type: ignore[misc, assignment]
@@ -236,11 +237,10 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             return
         if raw.startswith("//"):
             return
-
         body = raw[1:]
         cmd, sep, rest = body.partition(" ")
         index = self._index()
-        support = self._support()
+        support = self._support_cache or ReasoningSupport(False, False, False, False, source="none")
 
         if not sep:
             prefix = cmd.lower()
@@ -722,6 +722,55 @@ def _mouse_support_enabled() -> bool:
     return os.environ.get("KITE_MOUSE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _bound_prompt_layout(session: Any) -> None:
+    """Keep the input row compact and render completion menus below it."""
+    layout = getattr(session, "layout", None)
+    root = getattr(layout, "container", None)
+    root_children = getattr(root, "children", ())
+    if not root_children:
+        return
+
+    prompt_branch = root_children[0]
+    main = getattr(prompt_branch, "alternative_content", None)
+    body = getattr(main, "content", None)
+    body_children = list(getattr(body, "children", ()))
+    floats = list(getattr(main, "floats", ()))
+    default_buffer = getattr(session, "default_buffer", None)
+    if body is None or default_buffer is None:
+        return
+
+    buffer_index: int | None = None
+    for index, wrapper in enumerate(body_children):
+        window = getattr(wrapper, "content", None)
+        control = getattr(window, "content", None)
+        if getattr(control, "buffer", None) is default_buffer:
+            window.height = Dimension(min=1, max=1)
+            window.style = "class:composer"
+            buffer_index = index
+            break
+    if buffer_index is None:
+        return
+
+    menus: list[Any] = []
+    retained_floats: list[Any] = []
+    for floating in floats:
+        content = getattr(floating, "content", None)
+        if isinstance(content, (CompletionsMenu, MultiColumnCompletionsMenu)):
+            menus.append(content)
+        else:
+            retained_floats.append(floating)
+    for menu in menus:
+        window = getattr(menu, "content", None)
+        if window is not None:
+            window.right_margins = []
+    body.children[:] = (
+        body_children[: buffer_index + 1]
+        + menus
+        + body_children[buffer_index + 1 :]
+    )
+    main.floats[:] = retained_floats
+
+
 def make_prompt_session(
     completer: SlashCompleter,
     *,
@@ -738,13 +787,14 @@ def make_prompt_session(
         "auto_suggest": AutoSuggestFromHistory(),
         "style": prompt_style(),
         "mouse_support": _mouse_support_enabled(),
-        "reserve_space_for_menu": 12,
+        "reserve_space_for_menu": 0,
     }
     if key_bindings is not None:
         kwargs["key_bindings"] = key_bindings
     if CompleteStyle is not None:
         kwargs["complete_style"] = CompleteStyle.COLUMN
     session = PromptSession(**kwargs)
+    _bound_prompt_layout(session)
 
     def _select_first(_event: Any = None) -> None:
         _select_first_slash_completion(session.default_buffer)
