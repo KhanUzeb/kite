@@ -9,6 +9,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.padding import Padding
+from rich.panel import Panel
 from rich.text import Text
 
 from kite.agent.events import Event
@@ -34,7 +35,7 @@ from kite.ui.style import (
     cell_continuation_indent,
     make_console,
 )
-from kite.ui.theme import user_surface_styles
+from kite.ui.theme import glyph, user_surface_styles
 from kite.ui.tool_cards import (
     ToolCard,
     detail_from_args,
@@ -52,6 +53,47 @@ from kite.ui.tool_cards import (
 )
 
 _QUIET_START_TOOLS = frozenset({"read", "grep", "glob", "ls"})
+
+
+def render_startup_card(
+    *,
+    version: str,
+    provider: str,
+    model: str,
+    workspace: str,
+    context_files: list[str],
+    mode: str = "build",
+    compact: bool = False,
+) -> Panel:
+    """Branded welcome card printed once above the composer.
+
+    Pure presentation: the caller supplies every value, so this stays testable at
+    any width and never triggers provider/config work on the startup path.
+    """
+    body = Text()
+    blurb = (
+        "A lightweight coding agent for your terminal."
+        if compact
+        else "A lightweight coding agent for inspecting, editing, and verifying code."
+    )
+    body.append(blurb + "\n", style="kite.muted")
+    body.append(f"{provider}/{model}", style="kite.highlight")
+    body.append(f" · {mode} · ", style="kite.muted")
+    body.append(workspace, style="kite.muted")
+    if context_files:
+        body.append(" · ", style="kite.muted")
+        body.append(" · ".join(context_files), style="kite.muted")
+    body.append("\n")
+    body.append("/help", style="kite.brand")
+    body.append(" commands · /model switch · @file attach", style="kite.muted")
+    return Panel(
+        body,
+        title=f"{glyph('kite')} Kite {version}",
+        title_align="left",
+        border_style="kite.brand",
+        padding=(0, 1),
+        expand=True,
+    )
 
 
 def _subagent_prefix(p: dict[str, Any]) -> str:

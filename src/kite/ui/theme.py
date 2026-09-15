@@ -671,6 +671,7 @@ _UNICODE = {
     "chip_l": "╭ ",
     "chip_r": " ╮",
     "home": "~",
+    "kite": "🪁",
 }
 
 _ASCII = {
@@ -693,6 +694,7 @@ _ASCII = {
     "chip_l": "[ ",
     "chip_r": " ]",
     "home": "~",
+    "kite": "~",
 }
 
 FONTS: dict[str, dict[str, str]] = {"unicode": _UNICODE, "ascii": _ASCII}
