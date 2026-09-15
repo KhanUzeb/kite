@@ -108,6 +108,66 @@ def test_quiet_inspect_tools_skip_running_row() -> None:
     assert "read" in plain
 
 
+def _render_card(
+    width: int,
+    *,
+    provider: str = "chatgpt",
+    model: str = "gpt-5.6-luna",
+    workspace: str = "kite",
+    context: list[str] | None = None,
+) -> str:
+    from kite.ui.render import render_startup_card
+
+    buf = StringIO()
+    Console(file=buf, width=width, theme=KITE_THEME).print(
+        render_startup_card(
+            version="0.9.8.5",
+            provider=provider,
+            model=model,
+            workspace=workspace,
+            context_files=list(context or []),
+            compact=width < 60,
+        )
+    )
+    return strip_ansi(buf.getvalue())
+
+
+def test_startup_card_shows_identity_and_adapts_to_width() -> None:
+    wide = _render_card(100, context=["AGENTS.md"])
+    for token in (
+        "🪁 Kite 0.9.8.5",
+        "chatgpt/gpt-5.6-luna",
+        "build",
+        "kite",
+        "AGENTS.md",
+        "/help",
+        "/model",
+        "@file",
+    ):
+        assert token in wide, token
+    assert "inspecting, editing, and verifying" in wide
+
+    # Narrow terminals shorten the blurb instead of rewrapping the wide one.
+    narrow = _render_card(50)
+    assert "for your terminal." in narrow
+    assert "inspecting, editing, and verifying" not in narrow
+    for line in narrow.splitlines():
+        assert len(line) <= 50
+
+    # Missing configuration renders an em dash, not an empty field.
+    assert "—/gpt-5.6-luna" in _render_card(100, provider="—")
+
+
+def test_startup_card_omits_context_separator_when_no_files() -> None:
+    line = next(
+        ln for ln in _render_card(100, provider="groq", model="llama", workspace="demo").splitlines()
+        if "groq/llama" in ln
+    )
+    # No dangling separator: the workspace is the last field on the line.
+    assert "demo" in line and "demo ·" not in line
+    assert line.split("demo", 1)[1].strip(" │") == ""
+
+
 def test_theme_palettes_and_status() -> None:
     reset_prefs(theme="auto", font="unicode")
     for name in ("monochrome", "catppuccin", "ember", "forest", "hues", "transparent"):

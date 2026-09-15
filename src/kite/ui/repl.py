@@ -33,7 +33,7 @@ from kite.ui.complete import (
 from kite.ui.empty import render_empty
 from kite.ui.git import GitCheckpoints
 from kite.ui.inbox import MessageInbox
-from kite.ui.render import RunDisplay, render_compact_boundary
+from kite.ui.render import RunDisplay, render_compact_boundary, render_startup_card
 from kite.ui.state import SessionUiState
 from kite.ui.status import render_status
 from kite.ui.style import SYMBOL_FAIL, SYMBOL_PROMPT, make_console
@@ -271,21 +271,17 @@ class ChatSession:
         for name in ("AGENTS.md", "KITE.md", "CLAUDE.md"):
             if (cwd / name).is_file():
                 context_bits.append(name)
-        banner = Text()
-        banner.append("kite", style="kite.brand")
-        banner.append(f" {__version__}", style="kite.muted")
-        banner.append(" · ", style="kite.muted")
-        banner.append(f"{prov}/{mod}", style="kite.highlight")
-        banner.append(" · ", style="kite.muted")
-        banner.append(cwd.name or str(cwd), style="kite.muted")
-        self.console.print(banner)
-
-        hints = Text()
-        hints.append("/help", style="kite.brand")
-        hints.append("  /hotkeys  !cmd  @file  kite -c  kite -r", style="kite.muted")
-        self.console.print(hints)
-        if context_bits:
-            self.console.print("[kite.muted]" + " · ".join(context_bits) + "[/]")
+        self.console.print(
+            render_startup_card(
+                version=__version__,
+                provider=prov,
+                model=mod,
+                workspace=cwd.name or str(cwd),
+                context_files=context_bits,
+                mode=self.state.mode.value,
+                compact=self.console.width < 60,
+            )
+        )
 
         status = assess_setup_status_fast(provider=self.provider, model=self.model)
         if is_first_run(status):

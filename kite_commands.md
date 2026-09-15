@@ -25,7 +25,7 @@ Prefix `//` if you need a natural-language line that starts with `/`.
 
 `kite --help` lists the full command surface. `chat` and `exec` are first-class (exec is the CI one-shot).
 
-**Interactive session:** `kite` is a lean Pi-style REPL (Rich + prompt_toolkit): one-line header, composer, footer.
+**Interactive session:** `kite` is a lean Pi-style REPL (Rich + prompt_toolkit): a branded startup card (logo, version, provider/model, workspace, project instruction files), the composer, and the footer.
 
 Pi-shaped shortcuts:
 
