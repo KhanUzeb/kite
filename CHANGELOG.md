@@ -4,6 +4,10 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+### Removed
+- Optional Textual TUI (`kite/ui/textual/`, `KITE_TUI=1`, `kite[tui]` extra) — the Rich + prompt_toolkit REPL is the only interface.
+- Retired `/fullscreen` slash command and Textual-only shortcuts (`Ctrl+K`, `Ctrl+J`, `Ctrl+\`).
+
 ## [0.9.8.5] - 2026-09-13
 
 ### Changed

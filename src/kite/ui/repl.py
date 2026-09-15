@@ -33,7 +33,7 @@ from kite.ui.complete import (
 from kite.ui.empty import render_empty
 from kite.ui.git import GitCheckpoints
 from kite.ui.inbox import MessageInbox
-from kite.ui.render import RunDisplay, render_compact_boundary
+from kite.ui.render import RunDisplay, render_compact_boundary, render_startup_card
 from kite.ui.state import SessionUiState
 from kite.ui.status import render_status
 from kite.ui.style import SYMBOL_FAIL, SYMBOL_PROMPT, make_console
@@ -88,7 +88,9 @@ class ChatSession:
         self.no_guardrails = no_guardrails
         self.role = role or "auto"
         self.long_task = long_task
-        self.console = make_console(stderr=True)
+        # prompt_toolkit's patch_stdout owns stdout while the composer redraws.
+        # Sending transcript output there prevents later redraws from erasing it.
+        self.console = make_console()
         self.state = SessionUiState(
             mode=mode,
             approval=approval or default_approval(mode),
@@ -121,9 +123,7 @@ class ChatSession:
         self._approval_resolving = False
         self._approval_wake_sent = False
         self._composer_wake = False
-        self._approval_panel_id: str | None = None
         self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
-        self._textual_app = None
         from kite.tools.jobs import JobRegistry
 
         self.jobs = JobRegistry(on_event=self._ui_event_handler)
@@ -271,21 +271,17 @@ class ChatSession:
         for name in ("AGENTS.md", "KITE.md", "CLAUDE.md"):
             if (cwd / name).is_file():
                 context_bits.append(name)
-        banner = Text()
-        banner.append("kite", style="kite.brand")
-        banner.append(f" {__version__}", style="kite.muted")
-        banner.append(" · ", style="kite.muted")
-        banner.append(f"{prov}/{mod}", style="kite.highlight")
-        banner.append(" · ", style="kite.muted")
-        banner.append(cwd.name or str(cwd), style="kite.muted")
-        self.console.print(banner)
-
-        hints = Text()
-        hints.append("/help", style="kite.brand")
-        hints.append("  /hotkeys  !cmd  @file  kite -c  kite -r", style="kite.muted")
-        self.console.print(hints)
-        if context_bits:
-            self.console.print("[kite.muted]" + " · ".join(context_bits) + "[/]")
+        self.console.print(
+            render_startup_card(
+                version=__version__,
+                provider=prov,
+                model=mod,
+                workspace=cwd.name or str(cwd),
+                context_files=context_bits,
+                mode=self.state.mode.value,
+                compact=self.console.width < 60,
+            )
+        )
 
         status = assess_setup_status_fast(provider=self.provider, model=self.model)
         if is_first_run(status):
@@ -699,11 +695,6 @@ class ChatSession:
         self.console.use_theme(rich_theme())
         if self._prompt is not None:
             self._prompt.style = prompt_style()
-        app = getattr(self, "_textual_app", None)
-        if app is not None:
-            from kite.ui.textual.themes import apply_theme_to_app
-
-            apply_theme_to_app(app)
 
     def _set_theme(self, raw: str) -> None:
         from kite.ui.theme import THEME_NAMES, set_theme, theme_label
@@ -1193,7 +1184,7 @@ class ChatSession:
             ),
             action_slot=self._composer_action,
         )
-        self._prompt = make_prompt_session(completer, key_bindings=bindings)
+        self._prompt = make_prompt_session(completer, key_bindings=bindings, state=self.state)
         return self._prompt
 
     def _read_input_rich(self) -> str | None:
@@ -1431,7 +1422,6 @@ class ChatSession:
             "home": self._slash_home,
             "theme": self._set_theme,
             "font": self._set_font,
-            "fullscreen": self._slash_fullscreen,
         }
         self._slash_handler_map = handlers
         return handlers
@@ -1491,14 +1481,6 @@ class ChatSession:
                 f"I ran this shell command in the workspace:\n\n```\n{command}\n```\n\n"
                 f"Output (exit {completed.returncode}):\n\n```\n{preview}\n```"
             )
-
-    def _slash_fullscreen(self, _arg: str) -> None:
-        if self._textual_app is not None:
-            self.console.print("[kite.muted]fullscreen workbench retired[/]  ·  Ctrl+\\ sidebar")
-            return
-        self.console.print(
-            "[kite.muted]lean CLI is the default[/]  ·  optional TUI: KITE_TUI=1 with kite[tui]"
-        )
 
     def _slash_plan(self, _arg: str) -> None:
         self._apply_plan_mode()
@@ -2788,11 +2770,7 @@ class ChatSession:
             self._session_id = harness.last_session.id
             self._sync_goal_to_session()
 
-    def _run_task_textual(self, task: str) -> None:
-        """Run one turn under the Textual app (no prompt_toolkit composer)."""
-        self._run_task(task, textual=True)
-
-    def _run_task(self, task: str, *, textual: bool = False) -> None:
+    def _run_task(self, task: str) -> None:
         from kite.ui.attach import collect_turn_attachments
 
         try:
@@ -2839,7 +2817,8 @@ class ChatSession:
         continues_used = 0
         run_task = task
         box: dict = {}
-        session = None if textual else self._ensure_prompt()
+        session = self._ensure_prompt()
+        self.display.composer_owns_input = session is not None
 
         def _slash_busy_hint() -> None:
             self._flash_note("Enter queues · Esc stop · Ctrl+G steer")
@@ -2872,9 +2851,7 @@ class ChatSession:
                     self._wake_composer()
 
             threading.Thread(target=worker, daemon=True, name="kite-turn").start()
-            if textual and self._textual_app is not None:
-                self._textual_app.wait_for_turn(done)
-            elif session is not None:
+            if session is not None:
                 read_repl_busy_composer(
                     session=session,
                     state=self.state,
@@ -2997,6 +2974,8 @@ class ChatSession:
         self.state.busy = False
         self.state.clear_running()
         self.display.close()
+        extra = box.get("result") or {}
+        self.display.finish_composer_turn(extra)
         self._harness = None
         self._bind_session(harness)
         if box.get("err") is not None:
@@ -3006,7 +2985,6 @@ class ChatSession:
             return
         self.attachments = []
         self._sync_attach_count()
-        extra = box.get("result") or {}
         if extra.get("exit_status") == "Interrupted" or box.get("interrupted"):
             self.state.interrupted = True
             self.console.print("[kite.muted]session kept[/]  — type to continue, Ctrl+G after a stop to steer")
@@ -3053,14 +3031,6 @@ class ChatSession:
                 pass
 
     def run(self) -> int:
-        from kite.ui.tui_gate import should_use_textual_tui
-
-        if should_use_textual_tui():
-            from kite.ui.textual.run import run_textual_session
-
-            self._maybe_prompt_project_trust()
-            return run_textual_session(self)
-
         from kite.ui.git import git_branch
 
         self.state.git_branch = git_branch(self.cwd)
@@ -3074,6 +3044,7 @@ class ChatSession:
         if self.initial_prompt:
             opening = self.initial_prompt
             self.initial_prompt = None
+            self.display.print_user_turn(opening)
             self._run_task(opening)
 
         while True:
@@ -3085,8 +3056,6 @@ class ChatSession:
                 line = self._inbox.dequeue()
                 assert line is not None
                 self._sync_queue_count()
-                preview = line[:80] + ("…" if len(line) > 80 else "")
-                self.console.print(f"[kite.muted]› queued[/]  {preview}")
             else:
                 got = self._read_input()
                 if got.kind == "eof":
@@ -3113,5 +3082,6 @@ class ChatSession:
                     self.console.print("[kite.muted]bye[/]")
                     return 0
                 continue
+            self.display.print_user_turn(str(line))
             self._run_task(line)
         return 0

@@ -24,21 +24,7 @@ Kite streams work as it happens — tools, diffs, answers — in one fluid trans
 
 Tool output is **collapsed by default**. `Ctrl+O` or `/expand` shows full logs. The footer shows mode, model, and cost; `/status` has the rest.
 
-### Textual sidebar (`Ctrl+\`)
-
-Default interactive UI includes a Tau-style left rail:
-
-- **Sessions** — recent transcripts, current session marked
-- **Crew** — subagent workers (`/agents`, `/kill`)
-- **Changes** — `git diff` summary for the workspace
-
-```text
-Ctrl+\     toggle sidebar
-Enter      send · Alt+Enter newline
-Tab        slash / @file completion
-```
-
-Legacy Rich fullscreen workbench (`/fullscreen`) is retired — use the sidebar or `/status`.
+Legacy Rich fullscreen workbench (`/fullscreen`) is retired — use `/status`.
 
 ---
 
