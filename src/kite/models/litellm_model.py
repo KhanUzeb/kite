@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import time
+import warnings
 from collections.abc import Callable
+from contextlib import contextmanager
 from typing import Any
 
 from kite.agent.events import Event
@@ -30,6 +32,27 @@ def _as_str(value: Any) -> str:
     if isinstance(value, str):
         return value
     return ""
+
+
+@contextmanager
+def _quiet_litellm_usage_serialization():
+    """Hide LiteLLM's own ResponsesAPIResponse usage serializer warning.
+
+    LiteLLM's streaming assembler assigns a chat-style usage dict onto
+    ``ResponsesAPIResponse.usage`` (typed ``ResponseAPIUsage``) and then calls
+    ``model_dump()`` while building its standard-logging payload, so pydantic
+    emits ``PydanticSerializationUnexpectedValue`` on every turn from
+    ChatGPT-style responses providers. Kite reads token counts straight off the
+    stream chunks, so the malformed value never reaches us — this only keeps
+    dependency noise out of the transcript.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Pydantic serializer warnings",
+            category=UserWarning,
+        )
+        yield
 
 
 def extract_reasoning_and_content(delta: Any) -> tuple[str, str]:
@@ -142,6 +165,11 @@ class LitellmModel:
         return msg
 
     def _api_messages(self, messages: list[dict]) -> list[dict]:
+        answered = {
+            str(m.get("tool_call_id"))
+            for m in messages
+            if m.get("role") == "tool" and m.get("tool_call_id")
+        }
         api_messages = []
         for m in messages:
             if m.get("role") == "exit":
@@ -151,6 +179,16 @@ class LitellmModel:
                 for k, v in m.items()
                 if k in {"role", "content", "tool_calls", "tool_call_id", "name"} and v is not None
             }
+            if clean.get("role") == "assistant" and clean.get("tool_calls"):
+                # Providers that validate function-call pairing reject an
+                # assistant tool_call whose output was never recorded, so
+                # transcripts written before that pairing was fixed stay usable.
+                paired = [tc for tc in clean["tool_calls"] if str(tc.get("id")) in answered]
+                if len(paired) != len(clean["tool_calls"]):
+                    if paired:
+                        clean["tool_calls"] = paired
+                    else:
+                        clean.pop("tool_calls", None)
             if clean.get("role") == "assistant" and not clean.get("content") and not clean.get("tool_calls"):
                 continue
             api_messages.append(clean)
@@ -298,70 +336,71 @@ class LitellmModel:
         first_token = False
 
         try:
-            stream = litellm.completion(**self._completion_kwargs(messages, stream=True, overrides=overrides))
-            for chunk in stream:
-                if self.should_stop():
-                    self._emit("interrupt")
-                    break
-                usage = getattr(chunk, "usage", None)
-                if usage is not None:
-                    hidden_chunk = getattr(chunk, "_hidden_params", None) or {}
-                    self._record_usage(usage, hidden_chunk if isinstance(hidden_chunk, dict) else {})
-                    self._emit("stream_usage", **self.last_usage)
-                hidden = getattr(chunk, "_hidden_params", None) or {}
-                if isinstance(hidden, dict) and hidden.get("response_cost") is not None:
-                    cost = float(hidden.get("response_cost") or 0.0)
+            with _quiet_litellm_usage_serialization():
+                stream = litellm.completion(**self._completion_kwargs(messages, stream=True, overrides=overrides))
+                for chunk in stream:
+                    if self.should_stop():
+                        self._emit("interrupt")
+                        break
+                    usage = getattr(chunk, "usage", None)
+                    if usage is not None:
+                        hidden_chunk = getattr(chunk, "_hidden_params", None) or {}
+                        self._record_usage(usage, hidden_chunk if isinstance(hidden_chunk, dict) else {})
+                        self._emit("stream_usage", **self.last_usage)
+                    hidden = getattr(chunk, "_hidden_params", None) or {}
+                    if isinstance(hidden, dict) and hidden.get("response_cost") is not None:
+                        cost = float(hidden.get("response_cost") or 0.0)
 
-                choices = getattr(chunk, "choices", None) or []
-                if not choices:
-                    continue
-                delta = choices[0].delta
-                think_piece, answer_piece = extract_reasoning_and_content(delta)
-                tool_deltas = list(getattr(delta, "tool_calls", None) or [])
-                if think_piece:
-                    first_token = self._emit_first_token(
-                        started=started, channel="reasoning", seen=first_token
-                    )
-                    reasoning += think_piece
-                    self._emit("stream_reasoning", text=think_piece)
-                if answer_piece:
-                    first_token = self._emit_first_token(
-                        started=started, channel="answer", seen=first_token
-                    )
-                    content += answer_piece
-                    self._emit("stream_delta", text=answer_piece)
+                    choices = getattr(chunk, "choices", None) or []
+                    if not choices:
+                        continue
+                    delta = choices[0].delta
+                    think_piece, answer_piece = extract_reasoning_and_content(delta)
+                    tool_deltas = list(getattr(delta, "tool_calls", None) or [])
+                    if think_piece:
+                        first_token = self._emit_first_token(
+                            started=started, channel="reasoning", seen=first_token
+                        )
+                        reasoning += think_piece
+                        self._emit("stream_reasoning", text=think_piece)
+                    if answer_piece:
+                        first_token = self._emit_first_token(
+                            started=started, channel="answer", seen=first_token
+                        )
+                        content += answer_piece
+                        self._emit("stream_delta", text=answer_piece)
 
-                for tc in tool_deltas:
-                    idx = int(getattr(tc, "index", 0) or 0)
-                    slot = tool_calls_acc.setdefault(idx, {"id": None, "name": "", "arguments": ""})
-                    if getattr(tc, "id", None):
-                        slot["id"] = tc.id
-                    fn = getattr(tc, "function", None)
-                    if fn is not None:
-                        if getattr(fn, "name", None):
-                            first_token = self._emit_first_token(
-                                started=started, channel="tool", seen=first_token
-                            )
-                            slot["name"] = (slot["name"] or "") + fn.name
-                            self._emit(
-                                "stream_tool",
-                                index=idx,
-                                name=slot["name"],
-                                partial_args=slot["arguments"],
-                                phase="name",
-                            )
-                        if getattr(fn, "arguments", None):
-                            first_token = self._emit_first_token(
-                                started=started, channel="tool", seen=first_token
-                            )
-                            slot["arguments"] += fn.arguments
-                            self._emit(
-                                "stream_tool",
-                                index=idx,
-                                name=slot["name"],
-                                partial_args=slot["arguments"],
-                                phase="args",
-                            )
+                    for tc in tool_deltas:
+                        idx = int(getattr(tc, "index", 0) or 0)
+                        slot = tool_calls_acc.setdefault(idx, {"id": None, "name": "", "arguments": ""})
+                        if getattr(tc, "id", None):
+                            slot["id"] = tc.id
+                        fn = getattr(tc, "function", None)
+                        if fn is not None:
+                            if getattr(fn, "name", None):
+                                first_token = self._emit_first_token(
+                                    started=started, channel="tool", seen=first_token
+                                )
+                                slot["name"] = (slot["name"] or "") + fn.name
+                                self._emit(
+                                    "stream_tool",
+                                    index=idx,
+                                    name=slot["name"],
+                                    partial_args=slot["arguments"],
+                                    phase="name",
+                                )
+                            if getattr(fn, "arguments", None):
+                                first_token = self._emit_first_token(
+                                    started=started, channel="tool", seen=first_token
+                                )
+                                slot["arguments"] += fn.arguments
+                                self._emit(
+                                    "stream_tool",
+                                    index=idx,
+                                    name=slot["name"],
+                                    partial_args=slot["arguments"],
+                                    phase="args",
+                                )
         except Exception:
             self._emit("stream_end", ok=False)
             raise
@@ -386,7 +425,8 @@ class LitellmModel:
             provider=self.resolved.provider,
             model=self.resolved.model,
         )
-        response = litellm.completion(**self._completion_kwargs(messages, stream=False, overrides=overrides))
+        with _quiet_litellm_usage_serialization():
+            response = litellm.completion(**self._completion_kwargs(messages, stream=False, overrides=overrides))
         choice = response.choices[0]
         message = choice.message
         usage = getattr(response, "usage", None)

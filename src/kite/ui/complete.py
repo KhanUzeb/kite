@@ -20,11 +20,15 @@ try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
     from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.filters import Condition
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+    from prompt_toolkit.layout.dimension import Dimension
+    from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
     from prompt_toolkit.shortcuts import CompleteStyle
     from prompt_toolkit.styles import Style
-
     _PT = True
 except Exception:  # pragma: no cover
     Completer = object  # type: ignore[misc, assignment]
@@ -46,6 +50,10 @@ class ComposerResult:
 BUSY_SAFE_SLASHES = frozenset(
     {"tasks", "task", "status", "help", "jobs", "agents", "h", "?", "approve"}
 )
+
+# Aliases that earn their own completion row. Canonical command keeps the handler,
+# so `/exit` stays an alias of `/quit` while remaining discoverable in the menu.
+DISCOVERABLE_ALIASES: tuple[tuple[str, str], ...] = (("exit", "quit"),)
 
 _APPROVAL_CHOICES = {
     "a": "allow",
@@ -236,11 +244,10 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             return
         if raw.startswith("//"):
             return
-
         body = raw[1:]
         cmd, sep, rest = body.partition(" ")
         index = self._index()
-        support = self._support()
+        support = self._support_cache or ReasoningSupport(False, False, False, False, source="none")
 
         if not sep:
             prefix = cmd.lower()
@@ -262,6 +269,21 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                     start_position=-len(cmd),
                     display=_slash_completion_display(spec, index),
                     display_meta=_slash_meta(spec, index, extra),
+                )
+            for alias, canonical in DISCOVERABLE_ALIASES:
+                if alias in seen:
+                    continue
+                if prefix and not alias.startswith(prefix):
+                    continue
+                alias_spec = index.specs.get(canonical)
+                if alias_spec is None:
+                    continue
+                seen.add(alias)
+                yield Completion(
+                    alias,
+                    start_position=-len(cmd),
+                    display=_slash_completion_display(alias_spec, index, name=alias),
+                    display_meta=_slash_meta(alias_spec, index),
                 )
             return
 
@@ -446,53 +468,103 @@ def _slash_origin(spec: SlashSpec, index: CommandIndex) -> str:
     return spec.source or "other"
 
 
-_SLASH_CUES: dict[str, tuple[str, str, str]] = {
-    # origin: (prefix glyph, right-column tag, color)
-    "builtin": ("·", "cmd", ""),
-    "prompt-bundled": ("▸", "prompt", "#7aa2f7"),
-    "prompt-user": ("▸", "prompt · you", "#9ece6a"),
-    "prompt-project": ("▸", "prompt · repo", "#9ece6a"),
-    "skill-bundled": ("◆", "skill", "#e0af68"),
-    "skill-user": ("◆", "skill · you", "#9ece6a"),
-    "skill-project": ("◆", "skill · repo", "#9ece6a"),
-    "skill-plugin": ("◈", "skill · plug", "#bb9af7"),
-    "plugin": ("◈", "plug", "#bb9af7"),
+_SLASH_CUES: dict[str, tuple[str, str]] = {
+    # origin: (prefix glyph, color)
+    "builtin": ("", ""),
+    "prompt-bundled": ("▸", "#7aa2f7"),
+    "prompt-user": ("▸", "#9ece6a"),
+    "prompt-project": ("▸", "#9ece6a"),
+    "skill-bundled": ("◆", "#e0af68"),
+    "skill-user": ("◆", "#9ece6a"),
+    "skill-project": ("◆", "#9ece6a"),
+    "skill-plugin": ("◈", "#bb9af7"),
+    "plugin": ("◈", "#bb9af7"),
 }
 
 
-def _slash_cue(spec: SlashSpec, index: CommandIndex) -> tuple[str, str, str]:
+def _slash_cue(spec: SlashSpec, index: CommandIndex) -> tuple[str, str]:
     origin = _slash_origin(spec, index)
-    mark, tag, color = _SLASH_CUES.get(origin, ("·", origin, "#888888"))
+    mark, color = _SLASH_CUES.get(origin, ("·", "#888888"))
     if origin == "builtin":
         color = brand_fg()
-    return mark, tag, color
+    return mark, color
+
+
+def _slash_label(mark: str, name: str) -> str:
+    return f"{mark} /{name}" if mark else f"/{name}"
 
 
 def _slash_display(spec: SlashSpec, index: CommandIndex) -> str:
-    mark, _, _ = _slash_cue(spec, index)
-    return f"{mark} /{spec.name}"
+    mark, _ = _slash_cue(spec, index)
+    return _slash_label(mark, spec.name)
 
 
-def _slash_completion_display(spec: SlashSpec, index: CommandIndex) -> Any:
-    """Colored slash label — glyph marks builtin vs skill vs prompt vs plugin."""
-    mark, _, color = _slash_cue(spec, index)
-    label = f"{mark} /{spec.name}"
+def _slash_completion_display(spec: SlashSpec, index: CommandIndex, *, name: str | None = None) -> Any:
+    """Colored slash label — glyph marks non-builtin sources."""
+    mark, color = _slash_cue(spec, index)
+    label = _slash_label(mark, name or spec.name)
     if not _PT:
         return label
     return HTML(f"<style fg='{color}'><b>{_escape_html(label)}</b></style>")
 
 
 def _slash_meta(spec: SlashSpec, index: CommandIndex, extra: str = "") -> str:
-    _, tag, _ = _slash_cue(spec, index)
+    """Description-first metadata for a compact completion menu."""
     desc = (spec.description or "").strip()
-    parts = [tag]
-    if spec.hint:
-        parts.append(spec.hint)
+    hint = (spec.hint or "").strip()
+    parts = [desc or hint]
     if extra:
         parts.append(extra)
-    if desc:
-        parts.append(desc)
-    return "  ".join(parts)[:80]
+    return "  ".join(part for part in parts if part)[:80]
+
+
+def _slash_completion_state(buffer: Any) -> Any | None:
+    state = getattr(buffer, "complete_state", None)
+    if state is None or not getattr(state, "completions", None):
+        return None
+    try:
+        text = buffer.document.text_before_cursor
+    except Exception:
+        return None
+    return state if text.startswith("/") else None
+
+
+def _select_first_slash_completion(buffer: Any) -> None:
+    state = _slash_completion_state(buffer)
+    if state is None or state.complete_index is not None:
+        return
+    completion = state.completions[0]
+    before = buffer.document.text_before_cursor
+    replaced = before[len(before) + completion.start_position :]
+    if replaced == completion.text:
+        return
+    state.go_to_index(0)
+
+
+def _move_slash_completion(buffer: Any, delta: int, *, wrap: bool = True) -> None:
+    state = _slash_completion_state(buffer)
+    if state is None:
+        return
+    count = len(state.completions)
+    index = state.complete_index
+    if index is None:
+        index = 0 if delta >= 0 else count - 1
+    elif wrap:
+        index = (index + delta) % count
+    else:
+        index = max(0, min(index + delta, count - 1))
+    state.go_to_index(index)
+
+
+def _apply_selected_slash_completion(buffer: Any) -> bool:
+    state = _slash_completion_state(buffer)
+    if state is None or state.complete_index is None:
+        return False
+    completion = state.current_completion
+    if completion is None:
+        return False
+    buffer.apply_completion(completion)
+    return True
 
 
 def _session_rows() -> list[tuple[str, str]]:
@@ -641,16 +713,19 @@ def _toolbar_html(state: SessionUiState) -> Any:
         f"<style fg='{ui.muted}'> {glyph('sep')} {_escape_html(tail)}{flash}{hints}</style>"
     )
     lines: list[str] = []
-    if state.busy:
-        running = format_running_status(state)
-        if running:
-            lines.append(
-                f"<style fg='{ui.accent}'>●</style>"
-                f"<style fg='{ui.muted}'> {_escape_html(running)}</style>"
-            )
     lines.append(main)
     return HTML("\n".join(lines))
-
+def _activity_html(state: SessionUiState) -> Any:
+    if not state.busy:
+        return ""
+    running = format_running_status(state)
+    if not running:
+        return ""
+    ui = ui_colors()
+    return HTML(
+        f"<style fg='{ui.accent}'>●</style>"
+        f"<style fg='{ui.muted}'> {_escape_html(running)}</style>"
+    )
 
 def _escape_html(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -672,10 +747,93 @@ def _mouse_support_enabled() -> bool:
     return os.environ.get("KITE_MOUSE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _bound_prompt_layout(session: Any, state: SessionUiState | None = None) -> None:
+    """Keep the input row compact and render completion menus below it."""
+    layout = getattr(session, "layout", None)
+    root = getattr(layout, "container", None)
+    root_children = getattr(root, "children", ())
+    if not root_children:
+        return
+
+    prompt_branch = root_children[0]
+    main = getattr(prompt_branch, "alternative_content", None)
+    body = getattr(main, "content", None)
+    body_children = list(getattr(body, "children", ()))
+    floats = list(getattr(main, "floats", ()))
+    default_buffer = getattr(session, "default_buffer", None)
+    if body is None or default_buffer is None:
+        return
+
+    buffer_index: int | None = None
+    input_wrapper: Any | None = None
+    for index, wrapper in enumerate(body_children):
+        window = getattr(wrapper, "content", None)
+        control = getattr(window, "content", None)
+        if getattr(control, "buffer", None) is default_buffer:
+            window.height = Dimension(min=1, max=1)
+            window.style = "class:composer"
+            buffer_index = index
+            input_wrapper = wrapper
+            break
+    if buffer_index is None or input_wrapper is None:
+        return
+    menus: list[Any] = []
+    retained_floats: list[Any] = []
+    for floating in floats:
+        content = getattr(floating, "content", None)
+        if isinstance(content, (CompletionsMenu, MultiColumnCompletionsMenu)):
+            menus.append(content)
+        else:
+            retained_floats.append(floating)
+    for menu in menus:
+        window = getattr(menu, "content", None)
+        if window is not None:
+            window.right_margins = []
+    # One blank row above and below the live activity line keeps it visually
+    # detached from the transcript above and the composer box below. Spacers
+    # stay unpainted — no `class:composer`, or they would read as box padding.
+    activity_line = Window(
+        content=FormattedTextControl(
+            lambda: _activity_html(state) if state is not None else ""
+        ),
+        height=1,
+        style="class:activity",
+        dont_extend_height=True,
+    )
+    activity = ConditionalContainer(
+        content=HSplit(
+            [
+                Window(height=1, dont_extend_height=True),
+                activity_line,
+                Window(height=1, dont_extend_height=True),
+            ],
+            height=Dimension(min=3, max=3),
+        ),
+        filter=Condition(lambda: bool(state is not None and state.busy)),
+    )
+    composer = HSplit(
+        [
+            Window(height=1, char=" ", style="class:composer"),
+            input_wrapper,
+            Window(height=1, char=" ", style="class:composer"),
+        ],
+        height=Dimension(min=3, max=3),
+    )
+    body.children[:] = (
+        body_children[:buffer_index]
+        + [activity, composer]
+        + menus
+        + body_children[buffer_index + 1 :]
+    )
+    main.floats[:] = retained_floats
+
+
+
 def make_prompt_session(
     completer: SlashCompleter,
     *,
     key_bindings: Any | None = None,
+    state: SessionUiState | None = None,
 ) -> Any:
     if not _PT:
         return None
@@ -688,13 +846,21 @@ def make_prompt_session(
         "auto_suggest": AutoSuggestFromHistory(),
         "style": prompt_style(),
         "mouse_support": _mouse_support_enabled(),
-        "reserve_space_for_menu": 12,
+        "reserve_space_for_menu": 0,
+        "erase_when_done": True,
     }
     if key_bindings is not None:
         kwargs["key_bindings"] = key_bindings
     if CompleteStyle is not None:
         kwargs["complete_style"] = CompleteStyle.COLUMN
-    return PromptSession(**kwargs)
+    session = PromptSession(**kwargs)
+    _bound_prompt_layout(session, state)
+
+    def _select_first(_event: Any = None) -> None:
+        _select_first_slash_completion(session.default_buffer)
+
+    session.default_buffer.on_completions_changed += _select_first
+    return session
 
 
 def make_repl_key_bindings(
@@ -825,12 +991,37 @@ def make_repl_key_bindings(
 
     not_awaiting = Condition(lambda: not _awaiting_approval())
 
+    def _slash_completion_ready() -> bool:
+        try:
+            from prompt_toolkit.application.current import get_app
+
+            return _slash_completion_state(get_app().current_buffer) is not None
+        except Exception:
+            return False
+
+    slash_completion = Condition(_slash_completion_ready)
+
+    @bindings.add("up", eager=True, filter=slash_completion)
+    def _completion_up(event) -> None:  # noqa: ANN001
+        _move_slash_completion(event.current_buffer, -1)
+
+    @bindings.add("down", eager=True, filter=slash_completion)
+    def _completion_down(event) -> None:  # noqa: ANN001
+        _move_slash_completion(event.current_buffer, 1)
+
+    @bindings.add("pageup", eager=True, filter=slash_completion)
+    def _completion_pageup(event) -> None:  # noqa: ANN001
+        _move_slash_completion(event.current_buffer, -5, wrap=False)
+
+    @bindings.add("pagedown", eager=True, filter=slash_completion)
+    def _completion_pagedown(event) -> None:  # noqa: ANN001
+        _move_slash_completion(event.current_buffer, 5, wrap=False)
+
     @bindings.add("enter", eager=True, filter=not_awaiting)
     def _submit(event) -> None:  # noqa: ANN001
-        # complete_while_typing keeps an invisible menu open; default Enter
-        # then "accepts" the completion instead of sending the line.
-        # prompt_toolkit stores this as c-m (ControlM).
+        # Accept the selected slash completion and submit in one keypress.
         buf = event.current_buffer
+        _apply_selected_slash_completion(buf)
         buf.complete_state = None
         buf.validate_and_handle()
 
@@ -838,6 +1029,9 @@ def make_repl_key_bindings(
     def _tab_cycle(event) -> None:  # noqa: ANN001
         """Tab cycles slash/@ completions; Enter always sends the line."""
         buf = event.current_buffer
+        if _slash_completion_state(buf) is not None:
+            _move_slash_completion(buf, 1)
+            return
         if buf.complete_state is not None:
             buf.complete_next()
             return

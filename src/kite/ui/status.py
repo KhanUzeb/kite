@@ -185,24 +185,21 @@ def status_segments(state: SessionUiState) -> list[tuple[str, str]]:
     model = format_model_label(state)
     cost = f"${state.cost:.3f}"
 
-    if state.busy:
-        action = state.running_label or "working"
-        if len(action) > 48:
-            action = action[:45] + "…"
-        return [
-            (mode_label, mode_style(state)),
-            (action, "kite.highlight"),
-            (cost, "kite.muted"),
-        ]
-
-    idle = [
+    parts = [
         (mode_label, mode_style(state)),
         (model, "kite.muted"),
         (cost, "kite.muted"),
     ]
-    if state.window and state.tokens:
-        idle.append((f"ctx {state.context_pct:.0%}" if state.context_pct is not None else f"{state.tokens} tok", "kite.muted"))
-    return idle
+    if not state.busy and state.window and state.tokens:
+        parts.append(
+            (
+                f"ctx {state.context_pct:.0%}"
+                if state.context_pct is not None
+                else f"{state.tokens} tok",
+                "kite.muted",
+            )
+        )
+    return parts
 
 
 def status_detail_lines(state: SessionUiState) -> list[str]:

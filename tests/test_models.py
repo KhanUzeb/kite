@@ -97,6 +97,66 @@ def test_reasoning_fallback_preserves_session_config() -> None:
     assert model._drop_reasoning is False
 
 
+def test_api_messages_drop_unanswered_tool_calls() -> None:
+    model = object.__new__(LitellmModel)
+    projected = model._api_messages(
+        [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "answered", "type": "function", "function": {"name": "read", "arguments": "{}"}},
+                    {"id": "dangling", "type": "function", "function": {"name": "submit", "arguments": "{}"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "answered", "content": "ok"},
+            {"role": "user", "content": "next"},
+        ]
+    )
+
+    assistant = next(m for m in projected if m["role"] == "assistant")
+    assert [tc["id"] for tc in assistant["tool_calls"]] == ["answered"]
+    assert [m["role"] for m in projected] == ["user", "assistant", "tool", "user"]
+
+    emptied = model._api_messages(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "dangling", "type": "function", "function": {"name": "submit", "arguments": "{}"}}
+                ],
+            }
+        ]
+    )
+    assert emptied == []
+
+
+def test_litellm_usage_serializer_warning_is_contained() -> None:
+    import warnings
+
+    from litellm.types.llms.openai import ResponsesAPIResponse
+
+    from kite.models.litellm_model import _quiet_litellm_usage_serialization
+
+    # Same shape LiteLLM builds: a chat-style usage dict on a ResponseAPIUsage field.
+    response = ResponsesAPIResponse.model_construct(
+        id="resp_test",
+        created_at=0,
+        output=[],
+        usage={"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+    )
+    assert isinstance(response.usage, dict)
+
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        with _quiet_litellm_usage_serialization():
+            response.model_dump()
+
+    assert not [w for w in seen if "Pydantic serializer" in str(w.message)]
+
+
 def test_compaction_request_omits_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
     from kite.agent import summarize
 

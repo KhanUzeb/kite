@@ -102,6 +102,7 @@ class PaletteUi:
     muted: str
     accent: str
     placeholder: str
+    composer_bg: str
     toolbar_bg: str
     toolbar_fg: str
     completion_bg: str
@@ -114,6 +115,8 @@ class PaletteUi:
     scrollbar_btn: str
     autosuggest: str
     prompt: str
+    # Submitted user rows keep a filled band; empty on transparent themes.
+    user_bg: str
 
 
 def _dark_ui(
@@ -121,12 +124,15 @@ def _dark_ui(
     muted: str = "#555555",
     accent: str = "#c9a227",
     placeholder: str = "#4a4a4a",
+    composer_bg: str = "#30303c",
+    user_bg: str = "#262630",
     # Empty toolbar_bg → bg:default (no painted band / shadow under composer)
     toolbar_bg: str = "",
     toolbar_fg: str = "#5c5c5c",
     completion_bg: str = "#050505",
     completion_fg: str = "#b8b8b8",
-    completion_current_bg: str = "#003333",
+    # Selection uses foreground emphasis only; the composer owns the filled surface.
+    completion_current_bg: str = "#050505",
     completion_current_fg: str = "#a8ffff",
     completion_meta: str = "#555555",
     completion_meta_current: str = "#7a9a9a",
@@ -139,6 +145,7 @@ def _dark_ui(
         muted=muted,
         accent=accent,
         placeholder=placeholder,
+        composer_bg=composer_bg,
         toolbar_bg=toolbar_bg,
         toolbar_fg=toolbar_fg,
         completion_bg=completion_bg,
@@ -151,6 +158,7 @@ def _dark_ui(
         scrollbar_btn=scrollbar_btn,
         autosuggest=autosuggest,
         prompt=prompt,
+        user_bg=user_bg,
     )
 
 
@@ -159,11 +167,13 @@ def _light_ui(
     muted: str = "#666666",
     accent: str = "#9a7b0a",
     placeholder: str = "#888888",
+    composer_bg: str = "#eeeef4",
+    user_bg: str = "#e7e7ef",
     toolbar_bg: str = "#f0f0f0",
     toolbar_fg: str = "#555555",
     completion_bg: str = "#ffffff",
     completion_fg: str = "#222222",
-    completion_current_bg: str = "#d6ebff",
+    completion_current_bg: str = "#ffffff",
     completion_current_fg: str = "#000000",
     completion_meta: str = "#777777",
     completion_meta_current: str = "#444444",
@@ -176,6 +186,7 @@ def _light_ui(
         muted=muted,
         accent=accent,
         placeholder=placeholder,
+        composer_bg=composer_bg,
         toolbar_bg=toolbar_bg,
         toolbar_fg=toolbar_fg,
         completion_bg=completion_bg,
@@ -188,6 +199,7 @@ def _light_ui(
         scrollbar_btn=scrollbar_btn,
         autosuggest=autosuggest,
         prompt=prompt,
+        user_bg=user_bg,
     )
 
 
@@ -197,6 +209,8 @@ def _transparent_ui() -> PaletteUi:
         muted="#707070",
         accent="#909090",
         placeholder="#606060",
+        composer_bg="",
+        user_bg="",
         toolbar_bg="",
         toolbar_fg="#707070",
         completion_bg="",
@@ -304,7 +318,7 @@ _PALETTES: dict[str, dict[str, Any]] = {
         ui=_dark_ui(
             accent="#8a7a4a",
             toolbar_bg="#0a0a0a",
-            completion_current_bg="#1a2a2a",
+            completion_current_bg="#050505",
             completion_current_fg="#88aaaa",
         ),
     ),
@@ -336,7 +350,7 @@ _PALETTES: dict[str, dict[str, Any]] = {
         ui=_dark_ui(
             accent="#aaaaaa",
             prompt="bold",
-            completion_current_bg="#222222",
+            completion_current_bg="#050505",
             completion_current_fg="#ffffff",
         ),
     ),
@@ -380,7 +394,7 @@ _PALETTES: dict[str, dict[str, Any]] = {
             toolbar_fg="#8a8a8a",
             completion_bg="#121212",
             completion_fg="#c8c8c8",
-            completion_current_bg="#2a2a2a",
+            completion_current_bg="#121212",
             completion_current_fg="#ffffff",
             prompt="#e0e0e0 bold",
         ),
@@ -428,7 +442,7 @@ _PALETTES: dict[str, dict[str, Any]] = {
             toolbar_fg="#a6adc8",
             completion_bg="#11111b",
             completion_fg="#cdd6f4",
-            completion_current_bg="#313244",
+            completion_current_bg="#11111b",
             completion_current_fg="#89b4fa",
             completion_meta="#6c7086",
             completion_meta_current="#b4befe",
@@ -481,7 +495,7 @@ _PALETTES: dict[str, dict[str, Any]] = {
             toolbar_fg="#c8b8a8",
             completion_bg="#1a1208",
             completion_fg="#f0e0d0",
-            completion_current_bg="#3a2818",
+            completion_current_bg="#1a1208",
             completion_current_fg="#ffab40",
             completion_meta="#8a7a6a",
             completion_meta_current="#ffb347",
@@ -534,7 +548,7 @@ _PALETTES: dict[str, dict[str, Any]] = {
             toolbar_fg="#8ab88a",
             completion_bg="#0a1810",
             completion_fg="#d0f0d0",
-            completion_current_bg="#1a3828",
+            completion_current_bg="#0a1810",
             completion_current_fg="#86efac",
             completion_meta="#5a7a5a",
             completion_meta_current="#6ee7b7",
@@ -587,7 +601,7 @@ _PALETTES: dict[str, dict[str, Any]] = {
             toolbar_fg="#b0b0d0",
             completion_bg="#12121f",
             completion_fg="#e8e8ff",
-            completion_current_bg="#2a2048",
+            completion_current_bg="#12121f",
             completion_current_fg="#c4b5fd",
             completion_meta="#7a7a9a",
             completion_meta_current="#f0abfc",
@@ -657,6 +671,7 @@ _UNICODE = {
     "chip_l": "╭ ",
     "chip_r": " ╮",
     "home": "~",
+    "kite": "🪁",
 }
 
 _ASCII = {
@@ -679,6 +694,7 @@ _ASCII = {
     "chip_l": "[ ",
     "chip_r": " ]",
     "home": "~",
+    "kite": "~",
 }
 
 FONTS: dict[str, dict[str, str]] = {"unicode": _UNICODE, "ascii": _ASCII}
@@ -742,6 +758,18 @@ def ui_colors(name: str | None = None) -> PaletteUi:
     return palette(name)["ui"]
 
 
+def user_surface_styles(name: str | None = None) -> tuple[str, str, str]:
+    """Rich styles ``(body, marker, pad)`` for a submitted user row.
+
+    Literal colors only: Rich cannot resolve a theme name inside a compound
+    style definition.
+    """
+    ui = ui_colors(name)
+    if not ui.user_bg:
+        return "kite.user", "kite.muted", ""
+    return f"default on {ui.user_bg}", f"{ui.muted} on {ui.user_bg}", f"on {ui.user_bg}"
+
+
 def rich_theme(name: str | None = None) -> Theme:
     return Theme(dict(palette(name)["styles"]))
 
@@ -777,17 +805,18 @@ def _pt_bg(fg: str, bg: str, *, prefix: str = "", suffix: str = "") -> str:
 def pt_style_dict(name: str | None = None) -> dict[str, str]:
     ui = ui_colors(name)
     return {
-        "prompt": ui.prompt,
+        "composer": _pt_bg("", ui.composer_bg),
+        "prompt": _pt_bg(ui.prompt, ui.composer_bg),
         "placeholder": ui.placeholder,
         "bottom-toolbar": _pt_bg(ui.toolbar_fg, ui.toolbar_bg, prefix="noreverse "),
-        "completion-menu": _pt_bg(ui.completion_fg, ui.completion_bg),
-        "completion-menu.completion": _pt_bg(ui.completion_fg, ui.completion_bg),
+        "completion-menu": _pt_bg(ui.completion_fg, ""),
+        "completion-menu.completion": _pt_bg(ui.completion_fg, ""),
         "completion-menu.completion.current": _pt_bg(
-            ui.completion_current_fg, ui.completion_current_bg, suffix=" bold"
+            ui.completion_current_fg, "", suffix=" bold"
         ),
-        "completion-menu.meta.completion": ui.completion_meta,
-        "completion-menu.meta.completion.current": ui.completion_meta_current,
-        "completion-menu.multi-column-meta": _pt_bg(ui.completion_meta, ui.scrollbar_bg),
+        "completion-menu.meta.completion": _pt_bg(ui.completion_meta, ""),
+        "completion-menu.meta.completion.current": _pt_bg(ui.completion_meta_current, ""),
+        "completion-menu.multi-column-meta": _pt_bg(ui.completion_meta, ""),
         "scrollbar.background": _pt_bg("", ui.scrollbar_bg) if ui.scrollbar_bg else "",
         "scrollbar.button": _pt_bg("", ui.scrollbar_btn) if ui.scrollbar_btn else "",
         "auto-suggestion": ui.autosuggest,
@@ -813,8 +842,6 @@ def _normalize_theme(raw: str) -> str | None:
 
 def _normalize_font(raw: str) -> str | None:
     token = raw.strip().lower()
-    if token in FONT_NAMES:
-        return token
     aliases = {"plain": "ascii", "compat": "ascii", "default": "unicode", "utf8": "unicode", "utf-8": "unicode"}
     return aliases.get(token)
 

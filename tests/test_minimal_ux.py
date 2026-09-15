@@ -90,12 +90,12 @@ def test_completion_lists_commands_and_skills_with_cues() -> None:
     plan = next(s for s in specs if s.name == "plan")
     explain = next(s for s in specs if s.name == "explain")
     commit = next(s for s in specs if s.name == "commit")
-    assert _slash_display(plan, index).startswith("· /plan")
+    assert _slash_display(plan, index) == "/plan"
     assert _slash_display(explain, index).startswith("▸ /explain")
     assert _slash_display(commit, index).startswith("◆ /commit")
-    assert _slash_meta(plan, index).startswith("cmd")
-    assert "prompt" in _slash_meta(explain, index)
-    assert _slash_meta(commit, index).startswith("skill")
+    assert _slash_meta(plan, index).startswith("Opt-in read-only")
+    assert _slash_meta(explain, index).startswith("Explain the repo")
+    assert not any(_slash_meta(spec, index).startswith(tag) for spec in specs for tag in ("cmd", "prompt", "skill"))
 
     completer = SlashCompleter(lambda: index)
     completions = list(
@@ -110,6 +110,23 @@ def test_completion_lists_commands_and_skills_with_cues() -> None:
     assert "explain" in completion_names
     assert "commit" in completion_names
     assert "tools" in names
+
+
+def test_bare_slash_does_not_resolve_reasoning_or_auth() -> None:
+    index = CommandIndex.load(".")
+
+    def unexpected_resolution() -> None:
+        raise AssertionError("bare slash completion must not resolve a model")
+
+    completer = SlashCompleter(lambda: index, reasoning_info=unexpected_resolution)
+    completions = list(
+        completer.get_completions(
+            type("D", (), {"text_before_cursor": "/"})(),
+            None,
+        )
+    )
+
+    assert any(completion.text == "model" for completion in completions)
 
 
 def test_composer_mouse_defaults_off() -> None:
@@ -158,7 +175,7 @@ def test_status_footer_modes() -> None:
     busy = SessionUiState(mode=AgentMode.BUILD, provider="groq", model="llama", cost=0.02, busy=True)
     busy.running_label = "pytest tests/"
     segments = status_segments(busy)
-    assert segments[1][0] == "pytest tests/"
+    assert [text for text, _ in segments] == ["build", "groq/llama", "$0.020"]
 
     approval = SessionUiState(awaiting_approval="bash", awaiting_approval_mandatory=True)
     segments = status_segments(approval)

@@ -439,34 +439,28 @@ class _PosixEvents:
         self._buf = ""
 
     def __call__(self) -> str | None:
+        import os
         import select
 
-        ready, _, _ = select.select([sys.stdin], [], [], 0.5)
+        ready, _, _ = select.select([self._fd], [], [], 0.5)
         if not ready:
             return None
-        chunk = sys.stdin.read(1)
+        chunk = os.read(self._fd, 1).decode("utf-8", errors="replace")
         if not chunk:
             return "esc"
         if chunk == "\x1b":
             rest = ""
-            if select.select([sys.stdin], [], [], 0.02)[0]:
-                rest = sys.stdin.read(1)
-                if rest == "[" and select.select([sys.stdin], [], [], 0.02)[0]:
-                    rest += sys.stdin.read(1)
-                    while rest[-1].isdigit() or rest[-1] in ";<":
-                        if not select.select([sys.stdin], [], [], 0.02)[0]:
-                            break
-                        rest += sys.stdin.read(1)
+            if select.select([self._fd], [], [], 0.02)[0]:
+                rest = os.read(self._fd, 1).decode("utf-8", errors="replace")
+                if rest in {"[", "O"} and select.select([self._fd], [], [], 0.02)[0]:
+                    rest += os.read(self._fd, 1).decode("utf-8", errors="replace")
+                    if rest.startswith("["):
+                        while rest[-1].isdigit() or rest[-1] in ";<":
+                            if not select.select([self._fd], [], [], 0.02)[0]:
+                                break
+                            rest += os.read(self._fd, 1).decode("utf-8", errors="replace")
             seq = chunk + rest
-            return {
-                "\x1b[A": "up",
-                "\x1b[B": "down",
-                "\x1b[5~": "pageup",
-                "\x1b[6~": "pagedown",
-                "\x1b[H": "home",
-                "\x1b[F": "end",
-                "\x1b": "esc",
-            }.get(seq) or _posix_mouse(seq, self._drawn)
+            return _posix_key(seq) or _posix_mouse(seq, self._drawn)
         if chunk in "\r\n":
             return "enter"
         if chunk == "\x03":
@@ -487,6 +481,33 @@ class _PosixEvents:
             self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._old)
         except Exception:
             pass
+
+
+def _posix_key(seq: str) -> str | None:
+    """Decode normal and application-cursor terminal key sequences."""
+    direct = {
+        "\x1b[A": "up",
+        "\x1b[B": "down",
+        "\x1b[5~": "pageup",
+        "\x1b[6~": "pagedown",
+        "\x1b[H": "home",
+        "\x1b[F": "end",
+        "\x1bOA": "up",
+        "\x1bOB": "down",
+        "\x1bOH": "home",
+        "\x1bOF": "end",
+        "\x1b": "esc",
+    }
+    if seq in direct:
+        return direct[seq]
+    if seq.startswith("\x1b[") and seq[-1:] in {"A", "B", "H", "F"}:
+        return {
+            "A": "up",
+            "B": "down",
+            "H": "home",
+            "F": "end",
+        }[seq[-1]]
+    return None
 
 
 def _posix_mouse(seq: str, drawn: dict) -> str | None:
