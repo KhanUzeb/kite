@@ -255,10 +255,6 @@ class RunDisplay:
         self._parallel_batch: int = 0
         self._in_code_fence: bool = False
         self._fence_lang: str = ""
-        self._answer_line: str = ""
-        self._answer_line_chars: int = 0
-        self._tool_preview_at: float = 0.0
-        self._tool_preview_chars: int = 0
         self._run_tools: int = 0
         self._run_t0: float | None = None
         self._transcript_buffer: list[Any] = []
@@ -506,24 +502,6 @@ class RunDisplay:
             self._spin(False)
             self._stream_write(chunk, channel=channel)
 
-    def _maybe_flush_tool_preview(self) -> None:
-        import time
-
-        if not self._pending_tool_name:
-            return
-        partial = self._pending_tool_args
-        now = time.monotonic()
-        grown = len(partial) - self._tool_preview_chars
-        if grown < 24 and (now - self._tool_preview_at) < 0.14:
-            return
-        if not partial and (now - self._tool_preview_at) < 0.4:
-            return
-        self._tool_preview_at = now
-        self._tool_preview_chars = len(partial)
-        self._print(
-            render_stream_tool_preview(self._pending_tool_name, partial),
-            highlight=False,
-        )
 
     def _spin(self, on: bool, label: str = "thinking") -> None:
         if on and not self.quiet:
@@ -619,12 +597,8 @@ class RunDisplay:
         self.state.retry_label = ""
         self.state.reset_stream_stats()
         self.state.provider = str(p.get("provider") or self.state.provider)
-        self.state.model = str(p.get("model") or self.state.model)
-        self.state.n_calls += 1
         self._channel = None
         self._streaming = False
-        self._tool_preview_at = 0.0
-        self._tool_preview_chars = 0
         self._spin(True, "thinking")
 
     def _on_stream_first_token(self, p: dict[str, Any]) -> None:
@@ -674,7 +648,6 @@ class RunDisplay:
         elif preview:
             spin_bits.append(preview)
         self._spin(True, "  ".join(spin_bits))
-        self._maybe_flush_tool_preview()
 
     def _on_stream_end(self, p: dict[str, Any]) -> None:
         self._flush_stream_buffers()
