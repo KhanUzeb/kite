@@ -1,5 +1,5 @@
 # kite-release-version: 0.9.9
-# Windows bootstrap — fetch install.ps1 (raw) or fall back to shallow git clone.
+# Windows bootstrap - fetch install.ps1 (raw) or fall back to shallow git clone.
 #
 #   irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.ps1 | iex
 #
@@ -38,12 +38,12 @@ try {
         Write-Host "Raw download failed (private repo / 404). Falling back to git clone..." -ForegroundColor Yellow
         $repoDir = Join-Path $work "repo"
         git clone --depth 1 --branch $Branch $RepoUrl $repoDir
-        if ($LASTEXITCODE -ne 0) { throw "git clone failed — sign in to GitHub or make the repo public" }
+        if ($LASTEXITCODE -ne 0) { throw "git clone failed - sign in to GitHub or make the repo public" }
         Copy-Item (Join-Path $repoDir "scripts\install.ps1") $installPs1
     }
 
     # Forward common switches if this script was invoked as a file with args.
-    # When used via irm|iex, args are not available — default global install.
+    # When used via irm|iex, args are not available - default global install.
     & $installPs1 @args
 } finally {
     try { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue } catch { }
