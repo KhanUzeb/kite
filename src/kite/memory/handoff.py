@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from kite.context.window import COMPACTION_PREFIX, deterministic_summary, estimate_usage
+from kite.context.window import estimate_usage
 from kite.memory.context_checkpoint import save_checkpoint
+from kite.memory.continuity import context_section, first_user_text
 from kite.memory.session import Session, SessionMeta
 
 
@@ -38,27 +39,14 @@ def _extract_todos(todos: list[dict] | None) -> str:
 
 
 def _mission_from_messages(messages: list[dict], task: str) -> str:
-    for m in messages:
-        if m.get("role") == "user":
-            content = m.get("content") or ""
-            if isinstance(content, list):
-                content = " ".join(
-                    str(p.get("text") or p.get("content") or "") for p in content if isinstance(p, dict)
-                )
-            text = str(content).strip()
-            if text and not text.startswith(COMPACTION_PREFIX):
-                return text[:2000]
+    text = first_user_text(messages)
+    if text:
+        return text[:2000]
     return task or "(unknown)"
 
 
 def _context_section(messages: list[dict], *, max_chars: int = 12_000) -> str:
-    """Prefer existing compaction summary; else deterministic excerpt of recent turns."""
-    for m in messages:
-        content = str(m.get("content") or "")
-        if content.startswith(COMPACTION_PREFIX):
-            return content.removeprefix(COMPACTION_PREFIX).strip()[:max_chars]
-    tail = messages[-12:] if len(messages) > 12 else messages
-    return deterministic_summary(tail, max_chars=max_chars)
+    return context_section(messages, max_chars=max_chars)
 
 
 def build_handoff_markdown(

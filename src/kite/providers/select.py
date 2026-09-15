@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sys
+import sys  # noqa: F401  # re-exported: tests patch kite.providers.select.sys.platform
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,21 +18,10 @@ def _current_model(cfg, provider: str) -> str | None:
 
 
 def _can_use_radiolist() -> bool:
-    """Fullscreen prompt_toolkit dialogs break on Windows and inside a running REPL."""
-    if sys.platform == "win32":
-        return False
-    from kite.util.tty import is_interactive_tty
+    """Thin re-export — canonical logic lives in ``kite.ui.pick``."""
+    from kite.ui.pick import can_use_radiolist
 
-    if not is_interactive_tty():
-        return False
-    try:
-        from prompt_toolkit.application.current import get_app_or_none
-
-        if get_app_or_none() is not None:
-            return False
-    except Exception:
-        return False
-    return True
+    return can_use_radiolist()
 
 
 def _numbered_pick(
@@ -44,6 +33,7 @@ def _numbered_pick(
     noun: str,
     refreshable: bool = False,
 ) -> str | None:
+    """Thin re-export — canonical picker lives in ``kite.ui.pick``."""
     from kite.ui.pick import numbered_pick
 
     return numbered_pick(
@@ -177,11 +167,17 @@ def select_provider_interactive(
     rows = [p for p in catalog.list() if not byok_only or is_byok_provider(p)]
 
     def _sort_key(spec):
-        name = spec.name
-        oauth_rank = 0 if oauth_first and is_oauth_provider(spec) else 1
-        ready = inspect_provider_credentials(spec).usable
-        rec = RECOMMENDED_PROVIDERS.index(name) if name in RECOMMENDED_PROVIDERS else 99
-        return (oauth_rank, 0 if ready else 1, rec, name)
+        from kite.ui.pick import provider_sort_key
+
+        return provider_sort_key(
+            name=spec.name,
+            oauth_first=oauth_first,
+            is_oauth=is_oauth_provider(spec),
+            ready=inspect_provider_credentials(spec).usable,
+            recommended_index=(
+                RECOMMENDED_PROVIDERS.index(spec.name) if spec.name in RECOMMENDED_PROVIDERS else 99
+            ),
+        )
 
     rows.sort(key=_sort_key)
     values: list[tuple[str, str]] = []

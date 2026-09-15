@@ -10,6 +10,7 @@ from typing import Any
 from kite.cli.slash import CommandIndex, SlashSpec
 from kite.config import ensure_home, kite_home
 from kite.models.reasoning import ReasoningSupport
+from kite.ui.approval import APPROVAL_KEYS
 from kite.ui.attach import IMAGE_EXTS
 from kite.ui.commands import ALIASES, ARG_CHOICES
 from kite.ui.state import SessionUiState
@@ -55,13 +56,8 @@ BUSY_SAFE_SLASHES = frozenset(
 # so `/exit` stays an alias of `/quit` while remaining discoverable in the menu.
 DISCOVERABLE_ALIASES: tuple[tuple[str, str], ...] = (("exit", "quit"),)
 
-_APPROVAL_CHOICES = {
-    "a": "allow",
-    "s": "session",
-    "p": "always",
-    "n": "deny",
-    "q": "stop",
-}
+# Single source: kite.ui.approval.APPROVAL_KEYS (composer keys, panel, prompt).
+_APPROVAL_CHOICES = APPROVAL_KEYS
 
 
 def is_busy_safe_slash(line: str) -> bool:
@@ -834,6 +830,7 @@ def make_prompt_session(
     *,
     key_bindings: Any | None = None,
     state: SessionUiState | None = None,
+    output: Any | None = None,
 ) -> Any:
     if not _PT:
         return None
@@ -851,6 +848,8 @@ def make_prompt_session(
     }
     if key_bindings is not None:
         kwargs["key_bindings"] = key_bindings
+    if output is not None:
+        kwargs["output"] = output
     if CompleteStyle is not None:
         kwargs["complete_style"] = CompleteStyle.COLUMN
     session = PromptSession(**kwargs)

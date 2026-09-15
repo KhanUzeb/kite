@@ -52,6 +52,28 @@ Project memory for Kite. Read on every session. Keep it short.
 """
 
 
+def _resume_exe() -> str:
+    """Executable name for copy-pasteable resume hints — prefers installed `kite`, else argv[0] basename."""
+    import shutil
+    import sys
+    from pathlib import Path
+
+    try:
+        if shutil.which("kite"):
+            return "kite"
+    except Exception:
+        pass
+    try:
+        raw = (sys.argv[0] or "").strip() if sys.argv else ""
+        if raw:
+            name = Path(raw).name.strip()
+            if name and len(name) <= 64 and all(c.isalnum() or c in "._-" for c in name):
+                return name
+    except Exception:
+        pass
+    return "kite"
+
+
 class ChatSession:
     def __init__(
         self,
@@ -397,18 +419,19 @@ class ChatSession:
         self.state.touch()
 
     def _handle_slash_while_busy(self, raw: str) -> None:
-        parsed = resolve_slash(raw, self._index())
-        if parsed.kind == "unknown":
-            self._flash_note(parsed.message or "unknown command")
+        """Busy-turn slash gate — classification owned by ui.complete (single BUSY_SAFE set)."""
+        from kite.ui.complete import classify_busy_line
+
+        decision = classify_busy_line(raw)
+        if decision.kind == "busy_slash":
+            self._handle_slash(decision.text)
             return
-        cmd, arg = parsed.command, parsed.arg
-        cmd, arg = self._apply_legacy_slash(cmd, arg, parsed.legacy)
-        cmd, arg = self._normalize_slash_cmd(cmd, arg)
-        safe = {"tasks", "task", "status", "help", "jobs", "approve"}
-        if cmd not in safe:
-            self._flash_note("still working — /tasks · /status · /help · /jobs · /approve")
-            return
-        self._handle_slash(raw, parsed)
+        if decision.kind == "slash":
+            parsed = resolve_slash(raw, self._index())
+            if parsed.kind == "unknown":
+                self._flash_note(parsed.message or "unknown command")
+                return
+        self._flash_note("still working — /tasks · /status · /help · /jobs · /approve")
 
     def _prompt_app_running(self) -> bool:
         session = self._prompt
@@ -734,7 +757,8 @@ class ChatSession:
 
     def _pick_session(self, title: str, *, query: str = "", show_table: bool = True) -> str | None:
         from kite.memory.session import list_sessions
-        from kite.memory.session_format import render_sessions_table, session_pick_items
+        from kite.memory.session_format import session_pick_items
+        from kite.ui.tables import render_sessions_table
 
         rows = list_sessions(limit=30, query=query)
         if not rows:
@@ -752,7 +776,7 @@ class ChatSession:
 
     def _print_sessions_list(self, query: str = "") -> None:
         from kite.memory.session import list_sessions
-        from kite.memory.session_format import render_sessions_table
+        from kite.ui.tables import render_sessions_table
 
         rows = list_sessions(limit=30, query=query.strip())
         title = "Sessions"
@@ -1027,8 +1051,6 @@ class ChatSession:
             return "memory", "episodic"
         if legacy == "cost":
             return "status", arg
-        if legacy == "collapse":
-            return "collapse", arg
         if legacy == "fast":
             return "thinking", arg or "low"
         return cmd, arg
@@ -1335,14 +1357,8 @@ class ChatSession:
         threading.Thread(target=_warm, name="kite-prewarm", daemon=True).start()
 
     def _normalize_slash_cmd(self, cmd: str, arg: str) -> tuple[str, str]:
-        if cmd == "mode" and arg in {"plan", "build"}:
-            return arg, ""
-        if cmd == "new":
-            return "clear", arg
-        if cmd == "sessions" and not arg:
-            return "session", "list"
-        if cmd == "skill" and not arg:
-            return "skills", ""
+        # Aliases (new/sessions/skill/mode) already resolve via
+        # ui.commands.ALIASES / parse_slash before dispatch — pass through.
         return cmd, arg
 
     def _slash_handlers(self) -> dict[str, Callable[[str], None]]:
@@ -1358,8 +1374,6 @@ class ChatSession:
             "build": self._slash_build,
             "approve": self._slash_approve,
             "restricted": self._slash_restricted,
-            "sandbox": self._slash_restricted,
-            "cost": self._slash_cost,
             "expand": self._slash_expand,
             "live": self._slash_live,
             "expand-thinking": self._slash_expand_thinking,
@@ -1369,9 +1383,7 @@ class ChatSession:
             "clear": self._slash_clear,
             "init": self._slash_init,
             "login": login,
-            "signin": login,
             "logout": logout,
-            "signout": logout,
             "keys": self._show_keys,
             "setup": self._slash_setup,
             "model": self._model_cmd,
@@ -1382,20 +1394,16 @@ class ChatSession:
             "thinking": self._slash_thinking,
             "fast": self._slash_fast,
             "reasoning": self._slash_reasoning,
-            "effort": self._slash_reasoning,
             "compact": self._compact_now,
             "checkpoint": self._checkpoint_cmd,
             "handoff": self._handoff_cmd,
             "attach": self._attach_path,
             "clip": clip,
-            "clipboard": clip,
-            "paste": clip,
             "detach": self._detach,
             "attachments": self._show_attachments,
             "skills": self._show_skills,
             "skill": self._run_skill,
             "tools": self._slash_tools,
-            "tool": self._slash_tools,
             "commands": self._handle_commands,
             "plugins": self._handle_plugins,
             "memory": self._slash_memory,
@@ -1422,7 +1430,19 @@ class ChatSession:
             "home": self._slash_home,
             "theme": self._set_theme,
             "font": self._set_font,
+            # Retired workbench notice (was _slash_fullscreen).
+            "fullscreen": lambda _arg="": self.console.print(
+                "[kite.muted]fullscreen workbench retired[/]  ·  lean CLI is the default"
+            ),
         }
+        # Alias fan-out from ui.commands (sandbox/signin/signout/clipboard/paste/
+        # tool/effort/…): parse_slash already normalizes to canonicals, so every
+        # alias resolves to the same handler without listing each one here.
+        from kite.ui.commands import ALIASES
+
+        for _alias, _canonical in ALIASES.items():
+            if _alias not in handlers and _canonical in handlers:
+                handlers[_alias] = handlers[_canonical]
         self._slash_handler_map = handlers
         return handlers
 
@@ -1542,15 +1562,6 @@ class ChatSession:
         else:
             self.console.print("[kite.success]host mode[/]  use set_cwd to work elsewhere; protected paths still blocked")
         self.state.touch()
-
-    def _slash_cost(self, _arg: str) -> None:
-        pct = f"{self.state.context_pct:.0%}" if self.state.context_pct is not None else "—"
-        cache = ""
-        if self.state.cache_hit_tokens:
-            cache = f"  ·  cache {self.state.cache_hit_ratio:.0%} ({self.state.cache_hit_tokens} tok)"
-        self.console.print(
-            f"${self.state.cost:.4f}  ·  ctx {self.state.tokens}/{self.state.window or '—'} ({pct}){cache}  ·  calls {self.state.n_calls}"
-        )
 
     def _slash_expand(self, _arg: str) -> None:
         self.state.expanded_all = not self.state.expanded_all
@@ -2107,6 +2118,24 @@ class ChatSession:
         if n:
             self.console.print(f"[kite.muted]stopped {n} background job{'s' if n != 1 else ''}[/]")
 
+    def _print_resume_hint(self) -> None:
+        """Copy-pasteable resume hint on interactive exit — only when the session was actually persisted."""
+        sid = (self._session_id or "").strip()
+        if not sid:
+            return
+        try:
+            from kite.memory.session import resolve_session_path
+
+            path = resolve_session_path(sid)
+        except (FileNotFoundError, ValueError, OSError):
+            return
+        try:
+            if not path.is_file() or path.stat().st_size == 0:
+                return
+        except OSError:
+            return
+        self.console.print(f"[kite.muted]Resume this session with {_resume_exe()} resume {sid}[/]")
+
     def _slash_resume(self, arg: str) -> None:
         if not arg:
             sid = self._pick_session("Resume a session")
@@ -2231,31 +2260,9 @@ class ChatSession:
         return target, tail
 
     def _print_session(self, session, *, tail: int | None = 12) -> None:
-        from kite.memory.session_format import format_session_resume_hint
+        from kite.ui.render import render_session_transcript
 
-        meta = session.meta
-        self.console.print(f"[kite.muted]{session.id}[/]  {format_session_resume_hint(meta)}")
-        shown = session.messages if tail is None else session.messages[-tail:]
-        if not shown:
-            self.console.print("[kite.muted](empty transcript)[/]")
-            return
-        skipped = len(session.messages) - len(shown)
-        if skipped > 0:
-            self.console.print(f"[kite.muted]  … {skipped} earlier messages[/]")
-        for m in shown:
-            role = str(m.get("role") or "?")
-            content = (m.get("content") or "").replace("\n", " ").strip()
-            if len(content) > 160:
-                content = content[:160] + "…"
-            if not content:
-                extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
-                actions = extra.get("actions") if isinstance(extra, dict) else None
-                if actions:
-                    tools = ", ".join(str(a.get("tool") or "") for a in actions if isinstance(a, dict))
-                    content = f"[tools: {tools}]" if tools else "[tool call]"
-                else:
-                    content = "—"
-            self.console.print(f"  [kite.brand]{role}[/] {content}")
+        render_session_transcript(self.console, session, tail=tail)
 
     def _open_session(self, session_id: str) -> None:
         from kite.memory.session import load_session
@@ -3051,6 +3058,7 @@ class ChatSession:
             if self._quit_after_turn:
                 self._teardown_jobs()
                 self.console.print("[kite.muted]bye[/]")
+                self._print_resume_hint()
                 return 0
             if self._inbox:
                 line = self._inbox.dequeue()
@@ -3061,6 +3069,7 @@ class ChatSession:
                 if got.kind == "eof":
                     self._teardown_jobs()
                     self.console.print("\n[kite.muted]bye[/]")
+                    self._print_resume_hint()
                     return 0
                 if got.kind == "stop":
                     self.console.print("[kite.muted]nothing running[/]  — session stays open")
@@ -3080,6 +3089,7 @@ class ChatSession:
                 if not self._handle_slash(line, parsed):
                     self._teardown_jobs()
                     self.console.print("[kite.muted]bye[/]")
+                    self._print_resume_hint()
                     return 0
                 continue
             self.display.print_user_turn(str(line))

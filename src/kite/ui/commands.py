@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from kite.ui.theme import FONT_HELP, THEME_HELP
+
 Visibility = Literal["primary", "advanced"]
 
 
@@ -300,24 +302,8 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("build", "apply edits (default)"),
         ("plan", "opt-in: explore + checklist, no edits"),
     ],
-    "theme": [
-        ("auto", "follow the terminal"),
-        ("kite", "bright cyan on dark"),
-        ("dark", "near-black UI, bright cyan accents"),
-        ("light", "blue brand on light terminals"),
-        ("dim", "low-contrast"),
-        ("mono", "no color, bold errors only"),
-        ("monochrome", "grayscale with subtle contrast"),
-        ("catppuccin", "pastel mocha — lavender brand, pink accent"),
-        ("ember", "warm charcoal — amber brand, ember glow"),
-        ("forest", "deep green — moss brand, leaf accent"),
-        ("hues", "vivid accents — purple brand, rainbow tools"),
-        ("transparent", "ghost UI — terminal background shows through"),
-    ],
-    "font": [
-        ("unicode", "✓ ⚠ › — default"),
-        ("ascii", "+ ! > — plain ASCII"),
-    ],
+    "theme": [(name, THEME_HELP[name]) for name in THEME_HELP],
+    "font": [(name, FONT_HELP[name]) for name in FONT_HELP],
     "kill": [
         ("all", "kill every background job and live subagent"),
     ],

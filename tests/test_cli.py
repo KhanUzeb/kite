@@ -193,6 +193,74 @@ def test_chat_flags_rejects_and_resume(monkeypatch, tmp_path: Path, kite_home) -
     assert _resume(argparse.Namespace(session=None)) == 2
 
 
+def test_resume_renders_transcript_and_restores_context(monkeypatch, tmp_path: Path, kite_home) -> None:
+    """Issue #83: one-shot resume prints the full transcript and forwards resume context to the harness."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from kite.application.contracts import RunResult
+    from kite.cli import run as run_mod
+    from kite.cli.run import build_parser, cmd_resume
+    from kite.memory.session import Session, SessionMeta
+
+    meta = SessionMeta(
+        id="sess83", created_at=1.0, updated_at=2.0, cwd=str(tmp_path), provider="groq", model="x", task="t",
+    )
+    stored = Session(
+        meta=meta,
+        messages=[
+            {"role": "user", "content": "What is Kite?"},
+            {"role": "assistant", "content": "A coding agent."},
+            {
+                "role": "exit",
+                "content": "Submitted",
+                "extra": {"exit_status": "Submitted", "submission": "done bullets"},
+            },
+        ],
+    )
+    monkeypatch.setattr("kite.memory.session.load_session", lambda *_a, **_k: stored)
+    buf = StringIO()
+    monkeypatch.setattr(run_mod, "_console", lambda: Console(file=buf, force_terminal=False, width=200))
+    seen: dict = {}
+
+    def fake_build(**kwargs):
+        seen.update(kwargs)
+        return MagicMock()
+
+    class FakeHarness:
+        def __init__(self, config):
+            self.config = config
+
+        def subscribe(self, *_a, **_k):
+            return None
+
+        def teardown_jobs(self):
+            return None
+
+    monkeypatch.setattr("kite.agent.harness_build.build_harness_config", fake_build)
+    monkeypatch.setattr("kite.agent.harness.Harness", FakeHarness)
+    monkeypatch.setattr(
+        "kite.application.cli.execute_harness_task",
+        lambda *_a, **_k: RunResult(
+            status="completed",
+            stop_reason="submitted",
+            final_message="ok",
+            legacy={"exit_status": "Submitted", "submission": "ok"},
+        ),
+    )
+    parser = build_parser()
+    resume = parser._subparsers._group_actions[0].choices["resume"]
+    args = resume.parse_args(["sess83", "continue"])
+    args.cwd = str(tmp_path)
+    assert cmd_resume(args) == 0
+    out = buf.getvalue()
+    assert out.index("What is Kite?") < out.index("A coding agent.") < out.index("done bullets")
+    assert seen.get("resume") is True
+    assert seen.get("session_id") == "sess83"
+    assert seen.get("follow_up") == "continue"
+
+
 def test_headless_tasks_status_and_approval(monkeypatch, workspace, kite_home, capsys) -> None:
     task = parse_task_line("fix the tests", default_cwd="/tmp/ws")
     assert task and task.task == "fix the tests"

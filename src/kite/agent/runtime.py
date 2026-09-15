@@ -70,6 +70,7 @@ class RuntimeOptions:
     use_tool_executor: bool = True
     memory_in_prompt: bool = False
     goal_objective: str = ""
+    allowed_tools: list[str] | None = None  # per-worker registry allowlist (None = inherit parent)
 
 
 @dataclass
@@ -425,9 +426,17 @@ class AgentRuntime:
             glyph: str = "◆",
             provider: str = "",
             model: str = "",
+            model_role: str = "",
+            allowed_tools: list[str] | None = None,
         ) -> dict:
             from kite.agent.harness import Harness
             from kite.agent.harness_build import build_harness_config
+            from kite.agent.subagent_profiles import (
+                ROLE_MODEL_TIERS,
+                get_profile,
+                resolve_worker_model,
+                worker_tool_allowlist,
+            )
             from kite.application.cli import execute_harness_task, legacy_result_from_run
             from kite.application.policy import child_inherits_parent_policy
             from kite.providers.resolve import resolve_model
@@ -440,8 +449,16 @@ class AgentRuntime:
                 child_overrides={"mode": "plan", "approval": "readonly"},
             )
             child_role = (role or "auto").strip().lower()
+            prof = get_profile(profile) if profile else None
+            tier = (model_role or (prof.model_role if prof else "") or "coder").strip().lower()
+            if tier not in ROLE_MODEL_TIERS:
+                tier = "coder"
             child_provider = (provider or "").strip() or resolved.provider
-            child_model = (model or "").strip() or resolved.model
+            child_model = resolve_worker_model(
+                explicit_model=(model or "").strip(),
+                parent_model=resolved.model,
+                model_role=tier,
+            ) or resolved.model
             if provider or model:
                 child_resolved = resolve_model(
                     provider=child_provider or None,
@@ -450,6 +467,7 @@ class AgentRuntime:
                 )
                 child_provider = child_resolved.provider
                 child_model = child_resolved.model
+            scope = list(allowed_tools) if allowed_tools else worker_tool_allowlist(prof)
             h = Harness(
                 build_harness_config(
                     cwd=cwd,
@@ -463,8 +481,9 @@ class AgentRuntime:
                     execution_mode=str(inherited["execution_mode"]),
                     interactive=False,
                     no_context=True,
-                    label=label or "subagent",
+                    label="subagent",
                     role=child_role,
+                    allowed_tools=scope,
                 ),
                 user_config=ucfg,
             )
@@ -531,6 +550,11 @@ class AgentRuntime:
             extras.extend(make_context7_tools())
         if extras:
             tools = [*tools, *extras]
+        if self.options.allowed_tools:
+            # Per-worker least-privilege scope (Part A): restricted profiles get only their
+            # allowlisted tools. Nesting/memory tools never survive into a worker registry.
+            allow = set(self.options.allowed_tools) - {"subagent", "memory"}
+            tools = [t for t in tools if t.name in allow]
         registry = ToolRegistry(tools)
         if self.slots.env is not None:
             env = self.slots.env(cwd=cwd, registry=registry)

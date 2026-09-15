@@ -172,23 +172,15 @@ def _reformat_search(
     compact: bool,
     max_snippet_chars: int,
 ) -> dict[str, Any]:
-    from kite.tools.web_format import format_search_output, search_summary
+    """Thin wrapper over the canonical ``web_format.reformat_search_hit``."""
+    from kite.tools.web_format import reformat_search_hit
 
-    results = hit.get("results") if isinstance(hit.get("results"), list) else []
-    engine = str(hit.get("engine") or "api")
-    query = str(hit.get("query") or "")
-    source = str(hit.get("source") or "api")
-    hit["output"] = format_search_output(
-        query,
-        results,
-        engine=engine,
-        source=source,
+    return reformat_search_hit(
+        hit,
         urls_only=urls_only,
         compact=compact,
         max_snippet_chars=max_snippet_chars,
     )
-    hit["summary"] = search_summary(results, engine=engine)
-    return hit
 
 
 def search_tavily(query: str, *, max_results: int, api_key: str) -> dict[str, Any] | None:

@@ -489,6 +489,39 @@ def test_submitted_output_is_not_repeated_after_a_tool() -> None:
     assert strip_ansi(buf.getvalue()).count("Hello there") == 1
 
 
+def test_composer_turn_keeps_answer_not_just_report() -> None:
+    """Issue #81: informational answer must survive a no-change Done/Changed/Verification submit."""
+    buf = StringIO()
+    display = RunDisplay(Console(file=buf, width=80, theme=KITE_THEME), state=SessionUiState())
+    display.composer_owns_input = True
+    display(Event("agent_start", payload={"task": "tell main features of kite"}))
+    display(Event("stream_delta", payload={"text": "Kite features: fast runs"}))
+    display(Event("agent_end", payload={"exit_status": "Submitted", "submission": "## Done\n- Shared an overview"}))
+    display.finish_composer_turn()
+    plain = strip_ansi(buf.getvalue())
+    assert "Kite features: fast runs" in plain
+    assert "Shared an overview" not in plain
+
+    buf2 = StringIO()
+    busy = RunDisplay(Console(file=buf2, width=80, theme=KITE_THEME), state=SessionUiState())
+    busy.composer_owns_input = True
+    busy(Event("agent_start", payload={"task": "fix tests"}))
+    busy(Event("stream_delta", payload={"text": "Root cause was a race in auth"}))
+    busy(
+        Event(
+            "agent_end",
+            payload={
+                "exit_status": "Submitted",
+                "submission": "## Done\n- Fixed the flake",
+                "verification": {"artifact_count": 1, "diff_count": 1},
+            },
+        )
+    )
+    busy.finish_composer_turn()
+    plain2 = strip_ansi(buf2.getvalue())
+    assert "Root cause was a race in auth" in plain2 and "Done" in plain2 and "Fixed the flake" in plain2
+
+
 
 
 def test_repl_prints_each_submitted_prompt_once(monkeypatch, tmp_path, kite_home) -> None:
@@ -552,6 +585,47 @@ def test_print_session_full_transcript_on_resume(tmp_path, kite_home) -> None:
     assert "earlier messages" not in out
     assert "msg-0" in out
     assert "msg-14" in out
+
+
+def test_resume_transcript_render_order_and_kinds(tmp_path, kite_home) -> None:
+    """Issue #83: resume renders all kinds chronologically with full bodies (no silent truncation)."""
+    from kite.memory.session import Session, SessionMeta
+
+    chat = ChatSession(cwd=str(tmp_path))
+    buf = StringIO()
+    chat.console = Console(file=buf, force_terminal=False, width=400)
+    long_answer = "line-one\nline-two\n" + "y" * 300
+    meta = SessionMeta(
+        id="sess83", created_at=1.0, updated_at=2.0, cwd=str(tmp_path), provider="p", model="m", task="demo",
+    )
+    loaded = Session(
+        meta=meta,
+        messages=[
+            {"role": "user", "content": "What is Kite? Reply in three concise bullets."},
+            {
+                "role": "assistant",
+                "content": "Kite is a coding agent.",
+                "tool_calls": [
+                    {"id": "call_1", "type": "function", "function": {"name": "read", "arguments": '{"path": "a"}'}}
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "file body here"},
+            {"role": "assistant", "content": long_answer},
+            {
+                "role": "exit",
+                "content": "Submitted",
+                "extra": {"exit_status": "Submitted", "submission": "final output bullets"},
+            },
+        ],
+    )
+    chat._print_session(loaded, tail=None)
+    out = strip_ansi(buf.getvalue())
+    bits = ["What is Kite?", "Kite is a coding agent.", "read", "file body here", "line-one", "final output bullets"]
+    positions = [out.index(bit) for bit in bits]
+    assert positions == sorted(positions)
+    assert "y" * 300 in out
+    assert "line-two" in out
+    assert "…" not in out
 
 
 def test_session_show_tail_parsing(tmp_path, kite_home) -> None:

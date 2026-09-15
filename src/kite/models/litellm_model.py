@@ -320,6 +320,42 @@ class LitellmModel:
         self._emit("stream_first_token", ttft_ms=ttft_ms, channel=channel)
         return True
 
+    def _finalize_response(
+        self,
+        *,
+        content: str,
+        tool_calls_acc: dict[int, dict[str, Any]],
+        cost: float,
+        reasoning: str,
+        ttft_ms: int | None = None,
+        include_ttft: bool = False,
+    ) -> dict:
+        """Shared stream/blocking finalizer: emit ``stream_end`` + build assistant.
+
+        ``include_ttft`` preserves the historical payload difference (stream
+        emits ``ttft_ms`` even when None; blocking omits it).
+        """
+        if include_ttft:
+            self._emit(
+                "stream_end",
+                ok=True,
+                chars=len(content),
+                tools=len(tool_calls_acc),
+                reasoning_chars=len(reasoning),
+                ttft_ms=ttft_ms,
+            )
+        else:
+            self._emit(
+                "stream_end",
+                ok=True,
+                chars=len(content),
+                tools=len(tool_calls_acc),
+                reasoning_chars=len(reasoning),
+            )
+        return self._build_assistant(
+            content=content, tool_calls_acc=tool_calls_acc, cost=cost, reasoning=reasoning
+        )
+
     def _query_stream(self, messages: list[dict], *, overrides: dict[str, Any] | None = None) -> dict:
         import litellm
 
@@ -407,15 +443,14 @@ class LitellmModel:
 
         self.cost += cost
         ttft_ms = int((time.monotonic() - started) * 1000) if first_token else None
-        self._emit(
-            "stream_end",
-            ok=True,
-            chars=len(content),
-            tools=len(tool_calls_acc),
-            reasoning_chars=len(reasoning),
+        return self._finalize_response(
+            content=content,
+            tool_calls_acc=tool_calls_acc,
+            cost=cost,
+            reasoning=reasoning,
             ttft_ms=ttft_ms,
+            include_ttft=True,
         )
-        return self._build_assistant(content=content, tool_calls_acc=tool_calls_acc, cost=cost, reasoning=reasoning)
 
     def _query_blocking(self, messages: list[dict], *, overrides: dict[str, Any] | None = None) -> dict:
         import litellm
@@ -452,8 +487,7 @@ class LitellmModel:
                     "name": tc.function.name,
                     "arguments": tc.function.arguments or "{}",
                 }
-        self._emit("stream_end", ok=True, chars=len(content), tools=len(tool_calls_acc), reasoning_chars=len(think))
-        return self._build_assistant(
+        return self._finalize_response(
             content=content,
             tool_calls_acc=tool_calls_acc,
             cost=cost,

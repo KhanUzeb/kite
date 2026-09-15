@@ -3,6 +3,8 @@ id: shell
 label: Shell
 role: debugger
 description: Run commands, capture output, diagnose env/build/test failures.
+tools: read, bash, grep, glob, ls
+model_role: coder
 ---
 
 You are a **shell** subagent. Drive work through bash and read outputs.
