@@ -52,6 +52,28 @@ Project memory for Kite. Read on every session. Keep it short.
 """
 
 
+def _resume_exe() -> str:
+    """Executable name for copy-pasteable resume hints — prefers installed `kite`, else argv[0] basename."""
+    import shutil
+    import sys
+    from pathlib import Path
+
+    try:
+        if shutil.which("kite"):
+            return "kite"
+    except Exception:
+        pass
+    try:
+        raw = (sys.argv[0] or "").strip() if sys.argv else ""
+        if raw:
+            name = Path(raw).name.strip()
+            if name and len(name) <= 64 and all(c.isalnum() or c in "._-" for c in name):
+                return name
+    except Exception:
+        pass
+    return "kite"
+
+
 class ChatSession:
     def __init__(
         self,
@@ -2096,6 +2118,24 @@ class ChatSession:
         if n:
             self.console.print(f"[kite.muted]stopped {n} background job{'s' if n != 1 else ''}[/]")
 
+    def _print_resume_hint(self) -> None:
+        """Copy-pasteable resume hint on interactive exit — only when the session was actually persisted."""
+        sid = (self._session_id or "").strip()
+        if not sid:
+            return
+        try:
+            from kite.memory.session import resolve_session_path
+
+            path = resolve_session_path(sid)
+        except (FileNotFoundError, ValueError, OSError):
+            return
+        try:
+            if not path.is_file() or path.stat().st_size == 0:
+                return
+        except OSError:
+            return
+        self.console.print(f"[kite.muted]Resume this session with {_resume_exe()} resume {sid}[/]")
+
     def _slash_resume(self, arg: str) -> None:
         if not arg:
             sid = self._pick_session("Resume a session")
@@ -2220,31 +2260,9 @@ class ChatSession:
         return target, tail
 
     def _print_session(self, session, *, tail: int | None = 12) -> None:
-        from kite.memory.session_format import format_session_resume_hint
+        from kite.ui.render import render_session_transcript
 
-        meta = session.meta
-        self.console.print(f"[kite.muted]{session.id}[/]  {format_session_resume_hint(meta)}")
-        shown = session.messages if tail is None else session.messages[-tail:]
-        if not shown:
-            self.console.print("[kite.muted](empty transcript)[/]")
-            return
-        skipped = len(session.messages) - len(shown)
-        if skipped > 0:
-            self.console.print(f"[kite.muted]  … {skipped} earlier messages[/]")
-        for m in shown:
-            role = str(m.get("role") or "?")
-            content = (m.get("content") or "").replace("\n", " ").strip()
-            if len(content) > 160:
-                content = content[:160] + "…"
-            if not content:
-                extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
-                actions = extra.get("actions") if isinstance(extra, dict) else None
-                if actions:
-                    tools = ", ".join(str(a.get("tool") or "") for a in actions if isinstance(a, dict))
-                    content = f"[tools: {tools}]" if tools else "[tool call]"
-                else:
-                    content = "—"
-            self.console.print(f"  [kite.brand]{role}[/] {content}")
+        render_session_transcript(self.console, session, tail=tail)
 
     def _open_session(self, session_id: str) -> None:
         from kite.memory.session import load_session
@@ -3040,6 +3058,7 @@ class ChatSession:
             if self._quit_after_turn:
                 self._teardown_jobs()
                 self.console.print("[kite.muted]bye[/]")
+                self._print_resume_hint()
                 return 0
             if self._inbox:
                 line = self._inbox.dequeue()
@@ -3050,6 +3069,7 @@ class ChatSession:
                 if got.kind == "eof":
                     self._teardown_jobs()
                     self.console.print("\n[kite.muted]bye[/]")
+                    self._print_resume_hint()
                     return 0
                 if got.kind == "stop":
                     self.console.print("[kite.muted]nothing running[/]  — session stays open")
@@ -3069,6 +3089,7 @@ class ChatSession:
                 if not self._handle_slash(line, parsed):
                     self._teardown_jobs()
                     self.console.print("[kite.muted]bye[/]")
+                    self._print_resume_hint()
                     return 0
                 continue
             self.display.print_user_turn(str(line))

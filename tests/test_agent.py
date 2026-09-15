@@ -12,7 +12,7 @@ from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.dispatch_mode import dispatch_hint, resolve_dispatch_mode
 from kite.agent.exceptions import LimitsExceeded, ProviderFault, Submitted
 from kite.agent.harness_build import build_harness_config
-from kite.agent.loop import _MAX_IDLE_TURNS, DefaultAgent, _allow_text_submit
+from kite.agent.loop import _MAX_IDLE_TURNS, DefaultAgent, _allow_text_submit, _is_casual_user_turn
 from kite.agent.loop_guard import LoopGuard
 from kite.agent.mode import (
     MUTATING_TOOLS,
@@ -216,6 +216,29 @@ def test_plan_build_tools_and_plan_submit_block(workspace: Path) -> None:
     assert out.get("ok") is False
     submit = next(t for t in make_coding_tools(cwd=str(workspace), enabled=["submit"]) if t.name == "submit")
     assert not submit.run({}).get("ok")
+
+
+def test_informational_turn_returns_answer_not_report() -> None:
+    """Issue #81: `tell main features of kite` ends with the answer text, not a turn report."""
+    assert _is_casual_user_turn("tell main features of kite")
+    assert _allow_text_submit(
+        "Kite features: fast runs",
+        mode=AgentMode.BUILD,
+        interactive=True,
+        last_user="tell main features of kite",
+    )
+    assert not _allow_text_submit(
+        "I finished the refactor.",
+        mode=AgentMode.BUILD,
+        interactive=True,
+        last_user="run the test suite",
+    )
+    agent = DefaultAgent(_TextOnlyModel(), _StubEnv(), interactive=True, mode=AgentMode.BUILD, provider_max_retries=1)
+    agent.messages = [{"role": "user", "content": "tell main features of kite"}]
+    with pytest.raises(Submitted) as ei:
+        agent.execute_actions({"role": "assistant", "content": "Kite features: fast runs", "extra": {"actions": []}})
+    assert ei.value.messages[0].get("content") == "Kite features: fast runs"
+    assert "## Verification" not in (ei.value.messages[0].get("content") or "")
 
 
 def test_completion_idle_and_error_stop(monkeypatch) -> None:
