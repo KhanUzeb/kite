@@ -115,6 +115,14 @@ def test_theme_palettes_and_status() -> None:
         assert "kite.brand" in palette(name)["styles"]
     assert set_theme("glass") == "transparent"
     assert "bg:default" in pt_style_dict("transparent")["bottom-toolbar"]
+    dark_styles = pt_style_dict("kite")
+    assert dark_styles["composer"] == "bg:#30303c"
+    assert dark_styles["prompt"].startswith("bg:#30303c ")
+    assert dark_styles["completion-menu.completion.current"] == "bg:default #a8ffff bold"
+    assert pt_style_dict("transparent")["composer"] == "bg:default"
+    for name in THEME_NAMES:
+        ui = palette(name)["ui"]
+        assert ui.completion_current_bg == ui.completion_bg
     assert set_theme("catpuccin") == "catppuccin" and resolved_theme("catpuccin") == "catppuccin"
     brands = {name: brand_fg(name) for name in ("kite", "catppuccin", "ember", "forest", "hues")}
     assert len(set(brands.values())) == len(brands)

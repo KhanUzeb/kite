@@ -112,6 +112,23 @@ def test_completion_lists_commands_and_skills_with_cues() -> None:
     assert "tools" in names
 
 
+def test_bare_slash_does_not_resolve_reasoning_or_auth() -> None:
+    index = CommandIndex.load(".")
+
+    def unexpected_resolution() -> None:
+        raise AssertionError("bare slash completion must not resolve a model")
+
+    completer = SlashCompleter(lambda: index, reasoning_info=unexpected_resolution)
+    completions = list(
+        completer.get_completions(
+            type("D", (), {"text_before_cursor": "/"})(),
+            None,
+        )
+    )
+
+    assert any(completion.text == "model" for completion in completions)
+
+
 def test_composer_mouse_defaults_off() -> None:
     import os
 
