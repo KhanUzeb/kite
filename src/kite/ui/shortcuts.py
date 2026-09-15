@@ -27,16 +27,6 @@ composer (idle)
   !!command       run a shell command without adding it to context
 """
 
-TEXTUAL_SHORTCUTS = """\
-optional fullscreen TUI (KITE_TUI=1 and kite[tui])
-  Enter           send · Alt+Enter newline
-  Tab             accept completion
-  Ctrl+\\          toggle sidebar (sessions / crew / changes)
-  Ctrl+G          steer (while busy)
-  Ctrl+U          dequeue (while busy)
-  Ctrl+P / B      plan / build mode
-"""
-
 BUSY_SHORTCUTS = """\
 while a turn is running
   Enter           queue a follow-up

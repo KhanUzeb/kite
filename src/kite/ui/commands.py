@@ -66,12 +66,6 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("handoff", "Export context for another agent", hint="[dir]", group="session"),
     BuiltinCommand("expand", "Toggle expanded tool output", group="session"),
     BuiltinCommand(
-        "fullscreen",
-        "Retired — Textual sidebar (Ctrl+\\) replaces fullscreen workbench",
-        group="session",
-        visibility="legacy",
-    ),
-    BuiltinCommand(
         "live",
         "Stream output live — /live (bash) or /live agents (subagent crew)",
         hint="[agents]",
