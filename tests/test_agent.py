@@ -420,6 +420,53 @@ def test_submit_gate_and_executor_approval(workspace: Path) -> None:
     ).get("ok") is True
 
 
+def test_pre_tool_budget_guard_refuses_dispatch() -> None:
+    events: list[str] = []
+
+    def _over_budget(**kwargs) -> DefaultAgent:
+        agent = DefaultAgent(_StubModel(), _StubEnv(), on_event=lambda e: events.append(e.kind), **kwargs)
+        agent.env.execute = lambda action, cwd="": (_ for _ in ()).throw(AssertionError("tool must not dispatch"))  # type: ignore[method-assign]
+        return agent
+
+    stepped = _over_budget(step_limit=2)
+    stepped.n_calls = 2
+    stepped.execute_actions(
+        {"role": "assistant", "content": "", "extra": {"actions": [{"tool": "read", "arguments": {"path": "x"}}]}}
+    )
+    costed = _over_budget(cost_limit=1.0)
+    costed.cost = 1.0
+    costed.execute_actions(
+        {"role": "assistant", "content": "", "extra": {"actions": [{"tool": "read", "arguments": {"path": "x"}}]}}
+    )
+    assert "limits" in events
+    for agent in (stepped, costed):
+        blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
+        assert "budget" in blob
+
+
+def test_schema_repair_nudge_names_expected_keys(workspace: Path) -> None:
+    tools = make_coding_tools(cwd=str(workspace), enabled=["read"])
+    agent = DefaultAgent(_StubModel(), LocalEnvironment(registry=ToolRegistry(tools)))
+    tool, args, action = agent._prepare_action({"tool": "read", "arguments": "x.py"})
+    assert args == {}
+    hint = str(action.get("_schema_repair_hint") or "")
+    assert "arguments must be an object" in hint and "path" in hint
+    outputs: list[dict] = []
+    agent._after_tool(tool, args, action, {"ok": False, "error": "boom", "output": "boom"}, 1, outputs)
+    assert "Schema repair" in outputs[0]["output"] and "path" in outputs[0]["output"]
+
+
+def test_submit_tool_gated_on_verification() -> None:
+    agent = DefaultAgent(_StubModel(), _StubEnv(), verify_before_submit=True)
+    agent.verification.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+    blocked = agent._invoke_tool(
+        "submit", {"message": "finished"}, {"tool": "submit", "arguments": {"message": "finished"}}
+    )
+    assert blocked.get("blocked") is True and "Submit blocked" in str(blocked.get("error") or "")
+    clean = DefaultAgent(_StubModel(), _StubEnv(), verify_before_submit=True)
+    assert clean.verification.submit_block_reason("hi") is None
+
+
 def test_harness_keeps_job_registry_after_run_error() -> None:
     from kite.agent.harness import Harness, HarnessConfig
 

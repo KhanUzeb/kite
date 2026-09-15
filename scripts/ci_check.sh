@@ -2,6 +2,10 @@
 # kite-release-version: 0.9.8.5
 # Same gates as .github/workflows/tests.yml — run before push to main.
 set -euo pipefail
+RELEASE=0
+if [[ "${1:-}" == "--release" ]]; then
+  RELEASE=1
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export KITE_SKIP_SETUP="${KITE_SKIP_SETUP:-1}"
@@ -21,7 +25,11 @@ if [[ -z "${PYTHON:-}" ]]; then
 fi
 echo "Using Python: $PYTHON"
 echo "== sync_version --check"
-"$PYTHON" scripts/sync_version.py --check
+if [[ "$RELEASE" == "1" ]]; then
+  "$PYTHON" scripts/sync_version.py --check --release
+else
+  "$PYTHON" scripts/sync_version.py --check
+fi
 echo "== ruff"
 "$PYTHON" -m ruff check src tests
 echo "== pytest"

@@ -125,6 +125,29 @@ def test_paid_web_providers_chain(monkeypatch) -> None:
     assert resolve_web_tool_env("tavily") == "TAVILY_API_KEY" and resolve_web_tool_env("unknown") is None
 
 
+def test_submit_task_blocked_without_verification(tmp_path) -> None:
+    from kite.agent.verification import VerificationCollector
+    from kite.tools.coding import make_coding_tools
+
+    collector = VerificationCollector()
+    collector.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+    submit = next(
+        t
+        for t in make_coding_tools(cwd=str(tmp_path), enabled=["submit"], verification=collector)
+        if t.name == "submit"
+    )
+    blocked = submit.run({"message": "finished"})
+    assert blocked.get("blocked") is True and "Submit blocked" in str(blocked.get("error") or "")
+    relaxed = next(
+        t
+        for t in make_coding_tools(
+            cwd=str(tmp_path), enabled=["submit"], verification=collector, verify_before_submit=False
+        )
+        if t.name == "submit"
+    )
+    assert relaxed.run({"message": "finished"}).get("ok") is True
+
+
 def test_jobs_and_orchestrator(tmp_path) -> None:
     sleep = f'{sys.executable} -c "import time; time.sleep(60)"'
     reg = JobRegistry()

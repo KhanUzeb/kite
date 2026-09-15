@@ -229,7 +229,7 @@ These never go to the model.
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
 | `/clear` `/new` | Fresh chat session (memory notes stay) |
 | `/compact` | Summarize older turns now; ctx meter updates immediately |
-| `/cost` | USD + context |
+| `/cost` | Legacy alias → `/status` (includes cost) |
 | `/stop` | Stop the current turn; session stays open |
 | `/steer text` | Stop and run `text` as the next turn |
 | `/tasks` | Show the running turn and queued follow-ups |

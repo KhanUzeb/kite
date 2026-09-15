@@ -111,6 +111,7 @@ Exit paths: **`submit`** tool or bash submit marker, step/cost/time limits, user
 | `plugins/extensions.py` | `.kite/extensions` `register_tool` loader |
 | `skills/` | Load `SKILL.md`; install npm/git or **symlink** a local folder into `~/.kite/skills` |
 | `ui/repl.py` | prompt_toolkit REPL, slash expansion, keybindings |
+| `ui/commands.py` + `ui/tables.py` | Single slash registry (`BUILTINS` / `ALIASES` / `LEGACY_ALIASES`) + canonical sessions table (`memory/session_format` re-exports) |
 
 ---
 
@@ -153,7 +154,9 @@ Runtime merge order: bundled defaults → user TOML → CLI flags.
 
 ## Tools & guardrails
 
-Tools implement a common `Tool.run(args) → {ok, output, …}` contract. Production path: **`ToolExecutor.execute(ToolCall)`** → `LocalEnvironment.execute()` → `ToolRegistry`.
+Tools implement a common `Tool.run(args) → {ok, output, …}` contract. Production path: **`ToolExecutor.execute(ToolCall)`** → `LocalEnvironment.execute()` → `ToolRegistry` (single authorize → run → normalize pipeline; no parallel tool path).
+
+Single slash registry: `ui/commands.py` (`BUILTINS` / `ALIASES` / `LEGACY_ALIASES`) is the source — `ui/repl.py` fans aliases out to handlers, `ui/complete.py` owns `BUSY_SAFE_SLASHES`, and `ui/approval.py` owns `APPROVAL_KEYS`.
 
 **Mutating tools** (`write`, `edit`, `bash`, …) pass through:
 

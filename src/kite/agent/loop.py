@@ -715,42 +715,10 @@ class DefaultAgent:
         return self.execute_actions(self.query())
 
     def query(self) -> dict:
-        if 0 < self.step_limit <= self.n_calls:
-            detail = f"step budget {self.n_calls}/{self.step_limit}"
-            raise LimitsExceeded(
-                _exit_msg(
-                    "LimitsExceeded",
-                    content=detail,
-                    submission=detail,
-                    limit_kind="steps",
-                    steps=self.n_calls,
-                    step_limit=self.step_limit,
-                )
-            )
-        if 0 < self.cost_limit <= self.cost:
-            detail = f"cost budget ${self.cost:.2f}/${self.cost_limit:.2f}"
-            raise LimitsExceeded(
-                _exit_msg(
-                    "LimitsExceeded",
-                    content=detail,
-                    submission=detail,
-                    limit_kind="cost",
-                    cost=self.cost,
-                    cost_limit=self.cost_limit,
-                )
-            )
-        if 0 < self.wall_time_limit_seconds <= int(time.time() - self._start_time):
-            detail = f"time budget {int(time.time() - self._start_time)}s/{self.wall_time_limit_seconds}s"
-            raise TimeExceeded(
-                _exit_msg(
-                    "TimeExceeded",
-                    content=detail,
-                    submission=detail,
-                    limit_kind="time",
-                    elapsed_s=int(time.time() - self._start_time),
-                    wall_time_limit_seconds=self.wall_time_limit_seconds,
-                )
-            )
+        hit = self._budget_exit()
+        if hit is not None:
+            exc_cls, message = hit
+            raise exc_cls(message)
         self.n_calls += 1
         last_error: BaseException | None = None
         attempts = 0
@@ -815,6 +783,60 @@ class DefaultAgent:
         self.add_messages(message)
         return message
 
+    def _budget_exit(self) -> tuple[type[InterruptAgentFlow], dict] | None:
+        """Shared step/cost/wall-time predicates — query() and the pre-tool guard use the same limits."""
+        if 0 < self.step_limit <= self.n_calls:
+            detail = f"step budget {self.n_calls}/{self.step_limit}"
+            return (
+                LimitsExceeded,
+                _exit_msg(
+                    "LimitsExceeded",
+                    content=detail,
+                    submission=detail,
+                    limit_kind="steps",
+                    steps=self.n_calls,
+                    step_limit=self.step_limit,
+                ),
+            )
+        if 0 < self.cost_limit <= self.cost:
+            detail = f"cost budget ${self.cost:.2f}/${self.cost_limit:.2f}"
+            return (
+                LimitsExceeded,
+                _exit_msg(
+                    "LimitsExceeded",
+                    content=detail,
+                    submission=detail,
+                    limit_kind="cost",
+                    cost=self.cost,
+                    cost_limit=self.cost_limit,
+                ),
+            )
+        if 0 < self.wall_time_limit_seconds <= int(time.time() - self._start_time):
+            detail = f"time budget {int(time.time() - self._start_time)}s/{self.wall_time_limit_seconds}s"
+            return (
+                TimeExceeded,
+                _exit_msg(
+                    "TimeExceeded",
+                    content=detail,
+                    submission=detail,
+                    limit_kind="time",
+                    elapsed_s=int(time.time() - self._start_time),
+                    wall_time_limit_seconds=self.wall_time_limit_seconds,
+                ),
+            )
+        return None
+
+    def _tool_budget_block(self) -> dict | None:
+        """Pre-tool budget guard: refuse dispatch when already over budget instead of running the tool."""
+        hit = self._budget_exit()
+        if hit is None:
+            return None
+        _exc_cls, message = hit
+        extra = message.get("extra", {})
+        detail = str(message.get("content") or extra.get("exit_status") or "budget exceeded")
+        self._emit("limits", detail=detail, **extra)
+        return {"ok": False, "blocked": True, "error": detail, "output": detail}
+
     def _handle_no_actions(self, message: dict) -> list[dict]:
         content = (message.get("content") or "").strip()
         last_user = _last_human_user_content(self.messages)
@@ -861,6 +883,11 @@ class DefaultAgent:
         return self.add_messages({"role": "user", "content": _IDLE_NUDGE})
 
     def _execute_parallel_actions(self, actions: list[dict], outputs: list[dict]) -> None:
+        blocked = self._tool_budget_block()
+        if blocked is not None:
+            for _ in actions:
+                outputs.append(dict(blocked))
+            return
         prepared: list[tuple[str, dict, dict]] = []
         for action in actions:
             if self._interrupt:
@@ -899,6 +926,10 @@ class DefaultAgent:
         for action in actions:
             if self._interrupt:
                 outputs.append({"ok": False, "error": "interrupted", "output": "interrupted", "blocked": True})
+                break
+            blocked = self._tool_budget_block()
+            if blocked is not None:
+                outputs.append(blocked)
                 break
             tool, args, action = self._prepare_action(action)
             self._emit("tool_start", tool=tool, arguments=args, reason=args.get("reason"))
@@ -967,13 +998,41 @@ class DefaultAgent:
             )
             self.add_messages(*obs)
 
+    def _expected_arg_keys(self, tool: str) -> list[str]:
+        """Expected schema keys for a repair hint — from the tool registry when available."""
+        registry = getattr(self.env, "registry", None)
+        get = getattr(registry, "get", None)
+        spec = get(tool) if callable(get) else None
+        params = getattr(spec, "parameters", None) or {}
+        props = params.get("properties") if isinstance(params, dict) else None
+        if isinstance(props, dict):
+            return sorted(str(k) for k in props)
+        return []
+
     def _prepare_action(self, action: dict) -> tuple[str, dict, dict]:
         tool = str(action.get("tool") or "")
-        args = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
+        raw_args = action.get("arguments")
+        bad: object = None
+        if raw_args is not None and not isinstance(raw_args, dict):
+            bad = raw_args
+            args: dict = {}
+        else:
+            args = raw_args if isinstance(raw_args, dict) else {}
         if self.hooks is not None:
             action = self.hooks.call("before_tool", action) or action
             tool = str(action.get("tool") or tool)
-            args = action.get("arguments") if isinstance(action.get("arguments"), dict) else args
+            hooked = action.get("arguments")
+            if hooked is not None and not isinstance(hooked, dict):
+                bad = hooked
+            args = hooked if isinstance(hooked, dict) else args
+        if bad is not None:
+            keys = self._expected_arg_keys(tool)
+            want = f"expected object keys [{', '.join(keys)}]" if keys else "expected a JSON object"
+            hint = (
+                f"Schema repair: '{tool or 'unknown tool'}' arguments must be an object "
+                f"({want}); got {type(bad).__name__}. Retry with a JSON object."
+            )
+            action = {**action, "arguments": args, "_schema_repair_hint": hint}
         return tool, args, action
 
     def _counts_as_tool_failure(self, tool: str, args: dict, out: dict) -> bool:
@@ -1007,6 +1066,26 @@ class DefaultAgent:
                 "blocked in plan mode — /build to apply edits",
                 "blocked in plan mode — switch to build to mutate the workspace",
             )
+        if tool == "submit":
+            submission = str(args.get("message") or args.get("content") or args.get("submission") or "")
+            reason = self.verification.submit_block_reason(
+                submission,
+                require_verification=self.verify_before_submit,
+            )
+            if reason:
+                self._emit(
+                    "submit_blocked",
+                    reason=reason,
+                    verification=self.verification.summary(),
+                )
+                return _blocked(
+                    reason,
+                    output=(
+                        f"{reason}\n\n"
+                        f"Verification status: {self.verification.status()}\n"
+                        + "\n".join(self.verification.render_lines())
+                    ),
+                )
         try:
             return self._run_gated(tool, args, action)
         except Submitted as submitted:
@@ -1137,6 +1216,10 @@ class DefaultAgent:
                 duration_ms=duration_ms,
                 session_id=self.session.id if self.session else "",
             )
+        hint = action.get("_schema_repair_hint") if isinstance(action, dict) else None
+        if hint:
+            existing = str(out.get("output") or out.get("error") or "")
+            out = {**out, "output": f"{existing}\n\n{hint}".strip(), "schema_repair": True}
         outputs.append(out)
 
     def _run_gated(self, tool: str, args: dict, action: dict) -> dict:
@@ -1212,6 +1295,30 @@ class DefaultAgent:
             )
         return normalized
 
+    def _bash_progress_hint(self, tool: str, command: str) -> str:
+        if tool != "bash" or not command:
+            return ""
+        lines = str(command).strip().splitlines()
+        if not lines:
+            return ""
+        preview = lines[0][:48]
+        return f" — {preview}{'…' if len(lines[0]) > 48 else ''}"
+
+    def _await_tool_thread(self, done: threading.Event, *, tool: str, command: str = "") -> None:
+        start = time.monotonic()
+        interval = max(0.5, float(self.tool_progress_interval_seconds))
+        max_wait = max(600.0, interval * 240)
+        while not done.wait(timeout=interval):
+            if self._interrupt and self.cancel is not None:
+                self.cancel.request()
+            if time.monotonic() - start > max_wait:
+                if self.cancel is not None:
+                    self.cancel.request()
+                break
+            elapsed = int(time.monotonic() - start)
+            hint = self._bash_progress_hint(tool, command)
+            self._emit("tool_progress", tool=tool, elapsed_s=elapsed, hint=hint)
+
     def _run_gated_via_executor(self, tool: str, args: dict, action: dict) -> dict:
         import uuid
 
@@ -1264,24 +1371,7 @@ class DefaultAgent:
                 done.set()
 
         threading.Thread(target=worker, daemon=True).start()
-        start = time.monotonic()
-        interval = max(0.5, float(self.tool_progress_interval_seconds))
-        max_wait = max(600.0, interval * 240)
-        while not done.wait(timeout=interval):
-            if self._interrupt and self.cancel is not None:
-                self.cancel.request()
-            if time.monotonic() - start > max_wait:
-                if self.cancel is not None:
-                    self.cancel.request()
-                break
-            elapsed = int(time.monotonic() - start)
-            hint = ""
-            if tool == "bash":
-                cmd = str(args.get("command") or "").strip().splitlines()
-                if cmd:
-                    preview = cmd[0][:48]
-                    hint = f" — {preview}{'…' if len(cmd[0]) > 48 else ''}"
-            self._emit("tool_progress", tool=tool, elapsed_s=elapsed, hint=hint)
+        self._await_tool_thread(done, tool=tool, command=str(args.get("command") or ""))
         if error:
             exc = error[0]
             if isinstance(exc, InterruptAgentFlow):
@@ -1308,26 +1398,8 @@ class DefaultAgent:
                 done.set()
 
         threading.Thread(target=worker, daemon=True).start()
-        start = time.monotonic()
-        interval = max(0.5, float(self.tool_progress_interval_seconds))
-        max_wait = max(600.0, interval * 240)
-        while not done.wait(timeout=interval):
-            if self._interrupt:
-                if self.cancel is not None:
-                    self.cancel.request()
-            if time.monotonic() - start > max_wait:
-                if self.cancel is not None:
-                    self.cancel.request()
-                break
-            elapsed = int(time.monotonic() - start)
-            hint = ""
-            if tool == "bash":
-                args = action.get("arguments") or {}
-                cmd = str(args.get("command") or "").strip().splitlines()
-                if cmd:
-                    preview = cmd[0][:48]
-                    hint = f" — {preview}{'…' if len(cmd[0]) > 48 else ''}"
-            self._emit("tool_progress", tool=tool, elapsed_s=elapsed, hint=hint)
+        command = str((action.get("arguments") or {}).get("command") or "")
+        self._await_tool_thread(done, tool=tool, command=command)
         if error:
             raise error[0]
         if "out" not in result:

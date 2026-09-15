@@ -24,13 +24,6 @@ from kite.guardrails.sandbox import check_command_paths, is_inside, protected_ro
 POLICY_VERSION = "0.9.0"
 
 
-def _is_sibling_prefix(resolved: Path, root: Path) -> bool:
-    root_s, res_s = str(root), str(resolved)
-    if res_s == root_s or not res_s.startswith(root_s):
-        return False
-    return res_s[len(root_s)] not in "\\/"
-
-
 def check_path_access(
     path: str | Path,
     workspace: str | Path,
@@ -44,11 +37,11 @@ def check_path_access(
         resolved = resolve_in_workspace(path, root)
     except Exception as exc:
         return False, str(exc)
-    if _is_sibling_prefix(resolved, root):
-        return False, "sibling-prefix escape"
+    # NOTE: sibling-prefix escapes (e.g. <root>-evil vs <root>) fail is_inside
+    # below, so no separate prefix check is needed.
     for prot in protected_roots():
         try:
-            if resolved == prot.resolve() or resolved.is_relative_to(prot.resolve()):
+            if resolved.is_relative_to(prot):
                 return False, f"protected path: {resolved}"
         except (ValueError, OSError):
             continue

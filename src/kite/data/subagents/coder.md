@@ -3,6 +3,8 @@ id: coder
 label: Coder
 role: implementer
 description: Implement a focused change — small diff, match repo style, verify.
+tools:
+model_role: coder
 ---
 
 You are a **coder** subagent. Implement the assigned change end-to-end.

@@ -5,7 +5,8 @@
 Usage:
   python scripts/sync_version.py              # sync all files to pyproject version
   python scripts/sync_version.py 0.9.8.5        # set pyproject + all stamps to 0.9.8.5
-  python scripts/sync_version.py --check      # exit 1 if any stamp differs
+  python scripts/sync_version.py --check      # fast: stamps only (no release docs)
+  python scripts/sync_version.py --check --release  # stamps + RELEASE doc + CHANGELOG
 
 Called by scripts/bump_release.sh and CI on every push/tag.
 """
@@ -13,6 +14,7 @@ Called by scripts/bump_release.sh and CI on every push/tag.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import tomllib
@@ -145,7 +147,7 @@ def sync_version(version: str) -> list[str]:
     return updated
 
 
-def check_version(expected: str) -> list[str]:
+def check_version(expected: str, release: bool = False) -> list[str]:
     errors: list[str] = []
     if read_pyproject_version() != expected:
         errors.append(
@@ -179,6 +181,9 @@ def check_version(expected: str) -> list[str]:
 
     errors.extend(check_script_markers(expected))
 
+    if not release:
+        return errors
+
     release_doc = ROOT / f"docs/RELEASE-{expected}.md"
     if not release_doc.is_file():
         errors.append(f"missing {release_doc.relative_to(ROOT)}")
@@ -192,11 +197,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", nargs="?", help="target version (default: read pyproject.toml)")
     parser.add_argument("--check", action="store_true", help="verify stamps match pyproject version")
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="with --check: also verify RELEASE doc + CHANGELOG (implied on tag builds)",
+    )
     args = parser.parse_args(argv)
 
     if args.check:
         expected = args.version or read_pyproject_version()
-        errors = check_version(expected)
+        release = args.release or os.environ.get("GITHUB_REF", "").startswith("refs/tags/v")
+        errors = check_version(expected, release=release)
         if errors:
             for err in errors:
                 print(f"sync_version: {err}", file=sys.stderr)

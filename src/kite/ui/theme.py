@@ -12,23 +12,6 @@ from typing import Any
 
 from rich.theme import Theme
 
-THEME_NAMES = (
-    "auto",
-    "kite",
-    "dark",
-    "light",
-    "dim",
-    "mono",
-    "monochrome",
-    "catppuccin",
-    "ember",
-    "forest",
-    "hues",
-    "transparent",
-)
-
-FONT_NAMES = ("unicode", "ascii")
-
 THEME_HELP = {
     "auto": "follow the terminal (COLORFGBG)",
     "kite": "bright cyan brand on dark",
@@ -48,6 +31,10 @@ FONT_HELP = {
     "unicode": "✓ ⚠ › — default",
     "ascii": "+ ! > — for terminals that chew glyphs",
 }
+
+# Single source: names always match the help maps (and the palettes below).
+THEME_NAMES = tuple(THEME_HELP)
+FONT_NAMES = tuple(FONT_HELP)
 
 _THEME_ALIASES = {
     "catpuccin": "catppuccin",
@@ -737,9 +724,7 @@ def resolved_theme(name: str | None = None) -> str:
     raw = _canonical_theme(name or _prefs.theme or "auto")
     if raw == "auto":
         return "light" if terminal_is_light() else "kite"
-    if raw in _PALETTES:
-        return raw
-    return "kite"
+    return raw if raw in _PALETTES else "kite"
 
 
 def theme_label(name: str | None = None) -> str:
@@ -835,9 +820,7 @@ def glyph_preview() -> str:
 
 def _normalize_theme(raw: str) -> str | None:
     token = _canonical_theme(raw)
-    if token in THEME_NAMES:
-        return token
-    return None
+    return token if token in THEME_NAMES else None
 
 
 def _normalize_font(raw: str) -> str | None:

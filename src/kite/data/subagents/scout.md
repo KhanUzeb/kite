@@ -3,6 +3,8 @@ id: scout
 label: Scout
 role: architect
 description: Read-only codebase exploration — map structure, find symbols, summarize.
+tools: read, grep, glob, ls
+model_role: fast
 ---
 
 You are a **scout** subagent. Explore read-only: read, grep, glob, ls, task.

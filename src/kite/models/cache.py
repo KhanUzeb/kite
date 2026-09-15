@@ -49,13 +49,26 @@ class CacheStats:
 
 
 def _tail_signature(messages: list[dict]) -> int:
-    """Cheap fingerprint of conversation length + last message (invalidates on append)."""
+    """Fingerprint of the stable prefix + recent-tail boundary (not full length).
+
+    Breakpoints only cover the stable prefix (system / compaction summary), so appending tail turns
+    must not invalidate the prepared prefix. Hash the head (first system/user message) and the tail
+    boundary (last two messages' roles + snippets) instead of the conversation length.
+    """
     if not messages:
         return 0
-    last = messages[-1]
-    content = last.get("content")
-    snippet = content[:240] if isinstance(content, str) else str(content)[:240]
-    return hash((len(messages), last.get("role"), snippet))
+    head = ""
+    for m in messages[:3]:
+        if m.get("role") in {"system", "user"}:
+            content = m.get("content")
+            head = content[:240] if isinstance(content, str) else str(content)[:240]
+            break
+    tail: list[tuple[str | None, str]] = []
+    for m in messages[-2:]:
+        content = m.get("content")
+        snippet = content[:240] if isinstance(content, str) else str(content)[:240]
+        tail.append((m.get("role"), snippet))
+    return hash((head, tuple(tail)))
 
 
 def _hash_prefix(messages: list[dict]) -> str:
@@ -68,6 +81,15 @@ def _hash_prefix(messages: list[dict]) -> str:
                 parts.append(c[:4000])
     raw = "\n---\n".join(parts)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _cache_key(messages: list[dict]) -> tuple[str, int]:
+    """Single conversation key: stable prefix hash + tail signature.
+
+    One equality check preserves the old dual ``prefix == and tail ==``
+    hit behavior exactly.
+    """
+    return (_hash_prefix(messages), _tail_signature(messages))
 
 
 def _supports_breakpoints(provider: str) -> bool:
@@ -166,21 +188,33 @@ class PromptCacheManager:
     provider: str
     enabled: bool = True
     session: CacheStats = field(default_factory=CacheStats)
-    _prefix_hash: str = ""
-    _tail_sig: int = 0
+    _cache_key_val: tuple[str, int] | None = field(default=None, init=False, repr=False)
     _prepared_messages: list[dict] | None = field(default=None, init=False)
 
+    # Backward-compat aliases for the pre-trim dual fields.
+    @property
+    def _prefix_hash(self) -> str:
+        return self._cache_key_val[0] if self._cache_key_val else ""
+
+    @_prefix_hash.setter
+    def _prefix_hash(self, value: str) -> None:
+        tail = self._cache_key_val[1] if self._cache_key_val else 0
+        self._cache_key_val = (value, tail)
+
+    @property
+    def _tail_sig(self) -> int:
+        return self._cache_key_val[1] if self._cache_key_val else 0
+
+    @_tail_sig.setter
+    def _tail_sig(self, value: int) -> None:
+        prefix = self._cache_key_val[0] if self._cache_key_val else ""
+        self._cache_key_val = (prefix, value)
+
     def prepare(self, messages: list[dict]) -> list[dict]:
-        prefix_hash = _hash_prefix(messages)
-        tail_sig = _tail_signature(messages)
-        if (
-            prefix_hash == self._prefix_hash
-            and tail_sig == self._tail_sig
-            and self._prepared_messages is not None
-        ):
+        key = _cache_key(messages)
+        if key == self._cache_key_val and self._prepared_messages is not None:
             return self._prepared_messages
-        self._prefix_hash = prefix_hash
-        self._tail_sig = tail_sig
+        self._cache_key_val = key
         self._prepared_messages = apply_cache_breakpoints(
             messages, provider=self.provider, enabled=self.enabled
         )

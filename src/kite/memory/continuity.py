@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from kite.context.window import COMPACTION_PREFIX
+from kite.context.window import COMPACTION_PREFIX, deterministic_summary
 
 if TYPE_CHECKING:
     from kite.memory.store import MemoryStore
@@ -40,7 +40,8 @@ class ContinuityBrief:
         )
 
 
-def _mission_from_messages(messages: list[dict], task: str) -> str:
+def first_user_text(messages: list[dict]) -> str:
+    """First non-compaction user turn as raw text (shared by handoff + continuity)."""
     for m in messages:
         if m.get("role") != "user":
             continue
@@ -51,8 +52,30 @@ def _mission_from_messages(messages: list[dict], task: str) -> str:
             )
         text = str(content).strip()
         if text and not text.startswith(COMPACTION_PREFIX):
-            return text[:500]
-    return (task or "")[:500]
+            return text
+    return ""
+
+
+def mission_from_messages(messages: list[dict], task: str = "", *, max_chars: int = 500) -> str:
+    """Canonical mission excerpt — first user turn, else task fallback (truncated)."""
+    text = first_user_text(messages)
+    if text:
+        return text[:max_chars]
+    return (task or "")[:max_chars]
+
+
+def context_section(messages: list[dict], *, max_chars: int = 12_000) -> str:
+    """Prefer existing compaction summary; else deterministic excerpt of recent turns."""
+    for m in messages:
+        content = str(m.get("content") or "")
+        if content.startswith(COMPACTION_PREFIX):
+            return content.removeprefix(COMPACTION_PREFIX).strip()[:max_chars]
+    tail = messages[-12:] if len(messages) > 12 else messages
+    return deterministic_summary(tail, max_chars=max_chars)
+
+
+def _mission_from_messages(messages: list[dict], task: str) -> str:
+    return mission_from_messages(messages, task)
 
 
 def build_continuity_brief(
