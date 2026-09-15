@@ -25,7 +25,7 @@ Prefix `//` if you need a natural-language line that starts with `/`.
 
 `kite --help` lists the full command surface. `chat` and `exec` are first-class (exec is the CI one-shot).
 
-**Interactive session:** `kite` is a lean Pi-style REPL (Rich + prompt_toolkit): one-line header, composer, footer. Optional fullscreen TUI is **not** in the default package — `pip install kite[tui]` and `KITE_TUI=1`.
+**Interactive session:** `kite` is a lean Pi-style REPL (Rich + prompt_toolkit): one-line header, composer, footer.
 
 Pi-shaped shortcuts:
 
@@ -250,7 +250,6 @@ These never go to the model.
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Write `KITE.md` if missing |
 | `/expand` | Toggle expanded tool output |
-| `/fullscreen` | Retired — use Textual sidebar (`Ctrl+\`) |
 | `/live` | Stream bash output in real time while tools run |
 | `/live agents` | Stream subagent crew tool + shell output with worker prefix |
 | `/collapse` | Collapse tool output (default) |
@@ -299,9 +298,6 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+T` / `F7` | Toggle thinking trace (collapsed by default — one-line summary) |
 | `F2` | Flash status on the footer (`Ctrl+S` is not bound; terminals use it for XOFF) |
 | `F5` | Refresh live models from the API, then pick |
-| `Ctrl+K` | **Textual only:** fast-path allow-once for pending approval (flash line also hints) |
-| `Ctrl+J` | **Textual only:** agents panel — active subagents, `k` to kill highlighted worker |
-| `Ctrl+\` | Toggle sidebar (sessions / crew / changes) |
 | `Tab` | Cycle slash completion selection without submitting |
 
 Slash completion menus highlight the first match automatically. `↑` / `↓` wrap through matches, Page Up/Down move by a page, and selection leaves the typed input unchanged until `Enter` accepts it.

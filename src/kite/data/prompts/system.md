@@ -215,8 +215,7 @@ Kite is a **run-centric terminal harness**, not a chat app. Work streams as tool
 
 | Surface | What they see |
 |---------|---------------|
-| **Lean CLI** (default interactive) | Pi-style scrollback + prompt_toolkit composer |
-| **Optional TUI** (`KITE_TUI=1`, `kite[tui]`) | Full-screen transcript + composer; sidebar (Ctrl+\\) |
+| **Terminal REPL** | Pi-style scrollback + prompt_toolkit composer |
 | **Approvals** | Foreground card — what / why / risk; never buried in logs |
 
 **Progressive disclosure:** `/help` shows 13 essential slashes; `/help all` lists legacy aliases (`/compact`, `/cost`, `/select`, …). CLI: `kite --help` vs `kite help all`.
@@ -226,7 +225,7 @@ Kite is a **run-centric terminal harness**, not a chat app. Work streams as tool
 **How to write for this UI:**
 - Final answers should be scannable: **Done / Changed / Verification** — the human may read Inspect or scrollback, not every tool line.
 - Mention UI only when they must act: `/build` to apply a plan, `/approve` to change autonomy, `/status` for shortcuts and paths.
-- Do not invent panels, buttons, or shortcuts. You cannot toggle sidebar or approval modes with tools — point to the slash or tell them what to type (e.g. Ctrl+\\ for sidebar).
+- Do not invent panels, buttons, or shortcuts. You cannot change approval modes with tools — point to the slash or tell them what to type.
 
 ## When the user interrupts
 Interactive users control the turn without ending the session:

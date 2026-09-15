@@ -104,7 +104,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Subagent profile** — Bundled persona (`scout`, `reviewer`, `shell`, `coder`, `context`) or custom `~/.kite/subagents/<id>.md` (user overrides bundled ids). Create with `kite subagents --init <id>` or `/agents init <id>`. Passed as `profile=` on the `subagent` tool; composes system prompt + task. Custom profiles are untrusted. Not the same as global **Profile** (`PROFILE.md` / `/profile`).
 
-**Subagent crew** — Parallel or background nested harness runs via `subagent` tool. Max 12 workers per dispatch; nested workers cannot recurse (`subagent` stripped) or write global memory (`memory` stripped). Optional per-worker `model=` / `provider=` overrides (arrays for crews). Monitor with `/agents` or Textual `Ctrl+J`; stop with `/kill`.
+**Subagent crew** — Parallel or background nested harness runs via `subagent` tool. Max 12 workers per dispatch; nested workers cannot recurse (`subagent` stripped) or write global memory (`memory` stripped). Optional per-worker `model=` / `provider=` overrides (arrays for crews). Monitor with `/agents`; stop with `/kill`.
 
 **Context checkpoint** — Named snapshot of the full model transcript (and todos) at a point in time. Distinct from git undo. Stored under `~/.kite/checkpoints/<session>/`.
 
