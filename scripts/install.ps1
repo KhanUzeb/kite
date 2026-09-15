@@ -7,7 +7,7 @@
 #   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 #
 # End-user (any directory):
-#   irm …/install.ps1 | iex
+#   irm .../install.ps1 | iex
 # Contributor:
 #   .\scripts\install.ps1 -Dev
 param(
@@ -26,7 +26,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Capture once at script scope — inside functions $MyInvocation refers to the function.
+# Capture once at script scope - inside functions $MyInvocation refers to the function.
 $script:ScriptPath = $PSCommandPath
 if (-not $script:ScriptPath) {
     $script:ScriptPath = $MyInvocation.MyCommand.Path
@@ -41,7 +41,7 @@ function Show-Usage {
 Usage: .\scripts\install.ps1 [options]
 
 Default: install kite globally for this Windows user (uv tool).
-Then kite works from any folder — no clone, no Activate.ps1.
+Then kite works from any folder - no clone, no Activate.ps1.
 
 If Windows blocks the script (ExecutionPolicy):
   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex"
@@ -200,7 +200,7 @@ function Install-GlobalCli {
     Ensure-Uv
     $spec = Get-GitToolSpec
     Write-Host "Installing kite CLI globally from $spec..."
-    Write-Host "(isolated tool env — not cloning into your current directory)"
+    Write-Host "(isolated tool env - not cloning into your current directory)"
 
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -253,7 +253,7 @@ function Install-GlobalCli {
 
     Write-Host ""
     Write-Host "Kite is installed globally on this user account (uv tool)."
-    Write-Host "Opening 'kite' works from any folder — no clone, no .venv activate."
+    Write-Host "Opening 'kite' works from any folder - no clone, no .venv activate."
     Write-Host "Kite home: $kiteHome"
     Write-Host ""
     Write-Host "  cd C:\path\to\any\project"
@@ -299,7 +299,7 @@ function Install-DevEditable {
     Ensure-Uv
     Set-Location $installRoot
 
-    # Editable CLI on PATH — opening kite works anywhere; no Activate.ps1 needed.
+    # Editable CLI on PATH - opening kite works anywhere; no Activate.ps1 needed.
     Write-Host "Installing editable kite CLI on PATH (uv tool --editable)..."
     uv tool install --python $Python --force --editable $installRoot
     if ($LASTEXITCODE -ne 0) { throw "uv tool install --editable failed" }
@@ -324,7 +324,7 @@ function Install-DevEditable {
     $kiteVersion = ""
     try { $kiteVersion = (kite --version 2>$null).Trim() } catch { }
     if ($kiteVersion) {
-        Write-Host "Installed $kiteVersion (editable on PATH — works from any folder)"
+        Write-Host "Installed $kiteVersion (editable on PATH - works from any folder)"
     } else {
         Write-Host "Warning: kite not on PATH in this shell yet. Open a new terminal." -ForegroundColor Yellow
     }
@@ -347,8 +347,8 @@ function Install-DevEditable {
     Write-Host "Kite home:    $kiteHome"
     Write-Host ""
     Write-Host "Opening 'kite' uses this editable install from any directory."
-    Write-Host "Local .venv is only for pytest/IDE — do not activate it to run kite."
-    Write-Host "Update / uninstall: uv tool upgrade kite · uv tool uninstall kite"
+    Write-Host "Local .venv is only for pytest/IDE - do not activate it to run kite."
+    Write-Host "Update / uninstall: uv tool upgrade kite | uv tool uninstall kite"
 }
 
 try {

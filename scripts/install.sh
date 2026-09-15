@@ -4,8 +4,8 @@
 #
 # Compatible with: macOS (bash 3.2+), Ubuntu/Debian Linux, WSL, other Unix.
 # End-user (any directory):
-#   curl -fsSL …/install.sh | bash
-#   → uv tool install from git + PATH; then `cd any/project && kite`
+#   curl -fsSL .../install.sh | bash
+#   -> uv tool install from git + PATH; then `cd any/project && kite`
 #
 # Contributor (this repo):
 #   ./scripts/install.sh --dev
@@ -47,7 +47,7 @@ Options:
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
-  curl -fsSL …/download.sh | bash -s -- --setup
+  curl -fsSL .../download.sh | bash -s -- --setup
   ./scripts/install.sh --dev
   ./scripts/install.sh --global --force
 EOF
@@ -146,7 +146,7 @@ ensure_uv() {
   if have uv; then
     return
   fi
-  echo "uv not found — installing via official installer..."
+  echo "uv not found - installing via official installer..."
   # Official installer is unsigned shell; pipe to sh is the supported path (same as Astral docs).
   curl -fsSL https://astral.sh/uv/install.sh | sh
   refresh_uv_path
@@ -158,7 +158,7 @@ ensure_uv() {
   fi
 }
 
-# True when fed via curl|bash / mktemp — never treat CWD as the kite repo.
+# True when fed via curl|bash / mktemp - never treat CWD as the kite repo.
 is_ephemeral_script() {
   local src="${BASH_SOURCE[0]:-}"
   [[ -z "${src}" ]] && return 0
@@ -245,7 +245,7 @@ bootstrap_kite_home() {
   if [[ ! -f "${env_file}" ]] && [[ -n "${example}" ]]; then
     cp "${example}" "${env_file}"
     chmod 600 "${env_file}" 2>/dev/null || true
-    echo "Created ${env_file} (template) — run: kite setup"
+    echo "Created ${env_file} (template) - run: kite setup"
   elif [[ -f "${env_file}" ]]; then
     chmod 600 "${env_file}" 2>/dev/null || true
   fi
@@ -259,7 +259,7 @@ install_global_cli() {
   local ver=""
   spec="$(git_tool_spec)"
   echo "Installing kite CLI globally from ${spec}..."
-  echo "(isolated tool env — not cloning into your current directory)"
+  echo "(isolated tool env - not cloning into your current directory)"
 
   # Avoid empty-array expansion (breaks macOS /bin/bash 3.2 with set -u).
   set +e
@@ -308,7 +308,7 @@ install_global_cli() {
 
   cat <<EOF
 
-Kite CLI is on PATH (uv tool). Opening \`kite\` turns its environment on —
+Kite CLI is on PATH (uv tool). Opening \`kite\` turns its environment on - 
 you do not activate anything first.
 
 Kite home: ${KITE_HOME}
@@ -347,10 +347,10 @@ install_dev_editable() {
 
   if [[ "${SKIP_CLONE}" -eq 0 ]]; then
     if [[ -d "${INSTALL_DIR}/.git" ]]; then
-      echo "Repo already exists at ${INSTALL_DIR} — pulling latest..."
+      echo "Repo already exists at ${INSTALL_DIR} - pulling latest..."
       git -C "${INSTALL_DIR}" pull --ff-only
     else
-      echo "Cloning ${REPO_URL} → ${INSTALL_DIR} (dev checkout)"
+      echo "Cloning ${REPO_URL} -> ${INSTALL_DIR} (dev checkout)"
       git clone "${REPO_URL}" "${INSTALL_DIR}"
     fi
   fi
@@ -363,7 +363,7 @@ install_dev_editable() {
   ensure_uv
   cd "${INSTALL_DIR}"
 
-  # Editable CLI on PATH — opening `kite` uses this checkout; no activate needed.
+  # Editable CLI on PATH - opening `kite` uses this checkout; no activate needed.
   echo "Installing editable kite CLI on PATH (uv tool --editable)..."
   set +e
   uv tool install --python "${PYTHON}" --force --editable "${INSTALL_DIR}"
@@ -395,7 +395,7 @@ install_dev_editable() {
     echo "Warning: kite not on PATH in this shell yet." >&2
     echo "Open a new terminal, or: export PATH=\"\$(uv tool dir --bin):\$PATH\"" >&2
   else
-    echo "Installed ${ver} (editable on PATH — opening kite turns env on)"
+    echo "Installed ${ver} (editable on PATH - opening kite turns env on)"
   fi
 
   if [[ "${VERIFY}" -eq 1 ]]; then
@@ -421,12 +421,12 @@ Dev checkout: ${INSTALL_DIR}
 Kite home:    ${KITE_HOME}
 
 Opening \`kite\` uses this editable install (env on automatically).
-Local .venv is only for pytest/IDE — you do not need to activate it to run kite.
+Local .venv is only for pytest/IDE - you do not need to activate it to run kite.
 
   kite
   .venv/bin/pytest -q
 
-Update / uninstall: uv tool upgrade kite · uv tool uninstall kite
+Update / uninstall: uv tool upgrade kite | uv tool uninstall kite
 EOF
 }
 
