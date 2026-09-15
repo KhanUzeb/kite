@@ -399,6 +399,22 @@ def test_composer_commits_buffered_answer_when_submission_is_missing() -> None:
 
 
 
+def test_streamed_tool_preview_is_committed_once_at_stream_end() -> None:
+    buf = StringIO()
+    display = RunDisplay(Console(file=buf, width=120, theme=KITE_THEME), state=SessionUiState())
+    for partial_args in ('{"message":"first', '{"message":"first answer"}'):
+        display(
+            Event(
+                "stream_tool",
+                payload={"name": "submit", "partial_args": partial_args, "phase": "args"},
+            )
+        )
+
+    assert "preparing" not in strip_ansi(buf.getvalue())
+    display(Event("stream_end", payload={}))
+    assert strip_ansi(buf.getvalue()).count("preparing") == 1
+
+
 def test_submitted_output_is_not_repeated_after_a_tool() -> None:
     buf = StringIO()
     display = RunDisplay(Console(file=buf, width=80, theme=KITE_THEME), state=SessionUiState())
