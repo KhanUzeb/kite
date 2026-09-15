@@ -4,6 +4,33 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-09-15
+
+### Added
+- Subagent orchestration upgrade (Codex/Pi/Claude-inspired): role model tiers
+  (`fast`/`coder`/`smart`), per-profile tool scopes, depth cap (1) + spawn
+  budget (64), context packets, bounded summaries, quality gate with one-shot
+  revise, thread-tree registry, `abort_on_failure`, per-worker timeouts,
+  input-ordered results.
+- Resume hint on interactive exit (`kite resume <session-id>`, persisted
+  sessions only) — closes #84.
+- `kite resume <id>` renders the full chronological transcript and restores
+  context — closes #83.
+- `docs/RELEASE-0.9.9.md`.
+- Split CI (lint/test/bench/release-check), `fail-fast: false`,
+  `sync_version --check` fast path + `--release` for tags; `ci_check.sh/ps1`
+  `--release` flag.
+
+### Changed
+- Single tool pipeline (executor only), single policy truth (sandbox), single
+  slash registry (`ui/commands.py`), single approval/pick/theme sources.
+- Informational Q&A turns keep the answer; the turn report is an adjunct or
+  suppressed when nothing changed — closes #81.
+- Pre-tool budget guard, schema-repair hint, summed multi-turn cost,
+  verification-wired `submit`, stable-prefix prompt cache, single memory
+  render budget.
+- Composer layout test hermetic via `DummyOutput` (headless Windows CI).
+
 ### Removed
 - Optional Textual TUI (`kite/ui/textual/`, `KITE_TUI=1`, `kite[tui]` extra) — the Rich + prompt_toolkit REPL is the only interface.
 - Retired `/fullscreen` slash command and Textual-only shortcuts (`Ctrl+K`, `Ctrl+J`, `Ctrl+\`).
