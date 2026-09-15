@@ -6,6 +6,7 @@ import pytest
 
 from kite.models.litellm_model import LitellmModel
 from kite.models.reasoning import ReasoningSupport, looks_like_reasoning_error, looks_like_temperature_reasoning_error
+from kite.models.usage import UsageTotals
 
 _REASONING_ERROR = (
     "gpt-5.6-luna doesn't support temperature=0.0 while reasoning is active. "
@@ -155,6 +156,14 @@ def test_litellm_usage_serializer_warning_is_contained() -> None:
             response.model_dump()
 
     assert not [w for w in seen if "Pydantic serializer" in str(w.message)]
+
+
+def test_usage_totals_sum_cost_across_turns() -> None:
+    totals = UsageTotals()
+    totals.absorb({"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.02})
+    totals.absorb({"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.03})
+    assert totals.input_tokens == 20 and totals.output_tokens == 10
+    assert totals.cost == pytest.approx(0.05)
 
 
 def test_compaction_request_omits_temperature(monkeypatch: pytest.MonkeyPatch) -> None:

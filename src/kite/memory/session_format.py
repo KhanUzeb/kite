@@ -126,6 +126,116 @@ def session_pick_items(
     return [(meta.id, format_session_picker_label(meta, current=current)) for meta in rows]
 
 
+def _transcript_text(content: Any) -> str:
+    """Normalize persisted message content (str | list | None) to plain text."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        bits: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                bits.append(part)
+            elif isinstance(part, dict):
+                text = part.get("text") if isinstance(part.get("text"), str) else None
+                if text is not None:
+                    bits.append(text)
+                else:
+                    bits.append(str(part))
+            else:
+                bits.append(str(part))
+        return "".join(bits)
+    return str(content)
+
+
+def _tool_call_lines(message: dict[str, Any]) -> list[str]:
+    """Human-readable tool call summaries from tool_calls, falling back to extra.actions."""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for tc in message.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+        name = str(fn.get("name") or tc.get("name") or "tool")
+        call_id = str(tc.get("id") or "")
+        args = str(fn.get("arguments") or tc.get("arguments") or "").strip()
+        if len(args) > 120:
+            args = args[:117] + "…"
+        line = f"{name}({args})" if args else name
+        if call_id:
+            line += f" [{call_id}]"
+        if line not in seen:
+            seen.add(line)
+            lines.append(line)
+    extra = message.get("extra") if isinstance(message.get("extra"), dict) else {}
+    actions = extra.get("actions") if isinstance(extra, dict) else None
+    if not lines and isinstance(actions, list):
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            name = str(action.get("tool") or "tool")
+            call_id = str(action.get("id") or "")
+            args = str(action.get("arguments") or "").strip()
+            if len(args) > 120:
+                args = args[:117] + "…"
+            line = f"{name}({args})" if args and len(args) < 120 else name
+            if call_id:
+                line += f" [{call_id}]"
+            if line not in seen:
+                seen.add(line)
+                lines.append(line)
+    return lines
+
+
+def transcript_entries(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chronological transcript rows covering user/assistant/tool/system/exit kinds.
+
+    Pure data helper — rendering lives in kite.ui.render so the memory layer stays UI-free.
+    Every persisted message yields exactly one entry, preserving file order.
+    """
+    entries: list[dict[str, Any]] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            entries.append({"index": index, "kind": "unknown", "label": "message", "body": str(message)})
+            continue
+        role = str(message.get("role") or "unknown")
+        extra = message.get("extra") if isinstance(message.get("extra"), dict) else {}
+        body = _transcript_text(message.get("content"))
+        if role == "exit":
+            status = str(extra.get("exit_status") or body or "exit").strip() or "exit"
+            submission = str(extra.get("submission") or "").strip()
+            shown = submission or body
+            entries.append(
+                {
+                    "index": index,
+                    "kind": "exit",
+                    "label": f"exit:{status}",
+                    "body": shown,
+                    "status": status,
+                    "submission": submission,
+                }
+            )
+        elif role == "tool":
+            call_id = str(message.get("tool_call_id") or extra.get("id") or "").strip()
+            label = f"tool result [{call_id}]" if call_id else "tool result"
+            entries.append({"index": index, "kind": "tool", "label": label, "body": body or "—"})
+        elif role == "assistant":
+            calls = _tool_call_lines(message)
+            entries.append(
+                {"index": index, "kind": "assistant", "label": "assistant", "body": body, "tool_calls": calls}
+            )
+        elif role == "user":
+            label = "tool result" if body.lstrip().startswith("<tool_result") else "user"
+            kind = "tool" if label == "tool result" else "user"
+            entries.append({"index": index, "kind": kind, "label": label, "body": body or "—"})
+        elif role == "system":
+            entries.append({"index": index, "kind": "system", "label": "system", "body": body or "—"})
+        else:
+            entries.append({"index": index, "kind": "unknown", "label": role, "body": body or "—"})
+    return entries
+
+
 def render_sessions_table(
     console: Any,
     rows: list[SessionMeta],
@@ -133,36 +243,7 @@ def render_sessions_table(
     title: str,
     current: str | None = None,
 ) -> None:
-    from rich.table import Table
+    """Deprecated re-export — canonical home is :func:`kite.ui.tables.render_sessions_table`."""
+    from kite.ui.tables import render_sessions_table as _render
 
-    table = Table(title=title, show_lines=False, pad_edge=False)
-    table.add_column("Date", style="dim", no_wrap=True)
-    table.add_column("Time", style="dim", no_wrap=True)
-    table.add_column("Title", overflow="ellipsis", max_width=36)
-    table.add_column("Model", style="cyan", no_wrap=True, max_width=22)
-    table.add_column("Status", no_wrap=True)
-    table.add_column("ID", style="dim", no_wrap=True)
-    table.add_column("Dir", style="dim", no_wrap=True, max_width=14)
-
-    for meta in rows:
-        date_s, time_s, rel = format_session_when(meta.updated_at)
-        mark = " *" if current and meta.id == current else ""
-        status = session_status(meta)
-        status_style = "green" if status == "Submitted" else ("yellow" if status == "open" else "dim")
-        cwd = Path(meta.cwd).name if meta.cwd else "—"
-        table.add_row(
-            date_s,
-            time_s,
-            session_title(meta, max_len=34) + mark,
-            f"{meta.provider}/{meta.model}".strip("/") or "—",
-            f"[{status_style}]{status}[/]",
-            session_short_id(meta.id),
-            cwd,
-        )
-    console.print(table)
-    if rows:
-        console.print(
-            f"[dim]resume:[/] [bold]kite resume <id>[/]  "
-            f"[dim]· filter:[/] kite sessions -q text  "
-            f"[dim]· show:[/] kite sessions --show {rows[0].id}"
-        )
+    _render(console, rows, title=title, current=current)

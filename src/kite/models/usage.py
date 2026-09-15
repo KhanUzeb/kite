@@ -28,7 +28,7 @@ class UsageTotals:
         except (TypeError, ValueError):
             delta = 0.0
         if delta:
-            self.cost = max(self.cost, delta)
+            self.cost += delta
 
     def absorb_session(self, session: dict[str, Any] | None) -> None:
         if not session:

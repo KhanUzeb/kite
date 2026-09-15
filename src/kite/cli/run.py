@@ -176,9 +176,68 @@ def _wire_display(harness, console, args: argparse.Namespace):
     return None
 
 
-def cmd_run(args: argparse.Namespace) -> int:
+def _resolve_mode_approval(args: argparse.Namespace) -> tuple:
+    """Shared mode/approval preamble for run + resume (headless retry included)."""
+    mode = _parse_mode(getattr(args, "mode", None))
+    approval = _parse_approval(getattr(args, "approval", None), mode)
+    if _is_headless(args):
+        from kite.tasks import resolve_headless_approval
+
+        approval = resolve_headless_approval(getattr(args, "approval", None), mode, headless=True)
+    return mode, approval
+
+
+def _load_attachments_or_abort(console, args: argparse.Namespace, task: str):
+    """Shared --attach preamble — (task, attachments), or None after printing the error."""
+    try:
+        return _load_attachments(getattr(args, "attach", None) or [], task or "", args.cwd)
+    except (OSError, ValueError) as e:
+        console.print(f"[red]{e}[/]")
+        return None
+
+
+def _build_harness_from_args(
+    args: argparse.Namespace,
+    *,
+    mode,
+    approval,
+    attachments,
+    session_id: str | None = None,
+    resume: bool = False,
+    follow_up: str | None = None,
+):
+    """Shared Harness(build_harness_config(...)) preamble for run + resume."""
     from kite.agent.harness import Harness
     from kite.agent.harness_build import build_harness_config
+
+    return Harness(
+        build_harness_config(
+            provider=args.provider,
+            model_name=args.model,
+            cwd=args.cwd,
+            step_limit=args.steps,
+            cost_limit=args.cost,
+            wall_time_limit_seconds=int(getattr(args, "time", 0) or 0),
+            output_path=Path(args.output) if getattr(args, "output", None) else None,
+            label=getattr(args, "label", "") or "",
+            session_id=session_id,
+            resume=resume,
+            follow_up=follow_up,
+            no_context=args.no_context,
+            no_compact=args.no_compact,
+            no_guardrails=args.no_guardrails,
+            config_name=args.config,
+            mode=mode.value,
+            approval=approval.value,
+            interactive=False,
+            attachments=attachments,
+            role=getattr(args, "role", "auto") or "auto",
+            long_task=bool(getattr(args, "long", False)),
+        )
+    )
+
+
+def cmd_run(args: argparse.Namespace) -> int:
     from kite.config import ensure_home
 
     console = _console()
@@ -196,21 +255,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                 return 2
             chunks.append(block)
         task = "".join(chunks).strip()
-    mode = _parse_mode(args.mode)
-    approval = _parse_approval(args.approval, mode)
-    if _is_headless(args):
-        from kite.tasks import resolve_headless_approval
-
-        approval = resolve_headless_approval(args.approval, mode, headless=True)
-    try:
-        task, attachments = _load_attachments(
-            getattr(args, "attach", None) or [],
-            task or "",
-            args.cwd,
-        )
-    except (OSError, ValueError) as e:
-        console.print(f"[red]{e}[/]")
+    mode, approval = _resolve_mode_approval(args)
+    loaded = _load_attachments_or_abort(console, args, task or "")
+    if loaded is None:
         return 2
+    task, attachments = loaded
     if not task.strip() and attachments:
         task = "Look at the attached files."
     if not task.strip():
@@ -225,28 +274,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not task.strip():
         console.print("[red]Provide a task, --stdin, or --attach[/]")
         return 2
-    harness = Harness(
-        build_harness_config(
-            provider=args.provider,
-            model_name=args.model,
-            cwd=args.cwd,
-            step_limit=args.steps,
-            cost_limit=args.cost,
-            wall_time_limit_seconds=args.time or 0,
-            output_path=Path(args.output) if args.output else None,
-            label=args.label or "",
-            no_context=args.no_context,
-            no_compact=args.no_compact,
-            no_guardrails=args.no_guardrails,
-            config_name=args.config,
-            mode=mode.value,
-            approval=approval.value,
-            interactive=False,
-            attachments=attachments,
-            role=getattr(args, "role", "auto"),
-            long_task=bool(getattr(args, "long", False)),
-        )
-    )
+    harness = _build_harness_from_args(args, mode=mode, approval=approval, attachments=attachments)
     _wire_display(harness, console, args)
     killed = 0
     try:
@@ -344,8 +372,6 @@ def _pick_session_id(console, *, title: str = "Pick a session") -> str | None:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    from kite.agent.harness import Harness
-    from kite.agent.harness_build import build_harness_config
     from kite.memory.session import load_session
     from kite.memory.session_format import format_session_resume_hint, suggest_sessions
 
@@ -371,7 +397,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             return 130
         args.session = picked
     try:
-        session = load_session(args.session)
+        session = load_session(args.session, unique=True)
     except FileNotFoundError:
         hints = suggest_sessions(args.session, limit=5)
         console.print(f"[red]no session matching[/] {args.session!r}")
@@ -385,8 +411,6 @@ def cmd_resume(args: argparse.Namespace) -> int:
     except ValueError as e:
         console.print(f"[red]{e}[/]")
         return 2
-
-    console.print(f"[dim]resuming[/]  {format_session_resume_hint(session.meta)}")
 
     follow = args.message or args.task
     if getattr(args, "retry", False) and not follow:
@@ -403,45 +427,26 @@ def cmd_resume(args: argparse.Namespace) -> int:
                 + f"  —  kite resume {args.session} \"continue\""
             )
             return 2
+        # Interactive path renders the full transcript via ChatSession._open_session;
+        # print only the one-line hint here to avoid duplicate transcript output.
+        console.print(f"[dim]resuming[/]  {format_session_resume_hint(session.meta)}")
         return cmd_chat(args)
-    mode = _parse_mode(args.mode)
-    approval = _parse_approval(args.approval, mode)
-    if _is_headless(args):
-        from kite.tasks import resolve_headless_approval
+    from kite.ui.render import render_session_transcript
 
-        approval = resolve_headless_approval(args.approval, mode, headless=True)
-    try:
-        follow, attachments = _load_attachments(
-            getattr(args, "attach", None) or [],
-            follow,
-            args.cwd,
-        )
-    except (OSError, ValueError) as e:
-        console.print(f"[red]{e}[/]")
+    render_session_transcript(console, session, tail=None)
+    mode, approval = _resolve_mode_approval(args)
+    loaded = _load_attachments_or_abort(console, args, follow)
+    if loaded is None:
         return 2
-    harness = Harness(
-        build_harness_config(
-            provider=args.provider,
-            model_name=args.model,
-            cwd=args.cwd,
-            step_limit=args.steps,
-            cost_limit=args.cost,
-            wall_time_limit_seconds=int(getattr(args, "time", 0) or 0),
-            output_path=Path(args.output) if getattr(args, "output", None) else None,
-            session_id=args.session,
-            resume=True,
-            follow_up=follow,
-            no_context=args.no_context,
-            no_compact=args.no_compact,
-            no_guardrails=args.no_guardrails,
-            config_name=args.config,
-            mode=mode.value,
-            approval=approval.value,
-            interactive=False,
-            attachments=attachments,
-            role=getattr(args, "role", "auto") or "auto",
-            long_task=bool(getattr(args, "long", False)),
-        )
+    follow, attachments = loaded
+    harness = _build_harness_from_args(
+        args,
+        mode=mode,
+        approval=approval,
+        attachments=attachments,
+        session_id=args.session,
+        resume=True,
+        follow_up=follow,
     )
     _wire_display(harness, console, args)
     try:
@@ -497,8 +502,8 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 
     from kite.config import kite_home
     from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
-    from kite.memory.session_format import render_sessions_table
     from kite.ui.pick import can_prompt, confirm, numbered_pick
+    from kite.ui.tables import render_sessions_table
 
     console = _console()
     query = (getattr(args, "search", None) or getattr(args, "query", None) or "").strip()
@@ -536,15 +541,10 @@ def cmd_sessions(args: argparse.Namespace) -> int:
         except (OSError, ValueError) as e:
             console.print(f"[red]{e}[/]")
             return 2
-        from kite.memory.session_format import format_session_resume_hint
+        from kite.ui.render import render_session_transcript
 
-        console.print(f"[bold]{session.id}[/]  {format_session_resume_hint(session.meta)}")
         console.print(Panel(json.dumps(session.meta.to_dict(), indent=2), title="meta"))
-        shown = session.messages if args.tail == 0 else session.messages[-args.tail :]
-        for i, m in enumerate(shown, 1):
-            role = m.get("role")
-            content = (m.get("content") or "")[:200].replace("\n", " ")
-            console.print(f"[dim]{i}[/] [cyan]{role}[/] {content}")
+        render_session_transcript(console, session, tail=None if args.tail == 0 else args.tail)
         console.print(f"[dim]resume:[/] [bold]kite resume {session.id}[/]")
         return 0
 

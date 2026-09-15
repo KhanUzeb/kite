@@ -12,12 +12,33 @@ from kite.config import ensure_home, kite_home
 from kite.memory.secure_io import wrap_untrusted_user_content
 
 _FRONTMATTER = re.compile(r"^---\s*\n(?P<body>.*?)\n---\s*\n(?P<prompt>.*)$", re.DOTALL)
-_FM_LINE = re.compile(r"^([a-z_]+):\s*(.+)$", re.IGNORECASE)
+_FM_LINE = re.compile(r"^([a-z_]+):\s*(.*)$", re.IGNORECASE)
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 _LABEL_RE = re.compile(r"^[\w .:/()-]{1,80}$", re.UNICODE)
+_TOOL_RE = re.compile(r"^[a-z0-9_]+$")
 _MAX_PROFILE_BYTES = 32_000
 _MAX_PROMPT_CHARS = 12_000
+_MAX_TOOLS_PER_PROFILE = 32
+_MAX_CONTEXT_CHARS = 2000
+SUMMARY_CONTRACT = (
+    "## Summary contract\n"
+    "Reply with exactly these sections so the lead merge stays cheap (total under ~1500 chars):\n"
+    "## Result\n## Files touched\n## Tests"
+)
 _VALID_ROLES = frozenset({"auto", "architect", "implementer", "debugger", "implement", "debug", "plan"})
+_VALID_MODEL_ROLES = frozenset({"fast", "coder", "smart"})
+# Tools a worker registry must never contain — nesting/memory writes stay with the parent run.
+_BLOCKED_WORKER_TOOLS = frozenset({"subagent", "memory"})
+
+
+# Role → model fallback chain. Each tier is an ordered preference: "parent" means inherit the
+# parent run's model first, None means fall back to the runtime default. Tiers currently all resolve
+# to the parent model (no per-tier catalog mapping yet); an explicit per-worker model= always wins.
+ROLE_MODEL_TIERS: dict[str, tuple[str | None, ...]] = {
+    "fast": ("parent", None),
+    "coder": ("parent", None),
+    "smart": ("parent", None),
+}
 
 
 @dataclass(frozen=True)
@@ -28,14 +49,42 @@ class SubagentProfile:
     description: str = ""
     prompt: str = ""
     bundled: bool = True
+    tools: tuple[str, ...] = ()  # empty = inherit parent run's registry
+    model_role: str = "coder"  # fast | coder | smart — model tier preference
 
-    def compose(self, task: str) -> str:
+    def compose(
+        self,
+        task: str,
+        *,
+        context: str = "",
+        project_root: str = "",
+        execution_cwd: str = "",
+    ) -> str:
+        """Compose worker prompt.
+
+        Packet order: persona + context packet + task + summary contract.
+        All new kwargs are optional (backward compatible); ``context`` capped at 2000 chars.
+        """
         task = (task or "").strip()[:4000]
         body = self.prompt.strip()[:_MAX_PROMPT_CHARS]
         if not self.bundled:
             body = wrap_untrusted_user_content(body, source=f"subagent-profile:{self.id}")
-        header = f"# Subagent: {self.label}\n{body}\n\n"
-        return f"{header}## Task\n{task}" if task else header.strip()
+        parts = [f"# Subagent: {self.label}\n{body}".strip()]
+        packet_lines: list[str] = []
+        if project_root or execution_cwd or context:
+            if project_root or execution_cwd:
+                packet_lines.append("## Context packet")
+                packet_lines.append(f"- project_root: {(project_root or '').strip()[:500] or '(unknown)'}")
+                packet_lines.append(f"- execution_cwd: {(execution_cwd or '').strip()[:500] or '(unknown)'}")
+            if context and context.strip():
+                packet_lines.append(f"- context: {context.strip()[:_MAX_CONTEXT_CHARS]}")
+            if packet_lines and packet_lines[0] != "## Context packet":
+                packet_lines.insert(0, "## Context packet")
+            parts.append("\n".join(packet_lines))
+        if task:
+            parts.append(f"## Task\n{task}")
+        parts.append(SUMMARY_CONTRACT)
+        return "\n\n".join(parts)
 
 
 def _parse_frontmatter(raw: str) -> dict[str, str]:
@@ -67,6 +116,59 @@ def _sanitize_role(raw: str) -> str:
     aliases = {"implement": "implementer", "debug": "debugger", "plan": "architect"}
     role = aliases.get(role, role)
     return role if role in _VALID_ROLES else "auto"
+
+
+def _default_model_role(profile_id: str, role: str) -> str:
+    """Tier default: fast for scout, smart for reviewer/planner-likes, coder otherwise."""
+    pid = (profile_id or "").strip().lower()
+    if pid == "scout":
+        return "fast"
+    if pid == "reviewer" or role == "architect":
+        return "smart"
+    return "coder"
+
+
+def _sanitize_model_role(raw: str, *, profile_id: str = "", role: str = "") -> str:
+    tier = (raw or "").strip().lower()
+    if tier in _VALID_MODEL_ROLES:
+        return tier
+    return _default_model_role(profile_id, role)
+
+
+def _sanitize_tools(raw: str) -> tuple[str, ...]:
+    """Parse a comma/space separated tool allowlist; empty string = inherit parent."""
+    seen: list[str] = []
+    for chunk in re.split(r"[,\s]+", (raw or "").strip().lower()):
+        name = chunk.strip()
+        if not name or not _TOOL_RE.match(name) or name in seen:
+            continue
+        seen.append(name)
+        if len(seen) >= _MAX_TOOLS_PER_PROFILE:
+            break
+    return tuple(seen)
+
+
+def worker_tool_allowlist(profile: SubagentProfile | None) -> list[str] | None:
+    """Registry allowlist for a worker, or None when the profile inherits the parent.
+
+    Always strips nesting/memory tools — workers never spawn subagents of their own.
+    """
+    if profile is None or not profile.tools:
+        return None
+    allowed = [t for t in profile.tools if t not in _BLOCKED_WORKER_TOOLS]
+    return allowed or None
+
+
+def resolve_worker_model(*, explicit_model: str = "", parent_model: str = "", model_role: str = "coder") -> str:
+    """Resolve a worker model via its tier: explicit model= wins, then parent, then runtime default."""
+    if explicit_model.strip():
+        return explicit_model.strip()
+    tier = (model_role or "coder").strip().lower()
+    for pref in ROLE_MODEL_TIERS.get(tier, ROLE_MODEL_TIERS["coder"]):
+        if pref == "parent" and parent_model.strip():
+            return parent_model.strip()
+        # None = runtime default — "" lets the caller fall back to its own default.
+    return ""
 
 
 def _read_bounded(path: Path) -> str:
@@ -110,13 +212,16 @@ def _parse_profile_file(path: Path, fallback_id: str, *, bundled: bool) -> Subag
 
     pid = _sanitize_id(meta.get("id") or meta.get("name") or fallback_id, fallback_id)
     label = _sanitize_label(meta.get("label") or "", pid.replace("-", " ").title())
+    role = _sanitize_role(meta.get("role") or "auto")
     return SubagentProfile(
         id=pid,
         label=label,
-        role=_sanitize_role(meta.get("role") or "auto"),
+        role=role,
         description=(meta.get("description") or "")[:200],
         prompt=prompt[:_MAX_PROMPT_CHARS],
         bundled=bundled,
+        tools=_sanitize_tools(meta.get("tools") or ""),
+        model_role=_sanitize_model_role(meta.get("model_role") or "", profile_id=pid, role=role),
     )
 
 
@@ -136,6 +241,8 @@ id: {id}
 label: {label}
 role: {role}
 description: {description}
+tools:
+model_role: coder
 ---
 
 You are a **{label}** subagent.
@@ -250,17 +357,29 @@ def resolve_subagent_task(
     profile: str = "",
     role: str = "",
     label: str = "",
+    context: str = "",
+    project_root: str = "",
+    execution_cwd: str = "",
 ) -> tuple[str, str, str]:
     """Return (composed_prompt, role, label) for a nested worker."""
     prof = get_profile(profile)
     safe_prompt = (prompt or "").strip()[:4000]
     if prof:
-        composed = prof.compose(safe_prompt)
+        composed = prof.compose(
+            safe_prompt,
+            context=context,
+            project_root=project_root,
+            execution_cwd=execution_cwd,
+        )
         resolved_role = _sanitize_role(role or prof.role)
         resolved_label = _sanitize_label(label or prof.label, prof.id)
         return composed, resolved_role, resolved_label
     resolved_role = _sanitize_role(role)
     resolved_label = _sanitize_label(label, safe_prompt[:48].replace("\n", " ") or "worker")
+    if safe_prompt and SUMMARY_CONTRACT not in safe_prompt:
+        safe_prompt = f"{safe_prompt}\n\n{SUMMARY_CONTRACT}"
+    elif not safe_prompt:
+        safe_prompt = SUMMARY_CONTRACT
     return safe_prompt, resolved_role, resolved_label
 
 
@@ -279,7 +398,8 @@ def profiles_for_orchestrator(*, max_chars: int = 1200) -> str:
     for p in rows:
         desc = p.description or p.prompt.split("\n", 1)[0][:120]
         trust = "bundled" if p.bundled else "user-local"
-        lines.append(f"- **{p.id}** ({p.label}) — role={p.role}, trust={trust}: {desc}")
+        scope = ",".join(p.tools) if p.tools else "inherit"
+        lines.append(f"- **{p.id}** ({p.label}) — role={p.role}, model={p.model_role}, tools={scope}, trust={trust}: {desc}")
     text = "\n".join(lines)
     if len(text) > max_chars:
         text = text[: max_chars - 20] + "\n..."

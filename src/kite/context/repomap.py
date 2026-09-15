@@ -35,30 +35,40 @@ _RUST_DEF = re.compile(r"^(?:pub\s+)?fn\s+(\w+)|^(?:pub\s+)?(?:struct|enum)\s+(\
 def git_changed_paths(root: Path) -> set[str]:
     """Paths changed vs HEAD, staged, or untracked — empty when not a git repo."""
     root = root.expanduser().resolve()
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "core.quotePath=false",
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=normal",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if proc.returncode != 0:
+        return set()
     changed: set[str] = set()
-    commands = (
-        ["git", "-C", str(root), "diff", "--name-only", "HEAD"],
-        ["git", "-C", str(root), "diff", "--cached", "--name-only"],
-        ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
-    )
-    for cmd in commands:
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=5,
-            )
-        except (OSError, subprocess.TimeoutExpired):
+    for line in (proc.stdout or "").splitlines():
+        if len(line) < 4:
             continue
-        if proc.returncode != 0:
-            continue
-        for line in (proc.stdout or "").splitlines():
-            rel = line.strip().replace("\\", "/")
-            if rel:
-                changed.add(rel)
+        rel = line[3:].strip()
+        if " -> " in rel:  # renames: keep the new path
+            rel = rel.rsplit(" -> ", 1)[-1].strip()
+        if len(rel) >= 2 and rel.startswith('"') and rel.endswith('"'):
+            rel = rel[1:-1]
+        rel = rel.replace("\\", "/")
+        if rel:
+            changed.add(rel)
     return changed
 
 

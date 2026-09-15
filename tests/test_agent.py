@@ -12,7 +12,7 @@ from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.dispatch_mode import dispatch_hint, resolve_dispatch_mode
 from kite.agent.exceptions import LimitsExceeded, ProviderFault, Submitted
 from kite.agent.harness_build import build_harness_config
-from kite.agent.loop import _MAX_IDLE_TURNS, DefaultAgent, _allow_text_submit
+from kite.agent.loop import _MAX_IDLE_TURNS, DefaultAgent, _allow_text_submit, _is_casual_user_turn
 from kite.agent.loop_guard import LoopGuard
 from kite.agent.mode import (
     MUTATING_TOOLS,
@@ -218,6 +218,29 @@ def test_plan_build_tools_and_plan_submit_block(workspace: Path) -> None:
     assert not submit.run({}).get("ok")
 
 
+def test_informational_turn_returns_answer_not_report() -> None:
+    """Issue #81: `tell main features of kite` ends with the answer text, not a turn report."""
+    assert _is_casual_user_turn("tell main features of kite")
+    assert _allow_text_submit(
+        "Kite features: fast runs",
+        mode=AgentMode.BUILD,
+        interactive=True,
+        last_user="tell main features of kite",
+    )
+    assert not _allow_text_submit(
+        "I finished the refactor.",
+        mode=AgentMode.BUILD,
+        interactive=True,
+        last_user="run the test suite",
+    )
+    agent = DefaultAgent(_TextOnlyModel(), _StubEnv(), interactive=True, mode=AgentMode.BUILD, provider_max_retries=1)
+    agent.messages = [{"role": "user", "content": "tell main features of kite"}]
+    with pytest.raises(Submitted) as ei:
+        agent.execute_actions({"role": "assistant", "content": "Kite features: fast runs", "extra": {"actions": []}})
+    assert ei.value.messages[0].get("content") == "Kite features: fast runs"
+    assert "## Verification" not in (ei.value.messages[0].get("content") or "")
+
+
 def test_completion_idle_and_error_stop(monkeypatch) -> None:
     assert not _allow_text_submit("I finished the refactor.", mode=AgentMode.BUILD, interactive=True)
     assert _allow_text_submit("Hey! 👋", mode=AgentMode.BUILD, interactive=True, last_user="hi")
@@ -418,6 +441,53 @@ def test_submit_gate_and_executor_approval(workspace: Path) -> None:
         {"command": "git status"},
         {"tool": "bash", "arguments": {"command": "git status"}},
     ).get("ok") is True
+
+
+def test_pre_tool_budget_guard_refuses_dispatch() -> None:
+    events: list[str] = []
+
+    def _over_budget(**kwargs) -> DefaultAgent:
+        agent = DefaultAgent(_StubModel(), _StubEnv(), on_event=lambda e: events.append(e.kind), **kwargs)
+        agent.env.execute = lambda action, cwd="": (_ for _ in ()).throw(AssertionError("tool must not dispatch"))  # type: ignore[method-assign]
+        return agent
+
+    stepped = _over_budget(step_limit=2)
+    stepped.n_calls = 2
+    stepped.execute_actions(
+        {"role": "assistant", "content": "", "extra": {"actions": [{"tool": "read", "arguments": {"path": "x"}}]}}
+    )
+    costed = _over_budget(cost_limit=1.0)
+    costed.cost = 1.0
+    costed.execute_actions(
+        {"role": "assistant", "content": "", "extra": {"actions": [{"tool": "read", "arguments": {"path": "x"}}]}}
+    )
+    assert "limits" in events
+    for agent in (stepped, costed):
+        blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
+        assert "budget" in blob
+
+
+def test_schema_repair_nudge_names_expected_keys(workspace: Path) -> None:
+    tools = make_coding_tools(cwd=str(workspace), enabled=["read"])
+    agent = DefaultAgent(_StubModel(), LocalEnvironment(registry=ToolRegistry(tools)))
+    tool, args, action = agent._prepare_action({"tool": "read", "arguments": "x.py"})
+    assert args == {}
+    hint = str(action.get("_schema_repair_hint") or "")
+    assert "arguments must be an object" in hint and "path" in hint
+    outputs: list[dict] = []
+    agent._after_tool(tool, args, action, {"ok": False, "error": "boom", "output": "boom"}, 1, outputs)
+    assert "Schema repair" in outputs[0]["output"] and "path" in outputs[0]["output"]
+
+
+def test_submit_tool_gated_on_verification() -> None:
+    agent = DefaultAgent(_StubModel(), _StubEnv(), verify_before_submit=True)
+    agent.verification.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+    blocked = agent._invoke_tool(
+        "submit", {"message": "finished"}, {"tool": "submit", "arguments": {"message": "finished"}}
+    )
+    assert blocked.get("blocked") is True and "Submit blocked" in str(blocked.get("error") or "")
+    clean = DefaultAgent(_StubModel(), _StubEnv(), verify_before_submit=True)
+    assert clean.verification.submit_block_reason("hi") is None
 
 
 def test_harness_keeps_job_registry_after_run_error() -> None:

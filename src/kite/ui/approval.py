@@ -30,6 +30,25 @@ from kite.ui.tool_cards import render_bash_command_block
 
 Decision = Literal["allow", "session", "always", "deny", "stop"]
 
+#: Single-letter approval keys → Decision. Single source for the composer
+#: (ui.complete), the panel footer below, and prompt_approval choices.
+APPROVAL_KEYS: dict[str, Decision] = {
+    "a": "allow",
+    "s": "session",
+    "p": "always",
+    "n": "deny",
+    "q": "stop",
+}
+
+#: Footer rendering per decision: (label, key style).
+_APPROVAL_KEY_META: dict[str, tuple[str, str]] = {
+    "allow": ("once", "kite.muted"),
+    "session": ("family", "kite.success"),
+    "always": ("always", "kite.success"),
+    "deny": ("deny", "kite.pending"),
+    "stop": ("stop", "kite.error"),
+}
+
 GitBashKind = Literal["read", "write", "other"]
 
 
@@ -688,16 +707,14 @@ def render_approval_panel(
     body.append(f"{GUTTER}{APPROVAL_BAR}\n", style="kite.muted")
     body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
     body.append("[Enter]", style="kite.success")
-    body.append(" / [a] once  ", style="kite.muted")
-    if not mandatory:
-        body.append("[s]", style="kite.success")
-        body.append(" family  ", style="kite.muted")
-        body.append("[p]", style="kite.success")
-        body.append(" always  ", style="kite.muted")
-    body.append("[n]", style="kite.pending")
-    body.append(" deny  ", style="kite.muted")
-    body.append("[q]", style="kite.error")
-    body.append(" stop\n", style="kite.muted")
+    for _key, _decision in APPROVAL_KEYS.items():
+        if mandatory and _decision in {"session", "always"}:
+            continue
+        _label, _style = _APPROVAL_KEY_META[_decision]
+        _lead = " / " if _key == "a" else ""
+        _end = "\n" if _key == "q" else "  "
+        body.append(f"{_lead}[{_key}]", style=_style)
+        body.append(f" {_label}{_end}", style="kite.muted")
     return body
 
 
@@ -718,7 +735,7 @@ def prompt_approval(
         return "allow"
 
     console.print(render_approval_panel(tool, arguments, diff=diff, reason=reason, mandatory=mandatory))
-    choices = ["a", "n", "q"] if mandatory else ["a", "s", "p", "n", "q"]
+    choices = [key for key, decision in APPROVAL_KEYS.items() if not mandatory or decision not in {"session", "always"}]
     try:
         choice = Prompt.ask(
             "Decision",

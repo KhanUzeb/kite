@@ -145,8 +145,16 @@ class MemoryStore:
             return None
 
     def render_for_prompt(self, *, max_chars: int = 4_000) -> str:
-        semantic = self.semantic.render_for_prompt(max_chars=max(800, max_chars - 1_000))
-        episodic = self.episodic.render_for_prompt(limit=6, max_chars=900)
+        """Render durable memory inside a single prompt budget (default 4000 chars).
+
+        Truncation order: semantic notes first (larger share), then recent episodes; the joined
+        text is hard-capped at ``max_chars`` so the prompt block never exceeds one budget.
+        """
+        # Semantic takes the whole budget minus room for episodes; episodic is a fixed tail slice.
+        semantic_budget = max(800, max_chars - 1_000)
+        episodic_limit, episodic_budget = 6, 900
+        semantic = self.semantic.render_for_prompt(max_chars=semantic_budget)
+        episodic = self.episodic.render_for_prompt(limit=episodic_limit, max_chars=episodic_budget)
         parts = [p for p in (semantic, episodic) if p]
         if not parts:
             return ""

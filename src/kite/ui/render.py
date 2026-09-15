@@ -55,6 +55,12 @@ from kite.ui.tool_cards import (
 _QUIET_START_TOOLS = frozenset({"read", "grep", "glob", "ls"})
 
 
+def _looks_like_turn_report(text: str) -> bool:
+    """Detect a Done/Changed/Verification turn report (submit template) vs. a real answer."""
+    lowered = text.lower()
+    return "## done" in lowered or "## changed" in lowered or "## verification" in lowered
+
+
 def render_startup_card(
     *,
     version: str,
@@ -205,9 +211,63 @@ def render_user_cell(task: str) -> Padding:
         body.append(line, style=body_style)
     return Padding(body, (1, 1), style=pad_style, expand=True)
 
+
+def render_session_transcript(console: Any, session: Any, *, tail: int | None = None) -> None:
+    """Print the complete chronological transcript for resume/show paths.
+
+    Renders every persisted message (user, assistant, tool calls/results, system, exit/submit)
+    with full multi-line bodies — terminal scrollback keeps long messages readable instead of
+    silently truncating them. ``tail`` windows the oldest entries only (None = all).
+    """
+    from kite.memory.session_format import format_session_resume_hint, transcript_entries
+
+    meta = session.meta
+    console.print(f"[kite.muted]{session.id}[/]  {format_session_resume_hint(meta)}")
+    entries = transcript_entries(list(session.messages or []))
+    if tail is not None:
+        shown = entries[-tail:] if tail > 0 else list(entries)
+    else:
+        shown = entries
+    if not shown:
+        console.print("[kite.muted](empty transcript)[/]")
+        return
+    skipped = len(entries) - len(shown)
+    if skipped > 0:
+        console.print(f"[kite.muted]  … {skipped} earlier messages  ·  use --tail 0 for full[/]")
+    from kite.ui.output_view import format_viewable_output
+
+    for entry in shown:
+        kind = str(entry.get("kind") or "unknown")
+        label = str(entry.get("label") or kind)
+        body = str(entry.get("body") or "")
+        if kind == "user":
+            console.print(render_user_cell(body or "—"), highlight=False)
+            continue
+        if kind == "assistant":
+            if body:
+                console.print(Text(body, style="kite.answer"), highlight=False, markup=False)
+            for line in entry.get("tool_calls") or []:
+                console.print(f"  [kite.muted]tool:[/] {line}", markup=True, highlight=False)
+            if not body and not (entry.get("tool_calls") or []):
+                console.print("  [kite.muted]—[/]")
+            continue
+        if kind == "tool":
+            console.print(f"  [kite.brand]{label}[/]", markup=True, highlight=False)
+            viewable = format_viewable_output(body).rstrip("\n") or "—"
+            console.print(Text(viewable, style="kite.terminal"), highlight=False, markup=False)
+            continue
+        if kind == "exit":
+            status = str(entry.get("status") or label)
+            console.print(f"  [kite.brand]{status}[/]", markup=True, highlight=False)
+            if body and body != status:
+                console.print(Text(body, style="kite.muted"), highlight=False, markup=False)
+            continue
+        console.print(f"  [kite.brand]{label}[/]", markup=True, highlight=False)
+        console.print(Text(body or "—", style="kite.muted"), highlight=False, markup=False)
+
+
 def _composer_owns_bottom(state: SessionUiState) -> bool:
     return state.busy
-
 
 def _composer_suppresses_scrollprint(state: SessionUiState) -> bool:
     return state.busy
@@ -1219,7 +1279,19 @@ class RunDisplay:
             self._deferred_answer_parts.clear()
             return
         submission = str(payload.get("submission") or payload.get("content") or "").strip()
-        answer = submission or "".join(self._deferred_answer_parts).strip()
+        streamed = "".join(self._deferred_answer_parts).strip()
+        if submission and streamed and str(payload.get("exit_status") or "Submitted") == "Submitted":
+            if submission in streamed or streamed in submission:
+                answer = max(submission, streamed, key=len)
+            else:
+                vsum = payload.get("verification") if isinstance(payload.get("verification"), dict) else {}
+                had_work = bool(vsum.get("artifact_count") or vsum.get("diff_count"))
+                if _looks_like_turn_report(submission) and not had_work:
+                    answer = streamed
+                else:
+                    answer = f"{streamed}\n\n{submission}"
+        else:
+            answer = submission or streamed
         if answer and str(payload.get("exit_status") or "Submitted") == "Submitted":
             self._streamed_answer = False
             self._stream_write(answer, channel="answer")

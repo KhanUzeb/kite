@@ -1,5 +1,7 @@
 # kite-release-version: 0.9.8.5
 # Same gates as .github/workflows/tests.yml — run before push to main.
+# Usage: .\scripts\ci_check.ps1 [-Release]  # -Release adds RELEASE doc + CHANGELOG check
+param([switch]$Release)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
@@ -26,7 +28,8 @@ function Resolve-CiPython {
 $Python = Resolve-CiPython -Root $Root
 Write-Host "Using Python: $Python"
 Write-Host "== sync_version --check"
-& $Python scripts/sync_version.py --check
+if ($Release) { & $Python scripts/sync_version.py --check --release }
+else { & $Python scripts/sync_version.py --check }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "== ruff"
 & $Python -m ruff check src tests

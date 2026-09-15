@@ -142,6 +142,8 @@ def make_coding_tools(
     jobs=None,
     on_event=None,
     auto_venv: bool = True,
+    verification=None,
+    verify_before_submit: bool = True,
 ) -> list[Tool]:
     def _root() -> str:
         if execution is not None:
@@ -511,12 +513,9 @@ def make_coding_tools(
         installed: list[str] = []
         if install:
             try:
-                from kite.skills.install import install_skill
-                from kite.skills.loader import load_skills
+                from kite.skills.install import install_skill_and_refresh
 
-                installed = install_skill(str(install), link_cwd=project_root)
-                for skill in load_skills(project_root):
-                    skill_by_name[skill.name] = skill
+                installed = install_skill_and_refresh(skill_by_name, str(install), project_root)
             except (ValueError, RuntimeError, OSError) as e:
                 return {"ok": False, "error": str(e), "output": str(e)}
         name = str(args.get("name") or "").strip()
@@ -662,6 +661,10 @@ def make_coding_tools(
                 "error": "message required — structured summary with Done/Changed/Verification sections",
                 "output": "message required",
             }
+        if verification is not None and verify_before_submit:
+            reason = verification.submit_block_reason(message, require_verification=True)
+            if reason:
+                return {"ok": False, "blocked": True, "error": reason, "output": reason}
         return {"ok": True, "submitted": True, "submission": message, "output": message}
 
     def memory_op(args: dict[str, Any]) -> dict[str, Any]:

@@ -44,6 +44,17 @@ def test_prompt_cache_manager_memoizes_prepare():
     assert a is b
 
 
+def test_prompt_cache_manager_stable_prefix_noop():
+    mgr = PromptCacheManager(provider="anthropic", enabled=True)
+    messages = [{"role": "system", "content": "You are helpful."}, {"role": "user", "content": "go"}]
+    first = mgr.prepare(messages)
+    assert mgr.prepare(messages) is first
+    assert first[0]["content"][0].get("cache_control")
+    grown = [*messages, {"role": "assistant", "content": "ok"}, {"role": "user", "content": "next"}]
+    second = mgr.prepare(grown)
+    assert second is not first and len(second) == len(grown) and mgr.prepare(grown) is second
+
+
 def test_runtime_prepare_static_cache():
     from unittest.mock import MagicMock, patch
 

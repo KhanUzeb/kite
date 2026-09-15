@@ -53,6 +53,35 @@ def search_summary(results: list[dict[str, str]], *, engine: str) -> str:
     return f"{len(results)} result(s) via {engine}"
 
 
+def reformat_search_hit(
+    hit: dict,
+    *,
+    urls_only: bool,
+    compact: bool,
+    max_snippet_chars: int,
+) -> dict:
+    """Re-render a paid-search hit dict via the canonical search formatter.
+
+    Canonical home of the logic historically duplicated as
+    ``tools.web_providers._reformat_search``. Hit shape (keys) unchanged.
+    """
+    results = hit.get("results") if isinstance(hit.get("results"), list) else []
+    engine = str(hit.get("engine") or "api")
+    query = str(hit.get("query") or "")
+    source = str(hit.get("source") or "api")
+    hit["output"] = format_search_output(
+        query,
+        results,
+        engine=engine,
+        source=source,
+        urls_only=urls_only,
+        compact=compact,
+        max_snippet_chars=max_snippet_chars,
+    )
+    hit["summary"] = search_summary(results, engine=engine)
+    return hit
+
+
 def slice_body_text(
     text: str,
     *,
@@ -71,9 +100,11 @@ def slice_body_text(
             body = "\n".join(lines[:max_lines])
             truncated = True
     if max_chars is not None and max_chars > 0 and len(body) > max_chars:
+        from kite.context.observation import elide_middle
+
         head = int(max_chars * 0.7)
         tail = max(0, max_chars - head - 20)
-        body = body[:head] + "\n…[truncated]…\n" + body[-tail:]
+        body = elide_middle(body, head=head, tail=tail, marker="\n…[truncated]…\n")
         truncated = True
     return body, truncated
 
@@ -126,6 +157,7 @@ def format_fetch_output(
 __all__ = [
     "format_fetch_output",
     "format_search_output",
+    "reformat_search_hit",
     "search_summary",
     "slice_body_text",
 ]

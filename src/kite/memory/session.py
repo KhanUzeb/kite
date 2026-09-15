@@ -346,8 +346,8 @@ def _apply_session_row(row: dict[str, Any], messages: list[dict]) -> list[dict]:
     return messages
 
 
-def load_session(session_id: str) -> Session:
-    path = resolve_session_path(session_id)
+def load_session(session_id: str, *, unique: bool = False) -> Session:
+    path = resolve_session_path(session_id, unique=unique)
     meta: SessionMeta | None = None
     messages: list[dict] = []
     with path.open(encoding="utf-8") as f:
