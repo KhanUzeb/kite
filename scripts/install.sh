@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 0.9.8.5
+# kite-release-version: 0.9.9
 # Install Kite as a global CLI (default) or editable checkout (--dev).
 #
 # Compatible with: macOS (bash 3.2+), Ubuntu/Debian Linux, WSL, other Unix.
