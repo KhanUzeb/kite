@@ -258,6 +258,7 @@ def test_prompt_session_wires_automatic_slash_selection(monkeypatch) -> None:
 
 
 def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
+    from prompt_toolkit.layout.containers import HSplit, Window
     from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
 
     import kite.ui.complete as complete
@@ -275,6 +276,14 @@ def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
 
     main = session.layout.container.children[0].alternative_content
     body = main.content
+    composer = next(child for child in body.children if isinstance(child, HSplit) and len(child.children) == 3)
+    assert composer.height.min == 3 and composer.height.max == 3
+    assert all(
+        isinstance(child, Window) and child.style == "class:composer"
+        for child in (composer.children[0], composer.children[2])
+    )
+    assert composer.children[0].char == " " and composer.children[2].char == " "
+
     assert any(isinstance(child, (CompletionsMenu, MultiColumnCompletionsMenu)) for child in body.children)
     assert all(
         not isinstance(floating.content, (CompletionsMenu, MultiColumnCompletionsMenu))

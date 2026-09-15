@@ -22,6 +22,7 @@ try:
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.layout.containers import HSplit, Window
     from prompt_toolkit.layout.dimension import Dimension
     from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
     from prompt_toolkit.shortcuts import CompleteStyle
@@ -740,6 +741,7 @@ def _bound_prompt_layout(session: Any) -> None:
         return
 
     buffer_index: int | None = None
+    input_wrapper: Any | None = None
     for index, wrapper in enumerate(body_children):
         window = getattr(wrapper, "content", None)
         control = getattr(window, "content", None)
@@ -747,10 +749,10 @@ def _bound_prompt_layout(session: Any) -> None:
             window.height = Dimension(min=1, max=1)
             window.style = "class:composer"
             buffer_index = index
+            input_wrapper = wrapper
             break
-    if buffer_index is None:
+    if buffer_index is None or input_wrapper is None:
         return
-
     menus: list[Any] = []
     retained_floats: list[Any] = []
     for floating in floats:
@@ -763,8 +765,17 @@ def _bound_prompt_layout(session: Any) -> None:
         window = getattr(menu, "content", None)
         if window is not None:
             window.right_margins = []
+    composer = HSplit(
+        [
+            Window(height=1, char=" ", style="class:composer"),
+            input_wrapper,
+            Window(height=1, char=" ", style="class:composer"),
+        ],
+        height=Dimension(min=3, max=3),
+    )
     body.children[:] = (
-        body_children[: buffer_index + 1]
+        body_children[:buffer_index]
+        + [composer]
         + menus
         + body_children[buffer_index + 1 :]
     )
