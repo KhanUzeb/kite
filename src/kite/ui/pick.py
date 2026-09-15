@@ -11,6 +11,37 @@ if TYPE_CHECKING:
 _PICK_SHOW = 40
 REFRESH_PICK = "__refresh__"
 
+
+def can_use_radiolist() -> bool:
+    """Fullscreen prompt_toolkit dialogs break on Windows and inside a running REPL."""
+    if sys.platform == "win32":
+        return False
+    from kite.util.tty import is_interactive_tty
+
+    if not is_interactive_tty():
+        return False
+    try:
+        from prompt_toolkit.application.current import get_app_or_none
+
+        if get_app_or_none() is not None:
+            return False
+    except Exception:
+        return False
+    return True
+
+
+def provider_sort_key(
+    *,
+    name: str,
+    oauth_first: bool,
+    is_oauth: bool,
+    ready: bool,
+    recommended_index: int,
+) -> tuple[int, int, int, str]:
+    """Canonical provider-picker ordering: oauth first, then ready, then recommended."""
+    oauth_rank = 0 if oauth_first and is_oauth else 1
+    return (oauth_rank, 0 if ready else 1, recommended_index, name)
+
 _PAGE_NEXT = {"+", ">", "more", "pgdn", "pagedown"}
 _PAGE_PREV = {"-", "<", "prev", "pgup", "pageup"}
 

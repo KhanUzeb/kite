@@ -168,6 +168,14 @@ def test_continuity_budget_and_memory_opt_in(workspace, kite_home) -> None:
     assert long_s == 120 and long_c == 25.0
 
 
+def test_memory_render_single_budget_cap(workspace, kite_home) -> None:
+    store = MemoryStore.open(workspace)
+    store.remember("prefer ruff", scope="project")
+    text = store.render_for_prompt()
+    assert "# Memory" in text and "prefer ruff" in text
+    assert len(store.render_for_prompt(max_chars=1200)) <= 1200
+
+
 def test_user_context_profiles_and_working_style(workspace, kite_home) -> None:
     assert user_path().name == "USER.md" and profile_path().name == "PROFILE.md"
     append_user_note("prefers pytest")

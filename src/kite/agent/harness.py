@@ -10,7 +10,7 @@ Swap internals without forking:
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -56,6 +56,41 @@ class HarnessConfig:
     long_task: bool = False
     memory_in_prompt: bool = False
     goal_objective: str = ""
+    allowed_tools: list | None = None  # per-worker registry allowlist (None = inherit)
+
+
+def runtime_options_from_config(config: HarnessConfig) -> RuntimeOptions:
+    """Map ``HarnessConfig`` onto ``RuntimeOptions`` (single field-mapping point)."""
+    data = asdict(config)
+    return RuntimeOptions(
+        provider=data["provider"],
+        model=data["model_name"],
+        cwd=data["cwd"],
+        config_name=data["config_name"],
+        system_prompt_override=data["system_prompt"],
+        session_id=data["session_id"],
+        resume=data["resume"],
+        follow_up=data["follow_up"],
+        label=data["label"],
+        no_context=data["no_context"],
+        no_compact=data["no_compact"],
+        no_guardrails=data["no_guardrails"],
+        output_path=data["output_path"],
+        step_limit=data["step_limit"],
+        cost_limit=data["cost_limit"],
+        wall_time_limit_seconds=data["wall_time_limit_seconds"] or None,
+        mode=data["mode"],
+        approval=data["approval"],
+        interactive=data["interactive"],
+        reasoning=data["reasoning"],
+        role=data["role"],
+        attachments=data["attachments"],
+        execution_mode=data["execution_mode"],
+        long_task=data["long_task"],
+        memory_in_prompt=data["memory_in_prompt"],
+        goal_objective=data["goal_objective"],
+        allowed_tools=data["allowed_tools"],
+    )
 
 
 @dataclass
@@ -99,50 +134,8 @@ class Harness:
 
         load_extensions(self, self.config.cwd or ".")
 
-    def _make_runtime(self) -> AgentRuntime:
-        self._load_extensions()
-        runtime = AgentRuntime(
-            RuntimeOptions(
-                provider=self.config.provider,
-                model=self.config.model_name,
-                cwd=self.config.cwd,
-                config_name=self.config.config_name,
-                system_prompt_override=self.config.system_prompt,
-                session_id=self.config.session_id,
-                resume=self.config.resume,
-                follow_up=self.config.follow_up,
-                label=self.config.label,
-                no_context=self.config.no_context,
-                no_compact=self.config.no_compact,
-                no_guardrails=self.config.no_guardrails,
-                output_path=self.config.output_path,
-                step_limit=self.config.step_limit,
-                cost_limit=self.config.cost_limit,
-                wall_time_limit_seconds=self.config.wall_time_limit_seconds or None,
-                mode=self.config.mode,
-                approval=self.config.approval,
-                interactive=self.config.interactive,
-                reasoning=self.config.reasoning,
-                role=self.config.role,
-                attachments=self.config.attachments,
-                execution_mode=self.config.execution_mode,
-                long_task=self.config.long_task,
-                memory_in_prompt=self.config.memory_in_prompt,
-                goal_objective=self.config.goal_objective,
-            ),
-            user_config=self.user_config,
-        )
-        runtime.slots = self.slots
-        runtime.hooks = self.hooks
-        runtime.extra_tools = self.extra_tools
-        if self.job_registry is not None:
-            runtime.job_registry = self.job_registry
-        return runtime
-
-    def run(self, task: str, *, cancel=None) -> dict:
-        self._load_extensions()
-        runtime = self._runtime or self._make_runtime()
-        self._runtime = runtime
+    def _attach_to_runtime(self, runtime: AgentRuntime, *, cancel=None) -> AgentRuntime:
+        """Sync harness-owned state onto a runtime (shared by make + run)."""
         runtime.slots = self.slots
         runtime.hooks = self.hooks
         runtime.extra_tools = self.extra_tools
@@ -162,6 +155,21 @@ class Harness:
             runtime.policy_engine_override = self.policy_engine
         if self.message_queue is not None:
             runtime.message_queue = self.message_queue
+        return runtime
+
+    def _make_runtime(self) -> AgentRuntime:
+        self._load_extensions()
+        runtime = AgentRuntime(
+            runtime_options_from_config(self.config),
+            user_config=self.user_config,
+        )
+        return self._attach_to_runtime(runtime)
+
+    def run(self, task: str, *, cancel=None) -> dict:
+        self._load_extensions()
+        runtime = self._runtime or self._make_runtime()
+        self._runtime = runtime
+        self._attach_to_runtime(runtime, cancel=cancel)
         try:
             result = runtime.run(task)
         finally:

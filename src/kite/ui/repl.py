@@ -397,18 +397,19 @@ class ChatSession:
         self.state.touch()
 
     def _handle_slash_while_busy(self, raw: str) -> None:
-        parsed = resolve_slash(raw, self._index())
-        if parsed.kind == "unknown":
-            self._flash_note(parsed.message or "unknown command")
+        """Busy-turn slash gate — classification owned by ui.complete (single BUSY_SAFE set)."""
+        from kite.ui.complete import classify_busy_line
+
+        decision = classify_busy_line(raw)
+        if decision.kind == "busy_slash":
+            self._handle_slash(decision.text)
             return
-        cmd, arg = parsed.command, parsed.arg
-        cmd, arg = self._apply_legacy_slash(cmd, arg, parsed.legacy)
-        cmd, arg = self._normalize_slash_cmd(cmd, arg)
-        safe = {"tasks", "task", "status", "help", "jobs", "approve"}
-        if cmd not in safe:
-            self._flash_note("still working — /tasks · /status · /help · /jobs · /approve")
-            return
-        self._handle_slash(raw, parsed)
+        if decision.kind == "slash":
+            parsed = resolve_slash(raw, self._index())
+            if parsed.kind == "unknown":
+                self._flash_note(parsed.message or "unknown command")
+                return
+        self._flash_note("still working — /tasks · /status · /help · /jobs · /approve")
 
     def _prompt_app_running(self) -> bool:
         session = self._prompt
@@ -734,7 +735,8 @@ class ChatSession:
 
     def _pick_session(self, title: str, *, query: str = "", show_table: bool = True) -> str | None:
         from kite.memory.session import list_sessions
-        from kite.memory.session_format import render_sessions_table, session_pick_items
+        from kite.memory.session_format import session_pick_items
+        from kite.ui.tables import render_sessions_table
 
         rows = list_sessions(limit=30, query=query)
         if not rows:
@@ -752,7 +754,7 @@ class ChatSession:
 
     def _print_sessions_list(self, query: str = "") -> None:
         from kite.memory.session import list_sessions
-        from kite.memory.session_format import render_sessions_table
+        from kite.ui.tables import render_sessions_table
 
         rows = list_sessions(limit=30, query=query.strip())
         title = "Sessions"
@@ -1027,8 +1029,6 @@ class ChatSession:
             return "memory", "episodic"
         if legacy == "cost":
             return "status", arg
-        if legacy == "collapse":
-            return "collapse", arg
         if legacy == "fast":
             return "thinking", arg or "low"
         return cmd, arg
@@ -1335,14 +1335,8 @@ class ChatSession:
         threading.Thread(target=_warm, name="kite-prewarm", daemon=True).start()
 
     def _normalize_slash_cmd(self, cmd: str, arg: str) -> tuple[str, str]:
-        if cmd == "mode" and arg in {"plan", "build"}:
-            return arg, ""
-        if cmd == "new":
-            return "clear", arg
-        if cmd == "sessions" and not arg:
-            return "session", "list"
-        if cmd == "skill" and not arg:
-            return "skills", ""
+        # Aliases (new/sessions/skill/mode) already resolve via
+        # ui.commands.ALIASES / parse_slash before dispatch — pass through.
         return cmd, arg
 
     def _slash_handlers(self) -> dict[str, Callable[[str], None]]:
@@ -1358,8 +1352,6 @@ class ChatSession:
             "build": self._slash_build,
             "approve": self._slash_approve,
             "restricted": self._slash_restricted,
-            "sandbox": self._slash_restricted,
-            "cost": self._slash_cost,
             "expand": self._slash_expand,
             "live": self._slash_live,
             "expand-thinking": self._slash_expand_thinking,
@@ -1369,9 +1361,7 @@ class ChatSession:
             "clear": self._slash_clear,
             "init": self._slash_init,
             "login": login,
-            "signin": login,
             "logout": logout,
-            "signout": logout,
             "keys": self._show_keys,
             "setup": self._slash_setup,
             "model": self._model_cmd,
@@ -1382,20 +1372,16 @@ class ChatSession:
             "thinking": self._slash_thinking,
             "fast": self._slash_fast,
             "reasoning": self._slash_reasoning,
-            "effort": self._slash_reasoning,
             "compact": self._compact_now,
             "checkpoint": self._checkpoint_cmd,
             "handoff": self._handoff_cmd,
             "attach": self._attach_path,
             "clip": clip,
-            "clipboard": clip,
-            "paste": clip,
             "detach": self._detach,
             "attachments": self._show_attachments,
             "skills": self._show_skills,
             "skill": self._run_skill,
             "tools": self._slash_tools,
-            "tool": self._slash_tools,
             "commands": self._handle_commands,
             "plugins": self._handle_plugins,
             "memory": self._slash_memory,
@@ -1422,7 +1408,19 @@ class ChatSession:
             "home": self._slash_home,
             "theme": self._set_theme,
             "font": self._set_font,
+            # Retired workbench notice (was _slash_fullscreen).
+            "fullscreen": lambda _arg="": self.console.print(
+                "[kite.muted]fullscreen workbench retired[/]  ·  lean CLI is the default"
+            ),
         }
+        # Alias fan-out from ui.commands (sandbox/signin/signout/clipboard/paste/
+        # tool/effort/…): parse_slash already normalizes to canonicals, so every
+        # alias resolves to the same handler without listing each one here.
+        from kite.ui.commands import ALIASES
+
+        for _alias, _canonical in ALIASES.items():
+            if _alias not in handlers and _canonical in handlers:
+                handlers[_alias] = handlers[_canonical]
         self._slash_handler_map = handlers
         return handlers
 
@@ -1542,15 +1540,6 @@ class ChatSession:
         else:
             self.console.print("[kite.success]host mode[/]  use set_cwd to work elsewhere; protected paths still blocked")
         self.state.touch()
-
-    def _slash_cost(self, _arg: str) -> None:
-        pct = f"{self.state.context_pct:.0%}" if self.state.context_pct is not None else "—"
-        cache = ""
-        if self.state.cache_hit_tokens:
-            cache = f"  ·  cache {self.state.cache_hit_ratio:.0%} ({self.state.cache_hit_tokens} tok)"
-        self.console.print(
-            f"${self.state.cost:.4f}  ·  ctx {self.state.tokens}/{self.state.window or '—'} ({pct}){cache}  ·  calls {self.state.n_calls}"
-        )
 
     def _slash_expand(self, _arg: str) -> None:
         self.state.expanded_all = not self.state.expanded_all

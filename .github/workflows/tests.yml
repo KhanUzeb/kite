@@ -11,10 +11,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pytest:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      KITE_HOME: /tmp/kite-home
+      KITE_SKIP_SETUP: "1"
+      KITE_TYPED_PICK: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install
+        shell: bash
+        run: uv pip install -e ".[dev]"
+
+      - name: Verify version stamps (fast)
+        shell: bash
+        run: python scripts/sync_version.py --check
+
+      - name: Ruff
+        shell: bash
+        run: python -m ruff check src tests
+
+  test:
     timeout-minutes: 10
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -40,18 +67,53 @@ jobs:
         shell: bash
         run: uv pip install -e ".[dev]"
 
-      - name: Verify version stamps
-        shell: bash
-        run: python scripts/sync_version.py --check
-
-      - name: Ruff
-        shell: bash
-        run: python -m ruff check src tests
-
       - name: Pytest
         shell: bash
         run: python -m pytest -q --tb=short -p faulthandler
 
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KITE_HOME: /tmp/kite-home
+      KITE_SKIP_SETUP: "1"
+      KITE_TYPED_PICK: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install
+        shell: bash
+        run: uv pip install -e ".[dev]"
+
       - name: Bench
         shell: bash
         run: python -m kite.cli.run bench --check
+
+  release-check:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      KITE_HOME: /tmp/kite-home
+      KITE_SKIP_SETUP: "1"
+      KITE_TYPED_PICK: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install
+        shell: bash
+        run: uv pip install -e ".[dev]"
+
+      - name: Verify release docs
+        shell: bash
+        run: python scripts/sync_version.py --check --release

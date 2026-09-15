@@ -9,6 +9,15 @@ DEFAULT_OBSERVATION_MAX_CHARS = 5_000
 _LINE_ELIDE_THRESHOLD = 80
 
 
+def elide_middle(text: str, *, head: int, tail: int, marker: str) -> str:
+    """Single shared middle-truncate helper.
+
+    Slice-preserving: ``text[-tail:]`` keeps the quirk where ``tail == 0``
+    yields the full tail (identical to the historical inline slices).
+    """
+    return f"{text[:head]}{marker}{text[-tail:]}"
+
+
 def _line_aware_elide(text: str, max_chars: int) -> str:
     """Keep first/last lines for multiline tool output; head/tail for single blocks."""
     lines = text.splitlines()
@@ -23,7 +32,7 @@ def _line_aware_elide(text: str, max_chars: int) -> str:
     head = max_chars // 2
     tail = max_chars // 4
     omitted = len(text) - head - tail
-    return f"{text[:head]}\n...<elided {omitted:,} chars>...\n{text[-tail:]}"
+    return elide_middle(text, head=head, tail=tail, marker=f"\n...<elided {omitted:,} chars>...\n")
 
 
 def observation_content(output: dict[str, Any], *, max_chars: int = DEFAULT_OBSERVATION_MAX_CHARS) -> str:
@@ -55,5 +64,5 @@ def observation_content(output: dict[str, Any], *, max_chars: int = DEFAULT_OBSE
     tail = max_chars // 4
     omitted = len(raw) - head - tail
     return _line_aware_elide(raw, max_chars) if "\n" in raw else (
-        f"{raw[:head]}\n...<elided {omitted:,} chars>...\n{raw[-tail:]}"
+        elide_middle(raw, head=head, tail=tail, marker=f"\n...<elided {omitted:,} chars>...\n")
     )

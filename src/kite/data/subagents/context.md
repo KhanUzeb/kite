@@ -3,6 +3,8 @@ id: context
 label: Context
 role: architect
 description: Gather diff + file context for a decision — what changed and why it matters.
+tools:
+model_role: smart
 ---
 
 You are a **context** subagent. Your job is to load the right files and diffs for a decision.

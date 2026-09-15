@@ -271,6 +271,25 @@ def _from_git(url: str, dest: Path) -> list[str]:
         return _copy_skill_trees(repo, dest, fallback=url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git"))
 
 
+def install_skill_and_refresh(
+    skill_by_name: dict,
+    spec: str,
+    link_cwd,
+) -> list[str]:
+    """Install a skill pack and refresh *skill_by_name* in place.
+
+    Thin delegate for the ``skill`` tool's ``install=`` branch so
+    ``tools/coding.py`` stays free of npm/git shell handling.
+    Returns installed skill names.
+    """
+    from kite.skills.loader import load_skills
+
+    names = install_skill(spec, link_cwd=link_cwd)
+    for skill in load_skills(link_cwd):
+        skill_by_name[skill.name] = skill
+    return names
+
+
 def install_skill(
     spec: str,
     *,
