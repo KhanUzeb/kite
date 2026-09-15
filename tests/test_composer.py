@@ -291,11 +291,16 @@ def test_prompt_session_wires_automatic_slash_selection(monkeypatch) -> None:
 def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
     from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
     from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
+    from prompt_toolkit.output import DummyOutput
 
     import kite.ui.complete as complete
 
     state = SessionUiState()
-    session = complete.make_prompt_session(complete.SlashCompleter(lambda: None), state=state)
+    # DummyOutput keeps the test hermetic: real console outputs (Win32Output)
+    # raise NoConsoleScreenBufferError on headless CI runners.
+    session = complete.make_prompt_session(
+        complete.SlashCompleter(lambda: None), state=state, output=DummyOutput()
+    )
     windows = [
         window
         for window in session.layout.find_all_windows()

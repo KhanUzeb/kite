@@ -830,6 +830,7 @@ def make_prompt_session(
     *,
     key_bindings: Any | None = None,
     state: SessionUiState | None = None,
+    output: Any | None = None,
 ) -> Any:
     if not _PT:
         return None
@@ -847,6 +848,8 @@ def make_prompt_session(
     }
     if key_bindings is not None:
         kwargs["key_bindings"] = key_bindings
+    if output is not None:
+        kwargs["output"] = output
     if CompleteStyle is not None:
         kwargs["complete_style"] = CompleteStyle.COLUMN
     session = PromptSession(**kwargs)
