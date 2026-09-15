@@ -153,6 +153,27 @@ _TASK_HINTS = (
     "could you",
 )
 
+# Informational openers ("tell main features of kite") — no-task Q&A whose answer is prose, not a report.
+_INFORMATIONAL_LEADERS = frozenset(
+    {
+        "tell",
+        "what",
+        "which",
+        "who",
+        "where",
+        "when",
+        "why",
+        "how",
+        "explain",
+        "describe",
+        "list",
+        "show",
+        "summarize",
+        "summarise",
+        "give",
+    }
+)
+
 
 def _is_casual_user_turn(content: str) -> bool:
     """User said hi/thanks or a short non-task question — prose may end the turn."""
@@ -167,6 +188,8 @@ def _is_casual_user_turn(content: str) -> bool:
         return True
     if any(h in text for h in _TASK_HINTS):
         return False
+    if first in _INFORMATIONAL_LEADERS:
+        return True
     if len(text) < 80 and text.endswith("?"):
         return True
     return False

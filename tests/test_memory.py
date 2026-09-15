@@ -142,6 +142,43 @@ def test_session_format_and_search(kite_home) -> None:
     assert any(row.id == session.id for row in suggest_sessions(short, limit=3))
 
 
+def test_resume_transcript_entries_cover_all_kinds() -> None:
+    """Issue #83: every persisted message kind yields one chronological transcript entry."""
+    from kite.memory.session_format import transcript_entries
+
+    messages = [
+        {"role": "system", "content": "sys prompt"},
+        {"role": "user", "content": "What is Kite?"},
+        {
+            "role": "assistant",
+            "content": "Kite is a coding agent.",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "file body"},
+        {"role": "user", "content": "<tool_result tool=bash>\nok\n</tool_result>"},
+        {"role": "exit", "content": "Submitted", "extra": {"exit_status": "Submitted", "submission": "done"}},
+    ]
+    entries = transcript_entries(messages)
+    assert [e["kind"] for e in entries] == ["system", "user", "assistant", "tool", "tool", "exit"]
+    assert entries[2]["tool_calls"] and "read" in entries[2]["tool_calls"][0]
+    assert "c1" in entries[3]["label"] and entries[3]["body"] == "file body"
+    assert entries[5]["status"] == "Submitted" and entries[5]["body"] == "done"
+
+
+def test_resume_continuation_persists_to_same_session(kite_home, tmp_path) -> None:
+    """Issue #83: continued turns keep appending to the resumed session file."""
+    session = create_session(task="What is Kite?", cwd=str(tmp_path), provider="p", model="m")
+    session.append({"role": "user", "content": "What is Kite?"})
+    session.append({"role": "assistant", "content": "A coding agent."})
+    sid = session.id
+    loaded = load_session(sid)
+    assert [m.get("content") for m in loaded.messages] == ["What is Kite?", "A coding agent."]
+    loaded.append({"role": "user", "content": "continue"})
+    reloaded = load_session(sid)
+    assert reloaded.id == sid
+    assert reloaded.messages[-1].get("content") == "continue" and len(reloaded.messages) == 3
+
+
 def test_continuity_budget_and_memory_opt_in(workspace, kite_home) -> None:
     brief = build_continuity_brief(messages=[{"role": "user", "content": "Add auth tests"}], todos=[{"status": "in_progress", "content": "write failing test"}], task="Add auth tests")
     assert "Add auth tests" in brief.to_markdown()

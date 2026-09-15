@@ -397,7 +397,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             return 130
         args.session = picked
     try:
-        session = load_session(args.session)
+        session = load_session(args.session, unique=True)
     except FileNotFoundError:
         hints = suggest_sessions(args.session, limit=5)
         console.print(f"[red]no session matching[/] {args.session!r}")
@@ -411,8 +411,6 @@ def cmd_resume(args: argparse.Namespace) -> int:
     except ValueError as e:
         console.print(f"[red]{e}[/]")
         return 2
-
-    console.print(f"[dim]resuming[/]  {format_session_resume_hint(session.meta)}")
 
     follow = args.message or args.task
     if getattr(args, "retry", False) and not follow:
@@ -429,7 +427,13 @@ def cmd_resume(args: argparse.Namespace) -> int:
                 + f"  —  kite resume {args.session} \"continue\""
             )
             return 2
+        # Interactive path renders the full transcript via ChatSession._open_session;
+        # print only the one-line hint here to avoid duplicate transcript output.
+        console.print(f"[dim]resuming[/]  {format_session_resume_hint(session.meta)}")
         return cmd_chat(args)
+    from kite.ui.render import render_session_transcript
+
+    render_session_transcript(console, session, tail=None)
     mode, approval = _resolve_mode_approval(args)
     loaded = _load_attachments_or_abort(console, args, follow)
     if loaded is None:
@@ -537,15 +541,10 @@ def cmd_sessions(args: argparse.Namespace) -> int:
         except (OSError, ValueError) as e:
             console.print(f"[red]{e}[/]")
             return 2
-        from kite.memory.session_format import format_session_resume_hint
+        from kite.ui.render import render_session_transcript
 
-        console.print(f"[bold]{session.id}[/]  {format_session_resume_hint(session.meta)}")
         console.print(Panel(json.dumps(session.meta.to_dict(), indent=2), title="meta"))
-        shown = session.messages if args.tail == 0 else session.messages[-args.tail :]
-        for i, m in enumerate(shown, 1):
-            role = m.get("role")
-            content = (m.get("content") or "")[:200].replace("\n", " ")
-            console.print(f"[dim]{i}[/] [cyan]{role}[/] {content}")
+        render_session_transcript(console, session, tail=None if args.tail == 0 else args.tail)
         console.print(f"[dim]resume:[/] [bold]kite resume {session.id}[/]")
         return 0
 
