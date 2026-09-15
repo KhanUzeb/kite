@@ -20,9 +20,11 @@ try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
     from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.filters import Condition
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import FileHistory
-    from prompt_toolkit.layout.containers import HSplit, Window
+    from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
     from prompt_toolkit.layout.dimension import Dimension
     from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
     from prompt_toolkit.shortcuts import CompleteStyle
@@ -48,6 +50,10 @@ class ComposerResult:
 BUSY_SAFE_SLASHES = frozenset(
     {"tasks", "task", "status", "help", "jobs", "agents", "h", "?", "approve"}
 )
+
+# Aliases that earn their own completion row. Canonical command keeps the handler,
+# so `/exit` stays an alias of `/quit` while remaining discoverable in the menu.
+DISCOVERABLE_ALIASES: tuple[tuple[str, str], ...] = (("exit", "quit"),)
 
 _APPROVAL_CHOICES = {
     "a": "allow",
@@ -264,6 +270,21 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                     display=_slash_completion_display(spec, index),
                     display_meta=_slash_meta(spec, index, extra),
                 )
+            for alias, canonical in DISCOVERABLE_ALIASES:
+                if alias in seen:
+                    continue
+                if prefix and not alias.startswith(prefix):
+                    continue
+                alias_spec = index.specs.get(canonical)
+                if alias_spec is None:
+                    continue
+                seen.add(alias)
+                yield Completion(
+                    alias,
+                    start_position=-len(cmd),
+                    display=_slash_completion_display(alias_spec, index, name=alias),
+                    display_meta=_slash_meta(alias_spec, index),
+                )
             return
 
         name = ALIASES.get(cmd.lower(), cmd.lower())
@@ -478,10 +499,10 @@ def _slash_display(spec: SlashSpec, index: CommandIndex) -> str:
     return _slash_label(mark, spec.name)
 
 
-def _slash_completion_display(spec: SlashSpec, index: CommandIndex) -> Any:
+def _slash_completion_display(spec: SlashSpec, index: CommandIndex, *, name: str | None = None) -> Any:
     """Colored slash label — glyph marks non-builtin sources."""
     mark, color = _slash_cue(spec, index)
-    label = _slash_label(mark, spec.name)
+    label = _slash_label(mark, name or spec.name)
     if not _PT:
         return label
     return HTML(f"<style fg='{color}'><b>{_escape_html(label)}</b></style>")
@@ -692,16 +713,19 @@ def _toolbar_html(state: SessionUiState) -> Any:
         f"<style fg='{ui.muted}'> {glyph('sep')} {_escape_html(tail)}{flash}{hints}</style>"
     )
     lines: list[str] = []
-    if state.busy:
-        running = format_running_status(state)
-        if running:
-            lines.append(
-                f"<style fg='{ui.accent}'>●</style>"
-                f"<style fg='{ui.muted}'> {_escape_html(running)}</style>"
-            )
     lines.append(main)
     return HTML("\n".join(lines))
-
+def _activity_html(state: SessionUiState) -> Any:
+    if not state.busy:
+        return ""
+    running = format_running_status(state)
+    if not running:
+        return ""
+    ui = ui_colors()
+    return HTML(
+        f"<style fg='{ui.accent}'>●</style>"
+        f"<style fg='{ui.muted}'> {_escape_html(running)}</style>"
+    )
 
 def _escape_html(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -723,7 +747,7 @@ def _mouse_support_enabled() -> bool:
     return os.environ.get("KITE_MOUSE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _bound_prompt_layout(session: Any) -> None:
+def _bound_prompt_layout(session: Any, state: SessionUiState | None = None) -> None:
     """Keep the input row compact and render completion menus below it."""
     layout = getattr(session, "layout", None)
     root = getattr(layout, "container", None)
@@ -765,6 +789,28 @@ def _bound_prompt_layout(session: Any) -> None:
         window = getattr(menu, "content", None)
         if window is not None:
             window.right_margins = []
+    # One blank row above and below the live activity line keeps it visually
+    # detached from the transcript above and the composer box below. Spacers
+    # stay unpainted — no `class:composer`, or they would read as box padding.
+    activity_line = Window(
+        content=FormattedTextControl(
+            lambda: _activity_html(state) if state is not None else ""
+        ),
+        height=1,
+        style="class:activity",
+        dont_extend_height=True,
+    )
+    activity = ConditionalContainer(
+        content=HSplit(
+            [
+                Window(height=1, dont_extend_height=True),
+                activity_line,
+                Window(height=1, dont_extend_height=True),
+            ],
+            height=Dimension(min=3, max=3),
+        ),
+        filter=Condition(lambda: bool(state is not None and state.busy)),
+    )
     composer = HSplit(
         [
             Window(height=1, char=" ", style="class:composer"),
@@ -775,17 +821,19 @@ def _bound_prompt_layout(session: Any) -> None:
     )
     body.children[:] = (
         body_children[:buffer_index]
-        + [composer]
+        + [activity, composer]
         + menus
         + body_children[buffer_index + 1 :]
     )
     main.floats[:] = retained_floats
 
 
+
 def make_prompt_session(
     completer: SlashCompleter,
     *,
     key_bindings: Any | None = None,
+    state: SessionUiState | None = None,
 ) -> Any:
     if not _PT:
         return None
@@ -799,13 +847,14 @@ def make_prompt_session(
         "style": prompt_style(),
         "mouse_support": _mouse_support_enabled(),
         "reserve_space_for_menu": 0,
+        "erase_when_done": True,
     }
     if key_bindings is not None:
         kwargs["key_bindings"] = key_bindings
     if CompleteStyle is not None:
         kwargs["complete_style"] = CompleteStyle.COLUMN
     session = PromptSession(**kwargs)
-    _bound_prompt_layout(session)
+    _bound_prompt_layout(session, state)
 
     def _select_first(_event: Any = None) -> None:
         _select_first_slash_completion(session.default_buffer)

@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from rich.console import Console
+from rich.padding import Padding
 from rich.text import Text
 
 from kite.agent.events import Event
@@ -33,6 +34,7 @@ from kite.ui.style import (
     cell_continuation_indent,
     make_console,
 )
+from kite.ui.theme import user_surface_styles
 from kite.ui.tool_cards import (
     ToolCard,
     detail_from_args,
@@ -145,14 +147,21 @@ def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: 
     t.append("\n")
     return t
 
-def render_user_cell(task: str) -> Text:
-    t = Text()
+def render_user_cell(task: str) -> Padding:
+    """Full-width filled band for a submitted user turn."""
+    body_style, marker_style, pad_style = user_surface_styles()
+    body = Text()
     lines = task.splitlines() or [task]
     user_prefix = f"{SYMBOL_USER} "
     for i, line in enumerate(lines):
-        t.append(user_prefix if i == 0 else cell_continuation_indent(user_prefix), style="kite.muted")
-        t.append(line + "\n", style="kite.user")
-    return t
+        if i:
+            body.append("\n")
+        body.append(
+            user_prefix if i == 0 else cell_continuation_indent(user_prefix),
+            style=marker_style,
+        )
+        body.append(line, style=body_style)
+    return Padding(body, (1, 1), style=pad_style, expand=True)
 
 def _composer_owns_bottom(state: SessionUiState) -> bool:
     return state.busy
@@ -231,6 +240,9 @@ class RunDisplay:
         self._need_prefix = False
         self._did_first_line = False
         self._saw_answer = False
+        self._streamed_answer = False
+        self._deferred_answer_parts: list[str] = []
+        self._deferred_agent_end: dict[str, Any] | None = None
         self._spinner = WaitSpinner(label="thinking")
         self._spinner_on = False
         self._anim_tick = 0
@@ -243,11 +255,17 @@ class RunDisplay:
         self._parallel_batch: int = 0
         self._in_code_fence: bool = False
         self._fence_lang: str = ""
+        self._answer_line: str = ""
+        self._answer_line_chars: int = 0
         self._tool_preview_at: float = 0.0
         self._tool_preview_chars: int = 0
         self._run_tools: int = 0
         self._run_t0: float | None = None
         self._transcript_buffer: list[Any] = []
+        # True when a prompt_toolkit composer owns the bottom of the screen: the
+        # REPL prints user rows at submit time and the live footer owns status,
+        # so event-driven banner/status scroll-printing must stay off.
+        self.composer_owns_input = False
         self._event_handlers: dict[str, Callable[[dict[str, Any]], None]] = {
             kind: getattr(self, f"_on_{kind}")  # noqa: SLF001
             for kind in _RENDER_EVENT_KINDS
@@ -276,6 +294,8 @@ class RunDisplay:
             self._print()
             self._streaming = False
         self._need_prefix = False
+        self._answer_line = ""
+        self._answer_line_chars = 0
 
     def _ensure_channel(self, channel: str) -> None:
         if self._channel == channel:
@@ -287,6 +307,8 @@ class RunDisplay:
         self._channel = channel
         self._need_prefix = True
         self._did_first_line = False
+        self._answer_line = ""
+        self._answer_line_chars = 0
 
     def _answer_style(self) -> str:
         return "kite.terminal" if self._in_code_fence else "kite.answer"
@@ -294,6 +316,7 @@ class RunDisplay:
     def _stream_write(self, text: str, *, channel: str) -> None:
         if channel == "answer":
             self._saw_answer = True
+            self._streamed_answer = True
             self._stream_write_answer(text)
             return
         if channel == "thinking":
@@ -346,46 +369,67 @@ class RunDisplay:
             self._print(block, end="", highlight=False, markup=False)
 
     def _stream_write_answer(self, text: str) -> None:
-        """Answer channel — prose vs fenced code blocks use distinct styles."""
+        """Answer channel — newlines come from the model, never from chunk boundaries."""
         self._ensure_channel("answer")
-        prefix = CHANNEL_PREFIX.get("answer", "  ")
+        while text:
+            index = text.find("\n")
+            if index < 0:
+                self._write_answer_partial(text)
+                return
+            line, text = text[:index], text[index + 1 :]
+            self._write_answer_line(line)
+
+    def _write_answer_partial(self, fragment: str) -> None:
+        """Emit a fragment of an unfinished line — no newline, continued in place."""
+        if not fragment:
+            return
+        style, body = self._answer_style(), fragment
+        if not self._answer_line_chars and not self._in_code_fence:
+            style, body = self._prose_line_style(self._answer_line + fragment)
         block = Text()
-        for raw_line in text.split("\n"):
-            line = raw_line
+        prefix = CHANNEL_PREFIX.get("answer", "  ")
+        if self._need_prefix and body:
+            indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
+            block.append(indent, style=self._answer_style())
+            self._need_prefix = False
+            self._did_first_line = True
+        block.append(body, style=style)
+        self._answer_line += fragment
+        self._answer_line_chars += len(fragment)
+        self._streaming = True
+        self._print(block, end="", highlight=False, markup=False)
+
+    def _write_answer_line(self, line: str) -> None:
+        """Close a line — markdown/fence cues apply only when it was not streamed yet."""
+        block = Text()
+        prefix = CHANNEL_PREFIX.get("answer", "  ")
+        if self._answer_line_chars:
+            self._write_answer_partial(line)
+        elif line:
             stripped = line.strip()
+            indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
             if stripped.startswith("```"):
                 opening = not self._in_code_fence
                 self._in_code_fence = not self._in_code_fence
-                if opening:
-                    self._fence_lang = stripped.lstrip("`").strip() or "code"
-                else:
-                    self._fence_lang = ""
-                if self._need_prefix:
-                    indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
-                    block.append(indent, style="kite.muted")
-                    self._need_prefix = False
-                    self._did_first_line = True
-                fence = f"```{self._fence_lang}" if opening else "```"
-                block.append(fence + "\n", style="kite.muted italic")
-                self._need_prefix = True
-                self._streaming = True
-                continue
-            if self._need_prefix:
-                indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
-                block.append(indent, style=self._answer_style())
-                self._need_prefix = False
+                self._fence_lang = stripped.lstrip("`").strip() if opening else ""
+                block.append(indent, style="kite.muted")
                 self._did_first_line = True
-            if line:
-                style = self._answer_style()
-                body = line
-                if not self._in_code_fence:
-                    style, body = self._prose_line_style(line)
-                block.append(body, style=style)
-            block.append("\n")
-            self._need_prefix = True
-            self._streaming = True
-        if block.plain:
-            self._print(block, end="", highlight=False, markup=False)
+                block.append(
+                    f"```{self._fence_lang}" if opening else "```",
+                    style="kite.muted italic",
+                )
+            else:
+                style, body = self._prose_line_style(line)
+                if body:
+                    block.append(indent, style=self._answer_style())
+                    self._did_first_line = True
+                    block.append(body, style=style)
+        self._answer_line = ""
+        self._answer_line_chars = 0
+        self._need_prefix = True
+        self._streaming = True
+        block.append("\n")
+        self._print(block, end="", highlight=False, markup=False)
 
     def _prose_line_style(self, line: str) -> tuple[str, str]:
         """Lightweight markdown-ish cues for streamed prose (no full parser)."""
@@ -507,8 +551,10 @@ class RunDisplay:
         self._end_stream_line()
 
     def print_status(self) -> None:
-        if not self.quiet:
-            self._print(render_status(self.state), highlight=False)
+        """Scroll-print the status line — skipped when the live footer owns it."""
+        if self.quiet or self.composer_owns_input:
+            return
+        self._print(render_status(self.state), highlight=False)
 
     def print_plan(self) -> None:
         if self.quiet or not self.state.todos:
@@ -520,9 +566,11 @@ class RunDisplay:
         self._print()
         self._print(render_plan_tasks(self.state.todos, tick=self._anim_tick))
 
-    def print_banner(self, task: str = "") -> None:
-        if task:
-            self._print(render_user_cell(task), highlight=False)
+    def print_user_turn(self, task: str) -> None:
+        """Persist one user-authored turn — called at submit time, not from events."""
+        if self.quiet or not task.strip():
+            return
+        self._print(render_user_cell(task), highlight=False)
 
     def __call__(self, event: Event) -> None:
         if self.quiet:
@@ -553,10 +601,14 @@ class RunDisplay:
         self.state.interrupted = False
         self._thinking_open = False
         self._thinking_buf.clear()
-        self.print_banner(str(p.get("task") or "").strip())
+        if not self.composer_owns_input:
+            self.print_user_turn(str(p.get("task") or "").strip())
         self.print_plan()
         self._channel = None
         self._saw_answer = False
+        self._streamed_answer = False
+        self._deferred_answer_parts.clear()
+        self._deferred_agent_end = None
         self._run_tools = 0
         self._run_t0 = time.monotonic()
         self._spin(True, "thinking")
@@ -595,13 +647,19 @@ class RunDisplay:
             self._spin(True, "thinking")
 
     def _on_stream_delta(self, p: dict[str, Any]) -> None:
-        text = p.get("text") or ""
-        if text:
-            if self._thinking_buf:
-                self._finalize_thinking()
-            self._coalesced_stream("answer", str(text))
-        else:
+        text = str(p.get("text") or "")
+        if not text:
             self._spin(True, "thinking")
+            return
+        if self._thinking_buf:
+            self._finalize_thinking()
+        if self.composer_owns_input:
+            # The busy prompt is erased on exit. Keep answer text out of those
+            # temporary rows and commit one canonical copy after teardown.
+            self._deferred_answer_parts.append(text)
+            self.state.note_stream_delta(text)
+            return
+        self._coalesced_stream("answer", text)
 
     def _on_stream_tool(self, p: dict[str, Any]) -> None:
         name = str(p.get("name") or "?")
@@ -1065,16 +1123,11 @@ class RunDisplay:
 
     def _render_agent_end_status(self, p: dict[str, Any]) -> None:
         status = p.get("exit_status") or "done"
-        submission = (p.get("submission") or "").strip()
+        submission = (p.get("submission") or p.get("content") or "").strip()
         if status == "Submitted":
-            if submission and not self._saw_answer:
+            if submission and not self._streamed_answer:
                 self._stream_write(submission, channel="answer")
                 self._end_stream_line()
-            line = Text()
-            line.append(f"{GUTTER}{SYMBOL_OK} ", style="kite.success")
-            line.append("work complete", style="kite.success bold")
-            line.append("\n")
-            self._print(line)
             vstatus = p.get("verification_status")
             vsum = p.get("verification") if isinstance(p.get("verification"), dict) else {}
             had_work = bool(vsum.get("artifact_count") or vsum.get("diff_count") or vsum.get("gaps"))
@@ -1136,9 +1189,28 @@ class RunDisplay:
         self.state.budget_limit = None
         self.state.clear_running()
         self._touch_state()
+        if self.composer_owns_input:
+            self._deferred_agent_end = dict(p)
+            return
         self._render_agent_end_status(p)
         self._print_run_meter(p)
         self.print_status()
+
+    def finish_composer_turn(self, result: dict[str, Any] | None = None) -> None:
+        """Commit the final answer after prompt_toolkit has erased the busy UI."""
+        payload = self._deferred_agent_end or dict(result or {})
+        self._deferred_agent_end = None
+        if not payload:
+            self._deferred_answer_parts.clear()
+            return
+        submission = str(payload.get("submission") or payload.get("content") or "").strip()
+        answer = submission or "".join(self._deferred_answer_parts).strip()
+        if answer and str(payload.get("exit_status") or "Submitted") == "Submitted":
+            self._streamed_answer = False
+            self._stream_write(answer, channel="answer")
+            self._end_stream_line()
+        self._render_agent_end_status(payload)
+        self._print_run_meter(payload)
 
     def _print_run_meter(self, p: dict[str, Any]) -> None:
         tools = int(p.get("tools") or self._run_tools or 0)
