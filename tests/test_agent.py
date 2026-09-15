@@ -280,6 +280,48 @@ def test_cancel_parallel_reads_and_interrupt(workspace: Path) -> None:
     assert token.is_set()
 
 
+def test_submit_leaves_no_unanswered_tool_call(kite_home) -> None:
+    from kite.agent.exceptions import Submitted
+    from kite.agent.loop import DefaultAgent
+
+    class _SubmitModel:
+        def format_message(self, **kwargs):
+            return dict(kwargs)
+
+        def query(self, messages):
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_submit", "type": "function", "function": {"name": "submit", "arguments": "{}"}}
+                ],
+                "extra": {
+                    "actions": [{"tool": "submit", "id": "call_submit", "arguments": {"message": "done"}}],
+                    "cost": 0.0,
+                },
+            }
+
+        def format_observation_messages(self, message, outputs, template_vars=None):
+            actions = message.get("extra", {}).get("actions", [])
+            return [
+                {"role": "tool", "tool_call_id": action["id"], "content": str(output)}
+                for action, output in zip(actions, outputs, strict=False)
+            ]
+
+    class _SubmitEnv:
+        def execute(self, action, cwd=""):
+            raise Submitted({"role": "exit", "content": "submitted", "extra": {"exit_status": "Submitted"}})
+
+    agent = DefaultAgent(_SubmitModel(), _SubmitEnv(), step_limit=2)
+    agent.run("do it")
+
+    transcript = [m for m in agent.messages if m.get("role") != "exit"]
+    calls = [tc["id"] for m in transcript if m.get("tool_calls") for tc in m["tool_calls"]]
+    answered = [m.get("tool_call_id") for m in transcript if m.get("role") == "tool"]
+    assert calls == ["call_submit"]
+    assert answered == ["call_submit"]
+
+
 def test_dispatch_mode_inference() -> None:
     assert resolve_dispatch_mode({"prompt": "x", "background": True}) == (True, "explicit-async")
     assert resolve_dispatch_mode({"prompts": ["a", "b"], "labels": ["x", "y"]})[0] is False

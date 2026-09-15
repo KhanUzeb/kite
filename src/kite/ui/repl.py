@@ -88,7 +88,9 @@ class ChatSession:
         self.no_guardrails = no_guardrails
         self.role = role or "auto"
         self.long_task = long_task
-        self.console = make_console(stderr=True)
+        # prompt_toolkit's patch_stdout owns stdout while the composer redraws.
+        # Sending transcript output there prevents later redraws from erasing it.
+        self.console = make_console()
         self.state = SessionUiState(
             mode=mode,
             approval=approval or default_approval(mode),
@@ -121,7 +123,6 @@ class ChatSession:
         self._approval_resolving = False
         self._approval_wake_sent = False
         self._composer_wake = False
-        self._approval_panel_id: str | None = None
         self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
         self._textual_app = None
         from kite.tools.jobs import JobRegistry
@@ -1193,7 +1194,7 @@ class ChatSession:
             ),
             action_slot=self._composer_action,
         )
-        self._prompt = make_prompt_session(completer, key_bindings=bindings)
+        self._prompt = make_prompt_session(completer, key_bindings=bindings, state=self.state)
         return self._prompt
 
     def _read_input_rich(self) -> str | None:
@@ -2840,6 +2841,7 @@ class ChatSession:
         run_task = task
         box: dict = {}
         session = None if textual else self._ensure_prompt()
+        self.display.composer_owns_input = session is not None
 
         def _slash_busy_hint() -> None:
             self._flash_note("Enter queues · Esc stop · Ctrl+G steer")
@@ -2997,6 +2999,8 @@ class ChatSession:
         self.state.busy = False
         self.state.clear_running()
         self.display.close()
+        extra = box.get("result") or {}
+        self.display.finish_composer_turn(extra)
         self._harness = None
         self._bind_session(harness)
         if box.get("err") is not None:
@@ -3006,7 +3010,6 @@ class ChatSession:
             return
         self.attachments = []
         self._sync_attach_count()
-        extra = box.get("result") or {}
         if extra.get("exit_status") == "Interrupted" or box.get("interrupted"):
             self.state.interrupted = True
             self.console.print("[kite.muted]session kept[/]  — type to continue, Ctrl+G after a stop to steer")
@@ -3074,6 +3077,7 @@ class ChatSession:
         if self.initial_prompt:
             opening = self.initial_prompt
             self.initial_prompt = None
+            self.display.print_user_turn(opening)
             self._run_task(opening)
 
         while True:
@@ -3085,8 +3089,6 @@ class ChatSession:
                 line = self._inbox.dequeue()
                 assert line is not None
                 self._sync_queue_count()
-                preview = line[:80] + ("…" if len(line) > 80 else "")
-                self.console.print(f"[kite.muted]› queued[/]  {preview}")
             else:
                 got = self._read_input()
                 if got.kind == "eof":
@@ -3113,5 +3115,6 @@ class ChatSession:
                     self.console.print("[kite.muted]bye[/]")
                     return 0
                 continue
+            self.display.print_user_turn(str(line))
             self._run_task(line)
         return 0

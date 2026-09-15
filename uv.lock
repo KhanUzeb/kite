@@ -925,7 +925,7 @@ wheels = [
 
 [[package]]
 name = "kite"
-version = "0.9.7"
+version = "0.9.8.5"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },
@@ -936,7 +936,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "tenacity" },
-    { name = "textual" },
     { name = "tomli-w" },
 ]
 
@@ -945,6 +944,10 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "textual" },
+]
+tui = [
+    { name = "textual" },
 ]
 
 [package.metadata]
@@ -960,10 +963,11 @@ requires-dist = [
     { name = "rich", specifier = ">=13.7.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "tenacity", specifier = ">=8.0" },
-    { name = "textual", specifier = ">=1.0.0" },
+    { name = "textual", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "textual", marker = "extra == 'tui'", specifier = ">=1.0.0" },
     { name = "tomli-w", specifier = ">=1.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["tui", "dev"]
 
 [[package]]
 name = "linkify-it-py"

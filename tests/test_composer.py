@@ -135,6 +135,8 @@ def test_classify_busy_line() -> None:
 
     assert classify_busy_line("/stop").kind == "stop"
     assert classify_busy_line("/quit").kind == "eof"
+    assert classify_busy_line("/q").kind == "eof"
+    assert classify_busy_line("/exit").kind == "eof"
     assert classify_busy_line("/steer use grep").kind == "steer"
     assert classify_busy_line("/steer use grep").text == "use grep"
     assert classify_busy_line("/tasks").kind == "busy_slash"
@@ -222,6 +224,28 @@ def test_slash_completion_selection_is_separate_from_input() -> None:
     assert buffer.text == "/se"
 
 
+def test_exit_alias_gets_its_own_completion_row(kite_home) -> None:
+    from prompt_toolkit.completion import CompleteEvent
+    from prompt_toolkit.document import Document
+
+    import kite.ui.complete as complete
+    from kite.cli.slash import CommandIndex
+
+    completer = complete.SlashCompleter(lambda: CommandIndex.load("."))
+
+    exit_rows = list(completer.get_completions(Document("/exi"), CompleteEvent()))
+    assert [row.text for row in exit_rows] == ["exit"]
+    assert "Leave the REPL" in str(exit_rows[0].display_meta)
+    assert "exit" in str(exit_rows[0].display)
+
+    prefix_rows = list(completer.get_completions(Document("/ex"), CompleteEvent()))
+    assert "exit" in [row.text for row in prefix_rows]
+
+    all_rows = list(completer.get_completions(Document("/"), CompleteEvent()))
+    names = [row.text for row in all_rows]
+    assert "quit" in names and "exit" in names
+
+
 def test_prompt_session_wires_automatic_slash_selection(monkeypatch) -> None:
     from types import SimpleNamespace
 
@@ -249,21 +273,29 @@ def test_prompt_session_wires_automatic_slash_selection(monkeypatch) -> None:
         on_completions_changed=Hook(),
     )
     session = SimpleNamespace(default_buffer=buffer)
-    monkeypatch.setattr(complete, "PromptSession", lambda **_: session)
+    seen: dict = {}
+    monkeypatch.setattr(
+        complete,
+        "PromptSession",
+        lambda **kwargs: (seen.update(kwargs) or session),
+    )
 
     complete.make_prompt_session(complete.SlashCompleter(lambda: None))
     buffer.on_completions_changed.callback(None)
 
     assert state.complete_index == 0
+    assert seen["erase_when_done"] is True
+
 
 
 def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
-    from prompt_toolkit.layout.containers import HSplit, Window
+    from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
     from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
 
     import kite.ui.complete as complete
 
-    session = complete.make_prompt_session(complete.SlashCompleter(lambda: None))
+    state = SessionUiState()
+    session = complete.make_prompt_session(complete.SlashCompleter(lambda: None), state=state)
     windows = [
         window
         for window in session.layout.find_all_windows()
@@ -276,7 +308,28 @@ def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
 
     main = session.layout.container.children[0].alternative_content
     body = main.content
+    activity = next(
+        child
+        for child in body.children
+        if isinstance(child, ConditionalContainer)
+        and isinstance(getattr(child, "content", None), HSplit)
+        and any(
+            getattr(grandchild, "style", None) == "class:activity"
+            for grandchild in child.content.children
+        )
+    )
     composer = next(child for child in body.children if isinstance(child, HSplit) and len(child.children) == 3)
+    assert not activity.filter()
+    state.busy = True
+    assert activity.filter()
+    assert body.children.index(activity) < body.children.index(composer)
+    # Activity sits between two unpainted spacer rows: a gap above it from the
+    # transcript and a gap below it before the composer box.
+    spacer_top, activity_line, spacer_bottom = activity.content.children
+    assert activity_line.style == "class:activity"
+    assert spacer_top.style not in {"class:composer", "class:activity"}
+    assert spacer_bottom.style not in {"class:composer", "class:activity"}
+    assert all(isinstance(row, Window) for row in (spacer_top, activity_line, spacer_bottom))
     assert composer.height.min == 3 and composer.height.max == 3
     assert all(
         isinstance(child, Window) and child.style == "class:composer"
@@ -284,7 +337,12 @@ def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
     )
     assert composer.children[0].char == " " and composer.children[2].char == " "
 
-    assert any(isinstance(child, (CompletionsMenu, MultiColumnCompletionsMenu)) for child in body.children)
+    menu_index = next(
+        index
+        for index, child in enumerate(body.children)
+        if isinstance(child, (CompletionsMenu, MultiColumnCompletionsMenu))
+    )
+    assert body.children.index(composer) < menu_index
     assert all(
         not isinstance(floating.content, (CompletionsMenu, MultiColumnCompletionsMenu))
         for floating in main.floats
@@ -349,7 +407,7 @@ def test_enter_applies_selected_slash_completion_before_submit() -> None:
 
 
 def test_toolbar_busy_and_approval_states() -> None:
-    from kite.ui.complete import _toolbar_html
+    from kite.ui.complete import _activity_html, _toolbar_html
     from kite.ui.status import format_running_status
 
     busy = SessionUiState(
@@ -369,10 +427,13 @@ def test_toolbar_busy_and_approval_states() -> None:
         tps=42.0,
     )
     busy_html = str(_toolbar_html(busy))
+    activity_html = str(_activity_html(busy))
     assert "Esc/Ctrl+C stop" in busy_html
     assert "steer 1" in busy_html
     assert "follow-up 1" in busy_html
     assert "next steer: fix the flaky test" in busy_html
+    assert "pytest -q" not in busy_html
+    assert "pytest -q" in activity_html
     assert "tok/s" not in busy_html
     assert "›" in format_running_status(busy)
 

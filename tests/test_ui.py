@@ -161,6 +161,15 @@ def test_composer_ctrl_c_queue_and_privacy(monkeypatch, kite_home) -> None:
     assert "ssrf" in summary and summary["session_persistence"] in {"full", "redacted", "disabled"}
 
 
+
+def test_exit_alias_resolves_to_quit() -> None:
+    from kite.cli.slash import CommandIndex, resolve_slash
+    from kite.ui.complete import classify_busy_line
+
+    parsed = resolve_slash("/exit", CommandIndex.load("."))
+    assert parsed.command == "quit"
+    assert classify_busy_line("/exit").kind == "eof"
+
 def test_repl_lazy_slash_and_jobs(monkeypatch, tmp_path, kite_home) -> None:
     monkeypatch.setattr("kite.providers.resolve.resolve_model", lambda **_: MagicMock(provider="groq", model="llama-test"))
     session = ChatSession(cwd=str(tmp_path))
@@ -314,6 +323,121 @@ def test_render_diff_and_stream_answer_styles() -> None:
     coalescer = StreamCoalescer(min_chars=4, flush_chars=100, max_latency_s=0.0)
     assert coalescer.push("custom", "hi") is None
     assert coalescer.push("custom", " there") is not None
+
+
+def test_stream_answer_keeps_chunk_boundaries_inline() -> None:
+    buf = StringIO()
+    display = RunDisplay(Console(file=buf, width=100, theme=KITE_THEME), state=SessionUiState())
+
+    for chunk in ("Kite is a", " terminal coding", "-agent harness.\n", "Second", " line\n"):
+        display._stream_write_answer(chunk)
+
+    lines = [line for line in strip_ansi(buf.getvalue()).splitlines() if line.strip()]
+    assert len(lines) == 2
+    assert lines[0].strip() == "• Kite is a terminal coding-agent harness."
+    assert lines[1].strip() == "Second line"
+
+
+def test_submitted_user_row_fills_width_with_surface() -> None:
+    from kite.ui.render import render_user_cell
+
+    console = Console(file=StringIO(), width=48, theme=KITE_THEME)
+    rows = console.render_lines(render_user_cell("ship the fix"), console.options)
+    assert len(rows) == 3
+    assert all(len("".join(segment.text for segment in row)) == 48 for row in rows)
+    assert any(segment.style is not None and segment.style.bgcolor for segment in rows[1])
+    assert "ship the fix" in "".join(segment.text for segment in rows[1])
+
+    multi = console.render_lines(render_user_cell("one\ntwo"), console.options)
+    assert len(multi) == 4
+    assert all(len("".join(segment.text for segment in row)) == 48 for row in multi)
+    assert "two" in "".join(segment.text for segment in multi[2])
+
+
+def test_composer_owns_input_suppresses_event_driven_rows() -> None:
+    events = [
+        Event("agent_start", payload={"task": "hi", "provider": "groq", "model": "llama"}),
+        Event("agent_end", payload={"exit_status": "Submitted", "submission": "Hello there", "cost": 0.0}),
+    ]
+
+    with_composer = StringIO()
+    display = RunDisplay(Console(file=with_composer, width=80, theme=KITE_THEME), state=SessionUiState())
+    display.state.busy = True
+    display.composer_owns_input = True
+    for event in events:
+        display(event)
+    assert "Hello there" not in strip_ansi(with_composer.getvalue())
+
+    display.finish_composer_turn(events[-1].payload)
+    plain = strip_ansi(with_composer.getvalue())
+    assert "hi" not in plain
+    assert plain.count("Hello there") == 1
+    assert "work complete" not in plain
+    assert "kite · " not in plain
+
+    without_composer = StringIO()
+    headless = RunDisplay(Console(file=without_composer, width=80, theme=KITE_THEME), state=SessionUiState())
+    headless.state.busy = True
+    for event in events:
+        headless(event)
+    plain_headless = strip_ansi(without_composer.getvalue())
+    assert "hi" in plain_headless
+    assert "kite · " in plain_headless
+
+def test_composer_commits_buffered_answer_when_submission_is_missing() -> None:
+    buf = StringIO()
+    display = RunDisplay(Console(file=buf, width=80, theme=KITE_THEME), state=SessionUiState())
+    display.composer_owns_input = True
+    display(Event("agent_start", payload={"task": "hi"}))
+    display(Event("stream_delta", payload={"text": "Hello "}))
+    display(Event("stream_delta", payload={"text": "there"}))
+    display(Event("agent_end", payload={"exit_status": "Submitted"}))
+
+    assert "Hello there" not in strip_ansi(buf.getvalue())
+    display.finish_composer_turn()
+    assert strip_ansi(buf.getvalue()).count("Hello there") == 1
+
+
+
+def test_submitted_output_is_not_repeated_after_a_tool() -> None:
+    buf = StringIO()
+    display = RunDisplay(Console(file=buf, width=80, theme=KITE_THEME), state=SessionUiState())
+    for event in (
+        Event("agent_start", payload={"task": "hi"}),
+        Event("stream_delta", payload={"text": "Hello there"}),
+        Event("tool_start", payload={"tool": "submit", "arguments": {}}),
+        Event("agent_end", payload={"exit_status": "Submitted", "submission": "Hello there"}),
+    ):
+        display(event)
+
+    assert strip_ansi(buf.getvalue()).count("Hello there") == 1
+
+
+
+
+def test_repl_prints_each_submitted_prompt_once(monkeypatch, tmp_path, kite_home) -> None:
+    from kite.ui.complete import ComposerResult
+
+    monkeypatch.setattr(
+        "kite.providers.resolve.resolve_model",
+        lambda **_: MagicMock(provider="groq", model="llama-test"),
+    )
+    monkeypatch.setattr(ChatSession, "_schedule_release_check_legacy", lambda self: None)
+    monkeypatch.setattr(ChatSession, "_prewarm_composer", lambda self: None)
+
+    session = ChatSession(cwd=str(tmp_path))
+    rows: list[str] = []
+    session.display.print_user_turn = rows.append  # type: ignore[method-assign]
+    session._run_task = lambda task, **kwargs: None  # type: ignore[method-assign]
+    prompts = [
+        ComposerResult("text", "first"),
+        ComposerResult("text", "second"),
+        ComposerResult("eof"),
+    ]
+    session._read_input = lambda: prompts.pop(0)  # type: ignore[method-assign]
+
+    assert session.run() == 0
+    assert rows == ["first", "second"]
 
 
 def test_approval_panel_includes_diff_stat() -> None:

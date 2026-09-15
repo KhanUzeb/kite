@@ -175,7 +175,7 @@ def test_status_footer_modes() -> None:
     busy = SessionUiState(mode=AgentMode.BUILD, provider="groq", model="llama", cost=0.02, busy=True)
     busy.running_label = "pytest tests/"
     segments = status_segments(busy)
-    assert segments[1][0] == "pytest tests/"
+    assert [text for text, _ in segments] == ["build", "groq/llama", "$0.020"]
 
     approval = SessionUiState(awaiting_approval="bash", awaiting_approval_mandatory=True)
     segments = status_segments(approval)

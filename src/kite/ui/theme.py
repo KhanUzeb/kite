@@ -115,6 +115,8 @@ class PaletteUi:
     scrollbar_btn: str
     autosuggest: str
     prompt: str
+    # Submitted user rows keep a filled band; empty on transparent themes.
+    user_bg: str
 
 
 def _dark_ui(
@@ -123,6 +125,7 @@ def _dark_ui(
     accent: str = "#c9a227",
     placeholder: str = "#4a4a4a",
     composer_bg: str = "#30303c",
+    user_bg: str = "#262630",
     # Empty toolbar_bg → bg:default (no painted band / shadow under composer)
     toolbar_bg: str = "",
     toolbar_fg: str = "#5c5c5c",
@@ -155,6 +158,7 @@ def _dark_ui(
         scrollbar_btn=scrollbar_btn,
         autosuggest=autosuggest,
         prompt=prompt,
+        user_bg=user_bg,
     )
 
 
@@ -164,6 +168,7 @@ def _light_ui(
     accent: str = "#9a7b0a",
     placeholder: str = "#888888",
     composer_bg: str = "#eeeef4",
+    user_bg: str = "#e7e7ef",
     toolbar_bg: str = "#f0f0f0",
     toolbar_fg: str = "#555555",
     completion_bg: str = "#ffffff",
@@ -194,6 +199,7 @@ def _light_ui(
         scrollbar_btn=scrollbar_btn,
         autosuggest=autosuggest,
         prompt=prompt,
+        user_bg=user_bg,
     )
 
 
@@ -204,6 +210,7 @@ def _transparent_ui() -> PaletteUi:
         accent="#909090",
         placeholder="#606060",
         composer_bg="",
+        user_bg="",
         toolbar_bg="",
         toolbar_fg="#707070",
         completion_bg="",
@@ -747,6 +754,18 @@ def palette(name: str | None = None) -> dict[str, Any]:
 
 def ui_colors(name: str | None = None) -> PaletteUi:
     return palette(name)["ui"]
+
+
+def user_surface_styles(name: str | None = None) -> tuple[str, str, str]:
+    """Rich styles ``(body, marker, pad)`` for a submitted user row.
+
+    Literal colors only: Rich cannot resolve a theme name inside a compound
+    style definition.
+    """
+    ui = ui_colors(name)
+    if not ui.user_bg:
+        return "kite.user", "kite.muted", ""
+    return f"default on {ui.user_bg}", f"{ui.muted} on {ui.user_bg}", f"on {ui.user_bg}"
 
 
 def rich_theme(name: str | None = None) -> Theme:

@@ -927,15 +927,45 @@ class DefaultAgent:
         self._consecutive_no_tool_turns = 0
         outputs: list[dict] = []
         cwd = self._execution_cwd()
-        for batch in plan_execution_batches(actions, cwd=cwd):
-            if len(batch) > 1:
-                self._execute_parallel_actions(batch, outputs)
-            else:
-                self._execute_sequential_actions(batch, outputs)
+        try:
+            for batch in plan_execution_batches(actions, cwd=cwd):
+                if len(batch) > 1:
+                    self._execute_parallel_actions(batch, outputs)
+                else:
+                    self._execute_sequential_actions(batch, outputs)
+        except Submitted:
+            self._answer_unfinished_calls(message, outputs)
+            raise
         obs = self.add_messages(*self.model.format_observation_messages(message, outputs))
         if self._interrupt:
             raise _user_interrupt()
         return obs
+
+    def _answer_unfinished_calls(self, message: dict, outputs: list[dict]) -> None:
+        """Record results for tool calls left dangling when the turn ended.
+
+        `submit` raises `Submitted` from inside the tool call, so its observation
+        is never appended. The call stays in the transcript, and a resumed
+        session would then send an assistant tool_call with no matching tool
+        output — ChatGPT rejects that with "No tool output found for function
+        call". Answering every call the batch never completed keeps the
+        transcript pairable.
+        """
+        actions = message.get("extra", {}).get("actions", [])
+        for action in actions[len(outputs) :]:
+            tool = str(action.get("tool") or "")
+            submitted = tool == "submit"
+            obs = self.model.format_observation_messages(
+                {"extra": {"actions": [action]}},
+                [
+                    {
+                        "ok": submitted,
+                        "output": "submitted" if submitted else "not executed",
+                        "tool": tool,
+                    }
+                ],
+            )
+            self.add_messages(*obs)
 
     def _prepare_action(self, action: dict) -> tuple[str, dict, dict]:
         tool = str(action.get("tool") or "")
