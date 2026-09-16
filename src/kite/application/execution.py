@@ -142,8 +142,24 @@ class ProcessRunner:
         self.timeout_seconds = timeout_seconds
         self.max_output_bytes = max_output_bytes
 
+    @staticmethod
+    def _child_env(cwd: str | None) -> dict[str, str]:
+        """Filtered host env + project .venv on PATH (same as the bash tool).
+
+        Falls back to the plain filtered env when venv discovery fails, so a
+        broken project layout never breaks process spawning itself.
+        """
+        if cwd:
+            try:
+                from kite.env.venv import prepare_child_env
+
+                return prepare_child_env(cwd=cwd)
+            except Exception:  # noqa: BLE001 — discovery must stay non-fatal
+                pass
+        return filtered_child_env()
+
     def run(self, command: list[str] | str, *, cwd: str | None = None, shell: bool = False) -> ProcessResult:
-        env = filtered_child_env()
+        env = self._child_env(cwd)
         if invokes_gh_cli(command):
             # Dynamic gh use: ambient GH_TOKEN/GITHUB_TOKEN flows impromptu.
             env = with_gh_tokens(env)

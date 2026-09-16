@@ -401,7 +401,8 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 | Tool | Purpose |
 |------|---------|
 | `submit` | Structured completion — `message` with Done / Changed / Verification sections (preferred over bash echo marker) |
-| `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. Dynamic `gh` lives here too (no hardcoded tools needed): read-only `gh issue/pr view\|list` runs free in build AND plan mode; publishing commands (`create`/`comment`/`merge`/`close`) prompt for approval in auto mode |
+| `write` / `edit` | Edits preserve the file's on-disk line endings (no LF↔CRLF churn); new files default to CRLF on Windows / LF elsewhere unless `.gitattributes`/`editorconfig` say otherwise |
+| `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. Runs with the project `.venv` first on PATH when one exists (system toolchains otherwise). Dynamic `gh` lives here too (no hardcoded tools needed): read-only `gh issue/pr view\|list` runs free in build AND plan mode; publishing commands (`create`/`comment`/`merge`/`close`) prompt for approval in auto mode |
 | `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |
 | `websearch` | Auto: Tavily → Exa → Firecrawl when keys set; else DuckDuckGo. Returns titles/URLs/snippets |
 | `webfetch` | Firecrawl scrape when `FIRECRAWL_API_KEY` set; else stdlib HTML extract |

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,6 +47,31 @@ def git_branch(cwd: str | Path) -> str:
 def is_repo(cwd: str | Path) -> bool:
     proc = _run(cwd, "git", "rev-parse", "--is-inside-work-tree")
     return proc.returncode == 0 and (proc.stdout or "").strip() == "true"
+
+
+_STATUS_TTL = 4.0
+_status_cache: dict[str, tuple[float, int]] = {}
+
+
+def git_dirty_count(cwd: str | Path) -> int:
+    """Uncommitted file count (staged + unstaged + untracked), TTL-cached.
+
+    Returns -1 when cwd is not a git repo or git fails — never raises.
+    """
+    key = str(cwd)
+    hit = _status_cache.get(key)
+    now = time.monotonic()
+    if hit is not None and now - hit[0] < _STATUS_TTL:
+        return hit[1]
+    count = -1
+    try:
+        proc = _run(cwd, "git", "status", "--porcelain=v1", timeout=10)
+    except subprocess.TimeoutExpired:
+        proc = None
+    if proc is not None and proc.returncode == 0:
+        count = sum(1 for line in (proc.stdout or "").splitlines() if line.strip())
+    _status_cache[key] = (now, count)
+    return count
 
 
 def _short_task(text: str, limit: int = 72) -> str:

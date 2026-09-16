@@ -383,7 +383,9 @@ class ChatSession:
         if req is None:
             self._approval_panel_id = None
             return
-        if self._approval_panel_id == req.request_id:
+        # getattr guard: a busy tick must never die on panel bookkeeping,
+        # even for sessions constructed before the attribute existed.
+        if getattr(self, "_approval_panel_id", None) == req.request_id:
             return
         from kite.ui.approval import render_approval_panel
 
@@ -605,6 +607,20 @@ class ChatSession:
     def _wire_harness_git(self, harness) -> None:
         """Attach git checkpoints in build mode only — plan mode stays read-only."""
         harness.checkpoints = self.git if self.state.mode is AgentMode.BUILD else None
+
+    def _refresh_git_state(self, *, announce: bool = False) -> None:
+        """Refresh branch/dirty snapshot; announce uncommitted files after a turn."""
+        from kite.ui.git import git_branch, git_dirty_count
+
+        self.state.git_branch = git_branch(self.cwd)
+        dirty = git_dirty_count(self.cwd)
+        self.state.git_dirty = dirty
+        if announce and dirty > 0:
+            noun = "file" if dirty == 1 else "files"
+            self.console.print(
+                f"[kite.muted]git  {dirty} uncommitted {noun} on {self.state.git_branch or '?'}"
+                "  ·  /undo to revert[/]"
+            )
 
     def _provider_names(self) -> list[str]:
         from kite.providers.catalog import load_catalog
@@ -3067,11 +3083,10 @@ class ChatSession:
                 persist_session_todos(self._session_id, self.todos.read())
             except Exception:
                 pass
+        self._refresh_git_state(announce=True)
 
     def run(self) -> int:
-        from kite.ui.git import git_branch
-
-        self.state.git_branch = git_branch(self.cwd)
+        self._refresh_git_state()
         self._startup_banner()
         self._maybe_prompt_project_trust()
         self._schedule_release_check_legacy()

@@ -14,13 +14,17 @@ def _apply_edit(path: Path, old: str, new: str, *, replace_all: bool = False) ->
     if old not in text:
         return False
     after = text.replace(old, new) if replace_all else text.replace(old, new, 1)
-    path.write_text(after, encoding="utf-8")
+    from kite.tools.line_endings import write_text_preserving
+
+    write_text_preserving(path, after)
     return True
 
 
 def _apply_write(path: Path, content: str) -> None:
+    from kite.tools.line_endings import write_text_preserving
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    write_text_preserving(path, content)
 
 
 def extract_patches_from_trajectory(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -111,11 +115,13 @@ def apply_unified_diff(diff_text: str, *, cwd: str, dry_run: bool = False) -> di
         if not _path_inside_workspace(target, root):
             skipped.append(f"escapes workspace: {current_path}")
         elif not dry_run and target.is_file():
+            from kite.tools.line_endings import write_text_preserving
+
             before = target.read_text(encoding="utf-8", errors="replace")
             after = "\n".join(new_lines)
             if not after.endswith("\n") and before.endswith("\n"):
                 after += "\n"
-            target.write_text(after, encoding="utf-8")
+            write_text_preserving(target, after)
             applied.append(current_path)
         elif dry_run:
             applied.append(f"would patch {current_path}")

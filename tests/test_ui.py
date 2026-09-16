@@ -9,6 +9,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from rich.console import Console
 
 from kite.agent.events import Event
@@ -796,3 +797,54 @@ def test_footer_error_segment_and_turn_reset(tmp_path, kite_home) -> None:
     chat._begin_turn_state("do things")
     assert chat.state.last_error == "" and chat.state.last_trace == ""
     assert chat.state.running_label == "do things"
+
+
+def test_git_dirty_tracking_and_branch_marker(tmp_path, kite_home, monkeypatch) -> None:
+    """Concrete git state: live dirty count, turn-end announce, branch * marker."""
+    import shutil
+    import subprocess
+    from io import StringIO
+
+    from rich.console import Console
+
+    from kite.ui.git import git_dirty_count
+    from kite.ui.status import status_context_parts
+
+    if shutil.which("git") is None:
+        pytest.skip("git not on PATH")
+    # Hermetic: ceiling the parent so no repo above tmp_path leaks in
+    # (this machine nests Temp inside a home-directory repo).
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+    assert git_dirty_count(str(tmp_path)) == -1
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, timeout=60)
+    from kite.ui import git as git_ui
+
+    git_ui._status_cache.clear()
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "t@t"],
+        check=True,
+        timeout=60,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "t"],
+        check=True,
+        timeout=60,
+    )
+    assert git_dirty_count(str(tmp_path)) == 0
+    (tmp_path / "new.txt").write_text("x", encoding="utf-8")
+    git_ui._status_cache.clear()
+    assert git_dirty_count(str(tmp_path)) == 1
+
+    chat = ChatSession(cwd=str(tmp_path))
+    buf = StringIO()
+    chat.console = Console(file=buf, force_terminal=False)
+    git_ui._status_cache.clear()
+    chat._refresh_git_state(announce=True)
+    assert chat.state.git_dirty == 1
+    assert "1 uncommitted file" in buf.getvalue()
+
+    chat.state.git_branch = "main"
+    assert "main*" in status_context_parts(chat.state)
+    chat.state.git_dirty = 0
+    assert "main" in status_context_parts(chat.state)
+    assert "main*" not in status_context_parts(chat.state)
