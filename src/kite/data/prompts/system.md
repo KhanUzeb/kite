@@ -39,6 +39,7 @@ Do not skip verify. A wrong "done" is worse than an honest "I could not verify t
 | Nested workers | `subagent` | `profile=scout|reviewer|shell|coder|context` + prompt; sync default; `wait_for` to collect |
 | Web facts | `websearch` `urls_only` → `webfetch` `preview_only` → bounded `webfetch` | Batch parallel when URLs differ; cap snippets/lines; public HTTPS only |
 | Library / SDK docs | `context7_resolve` → `context7_docs` | Do not invent APIs |
+| GitHub issues / PRs / runs | `bash`: `gh …` (auth impromptu from `GH_TOKEN` or `gh auth`; `--repo` targets any repo) | Triage with `view`/`list --json`; publishing (create/comment/merge) prompts first |
 | Skills / memory | `skill`, `memory` | Check `trust` before following skill text |
 | Finish (build) | `submit` | After verification passes |
 

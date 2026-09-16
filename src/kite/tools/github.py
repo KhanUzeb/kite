@@ -8,9 +8,18 @@ from typing import Any
 
 from kite.tools import Tool
 
+# Tokens gh accepts itself — re-injected past the child-env secret filter so
+# an exported GH_TOKEN/GITHUB_TOKEN works impromptu (no kite-side setup).
+
 
 def _gh_available() -> bool:
     return shutil.which("gh") is not None
+
+
+def _gh_env() -> dict[str, str]:
+    from kite.guardrails.env_filter import filtered_child_env, with_gh_tokens
+
+    return with_gh_tokens(filtered_child_env())
 
 
 def _run_gh(args: list[str], *, timeout: int = 30) -> dict[str, Any]:
@@ -22,8 +31,6 @@ def _run_gh(args: list[str], *, timeout: int = 30) -> dict[str, Any]:
         }
     cmd = ["gh", *args]
     try:
-        from kite.guardrails.env_filter import filtered_child_env
-
         proc = subprocess.run(
             cmd,
             capture_output=True,
@@ -31,7 +38,7 @@ def _run_gh(args: list[str], *, timeout: int = 30) -> dict[str, Any]:
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
-            env=filtered_child_env(),
+            env=_gh_env(),
         )
         output = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
         return {

@@ -324,8 +324,8 @@ First run (recommended):
   kite providers
   kite models -p groq --select
 
-Update later:   uv tool upgrade kite
-Uninstall:      uv tool uninstall kite
+Update later:   kite update
+Uninstall:      kite uninstall
 Hacking on kite source: ./scripts/install.sh --dev
 EOF
 }
@@ -426,7 +426,7 @@ Local .venv is only for pytest/IDE - you do not need to activate it to run kite.
   kite
   .venv/bin/pytest -q
 
-Update / uninstall: uv tool upgrade kite | uv tool uninstall kite
+Update / uninstall: kite update | kite uninstall
 EOF
 }
 

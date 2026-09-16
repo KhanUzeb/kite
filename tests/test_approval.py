@@ -214,3 +214,42 @@ def test_once_remembers_exact_command_for_session(monkeypatch) -> None:
     monkeypatch.setattr("kite.ui.approval.Prompt.ask", lambda *_a, **_k: asked.append("x") or "n")
     assert prompt_approval(_Console(), "bash", other, policy=policy) == "deny"
     assert asked == ["x"]
+
+
+def test_gh_reads_routine_writes_prompt(workspace: Path) -> None:
+    """Dynamic gh via bash: triage runs free, publishing prompts (no hardcoded tools)."""
+    from kite.ui.approval import is_gh_read, is_gh_write
+
+    ws = str(workspace)
+    for cmd in (
+        "gh issue view 12",
+        "gh issue view 12 --json title,body",
+        "gh pr list --limit 5",
+        "gh run view 123",
+        "gh search issues cli --limit 3",
+        "gh repo view",
+        "gh auth status",
+    ):
+        assert is_gh_read(cmd), cmd
+        level, _ = action_consequence("bash", command=cmd, workspace_cwd=ws, bash_cwd=ws)
+        assert level is ConsequenceLevel.ROUTINE, cmd
+        assert not needs_approval(
+            "bash", AgentMode.BUILD, ApprovalMode.AUTO, command=cmd, workspace_cwd=ws, bash_cwd=ws
+        )
+    for cmd in (
+        "gh issue create --title x",
+        "gh issue comment 12 --body hi",
+        "gh pr create --title x",
+        "gh pr merge 3",
+        "gh issue close 12",
+        "gh pr edit 3 --add-label bug",
+    ):
+        assert is_gh_write(cmd), cmd
+        level, reason = action_consequence("bash", command=cmd, workspace_cwd=ws, bash_cwd=ws)
+        assert level is ConsequenceLevel.SERIOUS and "GitHub" in reason, cmd
+        assert needs_approval(
+            "bash", AgentMode.BUILD, ApprovalMode.AUTO, command=cmd, workspace_cwd=ws, bash_cwd=ws
+        )
+        assert not needs_approval(
+            "bash", AgentMode.BUILD, ApprovalMode.YOLO, command=cmd, workspace_cwd=ws, bash_cwd=ws
+        )

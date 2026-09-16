@@ -144,6 +144,7 @@ class ChatSession:
         self._approval_coord = None
         self._approval_resolving = False
         self._approval_wake_sent = False
+        self._approval_panel_id: str | None = None
         self._composer_wake = False
         self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
         from kite.tools.jobs import JobRegistry
@@ -600,6 +601,10 @@ class ChatSession:
         self._harness = h
         self._harness_key = key
         return h
+
+    def _wire_harness_git(self, harness) -> None:
+        """Attach git checkpoints in build mode only — plan mode stays read-only."""
+        harness.checkpoints = self.git if self.state.mode is AgentMode.BUILD else None
 
     def _provider_names(self) -> list[str]:
         from kite.providers.catalog import load_catalog
@@ -1730,6 +1735,7 @@ class ChatSession:
 
     def _apply_thinking_level(self, raw: str) -> None:
         from kite.models.reasoning import (
+            clamp_thinking_level,
             cycle_thinking_level,
             fallback_thinking_level,
             resolve_thinking_level,
@@ -1752,6 +1758,25 @@ class ChatSession:
         encoded = resolve_thinking_level(token, info)
         if encoded is None and (info is None or not info.supported):
             encoded = fallback_thinking_level(token)
+        if info is not None and info.supported:
+            if (
+                encoded is None
+                and token.lower() in {"off", "none", "disable", "disabled"}
+                and not info.can_disable
+            ):
+                self.console.print("[kite.muted]this model cannot disable thinking[/]")
+                return
+            clamped = clamp_thinking_level(token, info)
+            if clamped is not None:
+                enc, effective = clamped
+                if enc != encoded:
+                    # Pi parity: unsupported level clamps to nearest, reported.
+                    self._commit_reasoning(enc)
+                    if effective != token.lower():
+                        self.console.print(
+                            f"[kite.muted]{token} unavailable on this model — using {effective}[/]"
+                        )
+                    return
         if encoded is None:
             menu = thinking_level_menu(info) if info is not None and info.supported else ()
             hint = "|".join(pi for pi, _ in menu) or "off|low|medium|high"
@@ -2777,6 +2802,12 @@ class ChatSession:
             self._session_id = harness.last_session.id
             self._sync_goal_to_session()
 
+    def _begin_turn_state(self, preview: str) -> None:
+        """Reset per-turn UI state: stale errors clear so the footer never lies."""
+        self.state.last_error = ""
+        self.state.last_trace = ""
+        self.state.set_running(label=preview[:80] or "working", kind="turn")
+
     def _run_task(self, task: str) -> None:
         from kite.ui.attach import collect_turn_attachments
 
@@ -2796,7 +2827,7 @@ class ChatSession:
             self.console.print(f"[kite.error]{escape(str(e))}[/]  [kite.muted]/login · /select · kite setup[/]")
             return
         preview = task.replace("\n", " ").strip()
-        self.state.set_running(label=preview[:80] or "working", kind="turn")
+        self._begin_turn_state(preview)
         self.attachments = list(bundled)
         self._sync_attach_count()
 
@@ -2814,7 +2845,7 @@ class ChatSession:
         harness = self._make_harness(resume=resume, follow_up=task if resume else None)
         self._harness = harness
         harness.approver = self._approver()
-        harness.checkpoints = self.git
+        self._wire_harness_git(harness)
         harness.todos = self.todos
         self._busy = True
         self.state.busy = True
@@ -2974,7 +3005,7 @@ class ChatSession:
             self.display._spin(False)
             harness = self._make_harness(resume=True, follow_up=run_task)
             harness.approver = self._approver()
-            harness.checkpoints = self.git
+            self._wire_harness_git(harness)
             harness.todos = self.todos
 
         self._busy = False

@@ -436,7 +436,7 @@ _INSPECTION_HEAD = re.compile(
     r"(?i)^\s*("
     r"git\s+(status|diff|log|show|branch|stash\s+list|rev-parse|describe)"
     r"|ls\b|dir\b|cat\b|head\b|tail\b|rg\b|grep\b|find\b|fd\b"
-    r"|pwd\b|echo\b|which\b|where\b|type\b|wc\b|file\b|stat\b|tree\b|realpath\b"
+    r"|pwd\b|echo\b|which\b|where\b|type\b|wc\b|file\b|stat\b|tree\b|realpath\b|jq\b"
     r"|sed\s+-n"
     r"|pytest\b|npm\s+test\b|cargo\s+test\b|go\s+test\b|make\s+test\b"
     r"|node\s+--version|python3?\s+--version|uv\s+--version"
@@ -451,6 +451,116 @@ _MUTATING_BASH = re.compile(
     r"|pip\s+install|npm\s+install|cargo\s+install|apt\s+install|brew\s+install"
     r")\b"
 )
+
+
+# gh CLI — dynamic GitHub use through bash (no hardcoded agent tools).
+# Reads triage for free; anything publishing to the remote prompts.
+_GH_HEAD = re.compile(r"(?i)^\s*gh(?:\.exe)?\b")
+_GH_VALUE_FLAGS = frozenset({
+    "--repo", "-R", "--limit", "-L", "--state", "-s", "--search",
+    "--author", "-a", "--label", "-l", "--assignee", "-A", "--mention",
+    "--milestone", "-m", "--jq", "-q", "--template", "-t", "--hostname",
+    "--method", "-X", "--order", "-O", "--sort", "-S",
+})
+_GH_READ_NOUNS = frozenset({
+    "issue", "issues", "pr", "prs", "pull-request", "run", "runs",
+    "repo", "repos", "release", "releases", "workflow", "workflows",
+    "cache", "caches", "alias", "aliases", "extension", "label", "labels",
+    "project", "projects", "gist", "gists", "status", "search",
+})
+_GH_READ_VERBS = frozenset({"view", "views", "list", "status", "diff", "checks"})
+_GH_WRITE_VERBS = frozenset({
+    "create", "new", "comment", "reply", "merge", "close", "reopen",
+    "edit", "delete", "del", "remove", "rm", "lock", "unlock", "transfer",
+    "sync", "fork", "clone", "rename", "archive", "unarchive", "upload",
+    "download", "rerun", "cancel", "publish", "unpublish", "refresh",
+    "login", "logout", "setup-git", "token", "store", "install",
+    "uninstall", "upgrade", "exec",
+})
+# Secret/variable scope always prompts — names alone are sensitive-adjacent.
+_GH_SENSITIVE_NOUNS = frozenset({"secret", "secrets", "variable", "variables"})
+
+
+def _gh_arg_tokens(argstr: str) -> list[str]:
+    """First meaningful tokens after `gh`, skipping flags and flag values."""
+    toks: list[str] = []
+    parts = (argstr or "").split()
+    i = 0
+    skip_next = False
+    while i < len(parts):
+        part = parts[i]
+        i += 1
+        if skip_next:
+            skip_next = False
+            continue
+        low = part.lower()
+        if low.startswith("-") and low not in {"-"}:
+            if low.split("=")[0] in _GH_VALUE_FLAGS:
+                if "=" not in low:
+                    skip_next = True
+            continue
+        toks.append(low)
+    return toks
+
+
+def _classify_gh_args(argstr: str) -> str:
+    toks = _gh_arg_tokens(argstr)
+    if not toks:
+        return "other"
+    noun, verb = toks[0], (toks[1] if len(toks) > 1 else "")
+    if noun in _GH_SENSITIVE_NOUNS:
+        return "write"
+    if noun == "search":
+        return "read"
+    if noun == "api":
+        method = ""
+        parts = (argstr or "").split()
+        for j, part in enumerate(parts):
+            if part.lower() in {"-X", "--method"} and j + 1 < len(parts):
+                method = parts[j + 1].upper()
+            if part.lower() == "--input":
+                return "write"
+        if method and method != "GET":
+            return "write"
+        return "read"
+    if verb in _GH_WRITE_VERBS:
+        return "write"
+    if noun == "auth":
+        return "read" if verb in {"", "status"} else "write"
+    if noun in _GH_READ_NOUNS and (verb in _GH_READ_VERBS or (noun == "status" and not verb)):
+        return "read"
+    return "other"
+
+
+def gh_bash_kind(command: str) -> str:
+    """Classify a bash gh invocation: read-only, publishing, or non-gh/unknown."""
+    text = str(command or "")
+    if not text or not re.search(r"(?i)\bgh(?:\.exe)?\b", text):
+        return "other"
+    kinds: set[str] = set()
+    for seg in _CHAIN_SPLIT.split(text):
+        seg = seg.strip()
+        if not seg or _CD.match(seg):
+            continue
+        head = re.match(r"(?i)^\s*gh(?:\.exe)?\b\s*(.*)$", seg, re.DOTALL)
+        if not head:
+            continue
+        kinds.add(_classify_gh_args(head.group(1)))
+    if not kinds:
+        return "other"
+    if "write" in kinds:
+        return "write"
+    if kinds == {"read"}:
+        return "read"
+    return "other"
+
+
+def is_gh_read(command: str) -> bool:
+    return gh_bash_kind(command) == "read"
+
+
+def is_gh_write(command: str) -> bool:
+    return gh_bash_kind(command) == "write"
 
 
 def is_inspection_bash(command: str) -> bool:
@@ -473,6 +583,11 @@ def is_inspection_bash(command: str) -> bool:
         return False
     for seg in segments:
         if _CD.match(seg):
+            continue
+        if _GH_HEAD.match(seg):
+            # Dynamic gh use: read-only triage is inspection; publishing is not.
+            if gh_bash_kind(seg) != "read":
+                return False
             continue
         if not _INSPECTION_HEAD.match(seg):
             return False

@@ -141,8 +141,11 @@ class GrokCliAuthProvider:
         return _FALLBACK_MODELS
 
     def litellm_env(self) -> dict[str, str]:
-        # Point LiteLLM xAI OAuth reader at Grok's official credential store.
-        return {"XAI_OAUTH_TOKEN_DIR": str(grok_home())}
+        # Grok CLI nests tokens under an issuer URL; LiteLLM needs a flat
+        # auth.json. Bridge into ~/.kite/oauth/xai (see grok_litellm).
+        from kite.providers.auth.grok_litellm import litellm_xai_env
+
+        return litellm_xai_env()
 
     def litellm_extras(self) -> dict[str, object]:
         return {"use_xai_oauth": True}

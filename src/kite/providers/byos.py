@@ -77,6 +77,11 @@ def ensure_oauth_env(spec: ProviderSpec) -> None:
         from kite.providers.auth.codex_litellm import materialize_litellm_chatgpt_auth
 
         materialize_litellm_chatgpt_auth()
+    # Same for Grok: ~/.grok/auth.json is CLI-nested, LiteLLM needs it flat.
+    if (spec.oauth_provider or spec.name) == "xai":
+        from kite.providers.auth.grok_litellm import materialize_litellm_xai_auth
+
+        materialize_litellm_xai_auth()
     for key, val in auth.litellm_env().items():
         os.environ[key] = val
 
