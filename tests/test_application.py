@@ -268,6 +268,23 @@ def test_effects_nested_policy_and_coordinator(workspace: Path) -> None:
     assert result.exit_code == 0 and "hi" in result.stdout
 
 
+def test_process_runner_prefers_project_venv(tmp_path) -> None:
+    """0.9 executor must resolve `python` from the project .venv like the bash tool."""
+    import sys
+    from pathlib import Path
+
+    venv = tmp_path / ".venv"
+    bindir = venv / ("Scripts" if sys.platform == "win32" else "bin")
+    bindir.mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = x\n", encoding="utf-8")
+    (bindir / ("python.exe" if sys.platform == "win32" else "python")).write_text("")
+    env = ProcessRunner._child_env(str(tmp_path))
+    key = "Path" if sys.platform == "win32" and "Path" in env else "PATH"
+    first = env[key].split(";" if sys.platform == "win32" else ":")[0]
+    assert Path(first).resolve() == bindir.resolve()
+    assert "PATH" in ProcessRunner._child_env(None) or "Path" in ProcessRunner._child_env(None)
+
+
 def test_cli_result_ok_only_when_submitted() -> None:
     from kite.application.cli import CliResult
     from kite.application.contracts import RunResult

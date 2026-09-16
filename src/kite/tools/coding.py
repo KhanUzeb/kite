@@ -267,7 +267,9 @@ def make_coding_tools(
         try:
             before = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(after, encoding="utf-8")
+            from kite.tools.line_endings import write_text_preserving
+
+            ending = write_text_preserving(path, after)
         except OSError as e:
             return _io_fail(path, e)
         diff = _unified_diff(str(path), before, after)
@@ -278,6 +280,7 @@ def make_coding_tools(
             "output": f"wrote {path}",
             "diff": diff,
             "changed_paths": [str(path)],
+            "line_ending": "crlf" if ending == "\r\n" else "lf",
         }
 
     def edit_file(args: dict[str, Any]) -> dict[str, Any]:
@@ -308,7 +311,9 @@ def make_coding_tools(
             return {"ok": False, "error": msg, "path": str(path), "output": msg}
         after = text.replace(matched, new) if args.get("replace_all") else text.replace(matched, new, 1)
         try:
-            path.write_text(after, encoding="utf-8")
+            from kite.tools.line_endings import write_text_preserving
+
+            ending = write_text_preserving(path, after)
         except OSError as e:
             return _io_fail(path, e)
         n = count if args.get("replace_all") else 1
@@ -319,6 +324,7 @@ def make_coding_tools(
             "output": f"edited {path} ({n} hunk{'s' if n != 1 else ''})",
             "diff": _unified_diff(str(path), text, after),
             "changed_paths": [str(path)],
+            "line_ending": "crlf" if ending == "\r\n" else "lf",
         }
 
     def bash(args: dict[str, Any]) -> dict[str, Any]:

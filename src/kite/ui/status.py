@@ -154,7 +154,8 @@ def status_context_parts(state: SessionUiState) -> list[str]:
     elif state.active_subagents:
         parts.append(f"agents {state.active_subagents}")
     if state.git_branch:
-        parts.append(state.git_branch)
+        branch = state.git_branch + ("*" if state.git_dirty > 0 else "")
+        parts.append(branch)
     badge = _verification_badge(state.verification_status)
     if badge:
         parts.append(badge)

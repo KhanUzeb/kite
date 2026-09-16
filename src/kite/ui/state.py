@@ -37,6 +37,7 @@ class SessionUiState:
     provider: str = ""
     model: str = ""
     git_branch: str = ""
+    git_dirty: int = -1
     cost: float = 0.0
     tokens: int = 0
     window: int = 0
