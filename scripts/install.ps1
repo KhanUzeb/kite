@@ -93,7 +93,10 @@ function Test-KiteCheckout {
 }
 
 function Get-GitToolSpec {
-    $url = $Repo.TrimEnd('.git')
+    $url = $Repo
+    # Strip a literal ".git" suffix only — TrimEnd('.git') would eat
+    # any trailing '.', 'g', 'i', 't' chars (e.g. a repo named "thing").
+    if ($url.EndsWith('.git')) { $url = $url.Substring(0, $url.Length - 4) }
     return "git+$url.git@$Ref"
 }
 
@@ -260,8 +263,8 @@ function Install-GlobalCli {
     Write-Host "  kite"
     Write-Host ""
     Write-Host "First run:  kite setup"
-    Write-Host "Update:     uv tool upgrade kite"
-    Write-Host "Uninstall:  uv tool uninstall kite"
+    Write-Host "Update:     kite update"
+    Write-Host "Uninstall:  kite uninstall"
     Write-Host "Dev only:   .\scripts\install.ps1 -Dev"
 }
 
@@ -348,7 +351,7 @@ function Install-DevEditable {
     Write-Host ""
     Write-Host "Opening 'kite' uses this editable install from any directory."
     Write-Host "Local .venv is only for pytest/IDE - do not activate it to run kite."
-    Write-Host "Update / uninstall: uv tool upgrade kite | uv tool uninstall kite"
+    Write-Host "Update / uninstall: kite update | kite uninstall"
 }
 
 try {

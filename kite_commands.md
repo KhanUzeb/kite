@@ -43,6 +43,8 @@ kite -r                      # browse sessions
 kite --version
 kite chat [--mode plan|build] [--approval auto|approve|trust|readonly] [--session id]
 kite run "task"              # one-shot
+kite run --print "task"      # one-shot, final answer on stdout only (Pi -p style)
+kite --print "task"          # same one-shot stdout-only form, no subcommand needed
 kite resume <session-id>                 # open that transcript in chat
 kite resume <session-id> [follow-up]     # one-shot continue
 kite resume --last [--retry]             # newest session for cwd; --retry sends recovery follow-up
@@ -98,7 +100,9 @@ kite sessions [--limit N] [--show id] [--tail N] [--no-pick]
 kite sessions --delete <id> [<id> ...]
 kite sessions --delete-all     # TTY confirms; else pass -y
 kite setup [-p provider]       # first-run wizard: credentials + model
-kite login [provider]          # pick provider if omitted → BYOK key or BYOS browser → pick model
+kite update [--check] [--ref REF] [--force]  # upgrade installed CLI via uv tool (fallback: git reinstall); bare `kite update` updates, it does NOT open chat
+kite uninstall [-y] [--purge]  # remove CLI; keeps ~/.kite data unless --purge
+kite login [provider]          # pick provider if omitted → BYOK key or BYOS browser → pick model (`kite login grok` bridges grok CLI subscription tokens to LiteLLM under ~/.kite/oauth/xai via the xAI subscription chat proxy)
 kite logout [provider]         # unlink BYOS subscription (codex, claude, grok/xai)
 kite keys                      # TTY: status then pick a provider to link
 kite keys [--set [provider]]   # paste BYOK API keys (hidden); also tavily|exa|firecrawl
@@ -126,6 +130,9 @@ kite tasks run <file.jsonl> [--stdin] [--json] [--dry-run] [--continue-on-error]
                            [--steps N] [--cost USD] [--time SEC] [-p] [-m]
 kite subagents [--show id] [--init id] [--role architect] [--force]
 kite dashboard [--session id] [--json] [--watch SEC] [--limit N]
+kite gh issue view|list|create|comment [--repo owner/name]  # view/list/create/comment on issues (any repo via --repo)
+kite gh pr view|list|create [--repo owner/name]             # same for PRs
+kite gh auth [login|status|logout]  # browser/device login, `--with-token` PAT-from-stdin for headless; also reads GH_TOKEN/GITHUB_TOKEN
 ```
 
 ### Harness timing (`kite bench`)
@@ -212,7 +219,7 @@ These never go to the model.
 | `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |
 | `/theme [auto\|kite\|dark\|light\|dim\|mono\|monochrome\|catppuccin\|ember\|forest\|hues\|transparent]` | Color palette. Empty: pick |
 | `/font [unicode\|ascii]` | Glyph pack. Empty: pick |
-| `/thinking` `[off\|minimal\|low\|medium\|high\|…]` | Pi-style thinking level for the current model. Empty: **cycle** to the next level. `off` hidden when the model cannot disable reasoning |
+| `/thinking` `[off\|minimal\|low\|medium\|high\|…]` | Pi-style thinking level for the current model. Empty: **cycle** to the next level. `off` hidden when the model cannot disable reasoning. Unsupported levels clamp to the nearest supported one with a notice (e.g. `xhigh` on a low/high-only model → `high`) |
 | `/model [provider/id]` | Show or set model |
 | `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
 | `/select [provider]` | Pick provider if needed, login if unlinked, then pick a live model (saved) |
@@ -304,9 +311,9 @@ Slash completion menus highlight the first match automatically. `↑` / `↓` wr
 
 Model/provider/session pickers (`kite models --select`, `kite select`, `kite -r`, `/select`, setup, web-keys) use a **console list**. On a TTY: **↑↓**, Page Up/Down, **click or drag** a row then release to select, type to filter, type a **number** then Enter, `r` refresh, Esc/`q` cancel. CI/`KITE_TYPED_PICK=1` uses the typed prompt (`+/−` pages). Composer mouse capture is **off** by default so the welcome banner stays readable on Windows; `KITE_MOUSE=1` enables slash-menu wheel (Shift+drag to copy).
 
-While a turn runs, the bottom toolbar shows a **running line** (`[HH:MM:SS] label running`) and, when bash or background jobs stream output, the latest sanitized line as `› …`. Model streaming shows `streaming` with **ttft** (time-to-first-token) on early tokens, then **tok/s** from provider usage when available. Reasoning and answer text use separate channels; tool-call JSON streams as throttled `preparing` previews. Queued messages show separate **steer** and **follow-up** counts plus `next steer:` / `next follow-up:` preview. Provider retries tick down in the running line. Auto-compaction shows `compacting context`. Metrics row: tok/s, cache %, context meter, and session cost.
+While a turn runs, the bottom toolbar shows a **running line** (`[HH:MM:SS] label running`) and, when bash or background jobs stream output, the latest sanitized line as `› …`. Model streaming shows `streaming` with **ttft** (time-to-first-token) on early tokens, then **tok/s** from provider usage when available. Reasoning and answer text use separate channels; tool-call JSON streams as throttled `preparing` previews. Queued messages show separate **steer** and **follow-up** counts plus `next steer:` / `next follow-up:` preview. Provider retries tick down in the running line. Auto-compaction shows `compacting context`. A failed turn leaves a persistent error segment in the footer until the next turn starts. Metrics row: tok/s, cache %, context meter, and session cost.
 
-`/thinking` appears in the slash menu when the current model advertises reasoning/thinking support. Levels shown match what the API exposes (e.g. `off low medium high` on OpenRouter/Groq/Nemotron). Empty `/thinking` cycles like Pi; set explicitly with `/thinking high` or `/thinking off`.
+`/thinking` appears in the slash menu when the current model advertises reasoning/thinking support. Levels shown match what the API exposes (e.g. `off low medium high` on OpenRouter/Groq/Nemotron). Empty `/thinking` cycles like Pi; set explicitly with `/thinking high` or `/thinking off`. Unsupported levels clamp to the nearest supported one and report it.
 
 ---
 
@@ -394,7 +401,7 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 | Tool | Purpose |
 |------|---------|
 | `submit` | Structured completion — `message` with Done / Changed / Verification sections (preferred over bash echo marker) |
-| `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` |
+| `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. Dynamic `gh` lives here too (no hardcoded tools needed): read-only `gh issue/pr view\|list` runs free in build AND plan mode; publishing commands (`create`/`comment`/`merge`/`close`) prompt for approval in auto mode |
 | `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |
 | `websearch` | Auto: Tavily → Exa → Firecrawl when keys set; else DuckDuckGo. Returns titles/URLs/snippets |
 | `webfetch` | Firecrawl scrape when `FIRECRAWL_API_KEY` set; else stdlib HTML extract |
@@ -456,7 +463,7 @@ Harness override (`--system-prompt` / config) still beats discovered `SYSTEM.md`
 
 Set `KITE_OFFLINE=1` to skip the background GitHub release check on REPL startup.
 
-Human commits are the source of truth for the project. Checkpoint `kite:` commits exist so `/undo` can revert agent edits without touching your own history.
+Human commits are the source of truth for the project. Checkpoint `kite:` commits exist so `/undo` can revert agent edits without touching your own history. Plan mode never attaches git checkpoints.
 
 ---
 
@@ -497,9 +504,9 @@ irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | i
 # If blocked: powershell -NoProfile -ExecutionPolicy Bypass -Command "irm …/install.ps1 | iex"
 ```
 
-Needs `curl` + `git`. Update / uninstall: `uv tool upgrade kite` · `uv tool uninstall kite`
+Needs `curl` + `git`. Update / uninstall: `kite update` · `kite uninstall` (`uv tool upgrade kite` / `uv tool uninstall kite` still work).
 
-Contributor (optional): `./scripts/install.sh --dev` still puts `kite` on PATH (editable). Update / uninstall: `uv tool upgrade kite` · `uv tool uninstall kite`.
+Contributor (optional): `./scripts/install.sh --dev` still puts `kite` on PATH (editable). Update / uninstall: `kite update` · `kite uninstall`.
 
 Manual: `uv tool install "git+https://github.com/KhanUzeb/kite.git"` then `uv tool update-shell`. Then `kite setup`.
 

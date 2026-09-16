@@ -271,6 +271,31 @@ def cycle_thinking_level(current: str | None, info: ReasoningSupport) -> str | N
     return encodings[(idx + 1) % len(encodings)]
 
 
+def clamp_thinking_level(raw: str, info: ReasoningSupport) -> tuple[str, str] | None:
+    """Clamp an unsupported Pi level to the nearest supported menu level.
+
+    Returns (encoded_reasoning, effective_pi_level), or None when the token
+    is not a Pi level or the model offers no levels. Ties prefer the cheaper
+    (lower) level — Pi searches both directions the same way.
+    """
+    token = (raw or "").strip().lower()
+    if token not in _PI_ORDER:
+        return None
+    menu = thinking_level_menu(info)
+    if not menu:
+        return None
+    for pi, enc in menu:
+        if token == pi:
+            return enc, pi
+    order = {name: idx for idx, name in enumerate(_PI_ORDER)}
+    want = order[token]
+    supported = [(pi, enc) for pi, enc in menu if pi in order]
+    if not supported:
+        return None
+    best = min(supported, key=lambda pair: (abs(order[pair[0]] - want), order[pair[0]]))
+    return best[1], best[0]
+
+
 def thinking_level_badge(raw: str | None, info: ReasoningSupport) -> str:
     level = reasoning_to_thinking_level(raw, info)
     if level in {"", "auto"}:

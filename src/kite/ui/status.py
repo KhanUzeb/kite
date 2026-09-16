@@ -136,6 +136,13 @@ def _verification_badge(status: str) -> str | None:
     return _VERIFY_LABELS.get(key, f"verify {key.replace('_', ' ')}")
 
 
+def _short_error(text: str, limit: int = 64) -> str:
+    flat = sanitize_status_text(text)
+    if len(flat) > limit:
+        return flat[: limit - 1] + "…"
+    return flat
+
+
 def status_context_parts(state: SessionUiState) -> list[str]:
     parts: list[str] = [format_model_label(state)]
     if state.reasoning and state.reasoning != "auto":
@@ -162,12 +169,16 @@ def status_context_parts(state: SessionUiState) -> list[str]:
         parts.append(f"queued {state.queued}")
     if state.interrupted:
         parts.append("interrupted")
+    if state.last_error.strip() and not state.busy:
+        parts.append(f"error: {_short_error(state.last_error)}")
     return parts
 
 
 def _segment_style(text: str) -> str:
     if text.startswith("approve "):
         return "kite.pending"
+    if text.startswith("error:"):
+        return "kite.error"
     if text == "working":
         return "kite.highlight"
     if text.startswith("verify ") or text in _VERIFY_LABELS.values():
@@ -199,6 +210,8 @@ def status_segments(state: SessionUiState) -> list[tuple[str, str]]:
                 "kite.muted",
             )
         )
+    if not state.busy and state.last_error.strip():
+        parts.append((f"err {_short_error(state.last_error)}", "kite.error"))
     return parts
 
 

@@ -153,14 +153,21 @@ def make_coding_tools(
     _root()
     project_root = str(execution.project_root) if execution is not None else (cwd or os.getcwd())
 
-    def _child_env(workdir: str) -> dict[str, str]:
+    def _child_env(workdir: str, command: str | None = None) -> dict[str, str]:
         venv = execution.venv_path if execution is not None else None
-        return prepare_child_env(
+        env = prepare_child_env(
             cwd=workdir,
             project_root=project_root,
             venv=venv,
             auto_venv=auto_venv,
         )
+        if command:
+            from kite.guardrails.env_filter import invokes_gh_cli, with_gh_tokens
+
+            if invokes_gh_cli(command):
+                # Dynamic gh use: ambient GH_TOKEN/GITHUB_TOKEN flows impromptu.
+                env = with_gh_tokens(env)
+        return env
 
     def _emit_bash_line(line: str) -> None:
         if on_event is None or Event is None:
@@ -344,7 +351,7 @@ def make_coding_tools(
                 job = jobs.spawn_bash(
                     command,
                     cwd=workdir,
-                    env=_child_env(workdir),
+                    env=_child_env(workdir, command),
                 )
             except OSError as e:
                 return {"ok": False, "returncode": -1, "output": "", "error": str(e)}
@@ -367,7 +374,7 @@ def make_coding_tools(
                 "text": True,
                 "encoding": "utf-8",
                 "errors": "replace",
-                "env": _child_env(workdir),
+                "env": _child_env(workdir, command),
             }
             from kite.guardrails.process import popen_process_group_kwargs, terminate_process_tree
 

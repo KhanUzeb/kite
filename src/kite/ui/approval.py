@@ -19,6 +19,7 @@ from kite.config import kite_home
 from kite.guardrails.sandbox import (
     check_command_paths,
     check_dangerous,
+    gh_bash_kind,
     is_benign_cache_delete,
     is_inspection_bash,
     resolve_in_workspace,
@@ -190,6 +191,16 @@ def is_git_read(command: str) -> bool:
     return git_bash_kind(command) == "read"
 
 
+def is_gh_write(command: str) -> bool:
+    """True when bash publishes to GitHub (create/comment/merge/close/…)."""
+    return gh_bash_kind(command) == "write"
+
+
+def is_gh_read(command: str) -> bool:
+    """True when bash only reads GitHub (view/list/status/search)."""
+    return gh_bash_kind(command) == "read"
+
+
 def action_pattern(tool: str, arguments: dict[str, Any]) -> str:
     """Stable pattern used for always-allow matching."""
     if tool == "bash":
@@ -331,6 +342,8 @@ def action_consequence(
         level = _git_bash_consequence(cmd)
         if level is ConsequenceLevel.SERIOUS:
             return level, "git history or remote changes need approval"
+    if is_gh_write(cmd):
+        return ConsequenceLevel.SERIOUS, "GitHub remote changes need approval"
     if _SERIOUS_BASH.search(cmd):
         return ConsequenceLevel.SERIOUS, "network or system command needs approval"
     if _DESTRUCTIVE_DELETE.search(cmd) and not is_benign_cache_delete(cmd):

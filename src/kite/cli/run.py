@@ -241,6 +241,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     from kite.config import ensure_home
 
     console = _console()
+    print_only = bool(getattr(args, "print_mode", False))
+    if print_only:
+        # Pi -p: quiet headless one-shot; the final answer is the only stdout.
+        args = argparse.Namespace(**{**vars(args), "quiet": True, "headless": True, "no_stream": True})
     task = args.task
     if args.stdin:
         chunks: list[str] = []
@@ -308,6 +312,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(json.dumps(data, indent=2))
         return 0 if ok else (int(cli_result.exit_code) or 1)
 
+    if print_only:
+        print(result.get("submission") or result.get("content") or "")
+        return 0 if ok else (int(cli_result.exit_code) or 1)
+
     console.print(
         f"[bold]exit[/]={result.get('exit_status')}  "
         f"[bold]session[/]={sid}  "
@@ -346,6 +354,39 @@ def cmd_chat(args: argparse.Namespace) -> int:
         return 2
     session = _chat_session_from_args(args, attachments=attachments)
     return session.run()
+
+
+def cmd_print(args: argparse.Namespace) -> int:
+    """Top-level `kite --print "prompt"` — Pi -p one-shot, final answer on stdout."""
+    console = _console()
+    parts = [str(part) for part in (getattr(args, "task", None) or []) if str(part)]
+    task = " ".join(parts).strip()
+    if not task and not sys.stdin.isatty():
+        chunks: list[str] = []
+        total = 0
+        while True:
+            block = sys.stdin.read(65536)
+            if not block:
+                break
+            total += len(block)
+            if total > 2_000_000:
+                console.print("[red]stdin exceeds 2MB limit[/]")
+                return 2
+            chunks.append(block)
+        task = "".join(chunks).strip()
+    if not task.strip():
+        console.print("[red]Provide a prompt: kite --print \"...\"[/]")
+        return 2
+    return cmd_run(
+        _bare_cli_namespace(
+            task=task,
+            stdin=False,
+            quiet=True,
+            headless=True,
+            no_stream=True,
+            print_mode=True,
+        )
+    )
 
 
 def _session_pick_items(rows) -> list[tuple[str, str]]:
@@ -1244,6 +1285,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Browse saved sessions (Pi -r)",
     )
+    parser.add_argument(
+        "--print",
+        dest="print_mode",
+        action="store_true",
+        help="One-shot: run the prompt headlessly and print only the final answer (Pi -p)",
+    )
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     help_p = sub.add_parser("help", help="Print CLI quick reference")
@@ -1258,6 +1305,12 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="One-shot task")
     run.add_argument("task", nargs="?", help="Task prompt")
     run.add_argument("--stdin", action="store_true", help="Read task from stdin")
+    run.add_argument(
+        "--print",
+        dest="print_mode",
+        action="store_true",
+        help="Print only the final answer on stdout (no session framing)",
+    )
     _add_run_flags(run)
     run.set_defaults(func=cmd_run)
 
@@ -1309,6 +1362,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     providers = sub.add_parser("providers", help="List providers + credential status")
     providers.set_defaults(func=cmd_providers)
+
+    update_p = sub.add_parser("update", help="Upgrade the installed kite CLI (uv tool)")
+    update_p.add_argument("--check", action="store_true", help="Show version + install mode, change nothing")
+    update_p.add_argument("--ref", default=None, help="Git ref to reinstall from (default: main)")
+    update_p.add_argument("--repo", default=None, help="Git remote for reinstall fallback")
+    update_p.add_argument("--force", action="store_true", help="Reinstall from git instead of upgrading")
+    update_p.set_defaults(func=_lazy_cmd("kite.cli.self_manage", "cmd_update"))
+
+    uninstall_p = sub.add_parser("uninstall", help="Remove the installed kite CLI (keeps ~/.kite data)")
+    uninstall_p.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
+    uninstall_p.add_argument("--purge", action="store_true", help="Also delete ~/.kite data (sessions, keys)")
+    uninstall_p.set_defaults(func=_lazy_cmd("kite.cli.self_manage", "cmd_uninstall"))
 
     setup = sub.add_parser("setup", help="First-run wizard — credentials, provider, model")
     setup.add_argument("-p", "--provider", help="Skip provider picker")
@@ -1478,6 +1543,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_subagents_parser(sub)
     add_tasks_parser(sub)
 
+    from kite.cli.gh import add_gh_parser
+
+    add_gh_parser(sub)
+
     cloud = sub.add_parser("cloud", help="Cloud/local task parity — list and apply saved outputs")
     cloud.add_argument("action", choices=["list", "apply"], nargs="?", default="list")
     cloud.add_argument("task_id", nargs="?", help="Task id for apply")
@@ -1503,9 +1572,44 @@ def rewrite_implicit_task(argv: list[str]) -> list[str]:
     first = argv[0]
     if first.startswith("-") or first in CLI_COMMANDS:
         return argv
-    oneshot = any(a in {"--headless", "--json", "-q", "--quiet", "--no-stream"} for a in argv)
+    oneshot = any(a in {"--headless", "--json", "-q", "--quiet", "--no-stream", "--print"} for a in argv)
     verb = "run" if oneshot or not sys.stdin.isatty() else "chat"
     return [verb, *argv]
+
+
+def _bare_cli_namespace(**overrides) -> argparse.Namespace:
+    """Defaults shared by bare-`kite` dispatch (chat / resume / print) — one literal, not four."""
+    base = dict(
+        session=None,
+        message=None,
+        task=None,
+        last=False,
+        retry=False,
+        provider=None,
+        model=None,
+        cwd=os.getcwd(),
+        config=None,
+        mode="build",
+        approval=None,
+        verbose=False,
+        steps=None,
+        cost=None,
+        time=0,
+        no_context=False,
+        no_compact=False,
+        no_guardrails=False,
+        role="auto",
+        long=False,
+        attach=[],
+        headless=False,
+        quiet=False,
+        json=False,
+        output=None,
+        no_stream=False,
+        label="",
+    )
+    base.update(overrides)
+    return argparse.Namespace(**base)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1515,6 +1619,14 @@ def main(argv: list[str] | None = None) -> int:
 
         print(__version__)
         return 0
+
+    if raw[:1] == ["--print"]:
+        # Pi -p: `kite --print "prompt"` bypasses the subcommand parser so a
+        # multi-word prompt is never mistaken for a COMMAND.
+        rest = raw[1:]
+        if rest[:1] == ["--"]:
+            rest = rest[1:]
+        return cmd_print(argparse.Namespace(task=rest))
 
     if raw and raw[0] not in {"-h", "--help", "help"}:
         from kite.providers.credentials import load_kite_env
@@ -1533,69 +1645,9 @@ def main(argv: list[str] | None = None) -> int:
     # Bare `kite` → lean REPL. `-c` / `-r` match Pi continue / session browse.
     if args.command is None:
         if getattr(args, "continue_last", False):
-            return cmd_resume(
-                argparse.Namespace(
-                    session=None,
-                    message=None,
-                    task=None,
-                    last=True,
-                    retry=False,
-                    provider=None,
-                    model=None,
-                    cwd=os.getcwd(),
-                    config=None,
-                    mode="build",
-                    approval=None,
-                    verbose=False,
-                    steps=None,
-                    cost=None,
-                    time=0,
-                    no_context=False,
-                    no_compact=False,
-                    no_guardrails=False,
-                    role="auto",
-                    long=False,
-                    attach=[],
-                    headless=False,
-                    quiet=False,
-                    json=False,
-                    output=None,
-                    no_stream=False,
-                    label="",
-                )
-            )
+            return cmd_resume(_bare_cli_namespace(last=True))
         if getattr(args, "resume_pick", False):
-            return cmd_resume(
-                argparse.Namespace(
-                    session=None,
-                    message=None,
-                    task=None,
-                    last=False,
-                    retry=False,
-                    provider=None,
-                    model=None,
-                    cwd=os.getcwd(),
-                    config=None,
-                    mode="build",
-                    approval=None,
-                    verbose=False,
-                    steps=None,
-                    cost=None,
-                    time=0,
-                    no_context=False,
-                    no_compact=False,
-                    no_guardrails=False,
-                    role="auto",
-                    long=False,
-                    attach=[],
-                    headless=False,
-                    quiet=False,
-                    json=False,
-                    output=None,
-                    no_stream=False,
-                    label="",
-                )
-            )
+            return cmd_resume(_bare_cli_namespace())
         from kite.cli.setup import maybe_run_first_setup
         from kite.ui.style import make_console
 
@@ -1604,28 +1656,7 @@ def main(argv: list[str] | None = None) -> int:
         if setup_code is not None:
             if setup_code != 0:
                 return setup_code
-        return cmd_chat(
-            argparse.Namespace(
-                provider=None,
-                model=None,
-                cwd=os.getcwd(),
-                config=None,
-                mode="build",
-                approval=None,
-                verbose=False,
-                session=None,
-                steps=None,
-                cost=None,
-                time=0,
-                no_context=False,
-                no_compact=False,
-                no_guardrails=False,
-                role="auto",
-                long=False,
-                attach=[],
-                task=None,
-            )
-        )
+        return cmd_chat(_bare_cli_namespace())
 
     return int(args.func(args))
 

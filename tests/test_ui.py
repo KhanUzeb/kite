@@ -741,3 +741,58 @@ def test_empty_repl_enter_does_not_run(tmp_path, kite_home) -> None:
     session._make_harness = lambda **_k: (_ for _ in ()).throw(AssertionError("blank enter must not start a turn"))  # type: ignore[method-assign]
     session._run_task("  ")
     assert "empty" in buf.getvalue().lower()
+
+
+def test_pending_approval_panel_renders_on_first_tick(tmp_path, kite_home) -> None:
+    """Busy-tick crash: panel id must exist before the first approval render (no AttributeError)."""
+    from kite.application.policy import ApprovalRequest
+
+    chat = ChatSession(cwd=str(tmp_path))
+    buf = StringIO()
+    chat.console = Console(file=buf, force_terminal=False, width=120)
+    req = ApprovalRequest(
+        request_id="req-first-tick",
+        tool="bash",
+        arguments={"command": "rm -rf /tmp/kite-proof"},
+        reason="destructive",
+        mandatory=True,
+    )
+    chat._approval_coordinator._pending = req
+    chat._show_pending_approval_panel()
+    out = strip_ansi(buf.getvalue())
+    assert "bash" in out
+    assert chat._approval_panel_id == "req-first-tick"
+    before = buf.getvalue()
+    chat._show_pending_approval_panel()
+    assert buf.getvalue() == before
+
+
+def test_plan_mode_never_wires_git_checkpoints(tmp_path, kite_home) -> None:
+    """Read-only runs must not attach git checkpoints (no commit lines, no git writes)."""
+    from types import SimpleNamespace
+
+    chat = ChatSession(cwd=str(tmp_path))
+    harness = SimpleNamespace(checkpoints="sentinel")
+    chat.state.mode = AgentMode.PLAN
+    chat._wire_harness_git(harness)
+    assert harness.checkpoints is None
+    chat.state.mode = AgentMode.BUILD
+    chat._wire_harness_git(harness)
+    assert harness.checkpoints is chat.git
+
+
+def test_footer_error_segment_and_turn_reset(tmp_path, kite_home) -> None:
+    """Failed turns leave a durable footer notice; the next turn clears it."""
+    from kite.ui.status import format_status_tail, status_segments
+
+    chat = ChatSession(cwd=str(tmp_path))
+    assert all(not text.startswith("err ") for text, _ in status_segments(chat.state))
+    chat.state.last_error = "step or cost budget reached " + "x" * 100
+    texts = dict(status_segments(chat.state))
+    err = next(text for text in texts if text.startswith("err "))
+    assert err.endswith("…") and len(err) <= len("err ") + 64
+    assert texts[err] == "kite.error"
+    assert "err " in format_status_tail(chat.state)
+    chat._begin_turn_state("do things")
+    assert chat.state.last_error == "" and chat.state.last_trace == ""
+    assert chat.state.running_label == "do things"

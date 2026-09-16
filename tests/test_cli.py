@@ -364,6 +364,97 @@ def test_implicit_prompt_rewrites_like_pi() -> None:
     assert rewritten[0] in {"chat", "run"}
     assert rewritten[1:] == ["fix", "the", "tests"]
     assert rewrite_implicit_task(["fix", "--headless"])[0] == "run"
+    # Self-manage commands are real subcommands, never chat prompts.
+    assert rewrite_implicit_task(["update"]) == ["update"]
+    assert rewrite_implicit_task(["uninstall", "-y"]) == ["uninstall", "-y"]
+    assert rewrite_implicit_task(["fix", "--print"])[0] == "run"
+
+
+def test_update_uninstall_print_dispatch(monkeypatch, kite_home, capsys) -> None:
+    import argparse
+
+    from kite.cli.run import build_parser, cmd_print, main
+
+    parser = build_parser()
+    assert parser.parse_args(["update", "--check"]).command == "update"
+    assert parser.parse_args(["uninstall", "--purge"]).command == "uninstall"
+    assert parser.parse_args(["run", "--print", "hi"]).print_mode is True
+
+    # update --check is read-only: version + mode, no uv calls.
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    assert main(["update", "--check"]) == 0
+    assert "0.9" in capsys.readouterr().err
+
+    # update on a managed install runs `uv tool upgrade kite` (mocked, headless-safe).
+    calls: list[list[str]] = []
+
+    class _Proc:
+        returncode = 0
+        stdout = "kite v0.9.9\n- kite\n"
+        stderr = ""
+
+    monkeypatch.setattr("shutil.which", lambda name: f"C:\\bin\\{name}.exe")
+    monkeypatch.setattr(
+        "kite.cli.self_manage.subprocess.run",
+        lambda cmd, **_k: calls.append(list(cmd)) or _Proc(),
+    )
+    assert main(["update"]) == 0
+    assert any(cmd[:3] == ["C:\\bin\\uv.exe", "tool", "upgrade"] for cmd in calls)
+
+    # uninstall without uv on PATH is guidance, not a crash.
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    assert main(["uninstall", "-y"]) == 2
+
+    # --print with no prompt and no piped stdin explains usage (exit 2, no harness).
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    assert main(["--print"]) == 2
+
+    # --print routes a prompt to cmd_run in print mode (harness mocked).
+    seen: dict = {}
+
+    def fake_run(args: argparse.Namespace) -> int:
+        seen.update(vars(args))
+        assert args.print_mode is True and args.quiet is True
+        return 0
+
+    monkeypatch.setattr("kite.cli.run.cmd_run", fake_run)
+    assert cmd_print(argparse.Namespace(task=["hello", "world"])) == 0
+    assert seen["task"] == "hello world"
+
+
+def test_gh_cli_dispatch(monkeypatch, kite_home, capsys) -> None:
+    from kite.cli.run import build_parser, main, rewrite_implicit_task
+
+    parser = build_parser()
+    assert parser.parse_args(["gh", "issue", "view", "12"]).gh_kind == "issue"
+    assert parser.parse_args(["gh", "pr", "create", "--title", "t"]).gh_action == "create"
+    assert rewrite_implicit_task(["gh", "issue", "list"]) == ["gh", "issue", "list"]
+
+    # No gh binary: graceful message, no crash.
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    assert main(["gh", "issue", "view", "12"]) == 127
+    assert "gh CLI not found" in capsys.readouterr().out
+
+    # Token flows to gh children; other secrets stay stripped.
+    monkeypatch.setenv("GH_TOKEN", "ghs_test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    seen: dict = {}
+
+    class _Proc:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    monkeypatch.setattr("shutil.which", lambda _name: "gh")
+    monkeypatch.setattr(
+        "kite.cli.gh.subprocess.run",
+        lambda cmd, **kwargs: seen.update(cmd=list(cmd), env=kwargs.get("env")) or _Proc(),
+    )
+    assert main(["gh", "issue", "view", "12", "--repo", "o/r"]) == 0
+    assert seen["cmd"][:4] == ["gh", "issue", "view", "12"]
+    assert "--repo" in seen["cmd"] and "o/r" in seen["cmd"]
+    assert seen["env"]["GH_TOKEN"] == "ghs_test"
+    assert "OPENAI_API_KEY" not in seen["env"]
 
 
 def test_parser_skips_heavy_backend_imports() -> None:

@@ -124,6 +124,27 @@ def test_child_env_strips_and_rejects_reinjection(monkeypatch, tmp_path: Path) -
     assert prepared.get("PAGER") == "cat"
 
 
+def test_gh_inspection_and_token_passthrough(monkeypatch, workspace: Path) -> None:
+    """Dynamic gh: reads are plan-mode inspection; gh children get ambient tokens only."""
+    from kite.guardrails.env_filter import filtered_child_env, invokes_gh_cli, with_gh_tokens
+
+    assert is_inspection_bash("gh issue view 12 --json title,body")
+    assert is_inspection_bash("gh pr list --limit 5 | jq '.[].title'")
+    assert not is_inspection_bash("gh issue create --title x")
+    assert not is_inspection_bash("gh pr merge 3")
+    assert not is_inspection_bash("gh issue view 1 && gh issue close 1")
+    assert invokes_gh_cli("gh issue view 1")
+    assert invokes_gh_cli(["gh", "pr", "list"])
+    assert invokes_gh_cli("powershell -Command \"gh auth status\"")
+    assert not invokes_gh_cli("git status")
+    assert not invokes_gh_cli(None)
+    monkeypatch.setenv("GH_TOKEN", "ghs_test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    env = with_gh_tokens(filtered_child_env())
+    assert env.get("GH_TOKEN") == "ghs_test"
+    assert "OPENAI_API_KEY" not in env
+
+
 def test_ssrf_blocks_private_and_rebinding(monkeypatch) -> None:
     cases = [
         ("http://2130706433/", "private"),
@@ -396,7 +417,9 @@ def test_owner_only_files_and_filtered_gh(kite_home, monkeypatch) -> None:
     from kite.tools.github import _run_gh
 
     _run_gh(["version"])
-    assert "GITHUB_TOKEN" not in (captured.get("env") or {})
+    # Impromptu tokens: gh-driving children receive ambient GH_TOKEN/GITHUB_TOKEN
+    # (other secrets stay stripped — see test_child_env_strips_and_rejects_reinjection).
+    assert (captured.get("env") or {}).get("GITHUB_TOKEN") == "ghp_secret"
     if sys.platform == "win32":
         return
     from kite.memory.secure_io import secure_memory_write

@@ -37,6 +37,9 @@ CLI_COMMANDS: frozenset[str] = frozenset({
     "tasks",
     "subagents",
     "maintainer",
+    "update",
+    "uninstall",
+    "gh",
 })
 
 # Shown first in `kite --help` (full list still appears below).
@@ -61,9 +64,14 @@ session
   kite [prompt]        interactive session (optional opening task)
   kite chat [prompt]   same as bare kite
   kite run "task"      one-shot (CI: --headless --json)
+  kite --print "task"  one-shot, final answer only (Pi -p)
   kite exec "task"     CI alias for run (auto, quiet)
   kite resume [id]     continue a session (--last)
   kite sessions        list / show / delete transcripts
+
+self-manage
+  kite update [--check]   upgrade the installed CLI (uv tool)
+  kite uninstall [-y]     remove the CLI (keeps ~/.kite data; --purge deletes it)
 
 setup
   kite setup | login | logout | keys | web-keys | providers | models
@@ -71,6 +79,7 @@ setup
 
 project
   kite context | skills | commands | plugins | memory | subagents
+  kite gh issue view|list|create|comment  ·  kite gh pr view|list|create  ·  kite gh auth
 
 ops
   kite tasks | bench | apply | import | audit | dashboard | cloud | runtime-config
@@ -92,6 +101,7 @@ def cli_help_brief() -> str:
 
   kite --help                every subcommand
   kite help all              this map plus flags
+  kite update | uninstall    upgrade / remove the installed CLI
   REPL: /help  ·  /help all
 """
 
@@ -102,8 +112,13 @@ def cli_help_text() -> str:
 Session
   kite | kite chat [prompt]     lean REPL (plan/build, /slash commands)
   kite run "task"               one-shot
+  kite --print "task"           one-shot, final answer on stdout only (Pi -p)
   kite resume [id] [message]    continue session (omit id to pick)
   kite sessions                 pick a transcript to open / show / delete
+
+Self-manage
+  kite update [--check]         upgrade the installed CLI (uv tool)
+  kite uninstall [-y] [--purge] remove the CLI (keeps ~/.kite data unless --purge)
 
 Setup & model
   kite setup                    first-run wizard
@@ -122,6 +137,8 @@ Project
   kite subagents [--show id] [--init id]   bundled + ~/.kite/subagents/
   kite commands | kite plugins
   kite memory [--remember text]
+  kite gh issue view|list|create|comment [--repo o/r]   GitHub issues (GH_TOKEN works)
+  kite gh pr view|list|create [--repo o/r]              GitHub PRs
 
 Advanced
   kite runtime-config           merged agent TOML
@@ -146,6 +163,7 @@ REPL essentials (type /help in chat, /help all for everything)
 Flags on run: -p provider  -m model  --cwd PATH  --mode plan|build
   --approval auto|approve|supervised|yolo|trust|readonly  --headless  --no-stream
   --steps  --cost  --time  --role  --long  --attach PATH  -v  -q  --json  -o PATH
+  --print (answer only)
 
 Flags on chat (also interactive resume): -p  -m  --cwd  --mode  --approval
   --steps  --cost  --time  --role  --long  --attach PATH  --no-context  --no-compact

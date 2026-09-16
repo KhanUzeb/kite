@@ -48,6 +48,55 @@ _DROP_ENV_PREFIXES = (
 _SENSITIVE_SUFFIX = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)$")
 
 
+# Single-purpose GitHub tokens the gh CLI consumes itself. Re-injected only
+# for children that drive gh (see invokes_gh_cli) so an exported GH_TOKEN
+# works impromptu — no kite-side setup. Everything else stays stripped.
+_GH_TOKEN_KEYS = ("GH_TOKEN", "GITHUB_TOKEN")
+
+_GH_HEAD = re.compile(r"(?i)^\s*gh(?:\.exe)?\b")
+_GH_CHAIN_SPLIT = re.compile(r"\s*&&\s*|\s*;\s*|\s*\|\s*")
+_GH_CD_LIKE = re.compile(r"(?i)^\s*(?:cd|chdir|pushd|popd|set)\b")
+_GH_PS_WRAP = re.compile(
+    r'''(?is)^\s*(?:powershell(?:\.exe)?(?:\s+-NoProfile)?\s+(?:-Command|-c)|cmd(?:\.exe)?\s+/c)\s+["']?(.*?)["']?\s*$'''
+)
+
+
+def invokes_gh_cli(command: str | list[str] | None) -> bool:
+    """True when a child command drives the gh CLI (any chain segment)."""
+    if not command:
+        return False
+    if isinstance(command, list):
+        if not command:
+            return False
+        from pathlib import Path
+
+        return Path(str(command[0])).name.lower() in {"gh", "gh.exe"}
+    text = str(command)
+    if not re.search(r"(?i)\bgh(?:\.exe)?\b", text):
+        return False
+    for seg in _GH_CHAIN_SPLIT.split(text):
+        seg = seg.strip()
+        if not seg or _GH_CD_LIKE.match(seg):
+            continue
+        wrapped = _GH_PS_WRAP.match(seg)
+        if wrapped and wrapped.group(1):
+            seg = wrapped.group(1).strip()
+        if _GH_HEAD.match(seg):
+            return True
+    return False
+
+
+def with_gh_tokens(env: dict[str, str]) -> dict[str, str]:
+    """Return env plus ambient GH_TOKEN/GITHUB_TOKEN (for gh-driving children only)."""
+    out = dict(env)
+    for key in _GH_TOKEN_KEYS:
+        if key not in out:
+            value = os.environ.get(key)
+            if value:
+                out[key] = value
+    return out
+
+
 def is_sensitive_env_key(name: str) -> bool:
     upper = name.upper()
     if upper in _DROP_ENV_EXACT:

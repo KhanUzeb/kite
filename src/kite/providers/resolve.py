@@ -38,6 +38,11 @@ class ResolvedModel:
             kwargs["api_base"] = self.api_base
         if is_oauth_provider(self.spec):
             kwargs.update(oauth_litellm_extras(self.spec))
+            if (self.spec.oauth_provider or self.spec.name) == "xai" and not self.api_key:
+                # Subscription proxy 426s without the CLI version stamp.
+                from kite.providers.auth.grok_litellm import xai_subscription_headers
+
+                kwargs["extra_headers"] = xai_subscription_headers()
         if self.provider == "ollama":
             kwargs.setdefault("api_key", "ollama")
         return kwargs
@@ -201,6 +206,13 @@ def missing_credentials(resolved: ResolvedModel) -> str | None:
                 from kite.providers.auth.codex_litellm import materialize_litellm_chatgpt_auth
 
                 materialize_litellm_chatgpt_auth()
+            except Exception as exc:  # noqa: BLE001 — surface bridge errors to the user
+                return str(exc)
+        if oauth_id == "xai":
+            try:
+                from kite.providers.auth.grok_litellm import materialize_litellm_xai_auth
+
+                materialize_litellm_xai_auth()
             except Exception as exc:  # noqa: BLE001 — surface bridge errors to the user
                 return str(exc)
         return None

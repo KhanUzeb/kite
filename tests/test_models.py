@@ -184,3 +184,53 @@ def test_compaction_request_omits_temperature(monkeypatch: pytest.MonkeyPatch) -
 
     assert summarize._try_complete(resolved, "transcript") == "summary"
     assert "temperature" not in captured
+
+
+def _menu_support() -> ReasoningSupport:
+    return ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium", "high"),
+    )
+
+
+def test_clamp_thinking_level_to_nearest_supported() -> None:
+    from kite.models.reasoning import clamp_thinking_level
+
+    info = _menu_support()
+    # Exact hits pass through.
+    assert clamp_thinking_level("high", info) == ("thinking:high", "high")
+    assert clamp_thinking_level("off", info) == ("off", "off")
+    # Unsupported xhigh/max clamp down to high (nearest; ties prefer cheaper).
+    assert clamp_thinking_level("xhigh", info) == ("thinking:high", "high")
+    assert clamp_thinking_level("max", info) == ("thinking:high", "high")
+    # Unknown tokens and level-less models give nothing.
+    assert clamp_thinking_level("turbo", info) is None
+    assert clamp_thinking_level("high", ReasoningSupport(False, False, False, False)) is None
+
+
+def test_apply_thinking_level_clamps_and_reports(tmp_path, kite_home) -> None:
+    from io import StringIO
+
+    from rich.console import Console
+
+    from kite.ui.repl import ChatSession
+    from tests.conftest import strip_ansi
+
+    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama")
+    buf = StringIO()
+    session.console = Console(file=buf, force_terminal=False)
+    session._reasoning_support = _menu_support()
+    session._ensure_model_resolved = lambda: None  # type: ignore[method-assign]
+
+    session._apply_thinking_level("xhigh")
+    assert session.state.reasoning == "thinking:high"
+    out = strip_ansi(buf.getvalue())
+    assert "xhigh unavailable" in out and "high" in out
+
+    session._apply_thinking_level("high")
+    assert session.state.reasoning == "thinking:high"
