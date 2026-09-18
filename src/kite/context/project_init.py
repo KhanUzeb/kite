@@ -356,6 +356,12 @@ def scaffold_project_docs(
         )
     if write_kite:
         kite_result = _write_text(root / _KITE_FILENAME, _KITE_STUB, force=force)
+    try:
+        from kite.context.discovery import invalidate_project_context_cache
+
+        invalidate_project_context_cache()
+    except Exception:
+        pass
     return ProjectInitResult(root=root, agents=agents_result, kite=kite_result)
 
 

@@ -1949,8 +1949,16 @@ class ChatSession:
         from kite.ui.theme import current_font, theme_label
 
         sid = self._session_id or "—"
+        from kite.context.status_summary import memory_context_summary, project_context_summary
+
         for line in status_detail_lines(self.state):
             self.console.print(f"[kite.muted]{line}[/]")
+        self.console.print("[kite.muted]context[/]")
+        for line in project_context_summary(self.cwd):
+            self.console.print(f"  [kite.muted]{line}[/]")
+        self.console.print("[kite.muted]memory[/]")
+        for line in memory_context_summary():
+            self.console.print(f"  [kite.muted]{line}[/]")
         self.console.print(
             f"[kite.muted]theme {theme_label()} · font {current_font()} · "
             f"sessions {persistence_mode()} · session {sid}"

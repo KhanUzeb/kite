@@ -904,6 +904,11 @@ def cmd_context(args: argparse.Namespace) -> int:
         tree_max_entries=cfg.tree_max_entries,
     )
     rendered = ctx.render_for_prompt()
+    if not args.json:
+        from kite.context.status_summary import project_context_summary
+
+        for line in project_context_summary(args.cwd):
+            console.print(f"[kite.muted]{line}[/]")
     if args.json:
         from kite.context.project_init import needs_agents_bootstrap
 
@@ -917,6 +922,8 @@ def cmd_context(args: argparse.Namespace) -> int:
                     "chars": len(rendered),
                     "needs_agents_bootstrap": bootstrap,
                     "init_hint": "kite init ." if bootstrap else None,
+                    "verification_command": ctx.verification_command or None,
+                    "verification_source": ctx.verification_source or None,
                 },
                 indent=2,
             )
