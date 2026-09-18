@@ -20,6 +20,8 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Project root** — The discovered repository root (`.git`, `pyproject.toml`, etc.). Used for project instructions, tree, and git context.
 
+**Project bootstrap** — Creating or refreshing root `AGENTS.md` (agents.md standard) from repo manifests. `kite init` scaffolds deterministically; the bundled `init` skill covers agent-guided updates. When a git workspace has no root `AGENTS.md`, project context may include a `<bootstrap_check>` nudge (no auto-write).
+
 **Execution cwd** — The active working directory for file tools and bash. Defaults to the launch cwd; may change via `set_cwd` or bash `cwd`.
 
 **Execution mode** — `host` (packaged default) or `restricted`. Host mode allows paths outside the session cwd (protected paths still blocked). Restricted mode sandboxes file/bash paths to the session. Toggle in the REPL with `/restricted on|off` (alias `/sandbox`). Production tool calls authorize through **`PolicyEngine`** (path containment, network in restricted mode); **`GuardrailPolicy`** still applies bash denylist and output clamp inside tools.
