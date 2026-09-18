@@ -72,11 +72,18 @@ def needs_agents_bootstrap(root: Path) -> bool:
 def bootstrap_nudge_markdown(root: Path) -> str:
     if not needs_agents_bootstrap(root):
         return ""
+    dir_s = str(root.expanduser().resolve())
     return (
         "<bootstrap_check>\n"
-        "This git workspace has no root AGENTS.md yet. When the user wants project "
-        "guidance for coding agents, load the `init` skill (or run `kite init`) to "
-        "scaffold AGENTS.md from the repo manifests. Do not bootstrap unless asked.\n"
+        f"Your workspace ({dir_s}) has no root AGENTS.md — this project has no "
+        "agent-facing setup notes yet.\n\n"
+        "Before starting substantive work, ask: would a root AGENTS.md help agents "
+        "work on this repo?\n"
+        "If yes (git repository with meaningful code), load the `init` skill and follow "
+        "it to generate `AGENTS.md` at the repo root, or run `kite init` for a "
+        "deterministic scaffold. Let the user review and commit.\n\n"
+        "If the repo does not need it (scratch dir, no real code), say so and skip.\n"
+        "Do not bootstrap unless the user asks or the skill procedure applies.\n"
         "</bootstrap_check>"
     )
 

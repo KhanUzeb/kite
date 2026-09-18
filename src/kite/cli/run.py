@@ -905,6 +905,9 @@ def cmd_context(args: argparse.Namespace) -> int:
     )
     rendered = ctx.render_for_prompt()
     if args.json:
+        from kite.context.project_init import needs_agents_bootstrap
+
+        bootstrap = needs_agents_bootstrap(ctx.root)
         console.print(
             json.dumps(
                 {
@@ -912,6 +915,8 @@ def cmd_context(args: argparse.Namespace) -> int:
                     "cwd": str(ctx.cwd),
                     "files": [f.path for f in ctx.files],
                     "chars": len(rendered),
+                    "needs_agents_bootstrap": bootstrap,
+                    "init_hint": "kite init ." if bootstrap else None,
                 },
                 indent=2,
             )
