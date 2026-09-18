@@ -247,22 +247,28 @@ def render_session_transcript(console: Any, session: Any, *, tail: int | None = 
             if body:
                 console.print(Text(body, style="kite.answer"), highlight=False, markup=False)
             for line in entry.get("tool_calls") or []:
-                console.print(f"  [kite.muted]tool:[/] {line}", markup=True, highlight=False)
+                # Text, not markup: persisted tool-call lines may hold brackets.
+                console.print(
+                    Text(f"  tool: {line}", style="kite.muted"),
+                    highlight=False,
+                    markup=False,
+                )
             if not body and not (entry.get("tool_calls") or []):
                 console.print("  [kite.muted]—[/]")
             continue
         if kind == "tool":
-            console.print(f"  [kite.brand]{label}[/]", markup=True, highlight=False)
+            # Labels come from persisted transcripts — never markup-format them.
+            console.print(Text(f"  {label}", style="kite.brand"), highlight=False, markup=False)
             viewable = format_viewable_output(body).rstrip("\n") or "—"
             console.print(Text(viewable, style="kite.terminal"), highlight=False, markup=False)
             continue
         if kind == "exit":
             status = str(entry.get("status") or label)
-            console.print(f"  [kite.brand]{status}[/]", markup=True, highlight=False)
+            console.print(Text(f"  {status}", style="kite.brand"), highlight=False, markup=False)
             if body and body != status:
                 console.print(Text(body, style="kite.muted"), highlight=False, markup=False)
             continue
-        console.print(f"  [kite.brand]{label}[/]", markup=True, highlight=False)
+        console.print(Text(f"  {label}", style="kite.brand"), highlight=False, markup=False)
         console.print(Text(body or "—", style="kite.muted"), highlight=False, markup=False)
 
 
@@ -664,7 +670,12 @@ class RunDisplay:
         source = str(p.get("source") or "file")
         kind_label = str(p.get("kind") or "")
         extra = f"  {kind_label}" if kind_label and kind_label != "text" else ""
-        self._print(f"[kite.muted]attach  {source}  {name}{extra}[/]")
+        # Filenames are user text — Text avoids MarkupError on "[...]" paths.
+        self._print(
+            Text(f"attach  {source}  {name}{extra}", style="kite.muted"),
+            highlight=False,
+            markup=False,
+        )
 
     def _on_route(self, p: dict[str, Any]) -> None:
         reason = str(p.get("reason") or "")

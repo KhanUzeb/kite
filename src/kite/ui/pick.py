@@ -108,6 +108,12 @@ def numbered_pick(
     filter, Enter. Scripted/tests: number, id, substring, ``+``/``-`` pages, ``r``.
     """
     if not items:
+        from kite.ui.empty import render_empty
+
+        try:
+            console.print(render_empty(f"no {noun}s", hint="nothing to pick"))
+        except Exception:
+            pass
         return None
     if can_scroll_pick() and not _console_is_scripted(console):
         try:

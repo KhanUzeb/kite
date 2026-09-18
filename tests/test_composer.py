@@ -309,7 +309,13 @@ def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
     ]
     assert windows
     assert all(window.style == "class:composer" for window in windows)
-    assert all(window.height.min == 1 and window.height.max == 1 for window in windows)
+    # Big-prompt fix: the input row grows (wrap + internal scroll) instead of
+    # locking to one visible line and hiding the tail.
+    assert 6 <= complete._COMPOSER_MAX_LINES <= 8
+    assert all(window.height.min == 1 and window.height.max == complete._COMPOSER_MAX_LINES for window in windows)
+    assert all(window.height.max > 1 for window in windows)
+    assert all(window.wrap_lines for window in windows)
+    assert all(window.allow_scroll_beyond_bottom for window in windows)
 
     main = session.layout.container.children[0].alternative_content
     body = main.content
@@ -335,7 +341,9 @@ def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
     assert spacer_top.style not in {"class:composer", "class:activity"}
     assert spacer_bottom.style not in {"class:composer", "class:activity"}
     assert all(isinstance(row, Window) for row in (spacer_top, activity_line, spacer_bottom))
-    assert composer.height.min == 3 and composer.height.max == 3
+    assert composer.height.min == 3 and composer.height.max == complete._COMPOSER_MAX_HEIGHT
+    assert composer.height.max == complete._COMPOSER_MAX_LINES + 2
+    assert 9 <= complete._COMPOSER_MAX_HEIGHT <= 10
     assert all(
         isinstance(child, Window) and child.style == "class:composer"
         for child in (composer.children[0], composer.children[2])
@@ -354,6 +362,67 @@ def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
     )
     column_menu = next(child for child in body.children if isinstance(child, CompletionsMenu))
     assert column_menu.content.right_margins == []
+
+
+def test_composer_session_and_prompt_are_multiline(kite_home, monkeypatch) -> None:
+    """The session must not force single-line mode — long prompts clip there."""
+    from prompt_toolkit.output import DummyOutput
+
+    import kite.ui.complete as complete
+
+    real_session_cls = complete.PromptSession
+    seen: dict = {}
+
+    def _recording_session(**kwargs):
+        seen.update(kwargs)
+        return real_session_cls(**kwargs)
+
+    monkeypatch.setattr(complete, "PromptSession", _recording_session)
+    session = complete.make_prompt_session(
+        complete.SlashCompleter(lambda: None),
+        state=SessionUiState(),
+        output=DummyOutput(),
+    )
+    assert seen.get("multiline") is True
+    assert session is not None
+
+    prompt_seen: dict = {}
+    session.prompt = lambda *a, **k: (prompt_seen.update(k) or "hello")  # type: ignore[method-assign]
+    result = complete._prompt_once(
+        session, SessionUiState(), busy=False, action_slot={"kind": "submit"}
+    )
+    assert prompt_seen.get("multiline") is True
+    assert result.kind == "text" and result.text == "hello"
+
+
+def test_composer_newline_keys_insert_without_submitting() -> None:
+    from types import SimpleNamespace
+
+    from prompt_toolkit.keys import Keys
+
+    from kite.ui.complete import make_repl_key_bindings
+
+    bindings = make_repl_key_bindings()
+    inserted: list[str] = []
+    buffer = SimpleNamespace(
+        insert_text=inserted.append,
+        validate_and_handle=MagicMock(),
+    )
+    event = SimpleNamespace(current_buffer=buffer)
+    ctrl_j = next(
+        binding
+        for binding in bindings.get_bindings_for_keys((Keys.ControlJ,))
+        if binding.handler.__name__ == "_newline"
+    )
+    ctrl_j.handler(event)
+    alt_enter = next(
+        binding
+        for binding in bindings.get_bindings_for_keys((Keys.Escape, Keys.ControlM))
+        if binding.handler.__name__ == "_newline"
+    )
+    alt_enter.handler(event)
+    assert inserted == ["\n", "\n"]
+    buffer.validate_and_handle.assert_not_called()
 
 def test_exact_slash_completion_does_not_leave_empty_menu_selected() -> None:
     from prompt_toolkit.buffer import Buffer, CompletionState
