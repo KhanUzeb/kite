@@ -202,7 +202,7 @@ def status_segments(state: SessionUiState) -> list[tuple[str, str]]:
         (model, "kite.muted"),
         (cost, "kite.muted"),
     ]
-    if not state.busy and state.window and state.tokens:
+    if not state.busy and state.window and state.tokens and not _terminal_compact():
         parts.append(
             (
                 f"ctx {state.context_pct:.0%}"
