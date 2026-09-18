@@ -264,7 +264,7 @@ In the REPL: start in **build** mode — type a task. `/plan` for an opt-in read
 
 Approval modes: `auto` · `approve` · `trust` · `readonly`. Set `KITE_LOADER=grid|dots|orbit|wave|spin` for terminal loader style.
 
-Visual walkthrough: [`guide.md`](guide.md) · Full command map: [`kite_commands.md`](kite_commands.md)
+Visual walkthrough: [`guide.md`](guide.md) · Examples: [`docs/EXAMPLES.md`](docs/EXAMPLES.md) · Full command map: [`kite_commands.md`](kite_commands.md)
 
 Other commands:
 
