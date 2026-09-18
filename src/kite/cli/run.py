@@ -1481,6 +1481,10 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--json", action="store_true")
     context.set_defaults(func=cmd_context)
 
+    from kite.cli.init_cmd import add_init_parser
+
+    add_init_parser(sub)
+
     skills = sub.add_parser("skills", help="List, show, or install markdown skills")
     skills.add_argument("--cwd", default=os.getcwd())
     skills.add_argument("--show", help="Show skill body by name")

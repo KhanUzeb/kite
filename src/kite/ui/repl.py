@@ -39,17 +39,6 @@ from kite.ui.status import render_status
 from kite.ui.style import SYMBOL_FAIL, SYMBOL_PROMPT, make_console
 from kite.ui.tables import kite_table
 
-KITE_MD_STUB = """# KITE.md
-
-Project memory for Kite. Read on every session. Keep it short.
-
-## What this repo is
-
-## Conventions
-
-## Do not
-
-"""
 
 
 def _resume_exe() -> str:
@@ -1718,13 +1707,27 @@ class ChatSession:
             return
         self.console.print(report["text"])
 
-    def _slash_init(self, _arg: str) -> None:
-        path = Path(self.cwd) / "KITE.md"
-        if path.exists():
-            self.console.print(f"[kite.pending]already exists[/] {path}")
+    def _slash_init(self, arg: str) -> None:
+        from kite.context.project_init import format_init_summary, scaffold_project_docs
+
+        bits = (arg or "").split()
+        force = "--force" in bits or "-f" in bits
+        agents_only = "--agents-only" in bits
+        kite_only = "--kite-only" in bits
+        if agents_only and kite_only:
+            self.console.print("[kite.error]use at most one of --agents-only and --kite-only[/]")
             return
-        path.write_text(KITE_MD_STUB, encoding="utf-8")
-        self.console.print(f"[kite.success]wrote[/] {path}")
+        result = scaffold_project_docs(
+            self.cwd,
+            write_agents=not kite_only,
+            write_kite=not agents_only,
+            force=force,
+        )
+        self.console.print(format_init_summary(result))
+        if result.agents and result.agents.action == "skipped":
+            self.console.print("[kite.pending]AGENTS.md already exists[/]  /init --force to overwrite")
+        if result.kite and result.kite.action == "skipped":
+            self.console.print("[kite.pending]KITE.md already exists[/]  /init --force to overwrite")
 
     def _slash_setup(self, _arg: str) -> None:
         from kite.cli.setup import run_setup_wizard
