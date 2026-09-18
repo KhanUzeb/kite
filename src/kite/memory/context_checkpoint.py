@@ -125,12 +125,20 @@ def _prune_checkpoints(session_id: str, keep: int = _MAX_CHECKPOINTS_PER_SESSION
             pass
 
 
+def _prefix_matches(folder: Path, checkpoint_id: str) -> list[Path]:
+    """Literal prefix scan — checkpoint ids come from CLI/tool input and may
+    contain glob metacharacters, so never interpolate them into a glob."""
+    prefix = (checkpoint_id or "").strip()
+    if not prefix or not folder.is_dir():
+        return []
+    return sorted(p for p in folder.glob("cp-*.json") if p.name.startswith(prefix))
+
+
 def load_checkpoint(session_id: str, checkpoint_id: str) -> ContextCheckpoint:
     path = _checkpoint_path(session_id, checkpoint_id)
     if not path.is_file():
         # prefix match
-        folder = checkpoints_dir(session_id)
-        matches = sorted(folder.glob(f"{checkpoint_id}*.json"))
+        matches = _prefix_matches(checkpoints_dir(session_id), checkpoint_id)
         if not matches:
             raise FileNotFoundError(f"no checkpoint '{checkpoint_id}' for session {session_id}")
         path = matches[-1]
@@ -156,7 +164,7 @@ def delete_checkpoint(session_id: str, checkpoint_id: str) -> bool:
     try:
         path = _checkpoint_path(session_id, checkpoint_id)
         if not path.is_file():
-            matches = list(checkpoints_dir(session_id).glob(f"{checkpoint_id}*.json"))
+            matches = _prefix_matches(checkpoints_dir(session_id), checkpoint_id)
             if not matches:
                 return False
             path = matches[-1]

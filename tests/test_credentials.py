@@ -168,3 +168,38 @@ def test_configured_web_tool_keys_reports_status(tmp_path, monkeypatch) -> None:
     assert rows["tavily"][1] == "TAVILY_API_KEY"
     assert rows["exa"][0] is False
     assert rows["firecrawl"][0] is False
+
+
+def test_remove_api_key_drops_header_comment(tmp_path, monkeypatch) -> None:
+    """write_api_key stores a '# VAR' header — logout must not leave it orphaned."""
+    env = tmp_path / ".env"
+    env.write_text("OTHER=1\n", encoding="utf-8")
+    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
+    write_api_key("GROQ_API_KEY", "secret-value-123")
+    assert "# GROQ_API_KEY" in env.read_text(encoding="utf-8")
+    assert remove_api_key("GROQ_API_KEY") is True
+    text = env.read_text(encoding="utf-8")
+    assert "GROQ_API_KEY" not in text
+    assert "OTHER=1" in text
+
+
+def test_load_kite_env_reloads_after_rewrite_without_mtime_change(tmp_path, monkeypatch) -> None:
+    """Same-mtime rewrites (coarse filesystems) must not serve stale keys."""
+    import kite.providers.credentials as creds
+
+    home_env = tmp_path / "kite-home.env"
+    home_env.write_text("RELOAD_KEY=one\n", encoding="utf-8")
+    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: home_env)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+    monkeypatch.setattr(creds, "_ENV_LOADED_KEY", None)
+    monkeypatch.delenv("RELOAD_KEY", raising=False)
+    load_kite_env()
+    assert os.getenv("RELOAD_KEY") == "one"
+    st = home_env.stat()
+    home_env.write_text("RELOAD_KEY=two-much-longer\n", encoding="utf-8")
+    os.utime(home_env, (st.st_atime, st.st_mtime))
+    monkeypatch.delenv("RELOAD_KEY", raising=False)
+    load_kite_env()
+    assert os.getenv("RELOAD_KEY") == "two-much-longer"

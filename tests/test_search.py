@@ -85,3 +85,20 @@ def test_ls_with_glob(tmp_path: Path) -> None:
     assert "a.py" in out["output"]
     assert "b.py" in out["output"]
     assert "subdir" not in out["output"]
+
+
+def test_glob_mtime_sort_skips_unreadable_files(tmp_path: Path, monkeypatch) -> None:
+    """Permission-denied entries must not crash glob (is_file re-raises EACCES)."""
+    (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("y\n", encoding="utf-8")
+    real_stat = Path.stat
+
+    def flaky_stat(self, *args, **kwargs):
+        if self.name == "b.py":
+            raise OSError("permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    out = glob_search(pattern="*.py", root=tmp_path, sort="mtime")
+    assert out["ok"] is True
+    assert "a.py" in out["output"]
