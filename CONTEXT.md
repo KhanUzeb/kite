@@ -22,6 +22,10 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Project bootstrap** — Creating or refreshing root `AGENTS.md` (agents.md standard) from repo manifests. `kite init` scaffolds deterministically; the bundled `init` skill covers agent-guided updates. When a git workspace has no root `AGENTS.md`, project context may include a `<bootstrap_check>` nudge (no auto-write).
 
+**Memory layers** — Where durable facts live: project-only → `AGENTS.md` / `KITE.md` / `.kite/` notes; cross-project user → `USER.md` / `PROFILE.md`; session notes → `MEMORY.md` / episodic / memory tool. The system prompt includes a short routing rubric (`memory_layers`); working continuity blocks are not durable memory.
+
+**Canonical verification** — Project context may list a preferred test command from CI workflows or manifests (`verification_command` in `kite context --json`).
+
 **Execution cwd** — The active working directory for file tools and bash. Defaults to the launch cwd; may change via `set_cwd` or bash `cwd`.
 
 **Execution mode** — `host` (packaged default) or `restricted`. Host mode allows paths outside the session cwd (protected paths still blocked). Restricted mode sandboxes file/bash paths to the session. Toggle in the REPL with `/restricted on|off` (alias `/sandbox`). Production tool calls authorize through **`PolicyEngine`** (path containment, network in restricted mode); **`GuardrailPolicy`** still applies bash denylist and output clamp inside tools.

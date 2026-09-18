@@ -85,6 +85,13 @@ def assemble_system_prompt(
     if append.strip():
         parts.append(append.strip())
 
+    try:
+        layers = load_prompt_template("memory_layers").strip()
+        if layers:
+            parts.append(layers)
+    except (FileNotFoundError, OSError):
+        pass
+
     if project_context is not None:
         rendered = project_context.render_for_prompt(max_chars=config.context.max_context_chars)
         if rendered.strip():

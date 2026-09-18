@@ -19,7 +19,7 @@ composer (idle)
   Ctrl+L          clear screen
   Ctrl+O / F6     toggle expanded tool output
   Ctrl+B / F4     build mode (default)
-  Ctrl+P / F3     plan mode (opt-in read-only checklist)
+  Shift+Tab / Ctrl+P / F3  plan mode (opt-in read-only checklist)
   Ctrl+T / F7     toggle thinking trace
   F2              flash status footer
   F5              refresh models, then pick
@@ -30,9 +30,10 @@ composer (idle)
 
 BUSY_SHORTCUTS = """\
 while a turn is running
-  Enter           queue a follow-up
+  Enter           steer — stop and send composer text as next turn (default)
+  Alt+Enter       queue a follow-up (KITE_BUSY_ENTER=queue swaps Enter/Alt+Enter)
   Esc / Ctrl+C    stop the turn (session stays open)
-  Ctrl+G          steer — stop and send composer text as next turn
+  Ctrl+G          steer (same as Enter)
   Ctrl+U          dequeue queued messages into composer
   F8 / Esc v      attach clipboard to next queued turn
   /tasks          running work + queue
