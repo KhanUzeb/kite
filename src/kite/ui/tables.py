@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rich import box
@@ -36,42 +35,36 @@ def render_sessions_table(
     title: str,
     current: str | None = None,
 ) -> None:
-    """Sessions picker table (canonical home; memory.session_format re-exports)."""
-    from kite.memory.session_format import (
-        format_session_when,
-        session_short_id,
-        session_status,
-        session_title,
-    )
+    """Sessions picker (canonical home; memory.session_format re-exports).
 
-    table = Table(title=title, show_lines=False, pad_edge=False)
-    table.add_column("Date", style="dim", no_wrap=True)
-    table.add_column("Time", style="dim", no_wrap=True)
-    table.add_column("Title", overflow="ellipsis", max_width=36)
-    table.add_column("Model", style="cyan", no_wrap=True, max_width=22)
-    table.add_column("Status", no_wrap=True)
-    table.add_column("ID", style="dim", no_wrap=True)
-    table.add_column("Dir", style="dim", no_wrap=True, max_width=14)
+    One session per visually separated card: the prompt is the primary
+    line, metadata (project · age · size · status · model) renders dimmed
+    beneath it. The current session reads ``> … *``; long prompts
+    truncate to the console width so rows stay aligned; lists taller than
+    the terminal scroll via the numbered picker. Empty lists print a
+    muted hint instead of an empty table.
+    """
+    from kite.memory.session_format import format_session_card
 
+    if not rows:
+        console.print("[dim]no sessions yet  ·  start chatting and they appear here[/]")
+        return
+    width = max(40, int(getattr(console, "width", 100) or 100))
+    if title:
+        console.print(f"[bold]{title}[/]")
+        console.print()
     for meta in rows:
-        date_s, time_s, rel = format_session_when(meta.updated_at)
-        mark = " *" if current and meta.id == current else ""
-        status = session_status(meta)
-        status_style = "green" if status == "Submitted" else ("yellow" if status == "open" else "dim")
-        cwd = Path(meta.cwd).name if meta.cwd else "—"
-        table.add_row(
-            date_s,
-            time_s,
-            session_title(meta, max_len=34) + mark,
-            f"{meta.provider}/{meta.model}".strip("/") or "—",
-            f"[{status_style}]{status}[/]",
-            session_short_id(meta.id),
-            cwd,
-        )
-    console.print(table)
+        prompt_line, meta_line = format_session_card(meta, current=current, width=width)
+        is_current = bool(current and meta.id == current)
+        prompt_style = "bold reverse" if is_current else "bold"
+        # markup=False: session titles are user text — a "[bug]" prompt must
+        # not parse as Rich markup (or raise MarkupError) on the way out.
+        console.print(prompt_line, style=prompt_style, markup=False, highlight=False)
+        console.print(meta_line, style="dim", markup=False, highlight=False)
+        console.print()
     if rows:
         console.print(
-            f"[dim]resume:[/] [bold]kite resume <id>[/]  "
-            f"[dim]· filter:[/] kite sessions -q text  "
+            "[dim]resume:[/] [bold]kite resume <id>[/]  "
+            "[dim]· filter:[/] kite sessions -q text  "
             f"[dim]· show:[/] kite sessions --show {rows[0].id}"
         )

@@ -23,6 +23,8 @@ class BuiltinCommand:
 PRIMARY_SLASH_COMMANDS: frozenset[str] = frozenset({
     "build",
     "plan",
+    "new",
+    "usage",
     "status",
     "model",
     "session",
@@ -62,7 +64,13 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand("hotkeys", "Keyboard shortcuts (Pi /hotkeys)", group="session", aliases=("keys-help",)),
     BuiltinCommand("restricted", "Path sandbox — off by default (host mode)", hint="[on|off]", aliases=("sandbox",), group="session"),
     BuiltinCommand("undo", "Revert the last kite: git checkpoint", group="session"),
-    BuiltinCommand("clear", "Fresh chat session (memory stays)", aliases=("new",), group="session"),
+    BuiltinCommand("clear", "Fresh chat session (memory stays)", group="session"),
+    BuiltinCommand(
+        "new",
+        "Start a new session — clears history, keeps provider/model",
+        group="session",
+        visibility="primary",
+    ),
     BuiltinCommand("compact", "Summarize older turns now (OpenRouter free)", group="session"),
     BuiltinCommand("checkpoint", "Save/list/restore transcript snapshot", hint="save|list|restore|show", group="session"),
     BuiltinCommand("handoff", "Export context for another agent", hint="[dir]", group="session"),
@@ -78,6 +86,13 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand(
         "status",
         "Mode, model, cost, shortcuts, paths, privacy",
+        group="session",
+        visibility="primary",
+    ),
+    BuiltinCommand(
+        "usage",
+        "Token, cache, cost, context, and provider limits",
+        hint="[session|provider|all]",
         group="session",
         visibility="primary",
     ),
@@ -328,6 +343,12 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("show", "print one persona by id"),
         ("init", "scaffold ~/.kite/subagents/<id>.md"),
         ("reload", "reload profiles from disk"),
+    ],
+    "usage": [
+        ("session", "current session totals"),
+        ("provider", "provider-reported limits and reset times"),
+        ("all", "local totals plus provider information"),
+        ("show", "same as session (default report)"),
     ],
     "goal": [
         ("pause", "suspend goal auto-continue"),
