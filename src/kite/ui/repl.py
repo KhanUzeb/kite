@@ -434,7 +434,7 @@ class ChatSession:
             if parsed.kind == "unknown":
                 self._flash_note(parsed.message or "unknown command")
                 return
-        self._flash_note("still working — /tasks · /status · /help · /jobs · /approve")
+        self._flash_note("still working — /tasks · /status · /usage · /help · /jobs · /approve")
 
     def _prompt_app_running(self) -> bool:
         session = self._prompt
@@ -778,22 +778,34 @@ class ChatSession:
 
     def _pick_session(self, title: str, *, query: str = "", show_table: bool = True) -> str | None:
         from kite.memory.session import list_sessions
-        from kite.memory.session_format import session_pick_items
+        from kite.memory.session_format import group_sessions_by_scope, session_pick_items
         from kite.ui.tables import render_sessions_table
 
         rows = list_sessions(limit=30, query=query)
         if not rows:
             self.console.print(render_empty("no sessions", hint="/resume id"))
             return None
+        here, elsewhere = group_sessions_by_scope(rows, self.cwd)
+        if query.strip() or not here:
+            ordered = rows
+            scope = "all projects" if not here else "current folder"
+        else:
+            ordered = [*here, *elsewhere]
+            scope = "current folder"
+        scoped_title = title if "(" in title else f"{title} ({scope})"
         if show_table:
             render_sessions_table(
                 self.console,
-                rows,
-                title=title,
+                ordered,
+                title=scoped_title,
                 current=self._session_id,
             )
-        items = session_pick_items(rows, current=self._session_id)
-        return self._pick(items, title=title, current=self._session_id, noun="session")
+            self.console.print(
+                "[dim][↑/↓ move] [Enter select] [type number/id to filter] "
+                "[Esc cancel]  ·  current folder first  ·  /session list to delete[/]"
+            )
+        items = session_pick_items(ordered, current=self._session_id)
+        return self._pick(items, title=scoped_title, current=self._session_id, noun="session")
 
     def _print_sessions_list(self, query: str = "") -> None:
         from kite.memory.session import list_sessions
@@ -1402,6 +1414,7 @@ class ChatSession:
             "trace": self._slash_trace,
             "undo": self._slash_undo,
             "clear": self._slash_clear,
+            "new": self._slash_new,
             "init": self._slash_init,
             "login": login,
             "logout": logout,
@@ -1436,6 +1449,7 @@ class ChatSession:
             "remember": self._remember,
             "forget": self._slash_forget,
             "status": self._slash_status,
+            "usage": self._slash_usage,
             "privacy": self._slash_privacy,
             "stop": self._slash_stop,
             "steer": self._slash_steer,
@@ -1646,6 +1660,63 @@ class ChatSession:
     def _slash_clear(self, _arg: str) -> None:
         self._reset_chat()
         self.console.print("[kite.muted]fresh start — conversation cleared[/]")
+
+    def _slash_new(self, _arg: str) -> None:
+        """Fresh session in place — history and pending state reset, config kept."""
+        self._reset_chat()
+        self.console.print("[kite.success]Started a new session.[/]")
+
+    def _slash_usage(self, arg: str) -> None:
+        from kite.models.usage import format_usage_report, provider_quota
+
+        raw_arg = (arg or "")
+        want_json = "--json" in raw_arg.lower()
+        token = raw_arg.lower().replace("--json", "").strip()
+        want_provider = token in {"provider", "all"}
+        want_session = token in {"", "show", "session", "all"}
+        if token and not want_provider and not want_session:
+            self.console.print("[kite.error]/usage [session|provider|all][/]")
+            return
+        quota = None
+        quota_available: bool | None = None
+        if want_provider:
+            try:
+                quota = provider_quota(self.provider or self.state.provider or None)
+            except Exception:
+                quota = None
+            quota_available = quota is not None
+        report = format_usage_report(
+            input_tokens=self.state.usage_input_tokens,
+            output_tokens=self.state.usage_output_tokens,
+            cache_read_tokens=self.state.usage_cache_read_tokens,
+            cache_write_tokens=self.state.usage_cache_write_tokens,
+            api_calls=self.state.n_calls,
+            cost=self.state.cost,
+            context_tokens=self.state.tokens,
+            context_window=self.state.window,
+            provider=self.provider or self.state.provider,
+            quota=quota,
+            quota_available=quota_available,
+        )
+        if want_json:
+            import json
+
+            payload = {
+                "input_tokens": self.state.usage_input_tokens,
+                "output_tokens": self.state.usage_output_tokens,
+                "cache_read_tokens": self.state.usage_cache_read_tokens,
+                "cache_write_tokens": self.state.usage_cache_write_tokens,
+                "total_tokens": report["total_tokens"],
+                "api_calls": self.state.n_calls,
+                "cost": self.state.cost,
+                "context_tokens": self.state.tokens,
+                "context_window": self.state.window,
+                "provider": self.provider or self.state.provider,
+                "quota": quota,
+            }
+            self.console.print(json.dumps(payload, indent=2))
+            return
+        self.console.print(report["text"])
 
     def _slash_init(self, _arg: str) -> None:
         path = Path(self.cwd) / "KITE.md"
@@ -2279,8 +2350,29 @@ class ChatSession:
         self.state.todos = []
         self.state.n_calls = 0
         self.state.cost = 0.0
+        self.state.usage_input_tokens = 0
+        self.state.usage_output_tokens = 0
+        self.state.usage_cache_read_tokens = 0
+        self.state.usage_cache_write_tokens = 0
+        self.state.cache_hit_tokens = 0
+        self.state.cache_hit_ratio = 0.0
+        self.state.tokens = 0
+        self.state.window = 0
+        self.state.last_error = ""
+        self.state.last_trace = ""
+        self.state.last_thinking = ""
+        self.state.interrupted = False
+        self.state.clear_running()
+        self.state.reset_stream_stats()
+        self._inbox = MessageInbox()
+        self.state.queued = 0
+        self.state.queue_steer = 0
+        self.state.queue_follow = 0
+        self.state.queue_head = ""
+        self.state.queue_head_kind = ""
         self.attachments = []
         self.state.pending_attach = 0
+        self.state.touch()
 
     def _parse_session_show_tail(self, raw: str, *, default: int = 20) -> tuple[str, int | None]:
         """Parse optional ``--tail N`` (``0`` = full transcript)."""
