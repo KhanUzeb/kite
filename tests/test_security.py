@@ -62,7 +62,11 @@ def test_dangerous_bash_and_benign_cache_deletes(workspace: Path) -> None:
     for cmd in ("env", "printenv", "export", "set", "Get-ChildItem Env:"):
         verdict = policy.check_bash(cmd)
         assert not verdict.allowed, cmd
+    assert not policy.check_bash("echo hi & printenv").allowed
     assert env_dump_blocked("echo hi && env")
+    assert env_dump_blocked("echo hi & env")
+    assert env_dump_blocked("echo hi & printenv")
+    assert env_dump_blocked("& printenv")
     assert not env_dump_blocked("echo hello && npm test")
     assert policy.check_bash("echo hello").allowed
 

@@ -162,6 +162,29 @@ def test_policy_paths_executor_and_journal(workspace: Path, tmp_path: Path) -> N
     assert conflicts and app.read_text(encoding="utf-8") == "user edit\n"
 
 
+def test_policy_glob_root_sandboxed(workspace: Path, tmp_path: Path) -> None:
+    """glob takes `root` (not `path`) — it must be authorized like every other path target."""
+    engine = PolicyEngine(workspace)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    denied = engine.authorize(
+        engine.derive_intent(ToolCall(call_id="g1", name="glob", arguments={"pattern": "**/*.py", "root": str(outside)}))
+    )
+    assert not denied.allowed, denied.reason
+    inside = engine.authorize(
+        engine.derive_intent(ToolCall(call_id="g2", name="glob", arguments={"pattern": "**/*.py", "root": str(workspace)}))
+    )
+    assert inside.allowed, inside.reason
+    # Parity with the sibling readers: all deny the same escape.
+    for name, args in (
+        ("read", {"path": str(outside / "secret.txt")}),
+        ("grep", {"pattern": "x", "path": str(outside)}),
+        ("ls", {"path": str(outside)}),
+    ):
+        decision = engine.authorize(engine.derive_intent(ToolCall(call_id="p1", name=name, arguments=args)))
+        assert not decision.allowed, (name, decision.reason)
+
+
 def test_verification_plans_and_replay(workspace: Path, tmp_path: Path) -> None:
     vc = VerificationCollector()
     vc.on_tool_end("bash", {"command": "pytest tests/ -q"}, {"ok": True, "returncode": 0, "output": "out"})
