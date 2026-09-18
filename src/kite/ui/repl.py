@@ -39,17 +39,6 @@ from kite.ui.status import render_status
 from kite.ui.style import SYMBOL_FAIL, SYMBOL_PROMPT, make_console
 from kite.ui.tables import kite_table
 
-KITE_MD_STUB = """# KITE.md
-
-Project memory for Kite. Read on every session. Keep it short.
-
-## What this repo is
-
-## Conventions
-
-## Do not
-
-"""
 
 
 def _resume_exe() -> str:
@@ -290,9 +279,13 @@ class ChatSession:
         prov = self.provider or cfg.default_provider or "—"
         mod = self.model or cfg.default_model or "—"
         cwd = Path(self.cwd)
+        from kite.context.discovery import find_project_root
+        from kite.context.project_init import needs_agents_bootstrap
+
+        root = find_project_root(cwd)
         context_bits: list[str] = []
         for name in ("AGENTS.md", "KITE.md", "CLAUDE.md"):
-            if (cwd / name).is_file():
+            if (root / name).is_file():
                 context_bits.append(name)
         self.console.print(
             render_startup_card(
@@ -305,6 +298,14 @@ class ChatSession:
                 compact=self.console.width < 60,
             )
         )
+        if needs_agents_bootstrap(root):
+            hint = Text()
+            hint.append("No root AGENTS.md — ", style="kite.pending")
+            hint.append("kite init", style="kite.brand")
+            hint.append(" or ", style="kite.muted")
+            hint.append("/init", style="kite.brand")
+            hint.append(" to scaffold agent guidance (agents.md standard).", style="kite.muted")
+            self.console.print(hint)
 
         status = assess_setup_status_fast(provider=self.provider, model=self.model)
         if is_first_run(status):
@@ -1416,6 +1417,7 @@ class ChatSession:
             "clear": self._slash_clear,
             "new": self._slash_new,
             "init": self._slash_init,
+            "context": self._slash_context,
             "login": login,
             "logout": logout,
             "keys": self._show_keys,
@@ -1718,13 +1720,40 @@ class ChatSession:
             return
         self.console.print(report["text"])
 
-    def _slash_init(self, _arg: str) -> None:
-        path = Path(self.cwd) / "KITE.md"
-        if path.exists():
-            self.console.print(f"[kite.pending]already exists[/] {path}")
+    def _slash_context(self, arg: str) -> None:
+        from kite.config import UserConfig
+        from kite.context.discovery import gather_project_context, invalidate_project_context_cache
+        from kite.context.status_summary import context_preview_body, project_context_summary
+
+        if "refresh" in (arg or "").split():
+            invalidate_project_context_cache()
+        cfg = UserConfig.load()
+        ctx = gather_project_context(
+            self.cwd,
+            include_git=cfg.include_git_status,
+            include_tree=cfg.include_tree_snippet,
+            tree_max_entries=cfg.tree_max_entries,
+        )
+        for line in project_context_summary(self.cwd):
+            self.console.print(f"[kite.muted]{line}[/]")
+        rendered = context_preview_body(ctx)
+        self.console.print(f"[kite.muted]{len(rendered):,} chars[/]")
+        self.console.print(rendered[:3500] + ("…" if len(rendered) > 3500 else ""))
+
+    def _slash_init(self, arg: str) -> None:
+        from kite.context.project_init import format_init_summary, parse_init_flags, scaffold_project_docs
+
+        force, agents_only, kite_only = parse_init_flags(arg)
+        if agents_only and kite_only:
+            self.console.print("[kite.error]use at most one of --agents-only and --kite-only[/]")
             return
-        path.write_text(KITE_MD_STUB, encoding="utf-8")
-        self.console.print(f"[kite.success]wrote[/] {path}")
+        result = scaffold_project_docs(
+            self.cwd,
+            write_agents=not kite_only,
+            write_kite=not agents_only,
+            force=force,
+        )
+        self.console.print(format_init_summary(result))
 
     def _slash_setup(self, _arg: str) -> None:
         from kite.cli.setup import run_setup_wizard
@@ -1934,8 +1963,16 @@ class ChatSession:
         from kite.ui.theme import current_font, theme_label
 
         sid = self._session_id or "—"
+        from kite.context.status_summary import memory_context_summary, project_context_summary
+
         for line in status_detail_lines(self.state):
             self.console.print(f"[kite.muted]{line}[/]")
+        self.console.print("[kite.muted]context[/]")
+        for line in project_context_summary(self.cwd):
+            self.console.print(f"  [kite.muted]{line}[/]")
+        self.console.print("[kite.muted]memory[/]")
+        for line in memory_context_summary():
+            self.console.print(f"  [kite.muted]{line}[/]")
         self.console.print(
             f"[kite.muted]theme {theme_label()} · font {current_font()} · "
             f"sessions {persistence_mode()} · session {sid}"

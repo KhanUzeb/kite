@@ -117,7 +117,8 @@ kite models --select           # same picker
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
               [--session-persistence full|redacted|disabled]
 kite privacy [--session-persistence full|redacted|disabled]   # security policy summary
-kite context [--json]
+kite context [--json] [--refresh]
+kite init [dir] [--force] [--chat] [--agents-only|--kite-only]  # scaffold AGENTS.md (+ KITE.md)
 kite skills                    # TTY: pick a skill to show (trust/origin column)
 kite skills [--show name] [--add pkg|path]
 kite commands
@@ -257,7 +258,8 @@ These never go to the model.
 | `/session` | Current session id |
 | `/session show [id] [--tail N]` | Preview transcript (default 20 messages; `--tail 0` = full) |
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
-| `/init` | Write `KITE.md` if missing |
+| `/init` | Scaffold `AGENTS.md` (+ `KITE.md` stub). Flags: `--force`, `--agents-only`, `--kite-only` |
+| `/context` | Preview project context (verify line, bootstrap/git hints). `/context refresh` bypasses cache |
 | `/expand` | Toggle expanded tool output |
 | `/live` | Stream bash output in real time while tools run |
 | `/live agents` | Stream subagent crew tool + shell output with worker prefix |
@@ -299,10 +301,11 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+L` | Clear screen |
 | `Ctrl+G` | Steer: stop and send the composer text as the next turn |
 | `Ctrl+U` | Dequeue: restore all queued messages into the composer for editing |
-| `Enter` | Send the line. With an open slash menu, accept the highlighted completion first; while working, queues a chat follow-up |
+| `Enter` | Send the line. With an open slash menu, accept the highlighted completion first. **While a turn runs:** steers (redirects) by default — set `KITE_BUSY_ENTER=queue` for legacy queue-on-Enter |
+| `Alt+Enter` | Newline when idle. **While a turn runs:** queues a follow-up (steer when `KITE_BUSY_ENTER=queue`) |
+| `Shift+Tab` / `Ctrl+P` / `F3` | Plan mode |
 | `@path` | Inline file attach in the composer (e.g. `fix @src/foo.py`) |
 | `Ctrl+O` / `F6` | Toggle expanded tool output (`/expand`) |
-| `Ctrl+P` / `F3` | Plan mode |
 | `Ctrl+B` / `F4` | Build mode |
 | `Ctrl+T` / `F7` | Toggle thinking trace (collapsed by default — one-line summary) |
 | `F2` | Flash status on the footer (`Ctrl+S` is not bound; terminals use it for XOFF) |
