@@ -36,7 +36,7 @@ _ENV_DUMP_PATTERNS = (
     re.compile(r"(?i)\bdir\s+env:"),
 )
 
-_CHAIN_SPLIT = re.compile(r"\s*&&\s*|\s*;\s*|\s*\|\s*")
+_CHAIN_SPLIT = re.compile(r"\s*&&\s*|\s*;\s*|\s*\|\s*|(?<!&)&(?!&)")
 
 _OS_INTERFACE_READ = re.compile(
     r"(?i)\b(cat|type|head|tail|less|more|Get-Content|dd|cp|tee)\s+[^\n]*"
@@ -127,7 +127,7 @@ class GuardrailPolicy:
         for rx in self._deny:
             if rx.search(command):
                 return GuardrailVerdict(False, f"bash command blocked by guardrail pattern: {rx.pattern}")
-        if re.search(r"(?i)(cat|type|Get-Content)\s+[^\n]*\.env\b", command):
+        if re.search(r"(?i)\b(cat|type|gc|head|tail|less|more|strings|Get-Content)\s+[^\n]*\.env\b", command):
             return GuardrailVerdict(False, "refusing to dump .env via bash; use careful read if needed")
         blocked = env_dump_blocked(command)
         if blocked:
@@ -197,8 +197,8 @@ class GuardrailPolicy:
                 return v
             return GuardrailVerdict(True, rewritten_args=args)
 
-        if tool == "write" and self.config.block_secret_writes:
-            content = str(args.get("content") or "")
+        if tool in {"write", "edit"} and self.config.block_secret_writes:
+            content = str(args.get("content") or args.get("new") or "")
             for rx in SECRET_PATTERNS:
                 if rx.search(content):
                     return GuardrailVerdict(False, "refusing to write content that looks like a secret")

@@ -133,9 +133,60 @@ def test_blocks_env_dump_commands(workspace: Path) -> None:
     assert policy.check_bash("npm test").allowed
 
 
+def test_bash_backslash_parent_traversal_blocked(workspace: Path) -> None:
+    from kite.guardrails.sandbox import check_command_paths, extract_command_paths
+
+    policy = GuardrailPolicy(GuardrailConfig(execution_mode="restricted"), workspace)
+    for cmd in (r"type ..\secret.txt", r"cat ..\..\etc\passwd", r"Get-Content ..\..\secrets.env"):
+        assert extract_command_paths(cmd), cmd
+        assert check_command_paths(cmd, workspace_root(workspace)), cmd
+        verdict = policy.check_bash(cmd)
+        assert not verdict.allowed, (cmd, verdict.reason)
+    # Forward-slash traversal stays blocked, in-workspace reads stay allowed.
+    assert not policy.check_bash("cat ../../etc/passwd").allowed
+    assert policy.check_bash("cat src/app.py").allowed
+
+
+def test_secret_write_guard_covers_edit(workspace: Path) -> None:
+    policy = GuardrailPolicy(GuardrailConfig(), workspace)
+    secret = "api_key=sk-abcdefghijklmnopqrstuvwxyz123456"
+    target = workspace / "src" / "app.py"
+    assert not policy.check_tool_call("write", {"path": str(target), "content": secret}).allowed
+    verdict = policy.check_tool_call("edit", {"path": str(target), "old": "x = 1", "new": secret})
+    assert not verdict.allowed, verdict.reason
+    assert "secret" in verdict.reason.lower()
+    assert policy.check_tool_call(
+        "edit", {"path": str(target), "old": "x = 1", "new": "x = 2"}
+    ).allowed
+
+
+def test_env_file_readers_blocked(workspace: Path) -> None:
+    policy = GuardrailPolicy(GuardrailConfig(), workspace)
+    for cmd in ("gc .env", "head -5 .env", "tail -n 20 .env", "less .env", "more .env", "strings .env"):
+        verdict = policy.check_bash(cmd)
+        assert not verdict.allowed, (cmd, verdict.reason)
+        assert ".env" in verdict.reason
+    assert policy.check_bash("echo hello").allowed
+    assert policy.check_bash("npm test").allowed
+
+
 def test_blocks_rm_rf_dot_and_git_reset(workspace: Path) -> None:
     assert check_dangerous("rm -rf .")
     assert check_dangerous("rm -rf ..")
     assert check_dangerous("git reset --hard")
     assert check_dangerous("git clean -fdx")
     assert not check_dangerous("rm -rf .pytest_cache")
+
+
+def test_bash_outside_workspace_blocked_for_tmp_like_roots(workspace: Path) -> None:
+    """check_command_paths must catch /tmp, /mnt, /srv, /Users — not just /etc."""
+    policy = GuardrailPolicy(GuardrailConfig(execution_mode="restricted"), workspace)
+    for cmd in (
+        "echo hi > /tmp/evil",
+        "cat /Users/other/secret",
+        "cp a /mnt/x",
+        "cat /srv/data/file",
+    ):
+        verdict = policy.check_bash(cmd)
+        assert not verdict.allowed, cmd
+    assert policy.check_bash("echo hello").allowed
