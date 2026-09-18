@@ -69,7 +69,7 @@ class PolicyEngine:
         effects = derive_effects(call)
         targets: list[str] = []
         args = dict(call.arguments)
-        for key in ("path", "file_path", "target", "command"):
+        for key in ("path", "file_path", "target", "command", "root"):
             if key in args and args[key]:
                 targets.append(str(args[key]))
         cmd_digest = ""

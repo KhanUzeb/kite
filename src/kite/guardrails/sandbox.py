@@ -109,8 +109,8 @@ _ABS_PATH = re.compile(
         | (?:~[\\/][^\s'\"|&;<>]+)
         | (?:\$HOME(?:[\\/][^\s'\"|&;<>]*)?)
         | (?:%[A-Za-z_]+%(?:[\\/][^\s'\"|&;<>]*)?)
-        | (?:\.\./[^\s'\"|&;<>]+)
-        | (?:/(?:proc|dev|run|etc|usr|bin|sbin|root|var|sys|System|private|home|opt|boot|data)[^\s'\"|&;<>]*)
+        | (?:\.\.[\\/][^\s'\"|&;<>]+)
+        | (?:/(?:proc|dev|run|etc|usr|bin|sbin|root|var|tmp|mnt|srv|sys|System|Library|Applications|Volumes|Users|private|home|opt|boot|data)[^\s'\"|&;<>]*)
     )
     """
 )

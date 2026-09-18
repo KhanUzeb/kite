@@ -6,7 +6,16 @@ import json
 import time
 from pathlib import Path
 
-from kite.memory.session import Session, SessionMeta, create_session, format_meta_line, load_session
+import pytest
+
+from kite.memory.session import (
+    Session,
+    SessionMeta,
+    create_session,
+    format_meta_line,
+    load_session,
+    resolve_session_path,
+)
 from kite.memory.session_analytics import SessionStats, save_session_stats, scan_session_file
 
 
@@ -140,3 +149,15 @@ def test_scan_session_events(kite_home, tmp_path) -> None:
     assert row is not None
     assert row.compaction_count == 1
     assert row.tool_blocked == 1
+
+
+def test_resolve_session_path_prefix_is_literal(kite_home) -> None:
+    """Empty/glob prefixes must not silently load an arbitrary session."""
+    session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
+    assert session.path is not None
+    assert resolve_session_path(session.id) == session.path
+    assert resolve_session_path(session.id[:12]) == session.path
+    with pytest.raises(FileNotFoundError):
+        resolve_session_path("")
+    with pytest.raises(FileNotFoundError):
+        resolve_session_path("*")

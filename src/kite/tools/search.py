@@ -28,6 +28,29 @@ def _skip_path(path: Path) -> bool:
     return any(part in _SKIP_PARTS for part in path.parts)
 
 
+def _is_file_safe(path: Path) -> bool:
+    """is_file() that never raises — unreadable entries are simply not files."""
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def _is_dir_safe(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _mtime_safe(path: Path) -> float:
+    """st_mtime for sort keys — missing/unreadable files sort first, never crash."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _rel(path: Path, root: Path) -> str:
     try:
         return path.relative_to(root).as_posix()
@@ -241,17 +264,17 @@ def grep_search(
 
     hits: list[tuple[str, int, str]] = []
     file_hits: dict[str, int] = {}
-    if root.is_file():
+    if _is_file_safe(root):
         paths = [root]
     elif glob_pat:
         glob_use = glob_pat
         paths = sorted(root.rglob(glob_use) if "**" in glob_use else root.glob(glob_use))
     else:
-        paths = sorted(p for p in root.rglob("*") if p.is_file() and not _skip_path(p))
+        paths = sorted(p for p in root.rglob("*") if _is_file_safe(p) and not _skip_path(p))
     for p in paths:
-        if not p.is_file() or _skip_path(p):
+        if not _is_file_safe(p) or _skip_path(p):
             continue
-        rel = _rel(p, root if root.is_dir() else p.parent)
+        rel = _rel(p, root if _is_dir_safe(root) else p.parent)
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -331,14 +354,15 @@ def glob_search(
     for p in candidates:
         if _skip_path(p):
             continue
-        if dirs_only and not p.is_dir():
+        # is_file()/is_dir() re-raise permission errors — skip those entries.
+        if dirs_only and not _is_dir_safe(p):
             continue
-        if files_only and not p.is_file():
+        if files_only and not _is_file_safe(p):
             continue
         matches.append(p)
 
     if sort == "mtime":
-        matches.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+        matches.sort(key=_mtime_safe, reverse=True)
     else:
         matches.sort(key=lambda p: str(p).lower())
 
@@ -368,7 +392,7 @@ def ls_search(
     max_entries = _safe_int(max_entries, 200, minimum=1, maximum=1000)
     if not path.exists():
         return {"ok": False, "error": f"not found: {path}", "output": f"not found: {path}"}
-    if path.is_file():
+    if _is_file_safe(path):
         return {"ok": True, "output": path.name, "count": 1, "summary": "1 file"}
 
     try:

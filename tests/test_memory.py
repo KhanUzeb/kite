@@ -263,3 +263,16 @@ def test_prompts_keep_chat_literal(tmp_path, monkeypatch) -> None:
     (project / ".kite" / "SYSTEM.md").write_text("PROJECT BASE", encoding="utf-8")
     override, _append = discover_system_prompt_files(project)
     assert override == "PROJECT BASE" and load_prompt_template("system")
+
+
+def test_checkpoint_prefix_lookup_is_literal(kite_home) -> None:
+    """Glob metacharacters in checkpoint ids must not match unrelated checkpoints."""
+    from kite.memory.context_checkpoint import delete_checkpoint, load_checkpoint, save_checkpoint
+
+    cp = save_checkpoint(session_id="sess-1", messages=[], cwd="/tmp")
+    assert load_checkpoint("sess-1", cp.id).id == cp.id
+    assert load_checkpoint("sess-1", cp.id[:10]).id == cp.id
+    with pytest.raises(FileNotFoundError):
+        load_checkpoint("sess-1", "*")
+    assert delete_checkpoint("sess-1", "*") is False
+    assert delete_checkpoint("sess-1", cp.id) is True

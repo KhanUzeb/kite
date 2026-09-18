@@ -328,7 +328,12 @@ def resolve_session_path(session_id: str, *, unique: bool = False) -> Path:
     exact = folder / f"{session_id}.jsonl"
     if exact.is_file():
         return exact
-    matches = sorted(folder.glob(f"{session_id}*.jsonl"))
+    prefix = (session_id or "").strip()
+    if not prefix:
+        raise FileNotFoundError(f"No session matching '{session_id}'")
+    # Literal prefix scan (not a glob): session ids come from tool/CLI input
+    # and may contain glob metacharacters like * ? [.
+    matches = sorted(p for p in folder.glob("*.jsonl") if p.stem.startswith(prefix))
     if not matches:
         raise FileNotFoundError(f"No session matching '{session_id}'")
     if unique and len(matches) > 1:

@@ -49,7 +49,7 @@ def env_file_path() -> Path:
     return kite_home() / ".env"
 
 
-_ENV_LOADED_KEY: tuple[str, float, str, float] | None = None
+_ENV_LOADED_KEY: tuple[str, float, int, str, float, int] | None = None
 
 
 def load_kite_env() -> None:
@@ -62,14 +62,20 @@ def load_kite_env() -> None:
     path = env_file_path()
     project_env = Path.cwd() / ".env"
     try:
-        home_mtime = path.stat().st_mtime if path.is_file() else 0.0
+        home_stat = path.stat() if path.is_file() else None
+        home_mtime = home_stat.st_mtime if home_stat else 0.0
+        home_size = home_stat.st_size if home_stat else 0
     except OSError:
         home_mtime = 0.0
+        home_size = 0
     try:
-        project_mtime = project_env.stat().st_mtime if project_env.is_file() else 0.0
+        project_stat = project_env.stat() if project_env.is_file() else None
+        project_mtime = project_stat.st_mtime if project_stat else 0.0
+        project_size = project_stat.st_size if project_stat else 0
     except OSError:
         project_mtime = 0.0
-    key = (str(path), home_mtime, str(project_env), project_mtime)
+        project_size = 0
+    key = (str(path), home_mtime, home_size, str(project_env), project_mtime, project_size)
     if _ENV_LOADED_KEY == key:
         return
     from dotenv import dotenv_values, load_dotenv
@@ -407,14 +413,19 @@ def remove_api_key(env_var: str) -> bool:
     comment = f"# {env_var}"
     removed = False
     if path.is_file():
-        out: list[str] = []
-        for line in read_env_lines(path):
+        lines = read_env_lines(path)
+        drop: set[int] = set()
+        for i, line in enumerate(lines):
             if pattern.match(line):
                 removed = True
-                continue
-            if removed and line.strip() == comment:
-                continue
-            out.append(line)
+                drop.add(i)
+                # write_api_key stores a "# VAR" header above the value —
+                # drop it too so logout leaves no orphan comment behind.
+                if i > 0 and lines[i - 1].strip() == comment:
+                    drop.add(i - 1)
+                if i + 1 < len(lines) and lines[i + 1].strip() == comment:
+                    drop.add(i + 1)
+        out = [line for i, line in enumerate(lines) if i not in drop]
         if removed:
             if out:
                 text = "\n".join(out).rstrip() + "\n"
