@@ -51,19 +51,14 @@ class ProjectContext:
     verification_source: str = ""  # ci | manifest | empty
 
     def render_for_prompt(self, *, max_chars: int = 12_000) -> str:
-        from kite.context.project_init import bootstrap_nudge_markdown
+        from kite.context.project_init import agent_nudges_markdown
 
         parts: list[str] = [
             f"## Workspace\n- cwd: {self.cwd}\n- project_root: {self.root}",
         ]
-        nudge = bootstrap_nudge_markdown(self.root)
-        if nudge:
-            parts.append(nudge)
-        from kite.context.git_reminders import worktree_reminder_markdown
-
-        git_note = worktree_reminder_markdown(self.root)
-        if git_note:
-            parts.append(git_note)
+        nudges = agent_nudges_markdown(self.root)
+        if nudges:
+            parts.append(nudges)
         if self.repo_map:
             parts.append(f"## Repo map (symbols)\n```\n{self.repo_map}\n```")
         if self.tree_snippet:
@@ -212,21 +207,13 @@ def gather_project_context(
     key = (str(cwd_path), include_git, include_tree, include_repo_map, tree_max_entries)
 
     def build() -> ProjectContext:
-        from kite.context.ci_hints import canonical_test_command
-        from kite.context.project_init import detect_ecosystem
+        from kite.context.verify_hint import resolve_verification_command
 
         root = find_project_root(cwd_path)
         repo_map = ""
         if include_repo_map and build_repo_map is not None:
             repo_map = build_repo_map(root, max_chars=4_000)
-        ci_test = canonical_test_command(root)
-        eco = detect_ecosystem(root)
-        if ci_test:
-            verify_cmd, verify_src = ci_test, "ci"
-        elif eco.test and eco.test != "<test command>":
-            verify_cmd, verify_src = eco.test, "manifest"
-        else:
-            verify_cmd, verify_src = "", ""
+        verify_cmd, verify_src = resolve_verification_command(root)
         return ProjectContext(
             root=root,
             cwd=cwd_path,

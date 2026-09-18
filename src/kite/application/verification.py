@@ -306,19 +306,11 @@ def discover_workspace_profile(workspace_root: str | Path) -> WorkspaceProfile:
     workspace = Path(workspace_root).expanduser().resolve()
     workspace_commands, user_packages = _load_user_profile(workspace)
     if not workspace_commands:
-        try:
-            from kite.context.ci_hints import canonical_test_command
-            from kite.context.project_init import detect_ecosystem
+        from kite.context.verify_hint import resolve_verification_command
 
-            ci = canonical_test_command(workspace)
-            if ci:
-                workspace_commands = (ci,)
-            else:
-                eco = detect_ecosystem(workspace)
-                if eco.test and eco.test != "<test command>":
-                    workspace_commands = (eco.test,)
-        except Exception:
-            pass
+        cmd, _src = resolve_verification_command(workspace)
+        if cmd:
+            workspace_commands = (cmd,)
     packages = tuple(_scan_packages(workspace, user_packages))
     return WorkspaceProfile(
         workspace_root=str(workspace),

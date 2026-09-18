@@ -42,13 +42,12 @@ class ProjectInitResult:
 
 @dataclass(frozen=True)
 class EcosystemHints:
-    name: str
     install: str
-    dev: str | None
-    build: str | None
     test: str
-    lint: str | None
-    typecheck: str | None
+    lint: str | None = None
+    dev: str | None = None
+    build: str | None = None
+    typecheck: str | None = None
 
 
 def is_git_workspace(root: Path) -> bool:
@@ -69,23 +68,25 @@ def needs_agents_bootstrap(root: Path) -> bool:
     return any((root / marker).exists() for marker in PROJECT_MARKERS)
 
 
-def bootstrap_nudge_markdown(root: Path) -> str:
-    if not needs_agents_bootstrap(root):
-        return ""
-    dir_s = str(root.expanduser().resolve())
-    return (
-        "<bootstrap_check>\n"
-        f"Your workspace ({dir_s}) has no root AGENTS.md — this project has no "
-        "agent-facing setup notes yet.\n\n"
-        "Before starting substantive work, ask: would a root AGENTS.md help agents "
-        "work on this repo?\n"
-        "If yes (git repository with meaningful code), load the `init` skill and follow "
-        "it to generate `AGENTS.md` at the repo root, or run `kite init` for a "
-        "deterministic scaffold. Let the user review and commit.\n\n"
-        "If the repo does not need it (scratch dir, no real code), say so and skip.\n"
-        "Do not bootstrap unless the user asks or the skill procedure applies.\n"
-        "</bootstrap_check>"
-    )
+def agent_nudges_markdown(root: Path) -> str:
+    """Bootstrap + git discipline blocks for project context (may be empty)."""
+    root = root.expanduser().resolve()
+    parts: list[str] = []
+    if needs_agents_bootstrap(root):
+        parts.append(
+            "<bootstrap_check>\n"
+            "No root AGENTS.md. If the user wants agent guidance, use the `init` skill or "
+            "`kite init`; otherwise skip.\n"
+            "</bootstrap_check>"
+        )
+    if is_git_workspace(root):
+        branch = default_branch(root)
+        parts.append(
+            f"<worktree-reminder>\n"
+            f"Git repo — avoid committing directly to `{branch}`; read AGENTS.md before broad edits.\n"
+            "</worktree-reminder>"
+        )
+    return "\n\n".join(parts)
 
 
 def default_branch(root: Path) -> str:
@@ -189,15 +190,7 @@ def detect_ecosystem(root: Path) -> EcosystemHints:
         if (root / "scripts" / "ci_check.sh").is_file():
             test = "./scripts/ci_check.sh"
         lint = "ruff check ." if (root / "pyproject.toml").read_text(encoding="utf-8").find("[tool.ruff]") >= 0 else None
-        return EcosystemHints(
-            name="Python",
-            install=install,
-            dev=None,
-            build=None,
-            test=test,
-            lint=lint,
-            typecheck=None,
-        )
+        return EcosystemHints(install=install, test=test, lint=lint)
     if (root / "package.json").is_file():
         pm = _node_pm(root)
         scripts = _package_scripts(root)
@@ -208,43 +201,15 @@ def detect_ecosystem(root: Path) -> EcosystemHints:
         lint = scripts.get("lint")
         typecheck = scripts.get("typecheck")
         return EcosystemHints(
-            name="Node.js",
-            install=install,
-            dev=dev,
-            build=build,
-            test=test,
-            lint=lint,
-            typecheck=typecheck,
+            install=install, test=test, lint=lint, dev=dev, build=build, typecheck=typecheck
         )
     if (root / "Cargo.toml").is_file():
         return EcosystemHints(
-            name="Rust",
-            install="cargo build",
-            dev="cargo run",
-            build="cargo build --release",
-            test="cargo test",
-            lint="cargo clippy",
-            typecheck=None,
+            install="cargo build", test="cargo test", lint="cargo clippy", dev="cargo run"
         )
     if (root / "go.mod").is_file():
-        return EcosystemHints(
-            name="Go",
-            install="go mod download",
-            dev=None,
-            build="go build ./...",
-            test="go test ./...",
-            lint="go vet ./...",
-            typecheck=None,
-        )
-    return EcosystemHints(
-        name="unknown",
-        install="<install command>",
-        dev=None,
-        build=None,
-        test="<test command>",
-        lint=None,
-        typecheck=None,
-    )
+        return EcosystemHints(install="go mod download", test="go test ./...", lint="go vet ./...")
+    return EcosystemHints(install="<install>", test="<test>")
 
 
 def _layout_lines(root: Path, *, max_dirs: int = 12) -> list[str]:
@@ -266,55 +231,27 @@ def _layout_lines(root: Path, *, max_dirs: int = 12) -> list[str]:
 
 
 def render_agents_md(root: Path) -> str:
+    from kite.context.verify_hint import resolve_verification_command
+
     root = root.expanduser().resolve()
     eco = detect_ecosystem(root)
+    test_cmd, _ = resolve_verification_command(root)
+    test_cmd = test_cmd or eco.test
     branch = default_branch(root)
     desc = _one_line_description(root)
-    layout = "\n".join(_layout_lines(root))
-
-    setup: list[str] = [f"- Install deps: `{eco.install}`"]
-    if eco.dev:
-        setup.append(f"- Start dev: `{eco.dev}`")
-    if eco.build:
-        setup.append(f"- Build: `{eco.build}`")
-    setup.append(f"- Test: `{eco.test}`")
+    setup = [f"- Install: `{eco.install}`", f"- Test: `{test_cmd}`"]
     if eco.lint:
         setup.append(f"- Lint: `{eco.lint}`")
-    if eco.typecheck:
-        setup.append(f"- Typecheck: `{eco.typecheck}`")
-
-    security = "- Never commit secrets — keep API keys in user config (e.g. `~/.kite/.env`), not the repo."
+    security = "- Never commit secrets; API keys live in user config (e.g. `~/.kite/.env`)."
     if (root / "SECURITY.md").is_file():
-        security += "\n- See `SECURITY.md` for reporting and trust boundaries."
-
-    body = f"""# AGENTS.md
-
-{desc}
-
-## Setup commands
-
-{chr(10).join(setup)}
-
-## Project layout
-
-{layout}
-
-## Testing instructions
-
-- Run `{eco.test}` before opening a PR.
-- Add or update tests for behavior changes; follow existing test layout in the repo.
-
-## PR and commit conventions
-
-- Branch from `{branch}`; do not push directly to the default branch.
-- Use short conventional commits (`feat:`, `fix:`, `docs:`, …) when the repo already does.
-- Run the canonical test command above once changes are ready.
-
-## Security
-
-{security}
-"""
-    return body.rstrip() + "\n"
+        security += " See `SECURITY.md`."
+    return (
+        f"# AGENTS.md\n\n{desc}\n\n## Setup\n\n{chr(10).join(setup)}\n\n"
+        f"## Layout\n\n{chr(10).join(_layout_lines(root))}\n\n"
+        f"## Verify before PR\n\nRun `{test_cmd}`; add tests for behavior changes.\n\n"
+        f"## Git\n\nBranch from `{branch}`; conventional commits when the repo already uses them.\n\n"
+        f"## Security\n\n{security}\n"
+    )
 
 
 def _write_text(
@@ -337,6 +274,16 @@ def _write_text(
     return InitWriteResult(path=path, action=action, backup=backup)
 
 
+def parse_init_flags(arg: str) -> tuple[bool, bool, bool]:
+    """Return ``(force, agents_only, kite_only)`` from slash/CLI arg string."""
+    bits = (arg or "").split()
+    return (
+        "--force" in bits or "-f" in bits,
+        "--agents-only" in bits,
+        "--kite-only" in bits,
+    )
+
+
 def scaffold_project_docs(
     directory: str | Path,
     *,
@@ -356,12 +303,9 @@ def scaffold_project_docs(
         )
     if write_kite:
         kite_result = _write_text(root / _KITE_FILENAME, _KITE_STUB, force=force)
-    try:
-        from kite.context.discovery import invalidate_project_context_cache
+    from kite.context.discovery import invalidate_project_context_cache
 
-        invalidate_project_context_cache()
-    except Exception:
-        pass
+    invalidate_project_context_cache()
     return ProjectInitResult(root=root, agents=agents_result, kite=kite_result)
 
 

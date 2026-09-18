@@ -53,7 +53,6 @@ def docs_help() -> str:
     return (
         "docs\n"
         "  kite_commands.md   CLI and slash map\n"
-        "  docs/EXAMPLES.md   walkthrough tasks (clamp, init, CI)\n"
         "  CONTEXT.md         terms, including memory layers\n"
         "  architecture.md    layers and extension points\n"
         "  SECURITY.md        trust boundaries\n"

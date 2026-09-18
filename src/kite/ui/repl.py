@@ -1723,10 +1723,9 @@ class ChatSession:
     def _slash_context(self, arg: str) -> None:
         from kite.config import UserConfig
         from kite.context.discovery import gather_project_context, invalidate_project_context_cache
-        from kite.context.status_summary import project_context_summary
+        from kite.context.status_summary import context_preview_body, project_context_summary
 
-        bits = (arg or "").split()
-        if "refresh" in bits or "--refresh" in bits:
+        if "refresh" in (arg or "").split():
             invalidate_project_context_cache()
         cfg = UserConfig.load()
         ctx = gather_project_context(
@@ -1737,20 +1736,14 @@ class ChatSession:
         )
         for line in project_context_summary(self.cwd):
             self.console.print(f"[kite.muted]{line}[/]")
-        rendered = ctx.render_for_prompt(max_chars=4_000)
-        self.console.print(f"[kite.muted]{len(rendered):,} chars in prompt slice[/]")
-        if len(rendered) > 3500:
-            self.console.print(rendered[:3500] + "\n…[truncated for display]")
-        else:
-            self.console.print(rendered)
+        rendered = context_preview_body(ctx)
+        self.console.print(f"[kite.muted]{len(rendered):,} chars[/]")
+        self.console.print(rendered[:3500] + ("…" if len(rendered) > 3500 else ""))
 
     def _slash_init(self, arg: str) -> None:
-        from kite.context.project_init import format_init_summary, scaffold_project_docs
+        from kite.context.project_init import format_init_summary, parse_init_flags, scaffold_project_docs
 
-        bits = (arg or "").split()
-        force = "--force" in bits or "-f" in bits
-        agents_only = "--agents-only" in bits
-        kite_only = "--kite-only" in bits
+        force, agents_only, kite_only = parse_init_flags(arg)
         if agents_only and kite_only:
             self.console.print("[kite.error]use at most one of --agents-only and --kite-only[/]")
             return
@@ -1761,10 +1754,6 @@ class ChatSession:
             force=force,
         )
         self.console.print(format_init_summary(result))
-        if result.agents and result.agents.action == "skipped":
-            self.console.print("[kite.pending]AGENTS.md already exists[/]  /init --force to overwrite")
-        if result.kite and result.kite.action == "skipped":
-            self.console.print("[kite.pending]KITE.md already exists[/]  /init --force to overwrite")
 
     def _slash_setup(self, _arg: str) -> None:
         from kite.cli.setup import run_setup_wizard
@@ -2732,9 +2721,6 @@ class ChatSession:
     def _show_memory(self, _arg: str = "") -> None:
         self._memory_in_prompt = True
         self._harness_key = None
-        self.console.print(
-            "[kite.muted]layers: project → AGENTS/KITE · user → USER/PROFILE · notes → MEMORY/episodic · /remember skill[/]"
-        )
         self._show_semantic()
         self.console.print()
         self._show_episodic()

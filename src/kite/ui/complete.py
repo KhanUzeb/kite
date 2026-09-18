@@ -672,14 +672,11 @@ def _toolbar_approval_bits(state: SessionUiState) -> list[str]:
 
 
 def _toolbar_busy_bits(state: SessionUiState) -> list[str]:
-    if busy_enter_queues_followup():
-        enter_hint = "Enter queue"
-    else:
-        enter_hint = "Enter steer"
+    legacy = busy_enter_queues_followup()
     bits = [
         "Esc/Ctrl+C stop",
-        enter_hint,
-        "Alt+Enter queue" if not busy_enter_queues_followup() else "Alt+Enter steer",
+        f"Enter {'queue' if legacy else 'steer'}",
+        f"Alt+Enter {'steer' if legacy else 'queue'}",
         "Ctrl+G steer",
         "Ctrl+U dequeue",
         "F8 attach clip",
