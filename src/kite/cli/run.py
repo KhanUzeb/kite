@@ -897,6 +897,10 @@ def cmd_context(args: argparse.Namespace) -> int:
 
     console = _console()
     cfg = UserConfig.load()
+    if getattr(args, "refresh", False):
+        from kite.context.discovery import invalidate_project_context_cache
+
+        invalidate_project_context_cache()
     ctx = gather_project_context(
         args.cwd,
         include_git=cfg.include_git_status,
@@ -1488,6 +1492,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     context = sub.add_parser("context", help="Preview discovered project context")
     context.add_argument("--cwd", default=os.getcwd())
+    context.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Bypass cached project context (re-read disk / git)",
+    )
     context.add_argument("-p", "--provider")
     context.add_argument("-m", "--model")
     context.add_argument("--json", action="store_true")

@@ -130,6 +130,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     ),
     BuiltinCommand("resume", "Continue a saved session", hint="[id]", group="session"),
     BuiltinCommand("init", "Scaffold AGENTS.md (+ KITE.md); /init --force to overwrite", group="session"),
+    BuiltinCommand("context", "Preview discovered project context for this workspace", group="session"),
     BuiltinCommand("trace", "Last error traceback", group="session"),
     BuiltinCommand("home", "Show ~/.kite paths", group="session"),
     BuiltinCommand(

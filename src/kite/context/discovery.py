@@ -59,6 +59,11 @@ class ProjectContext:
         nudge = bootstrap_nudge_markdown(self.root)
         if nudge:
             parts.append(nudge)
+        from kite.context.git_reminders import worktree_reminder_markdown
+
+        git_note = worktree_reminder_markdown(self.root)
+        if git_note:
+            parts.append(git_note)
         if self.repo_map:
             parts.append(f"## Repo map (symbols)\n```\n{self.repo_map}\n```")
         if self.tree_snippet:

@@ -38,6 +38,28 @@ def test_project_context_includes_ci_verification(tmp_path: Path) -> None:
     assert "./scripts/ci_check.sh" in rendered
 
 
+def test_worktree_reminder_in_git_project(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    invalidate_project_context_cache()
+    rendered = gather_project_context(root).render_for_prompt()
+    assert "<worktree-reminder>" in rendered
+
+
+def test_workspace_profile_uses_ci_command(tmp_path: Path) -> None:
+    from kite.application.verification import discover_workspace_profile
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    wf = root / ".github" / "workflows" / "t.yml"
+    wf.parent.mkdir(parents=True)
+    wf.write_text("run: pytest -q\n", encoding="utf-8")
+    profile = discover_workspace_profile(root)
+    assert profile.workspace_commands == ("pytest",)
+
+
 def test_memory_layers_in_system_prompt() -> None:
     body = load_prompt_template("memory_layers")
     assert "AGENTS.md" in body and "USER.md" in body
