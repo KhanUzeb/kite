@@ -53,21 +53,114 @@ def format_session_when(ts: float, *, now: float | None = None) -> tuple[str, st
 
 
 def format_session_picker_label(meta: SessionMeta, *, current: str | None = None) -> str:
-    date_s, time_s, rel = format_session_when(meta.updated_at)
-    title = session_title(meta, max_len=44)
+    """Single-line picker label — prompt first, dimmed metadata after.
+
+    Scan order: prompt → project → age → status → model → short id, so
+    crowded columns never bury the piece users actually recognize.
+    """
+    title = session_title(meta, max_len=64)
+    _date_s, _time_s, rel = format_session_when(meta.updated_at)
     status = session_status(meta)
     model = f"{meta.provider}/{meta.model}".strip("/") or "—"
-    cwd = Path(meta.cwd).name if meta.cwd else ""
-    bits = [f"{date_s} {time_s}", title, f"[{status}]", model]
-    if cwd:
-        bits.append(f"· {cwd}")
-    bits.append(f"({session_short_id(meta.id)})")
-    row = "  ".join(bits)
-    if rel not in {date_s, "just now"} and rel not in row:
-        row += f"  · {rel}"
+    project = session_project(meta)
+    bits = [title, f"{project} · {rel}"]
+    tail = f"{status} · {model} ({session_short_id(meta.id)})"
+    row = "  ".join([bits[0], bits[1], tail])
     if current and meta.id == current:
         row += "  *"
     return row
+
+
+def session_project(meta: SessionMeta) -> str:
+    """Compact project label — parent/name, truncated middle for long paths."""
+    raw = (meta.cwd or "").strip()
+    if not raw:
+        return "—"
+    try:
+        parts = [p for p in Path(raw).parts if p not in {"", "/"}]
+    except Exception:
+        return raw[-24:]
+    if not parts:
+        return "—"
+    short = "/".join(parts[-2:]) if len(parts) >= 2 else parts[0]
+    if len(short) > 28:
+        return "…/" + short[-27:]
+    return short
+
+
+def session_file_size(meta: SessionMeta) -> str:
+    """Human-readable session file size for the picker card, or ''."""
+    try:
+        from kite.memory.session import resolve_session_path
+
+        path = resolve_session_path(meta.id)
+        size = path.stat().st_size
+    except (OSError, ValueError, FileNotFoundError):
+        return ""
+    units = ("B", "KB", "MB", "GB")
+    value = float(size)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{size} B"
+
+
+def format_session_card(
+    meta: SessionMeta, *, current: str | None = None, width: int = 100
+) -> tuple[str, str]:
+    """Two-line picker card: (prompt_line, meta_line), truncated to width.
+
+    The prompt stays primary; project, age, size, and status render as
+    dimmed metadata beneath it. Long prompts truncate with … without
+    breaking alignment of the rows around them.
+    """
+    title = session_title(meta, max_len=10_000)
+    _date_s, _time_s, rel = format_session_when(meta.updated_at)
+    status = session_status(meta)
+    model = f"{meta.provider}/{meta.model}".strip("/") or "—"
+    project = session_project(meta)
+    size = session_file_size(meta)
+    meta_bits = [project, rel]
+    if size:
+        meta_bits.append(size)
+    meta_bits.append(status)
+    if model != "—":
+        meta_bits.append(model)
+    meta_line = " · ".join(meta_bits)
+    marker = "> " if current and meta.id == current else "  "
+    prompt_width = max(16, min(width - len(marker) - 1, 120))
+    if len(title) > prompt_width:
+        title = title[: max(1, prompt_width - 1)] + "…"
+    meta_width = max(16, min(width - 2, 120))
+    if len(meta_line) > meta_width:
+        meta_line = meta_line[: max(1, meta_width - 1)] + "…"
+    prompt_line = f"{marker}{title}"
+    if current and meta.id == current:
+        prompt_line += "  *"
+    return prompt_line, f"  {meta_line}"
+
+
+def group_sessions_by_scope(
+    rows: list[SessionMeta], cwd: str,
+) -> tuple[list[SessionMeta], list[SessionMeta]]:
+    """Split rows into (current-folder, other-projects), preserving order."""
+    try:
+        target = str(Path(cwd or ".").expanduser().resolve())
+    except OSError:
+        target = cwd or ""
+    here: list[SessionMeta] = []
+    elsewhere: list[SessionMeta] = []
+    for meta in rows:
+        try:
+            resolved = str(Path(meta.cwd or ".").expanduser().resolve())
+        except OSError:
+            resolved = meta.cwd or ""
+        if target and resolved == target:
+            here.append(meta)
+        else:
+            elsewhere.append(meta)
+    return here, elsewhere
 
 
 def format_session_resume_hint(meta: SessionMeta) -> str:

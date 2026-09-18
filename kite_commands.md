@@ -229,12 +229,14 @@ These never go to the model.
 | `/login [provider]` | Always (re)link credentials, then pick a model. BYOS opens a browser + device code |
 | `/logout [provider]` | Unlink; omit provider to pick |
 | `/sessions` `/session list` | Numbered picker: open / show / delete |
-| `/session open [id]` `/resume [id]` | Continue that chat (prints full transcript); omit id to pick |
+| `/session open [id]` `/resume [id]` | Continue that chat (prints full transcript); omit id to pick a card — prompt on top, project · age · size · status beneath; current folder first |
 | `/keys` | Credential status with type (BYOK/BYOS), masked key fingerprint, OAuth link state |
 | `/reasoning` `/effort` | Legacy effort modes (`auto\|off\|fast\|thinking`) — prefer `/thinking` |
 | `/fast` | Legacy shortcut → `/thinking low` |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
-| `/clear` `/new` | Fresh chat session (memory notes stay) |
+| `/clear` | Fresh chat session (memory notes stay) |
+| `/new` | Start a new session — clears history and pending state, keeps provider/model/config |
+| `/usage [session\|provider\|all]` | Token, cache, cost, context, and provider limits (missing provider data never errors) |
 | `/compact` | Summarize older turns now; ctx meter updates immediately |
 | `/cost` | Legacy alias → `/status` (includes cost) |
 | `/stop` | Stop the current turn; session stays open |
@@ -280,7 +282,7 @@ These never go to the model.
 | `/clip` `/paste` `/clipboard` | Attach clipboard text or image (**F8** or **Esc v**) |
 | `/detach [name\|all]` | Drop queued attachments |
 | `/attachments` | List queued files |
-| `/help` `/h` | Essential commands (13). `/help all` adds legacy aliases, shortcuts, and doc pointers (`kite_commands.md`, `CONTEXT.md`, …) |
+| `/help` `/h` | Essential commands (15). `/help all` adds legacy aliases, shortcuts, and doc pointers (`kite_commands.md`, `CONTEXT.md`, …) |
 | `/quit` `/q` `/exit` | Leave the REPL |
 
 Ctrl+C stops the **current turn**, not the process.
@@ -328,6 +330,7 @@ These **are** the next user turn. Overlay (later wins): bundled → `~/.kite/com
 | `/explain [path or question]` | Explain the repo or a focus |
 | `/fix [test or error]` | Diagnose and patch a failure |
 | `/pr [notes]` | Draft a PR title and body |
+| `/unslop [file, diff, or focus]` | Remove AI-generated cruft (verbose prose, redundant comments, unused helpers) without changing behavior |
 
 `$ARGUMENTS` (and `$1`…`$9`) in the markdown file is replaced with whatever you typed after the command.
 

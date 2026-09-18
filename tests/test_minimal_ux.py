@@ -51,10 +51,12 @@ def test_repl_help_primary_vs_all() -> None:
     assert "/compact" in full
     assert "/select" in full
     primary = primary_builtins()
-    assert len(primary) == 13
+    assert len(primary) == 15
     assert primary[0].name == "build"
     assert primary[1].name == "plan"
     assert any(b.name == "thinking" for b in primary)
+    assert any(b.name == "new" for b in primary)
+    assert any(b.name == "usage" for b in primary)
 
 
 def test_legacy_slash_still_dispatches() -> None:

@@ -1,11 +1,30 @@
-# Kite
+<h1 align="center">Kite</h1>
 
-Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harness that combines **mini-swe-agent** control flow with **tau**-style tools, providers, context, sessions, skills, and guardrails.
+<p align="center">
+  A terminal-first coding agent for local repositories
+</p>
 
+<p align="center">
+  <a href="https://github.com/KhanUzeb/kite/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/KhanUzeb/kite/tests.yml" alt="CI status">
+  </a>
+  <a href="https://pypi.org/project/kite/">
+    <img src="https://img.shields.io/pypi/v/kite" alt="PyPI version">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License">
+  </a>
+  <a href="CHANGELOG.md">
+    <img src="https://img.shields.io/badge/version-0.9.9-cyan.svg" alt="Version">
+  </a>
+  <a href="https://www.python.org">
+    <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
+  </a>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
-[![Version](https://img.shields.io/badge/version-0.9.9-cyan.svg)](CHANGELOG.md)
+<p align="center">
+  Plan, build, review, and automate work across local repositories.
+</p>
 
 **Version:** 0.9.9
 
@@ -13,13 +32,41 @@ Kite is a **Python coding agent CLI** for local repositories: a slim hybrid harn
 
 ## Why Kite
 
-- Built for practical repo work in a terminal-first workflow
-- Combines planning + execution modes with guarded tool use
-- Works across providers and local project directories
-- Keeps context manageable with checkpoints and compaction
+Working in a terminal on a real repository means juggling plans, edits, tests, and reviews across many tools. Kite puts that loop in one place: describe the task, watch it inspect code, apply guarded edits, and verify the result — without leaving your shell or handing your repo to a black box.
+
+## Highlights
+
+- **Plan then build** — read-only checklist first (`/plan`), edits when you say so (`/build`)
+- **Multi-provider** — OpenAI, Anthropic, Groq, OpenCode Zen/Go, NVIDIA NIM, Ollama, and OpenAI-compatible endpoints
+- **Guarded tools** — sandboxing, approval modes, secret redaction, and verification gates on `submit`
+- **Memory that persists** — sessions, checkpoints, handoffs, and project notes that survive restarts
+
+## Quick start
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install --python 3.12 --force "git+https://github.com/KhanUzeb/kite.git"
+cd ~/projects/my-app && kite
+kite setup   # guided API key + model picker on first run
+```
+
+## Example
+
+```bash
+kite run "explain this repo"
+kite run --mode plan "how should we add auth?"
+# in the REPL:
+/fix flaky login test
+/plan
+/build
+```
 
 ## Table of contents
 
+- [Why Kite](#why-kite)
+- [Highlights](#highlights)
+- [Quick start](#quick-start)
+- [Example](#example)
 - [Features](#features)
 - [Setup](#setup)
 - [Use Kite on any project](#use-kite-on-any-project)
