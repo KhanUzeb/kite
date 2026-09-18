@@ -1417,6 +1417,7 @@ class ChatSession:
             "clear": self._slash_clear,
             "new": self._slash_new,
             "init": self._slash_init,
+            "context": self._slash_context,
             "login": login,
             "logout": logout,
             "keys": self._show_keys,
@@ -1718,6 +1719,30 @@ class ChatSession:
             self.console.print(json.dumps(payload, indent=2))
             return
         self.console.print(report["text"])
+
+    def _slash_context(self, arg: str) -> None:
+        from kite.config import UserConfig
+        from kite.context.discovery import gather_project_context, invalidate_project_context_cache
+        from kite.context.status_summary import project_context_summary
+
+        bits = (arg or "").split()
+        if "refresh" in bits or "--refresh" in bits:
+            invalidate_project_context_cache()
+        cfg = UserConfig.load()
+        ctx = gather_project_context(
+            self.cwd,
+            include_git=cfg.include_git_status,
+            include_tree=cfg.include_tree_snippet,
+            tree_max_entries=cfg.tree_max_entries,
+        )
+        for line in project_context_summary(self.cwd):
+            self.console.print(f"[kite.muted]{line}[/]")
+        rendered = ctx.render_for_prompt(max_chars=4_000)
+        self.console.print(f"[kite.muted]{len(rendered):,} chars in prompt slice[/]")
+        if len(rendered) > 3500:
+            self.console.print(rendered[:3500] + "\n…[truncated for display]")
+        else:
+            self.console.print(rendered)
 
     def _slash_init(self, arg: str) -> None:
         from kite.context.project_init import format_init_summary, scaffold_project_docs
@@ -2707,6 +2732,9 @@ class ChatSession:
     def _show_memory(self, _arg: str = "") -> None:
         self._memory_in_prompt = True
         self._harness_key = None
+        self.console.print(
+            "[kite.muted]layers: project → AGENTS/KITE · user → USER/PROFILE · notes → MEMORY/episodic · /remember skill[/]"
+        )
         self._show_semantic()
         self.console.print()
         self._show_episodic()

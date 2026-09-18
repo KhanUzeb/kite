@@ -305,6 +305,20 @@ def discover_workspace_profile(workspace_root: str | Path) -> WorkspaceProfile:
     """Discover packages and verification commands for any workspace layout."""
     workspace = Path(workspace_root).expanduser().resolve()
     workspace_commands, user_packages = _load_user_profile(workspace)
+    if not workspace_commands:
+        try:
+            from kite.context.ci_hints import canonical_test_command
+            from kite.context.project_init import detect_ecosystem
+
+            ci = canonical_test_command(workspace)
+            if ci:
+                workspace_commands = (ci,)
+            else:
+                eco = detect_ecosystem(workspace)
+                if eco.test and eco.test != "<test command>":
+                    workspace_commands = (eco.test,)
+        except Exception:
+            pass
     packages = tuple(_scan_packages(workspace, user_packages))
     return WorkspaceProfile(
         workspace_root=str(workspace),

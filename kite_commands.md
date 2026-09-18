@@ -117,7 +117,7 @@ kite models --select           # same picker
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
               [--session-persistence full|redacted|disabled]
 kite privacy [--session-persistence full|redacted|disabled]   # security policy summary
-kite context [--json]
+kite context [--json] [--refresh]
 kite init [dir] [--force] [--chat] [--agents-only|--kite-only]  # scaffold AGENTS.md (+ KITE.md)
 kite skills                    # TTY: pick a skill to show (trust/origin column)
 kite skills [--show name] [--add pkg|path]
@@ -259,6 +259,7 @@ These never go to the model.
 | `/session show [id] [--tail N]` | Preview transcript (default 20 messages; `--tail 0` = full) |
 | `/session delete [id\|all]` | Drop this (or another) transcript + trajectory |
 | `/init` | Scaffold `AGENTS.md` (+ `KITE.md` stub). Flags: `--force`, `--agents-only`, `--kite-only` |
+| `/context` | Preview project context (verify line, bootstrap/git hints). `/context refresh` bypasses cache |
 | `/expand` | Toggle expanded tool output |
 | `/live` | Stream bash output in real time while tools run |
 | `/live agents` | Stream subagent crew tool + shell output with worker prefix |

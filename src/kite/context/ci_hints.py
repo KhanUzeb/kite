@@ -17,9 +17,29 @@ _RUN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
-def canonical_test_command(root: Path) -> str | None:
-    """Best-effort test command from `.github/workflows` (or similar CI paths)."""
-    root = root.expanduser().resolve()
+def _makefile_test(root: Path) -> str | None:
+    for name in ("Makefile", "makefile", "GNUmakefile"):
+        path = root / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if re.search(r"^test\s*:", text, re.MULTILINE):
+            return "make test"
+    just = root / "justfile"
+    if just.is_file():
+        try:
+            text = just.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        if re.search(r"^test\s*:", text, re.MULTILINE) or "test " in text:
+            return "just test"
+    return None
+
+
+def _ci_workflow_test(root: Path) -> str | None:
     candidates: list[Path] = []
     for rel in (
         ".github/workflows",
@@ -41,3 +61,9 @@ def canonical_test_command(root: Path) -> str | None:
             if pattern.search(text):
                 return cmd
     return None
+
+
+def canonical_test_command(root: Path) -> str | None:
+    """Best-effort test command from CI workflows, then Makefile / justfile."""
+    root = root.expanduser().resolve()
+    return _ci_workflow_test(root) or _makefile_test(root)

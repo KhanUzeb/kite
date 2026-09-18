@@ -55,7 +55,7 @@ class ComposerResult:
 
 # Slash commands safe to run while a turn is in flight (read-only / status / mode).
 BUSY_SAFE_SLASHES = frozenset(
-    {"tasks", "task", "status", "usage", "help", "jobs", "agents", "h", "?", "approve"}
+    {"tasks", "task", "status", "usage", "help", "jobs", "agents", "h", "?", "approve", "context"}
 )
 
 # Aliases that earn their own completion row. Canonical command keeps the handler,
