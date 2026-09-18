@@ -5,6 +5,7 @@ from __future__ import annotations
 IDLE_SHORTCUTS = """\
 composer (idle)
   Enter           send message
+  Alt+Enter / Ctrl+J  newline without sending (box grows to 7 rows, then scrolls)
   Tab             cycle / and @file completions
   ↑↓ / number / drag  CLI pickers — click or drag the mouse to highlight, release to select
   KITE_MOUSE=1        slash-menu wheel (off by default so the welcome banner stays readable)
@@ -41,11 +42,9 @@ while a turn is running
 
 APPROVAL_SHORTCUTS = """\
 approval prompt
-  Enter / a       allow this exact command for the rest of the session
+  Enter / a       allow this exact command (once)
   s               allow this command family for the session
   p               remember always (~/.kite/approvals.json)
-  s               allow this session
-  p               allow always (when offered)
   n               deny
   q               stop run
   /approve …      change approval mode while a turn runs
