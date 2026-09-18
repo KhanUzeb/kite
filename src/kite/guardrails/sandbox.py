@@ -329,6 +329,12 @@ def check_command_paths(command: str, workspace: Path) -> str:
         token = raw.strip().strip("\"'")
         if not token or token in {".", "./", ".\\"}:
             continue
+        # Normalize Windows separators first: on POSIX a backslash is a
+        # literal filename char, so `..\secret` would resolve *inside* the
+        # workspace and slip through. Treating `\` as a separator on every
+        # OS keeps traversal detection platform-independent (Path on
+        # Windows accepts forward slashes, so this is a no-op there).
+        token = token.replace("\\", "/")
         try:
             resolved = resolve_in_workspace(token, workspace)
         except OSError:
