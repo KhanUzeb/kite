@@ -154,7 +154,11 @@ def render_pick_list(
     page_hint: bool = False,
     cursor: int | None = None,
 ) -> Text:
-    """Left-bar numbered picker, same visual language as login panels."""
+    """Left-bar numbered picker, same visual language as login panels.
+
+    Long labels truncate with … so narrow terminals (40-60 cols) keep one
+    row per item instead of rewrapping the list.
+    """
     body = Text()
     body.append(f"{GUTTER}┊ ", style="kite.pending")
     body.append(title, style="kite.pending bold")
@@ -164,10 +168,13 @@ def render_pick_list(
         is_cursor = cursor is not None and (i - 1) == cursor
         mark = " *" if is_current and "*" not in label else ""
         prefix = "▸ " if is_cursor else "  "
+        text = f"{label}{mark}"
+        if len(text) > 64:
+            text = text[:63] + "…"
         body.append(f"{GUTTER}┊ ", style="kite.muted")
         body.append(f"{prefix}{i:>3}  ", style="kite.pick")
         body.append(
-            f"{label}{mark}\n",
+            f"{text}\n",
             style="kite.pick.current" if (is_current or is_cursor) else "",
         )
     body.append(f"{GUTTER}┊\n", style="kite.muted")

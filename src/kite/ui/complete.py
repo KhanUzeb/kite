@@ -24,7 +24,12 @@ try:
     from prompt_toolkit.filters import Condition
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import FileHistory
-    from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
+    from prompt_toolkit.layout.containers import (
+        ConditionalContainer,
+        HSplit,
+        ScrollOffsets,
+        Window,
+    )
     from prompt_toolkit.layout.controls import FormattedTextControl
     from prompt_toolkit.layout.dimension import Dimension
     from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
@@ -49,7 +54,7 @@ class ComposerResult:
 
 # Slash commands safe to run while a turn is in flight (read-only / status / mode).
 BUSY_SAFE_SLASHES = frozenset(
-    {"tasks", "task", "status", "help", "jobs", "agents", "h", "?", "approve"}
+    {"tasks", "task", "status", "usage", "help", "jobs", "agents", "h", "?", "approve"}
 )
 
 # Aliases that earn their own completion row. Canonical command keeps the handler,
@@ -743,6 +748,13 @@ def _mouse_support_enabled() -> bool:
     return os.environ.get("KITE_MOUSE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Composer box: 1-line minimum, grows to _COMPOSER_MAX_LINES, then scrolls
+# internally. The surrounding HSplit adds one padding row top and bottom,
+# so the visible box peaks at _COMPOSER_MAX_HEIGHT rows.
+_COMPOSER_MAX_LINES = 7
+_COMPOSER_MAX_HEIGHT = _COMPOSER_MAX_LINES + 2
+
+
 def _bound_prompt_layout(session: Any, state: SessionUiState | None = None) -> None:
     """Keep the input row compact and render completion menus below it."""
     layout = getattr(session, "layout", None)
@@ -766,8 +778,16 @@ def _bound_prompt_layout(session: Any, state: SessionUiState | None = None) -> N
         window = getattr(wrapper, "content", None)
         control = getattr(window, "content", None)
         if getattr(control, "buffer", None) is default_buffer:
-            window.height = Dimension(min=1, max=1)
+            window.height = Dimension(min=1, max=_COMPOSER_MAX_LINES)
             window.style = "class:composer"
+            window.wrap_lines = True
+            window.allow_scroll_beyond_bottom = True
+            window.dont_extend_height = False
+            window.dont_extend_width = False
+            try:
+                window.scroll_offsets = ScrollOffsets(top=1, bottom=1)
+            except Exception:
+                pass
             buffer_index = index
             input_wrapper = wrapper
             break
@@ -813,7 +833,7 @@ def _bound_prompt_layout(session: Any, state: SessionUiState | None = None) -> N
             input_wrapper,
             Window(height=1, char=" ", style="class:composer"),
         ],
-        height=Dimension(min=3, max=3),
+        height=Dimension(min=3, max=_COMPOSER_MAX_HEIGHT),
     )
     body.children[:] = (
         body_children[:buffer_index]
@@ -840,6 +860,10 @@ def make_prompt_session(
         "history": FileHistory(str(path)),
         "completer": completer,
         "complete_while_typing": True,
+        # Multiline buffer: Enter submits via key bindings (_submit), while
+        # Alt+Enter / Ctrl+J inserts a newline. Without this the session
+        # forces single-line mode and long prompts clip past the first row.
+        "multiline": True,
         "auto_suggest": AutoSuggestFromHistory(),
         "style": prompt_style(),
         "mouse_support": _mouse_support_enabled(),
@@ -877,7 +901,11 @@ def make_repl_key_bindings(
     can_remember_approval: Callable[[], bool] | None = None,
     action_slot: dict[str, str] | None = None,
 ) -> Any:
-    """Keyboard shortcuts while the composer is focused."""
+    """Keyboard shortcuts while the composer is focused.
+
+    The composer is multiline: Enter submits, Alt+Enter / Ctrl+J inserts a
+    newline (the box grows to _COMPOSER_MAX_LINES, then scrolls internally).
+    """
     if not _PT:
         return None
     from prompt_toolkit.filters import Condition
@@ -1023,6 +1051,12 @@ def make_repl_key_bindings(
         _apply_selected_slash_completion(buf)
         buf.complete_state = None
         buf.validate_and_handle()
+
+    @bindings.add("c-j", eager=True)
+    @bindings.add("escape", "enter", eager=True)
+    def _newline(event) -> None:  # noqa: ANN001
+        """Alt+Enter / Ctrl+J — newline without submitting (Enter submits)."""
+        event.current_buffer.insert_text("\n")
 
     @bindings.add("tab", eager=True)
     def _tab_cycle(event) -> None:  # noqa: ANN001
@@ -1258,6 +1292,9 @@ def _prompt_once(
             placeholder=HTML(f"<style fg='{ui.placeholder}'>{placeholder}</style>"),
             bottom_toolbar=_toolbar,
             refresh_interval=0.25 if (busy or state.awaiting_approval) else 0,
+            # Match the session default: the buffer stays multiline so pasted
+            # or wrapped prompts keep every row visible up to the layout cap.
+            multiline=True,
         )
     except EOFError:
         return ComposerResult("eof")
