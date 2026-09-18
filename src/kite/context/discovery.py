@@ -49,9 +49,14 @@ class ProjectContext:
     repo_map: str = ""
 
     def render_for_prompt(self, *, max_chars: int = 12_000) -> str:
+        from kite.context.project_init import bootstrap_nudge_markdown
+
         parts: list[str] = [
             f"## Workspace\n- cwd: {self.cwd}\n- project_root: {self.root}",
         ]
+        nudge = bootstrap_nudge_markdown(self.root)
+        if nudge:
+            parts.append(nudge)
         if self.repo_map:
             parts.append(f"## Repo map (symbols)\n```\n{self.repo_map}\n```")
         if self.tree_snippet:
