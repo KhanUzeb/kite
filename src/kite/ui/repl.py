@@ -279,9 +279,13 @@ class ChatSession:
         prov = self.provider or cfg.default_provider or "—"
         mod = self.model or cfg.default_model or "—"
         cwd = Path(self.cwd)
+        from kite.context.discovery import find_project_root
+        from kite.context.project_init import needs_agents_bootstrap
+
+        root = find_project_root(cwd)
         context_bits: list[str] = []
         for name in ("AGENTS.md", "KITE.md", "CLAUDE.md"):
-            if (cwd / name).is_file():
+            if (root / name).is_file():
                 context_bits.append(name)
         self.console.print(
             render_startup_card(
@@ -294,6 +298,14 @@ class ChatSession:
                 compact=self.console.width < 60,
             )
         )
+        if needs_agents_bootstrap(root):
+            hint = Text()
+            hint.append("No root AGENTS.md — ", style="kite.pending")
+            hint.append("kite init", style="kite.brand")
+            hint.append(" or ", style="kite.muted")
+            hint.append("/init", style="kite.brand")
+            hint.append(" to scaffold agent guidance (agents.md standard).", style="kite.muted")
+            self.console.print(hint)
 
         status = assess_setup_status_fast(provider=self.provider, model=self.model)
         if is_first_run(status):

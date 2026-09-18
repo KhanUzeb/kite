@@ -300,10 +300,11 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+L` | Clear screen |
 | `Ctrl+G` | Steer: stop and send the composer text as the next turn |
 | `Ctrl+U` | Dequeue: restore all queued messages into the composer for editing |
-| `Enter` | Send the line. With an open slash menu, accept the highlighted completion first; while working, queues a chat follow-up |
+| `Enter` | Send the line. With an open slash menu, accept the highlighted completion first. **While a turn runs:** steers (redirects) by default — set `KITE_BUSY_ENTER=queue` for legacy queue-on-Enter |
+| `Alt+Enter` | Newline when idle. **While a turn runs:** queues a follow-up (steer when `KITE_BUSY_ENTER=queue`) |
+| `Shift+Tab` / `Ctrl+P` / `F3` | Plan mode |
 | `@path` | Inline file attach in the composer (e.g. `fix @src/foo.py`) |
 | `Ctrl+O` / `F6` | Toggle expanded tool output (`/expand`) |
-| `Ctrl+P` / `F3` | Plan mode |
 | `Ctrl+B` / `F4` | Build mode |
 | `Ctrl+T` / `F7` | Toggle thinking trace (collapsed by default — one-line summary) |
 | `F2` | Flash status on the footer (`Ctrl+S` is not bound; terminals use it for XOFF) |

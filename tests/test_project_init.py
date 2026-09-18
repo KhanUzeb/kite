@@ -53,6 +53,7 @@ def test_bootstrap_nudge_when_missing_agents(tmp_path: Path) -> None:
     assert needs_agents_bootstrap(root)
     rendered = gather_project_context(root).render_for_prompt()
     assert "<bootstrap_check>" in rendered
+    assert "load the `init` skill" in rendered
 
 
 def test_bootstrap_nudge_absent_when_agents_present(tmp_path: Path) -> None:
