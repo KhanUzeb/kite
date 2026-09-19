@@ -36,6 +36,7 @@ class HarnessSlots:
 @dataclass
 class HookBus:
     _subs: dict[str, list[HookFn]] = field(default_factory=dict)
+    context: dict[str, object] = field(default_factory=dict)
 
     def on(self, event: str, fn: HookFn) -> HookFn:
         self._subs.setdefault(event, []).append(fn)

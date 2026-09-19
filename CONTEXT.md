@@ -96,6 +96,8 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Compaction** — Summarizing older turns to free context window space while keeping recent messages and **preserved facts** (constraints, errors, paths, bash commands, edited paths from verification). Defaults (override in `data/configs/default.toml`): ~12k chars project context, 12k-token recent tail (scaled down on smaller model windows), 5k-char tool observations. At **55% context**, old tool outputs are soft-trimmed; at **75%**, full compaction runs with merged summary blocks.
 
+**SoL-Pi** — Optional harness efficiency layer (`kite/sol_pi/`, config `.kite/sol-pi.json` or `~/.kite/sol-pi.json`): Action Fusion (`then_run` on edit/write), ObservationPack (`obs_recall` + projection), Evidence-Preserving Reducer (verified receipts for long diagnostic logs), Online Context Compact (economic compaction at plan/todo boundaries). Disabled by default; see [arXiv:2609.20519](https://arxiv.org/abs/2609.20519).
+
 **Auto venv** — When `[environment] auto_venv = true` (default), bash subprocesses prepend the project `.venv`/`venv` to `PATH` if `pyvenv.cfg` exists.
 
 **Live terminal** — `/live` toggles streaming bash output in the REPL while tools run (redacted).
