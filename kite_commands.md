@@ -518,6 +518,17 @@ Manual: `uv tool install "git+https://github.com/KhanUzeb/kite.git"` then `uv to
 
 GitHub Actions (`.github/workflows/tests.yml`) runs `pytest` on every push and pull request to `main` (Python 3.11 + 3.12). See [CONTRIBUTING.md](CONTRIBUTING.md#ci-github-actions).
 
+### SoL-Pi (token-efficient harness)
+
+Optional mechanisms from [SoL-Pi](https://arxiv.org/abs/2609.20519) (NVlabs reference: [SoL-Pi](https://github.com/NVlabs/SoL-Pi)). All features are **off** unless enabled in JSON:
+
+| File | Precedence |
+|------|------------|
+| `<project>/.kite/sol-pi.json` | Project (when present) |
+| `~/.kite/sol-pi.json` | User default |
+
+Copy the template from `src/kite/data/sol-pi.example.json`. Keys mirror the paper: `actionFusion`, `observationPack`, `evidencePreservingReducer` (+ optional reducer provider/model), `onlineContextCompact`, and `cacheWriteReadRatio` (default `12.5`). Conservative start: enable only `actionFusion` and `observationPack` (no extra model calls). Archives live under `<project>/.kite/sol-pi/<session-id>/`.
+
 ### Use on any project (not the kite checkout)
 
 Install once (one-liner). After that, `kite` is on PATH — no need to activate a venv or sit inside the kite repo.

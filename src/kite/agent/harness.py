@@ -109,6 +109,7 @@ class Harness:
     todos: TodoStore | None = None
     job_registry: JobRegistry | None = None
     message_queue: RunMessageQueue | None = None
+    sol_pi: object | None = None
     _extensions_loaded: bool = field(default=False, init=False)
 
     def use(self, slot: str, impl: Any) -> Harness:
@@ -133,12 +134,19 @@ class Harness:
         from kite.plugins.extensions import load_extensions
 
         load_extensions(self, self.config.cwd or ".")
+        try:
+            from kite.sol_pi.integration import attach_sol_pi
+
+            attach_sol_pi(self, self.config.cwd or ".")
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
 
     def _attach_to_runtime(self, runtime: AgentRuntime, *, cancel=None) -> AgentRuntime:
         """Sync harness-owned state onto a runtime (shared by make + run)."""
         runtime.slots = self.slots
         runtime.hooks = self.hooks
         runtime.extra_tools = self.extra_tools
+        runtime.sol_pi = self.sol_pi
         if self.job_registry is not None:
             runtime.job_registry = self.job_registry
         # Always assign: None → runtime creates a fresh CancelToken for this turn.

@@ -90,6 +90,7 @@ class AgentRuntime:
     slots: HarnessSlots = field(default_factory=HarnessSlots)
     hooks: HookBus = field(default_factory=HookBus)
     extra_tools: list[Any] = field(default_factory=list)
+    sol_pi: object | None = None
     last_agent: DefaultAgent | None = field(default=None, init=False)
     _audit_listener_attached: bool = field(default=False, init=False)
     job_registry: JobRegistry | None = None
@@ -550,6 +551,13 @@ class AgentRuntime:
             extras.extend(make_context7_tools())
         if extras:
             tools = [*tools, *extras]
+        sol_pi_session = self.sol_pi
+        if sol_pi_session is not None:
+            from kite.sol_pi.integration import apply_sol_pi_tools
+
+            bash_tool = next((t for t in tools if t.name == "bash"), None)
+            bash_fn = bash_tool.run if bash_tool is not None else (lambda _: {"ok": False, "output": "bash unavailable"})
+            tools = apply_sol_pi_tools(tools, sol_pi_session, bash_fn=bash_fn)
         if self.options.allowed_tools:
             # Per-worker least-privilege scope (Part A): restricted profiles get only their
             # allowlisted tools. Nesting/memory tools never survive into a worker registry.
@@ -618,6 +626,11 @@ class AgentRuntime:
                 label=self.options.label,
             )
             self.last_session = session
+
+        if sol_pi_session is not None and session is not None:
+            from kite.sol_pi.integration import bind_sol_pi_session
+
+            bind_sol_pi_session(sol_pi_session, session_id=session.id, cwd=cwd)
 
         out_path = self.options.output_path
         if out_path is None and session is not None:
