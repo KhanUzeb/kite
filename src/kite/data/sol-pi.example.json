@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "actionFusion": false,
+  "observationPack": false,
+  "evidencePreservingReducer": false,
+  "evidencePreservingReducerProvider": "openrouter",
+  "evidencePreservingReducerModel": "meta-llama/llama-3.1-8b-instruct",
+  "onlineContextCompact": false,
+  "cacheWriteReadRatio": 12.5
+}
