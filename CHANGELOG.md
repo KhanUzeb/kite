@@ -22,6 +22,9 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
   AGENTS.md, and install scripts.
 - README badges and design-doc links no longer reference PyPI (git/uv install
   only); release notes pointers aim at `docs/RELEASE-1.0.0.md`.
+- Bootstrap scripts (`download.sh` / `download.ps1`, aligned `install.*`):
+  clearer private-repo 404 fallbacks, `--` / switch pass-through, Windows
+  ExecutionPolicy one-liner, post-install version line on Windows bootstrap.
 
 ## [0.9.9] - 2026-09-15
 
