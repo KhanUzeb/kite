@@ -897,6 +897,10 @@ def cmd_context(args: argparse.Namespace) -> int:
 
     console = _console()
     cfg = UserConfig.load()
+    if getattr(args, "refresh", False):
+        from kite.context.discovery import invalidate_project_context_cache
+
+        invalidate_project_context_cache()
     ctx = gather_project_context(
         args.cwd,
         include_git=cfg.include_git_status,
@@ -904,7 +908,15 @@ def cmd_context(args: argparse.Namespace) -> int:
         tree_max_entries=cfg.tree_max_entries,
     )
     rendered = ctx.render_for_prompt()
+    if not args.json:
+        from kite.context.status_summary import project_context_summary
+
+        for line in project_context_summary(args.cwd):
+            console.print(f"[kite.muted]{line}[/]")
     if args.json:
+        from kite.context.project_init import needs_agents_bootstrap
+
+        bootstrap = needs_agents_bootstrap(ctx.root)
         console.print(
             json.dumps(
                 {
@@ -912,6 +924,10 @@ def cmd_context(args: argparse.Namespace) -> int:
                     "cwd": str(ctx.cwd),
                     "files": [f.path for f in ctx.files],
                     "chars": len(rendered),
+                    "needs_agents_bootstrap": bootstrap,
+                    "init_hint": "kite init ." if bootstrap else None,
+                    "verification_command": ctx.verification_command or None,
+                    "verification_source": ctx.verification_source or None,
                 },
                 indent=2,
             )
@@ -1476,10 +1492,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     context = sub.add_parser("context", help="Preview discovered project context")
     context.add_argument("--cwd", default=os.getcwd())
+    context.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Bypass cached project context (re-read disk / git)",
+    )
     context.add_argument("-p", "--provider")
     context.add_argument("-m", "--model")
     context.add_argument("--json", action="store_true")
     context.set_defaults(func=cmd_context)
+
+    from kite.cli.init_cmd import add_init_parser
+
+    add_init_parser(sub)
 
     skills = sub.add_parser("skills", help="List, show, or install markdown skills")
     skills.add_argument("--cwd", default=os.getcwd())

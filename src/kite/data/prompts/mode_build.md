@@ -10,7 +10,7 @@ If a live checklist already exists (from **plan** mode or earlier), **execute it
 
 1. Keep the live checklist current with `todo_write` (exactly one item `in_progress`).
 2. Finish one checklist item fully before marking it `completed` and starting the next.
-3. Follow the system **Working loop**: orient → change → verify → submit.
+3. Follow the system **Working loop**: orient → change → verify → submit. When project context lists **Canonical verification**, run that command (or an equivalent scoped test) before submit.
 4. Prefer `edit` over `write`. Inspect with bash (`rg`, `head`, `sed -n`, `wc -l`).
 5. Call `set_cwd` when work spans packages. Finish with the **`submit`** tool (structured `message`) after verification passes — not prose-only "done".
 

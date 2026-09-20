@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,7 +55,7 @@ class ComposerResult:
 
 # Slash commands safe to run while a turn is in flight (read-only / status / mode).
 BUSY_SAFE_SLASHES = frozenset(
-    {"tasks", "task", "status", "usage", "help", "jobs", "agents", "h", "?", "approve"}
+    {"tasks", "task", "status", "usage", "help", "jobs", "agents", "h", "?", "approve", "context"}
 )
 
 # Aliases that earn their own completion row. Canonical command keeps the handler,
@@ -63,6 +64,12 @@ DISCOVERABLE_ALIASES: tuple[tuple[str, str], ...] = (("exit", "quit"),)
 
 # Single source: kite.ui.approval.APPROVAL_KEYS (composer keys, panel, prompt).
 _APPROVAL_CHOICES = APPROVAL_KEYS
+
+
+def busy_enter_queues_followup() -> bool:
+    """When a turn is running, Enter queues (legacy) vs steers (MiniMax-style default)."""
+    raw = (os.environ.get("KITE_BUSY_ENTER") or "steer").strip().lower()
+    return raw in {"queue", "followup", "follow-up", "legacy"}
 
 
 def is_busy_safe_slash(line: str) -> bool:
@@ -665,7 +672,15 @@ def _toolbar_approval_bits(state: SessionUiState) -> list[str]:
 
 
 def _toolbar_busy_bits(state: SessionUiState) -> list[str]:
-    bits = ["Esc/Ctrl+C stop", "Enter queue", "Ctrl+G steer", "Ctrl+U dequeue", "F8 attach clip"]
+    legacy = busy_enter_queues_followup()
+    bits = [
+        "Esc/Ctrl+C stop",
+        f"Enter {'queue' if legacy else 'steer'}",
+        f"Alt+Enter {'steer' if legacy else 'queue'}",
+        "Ctrl+G steer",
+        "Ctrl+U dequeue",
+        "F8 attach clip",
+    ]
     if state.queue_steer:
         bits.append(f"steer {state.queue_steer}")
     if state.queue_follow:
@@ -958,6 +973,7 @@ def make_repl_key_bindings(
 
     @bindings.add("c-p", eager=True)
     @bindings.add("f3", eager=True)
+    @bindings.add("s-tab", eager=True)
     def _plan(event) -> None:  # noqa: ANN001
         _fire(on_plan, event)
 
@@ -986,6 +1002,17 @@ def make_repl_key_bindings(
     def _steer(event) -> None:  # noqa: ANN001
         slot["kind"] = "steer"
         event.app.exit(result=event.current_buffer.text)
+
+    @bindings.add("escape", "enter", eager=True, filter=busy)
+    def _busy_alt_enter(event) -> None:  # noqa: ANN001
+        """Alt+Enter — queue follow-up while a turn runs (MiniMax-style)."""
+        if busy_enter_queues_followup():
+            slot["kind"] = "steer"
+        else:
+            slot["kind"] = "queue"
+        buf = event.current_buffer
+        buf.complete_state = None
+        buf.validate_and_handle()
 
     @bindings.add("c-u", eager=True, filter=busy)
     def _dequeue(event) -> None:  # noqa: ANN001
@@ -1053,7 +1080,7 @@ def make_repl_key_bindings(
         buf.validate_and_handle()
 
     @bindings.add("c-j", eager=True)
-    @bindings.add("escape", "enter", eager=True)
+    @bindings.add("escape", "enter", eager=True, filter=idle)
     def _newline(event) -> None:  # noqa: ANN001
         """Alt+Enter / Ctrl+J — newline without submitting (Enter submits)."""
         event.current_buffer.insert_text("\n")
@@ -1275,7 +1302,10 @@ def _prompt_once(
         else:
             placeholder = "[Enter] once · [s] family · [p] always · [n] deny · [q] stop"
     elif busy:
-        placeholder = "add a follow-up while Kite works…"
+        if busy_enter_queues_followup():
+            placeholder = "Enter queues a follow-up · Alt+Enter steers · Ctrl+G steer"
+        else:
+            placeholder = "Enter steers the turn · Alt+Enter queues a follow-up · Shift+Enter newline"
     else:
         placeholder = "/help  ·  @file  ·  !shell  ·  Ctrl+D quit"
 
@@ -1319,6 +1349,8 @@ def _prompt_once(
         return ComposerResult("stop")
     if kind == "steer":
         return ComposerResult("steer", text)
+    if kind == "queue":
+        return ComposerResult("text", text)
     if kind == "dequeue":
         return ComposerResult("dequeue")
     if state.awaiting_approval:
@@ -1333,6 +1365,13 @@ def _prompt_once(
         return ComposerResult("empty")
     if busy and is_busy_safe_slash(text):
         return ComposerResult("busy_slash", text)
+    if busy and kind == "submit":
+        classified = classify_busy_line(text)
+        if classified.kind != "text":
+            return classified
+        if busy_enter_queues_followup():
+            return ComposerResult("text", text)
+        return ComposerResult("steer", text)
     return ComposerResult("text", text)
 
 

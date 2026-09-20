@@ -22,6 +22,7 @@ CLI_COMMANDS: frozenset[str] = frozenset({
     "config",
     "privacy",
     "context",
+    "init",
     "skills",
     "commands",
     "plugins",
@@ -78,6 +79,7 @@ setup
   kite config | privacy
 
 project
+  kite init [dir] [--chat|--force]   scaffold AGENTS.md (agents.md standard)
   kite context | skills | commands | plugins | memory | subagents
   kite gh issue view|list|create|comment  ·  kite gh pr view|list|create  ·  kite gh auth
 
@@ -132,6 +134,7 @@ Setup & model
   kite privacy                  security policy summary
 
 Project
+  kite init [dir]               scaffold AGENTS.md (+ KITE.md); --chat for init skill
   kite context                  preview workspace discovery
   kite skills [--show name] [--add pkg|path]
   kite subagents [--show id] [--init id]   bundled + ~/.kite/subagents/
