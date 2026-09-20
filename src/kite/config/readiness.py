@@ -43,17 +43,21 @@ def has_any_api_key() -> bool:
 
 
 def is_fresh_install() -> bool:
-    """No saved config and no cloud API keys yet."""
-    if has_config_file():
-        return False
-    return not has_any_api_key()
+    """No onboarding marker and no linked provider credentials yet."""
+    from kite.config.onboarding import should_auto_prompt_setup
+
+    return should_auto_prompt_setup()
 
 
 def is_first_run(status: SetupStatus | None = None) -> bool:
-    """True only before the user has completed setup (any key, OAuth, or config.toml)."""
+    """True only before the user has linked a provider or finished onboarding."""
+    from kite.config.onboarding import is_setup_complete
+
+    if is_setup_complete():
+        return False
     if status is not None:
-        return not status.has_config_file and not status.configured_providers
-    return is_fresh_install() and not configured_provider_names()
+        return not status.configured_providers
+    return True
 
 
 def assess_setup_status(
@@ -215,11 +219,13 @@ def format_setup_banner(status: SetupStatus) -> str:
 
 def offer_setup_interactive(console) -> bool:
     """Ask on a TTY whether to run setup now. Returns True if user wants setup."""
+    from kite.config.onboarding import should_auto_prompt_setup
+
     if os.environ.get("KITE_SKIP_SETUP"):
         return False
     if not is_interactive_tty():
         return False
-    if not is_first_run():
+    if not should_auto_prompt_setup():
         return False
     try:
         raw = console.input("[kite.brand]First run?[/] Run [cyan]kite setup[/] now? [Y/n] ").strip().lower()

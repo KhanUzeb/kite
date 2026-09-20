@@ -138,7 +138,9 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
     env_path = env_file_path()
     status = assess_setup_status()
 
-    if status.ready and not is_fresh_install():
+    from kite.config.onboarding import is_setup_complete, mark_setup_complete
+
+    if status.ready and is_setup_complete():
         console.print(
             Panel(
                 f"[green]Already configured[/]\n\n"
@@ -149,6 +151,7 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
                 border_style="green",
             )
         )
+        mark_setup_complete()
         return 0
 
     console.print(
@@ -214,6 +217,7 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
             border_style="green",
         )
     )
+    mark_setup_complete()
     return 0
 
 
