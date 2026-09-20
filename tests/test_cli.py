@@ -381,16 +381,18 @@ def test_update_uninstall_print_dispatch(monkeypatch, kite_home, capsys) -> None
     assert parser.parse_args(["run", "--print", "hi"]).print_mode is True
 
     # update --check is read-only: version + mode, no uv calls.
+    from kite import __version__
+
     monkeypatch.setattr("shutil.which", lambda _name: None)
     assert main(["update", "--check"]) == 0
-    assert "0.9" in capsys.readouterr().err
+    assert __version__ in capsys.readouterr().err
 
     # update on a managed install runs `uv tool upgrade kite` (mocked, headless-safe).
     calls: list[list[str]] = []
 
     class _Proc:
         returncode = 0
-        stdout = "kite v0.9.9\n- kite\n"
+        stdout = f"kite v{__version__}\n- kite\n"
         stderr = ""
 
     monkeypatch.setattr("shutil.which", lambda name: f"C:\\bin\\{name}.exe")
