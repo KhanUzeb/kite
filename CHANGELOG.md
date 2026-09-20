@@ -25,6 +25,8 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - Bootstrap scripts (`download.sh` / `download.ps1`, aligned `install.*`):
   clearer private-repo 404 fallbacks, `--` / switch pass-through, Windows
   ExecutionPolicy one-liner, post-install version line on Windows bootstrap.
+- Setup auto-prompt runs only on a true fresh install (TTY); stops after
+  `~/.kite/onboarding.complete` or any linked provider key/BYOS session.
 
 ## [0.9.9] - 2026-09-15
 
