@@ -151,7 +151,7 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 | [architecture.md](architecture.md) | Layers, lifecycle, extension points |
 | [kite_commands.md](kite_commands.md) | CLI/REPL command reference |
 | [CONTEXT.md](CONTEXT.md) | Term definitions |
-| [docs/RELEASE-0.9.8.5.md](docs/RELEASE-0.9.8.5.md) | Current version release notes |
+| [docs/RELEASE-1.0.0.md](docs/RELEASE-1.0.0.md) | Current version release notes |
 
 ---
 

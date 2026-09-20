@@ -20,6 +20,8 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 ### Changed
 - Version stamps and docs aligned to **1.0.0** across pyproject, README,
   AGENTS.md, and install scripts.
+- README badges and design-doc links no longer reference PyPI (git/uv install
+  only); release notes pointers aim at `docs/RELEASE-1.0.0.md`.
 
 ## [0.9.9] - 2026-09-15
 
