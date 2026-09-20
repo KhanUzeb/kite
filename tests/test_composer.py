@@ -130,6 +130,27 @@ def test_queue_steer_order(tmp_path, monkeypatch) -> None:
     assert chat.state.queue_follow == 1
 
 
+def test_busy_enter_default_steer(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from kite.ui.complete import _prompt_once, busy_enter_queues_followup
+    from kite.ui.state import SessionUiState
+
+    monkeypatch.delenv("KITE_BUSY_ENTER", raising=False)
+    assert not busy_enter_queues_followup()
+    monkeypatch.setattr("prompt_toolkit.patch_stdout.patch_stdout", lambda raw=False: nullcontext())
+    session = MagicMock()
+    session.prompt.return_value = "redirect me"
+    slot = {"kind": "submit"}
+    result = _prompt_once(session, SessionUiState(busy=True), busy=True, action_slot=slot)
+    assert result.kind == "steer" and result.text == "redirect me"
+    monkeypatch.setenv("KITE_BUSY_ENTER", "queue")
+    assert busy_enter_queues_followup()
+    slot = {"kind": "submit"}
+    result = _prompt_once(session, SessionUiState(busy=True), busy=True, action_slot=slot)
+    assert result.kind == "text" and result.text == "redirect me"
+
+
 def test_classify_busy_line() -> None:
     from kite.ui.complete import classify_busy_line
 
@@ -503,6 +524,7 @@ def test_toolbar_busy_and_approval_states() -> None:
     busy_html = str(_toolbar_html(busy))
     activity_html = str(_activity_html(busy))
     assert "Esc/Ctrl+C stop" in busy_html
+    assert "Enter steer" in busy_html
     assert "steer 1" in busy_html
     assert "follow-up 1" in busy_html
     assert "next steer: fix the flaky test" in busy_html
