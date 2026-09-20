@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # kite-release-version: 1.0.0
 # Install Kite as a global CLI (default) or editable checkout (--dev).
+# Global install uses `uv tool install git+https://github.com/...` only (not PyPI).
 #
 # Compatible with: macOS (bash 3.2+), Ubuntu/Debian Linux, WSL, other Unix.
 # End-user (any directory):
-#   curl -fsSL .../install.sh | bash
-#   -> uv tool install from git + PATH; then `cd any/project && kite`
+#   curl -fsSL .../scripts/download.sh | bash
+#   -> uv tool install from GitHub + PATH; then `cd any/project && kite`
 #
 # Contributor (this repo):
 #   ./scripts/install.sh --dev
@@ -27,9 +28,10 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/install.sh [options]
 
-Default: install the kite CLI via `uv tool install` so opening `kite` turns
-its environment on automatically (you never manually activate a kite venv).
-In a project that has .venv, kite also auto-uses that for python/pip tools.
+Default: install the kite CLI via `uv tool install` from GitHub so opening
+`kite` turns its environment on automatically (you never manually activate a
+kite venv). In a project that has .venv, kite also auto-uses that for local
+python tools.
 
 Options:
   --global         Same as default (CLI on PATH)
@@ -46,8 +48,9 @@ Options:
   -h, --help       Show this help
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash
   curl -fsSL .../download.sh | bash -s -- --setup
+  curl -fsSL .../download.sh | bash -s -- -- --force
   ./scripts/install.sh --dev
   ./scripts/install.sh --global --force
 EOF

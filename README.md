@@ -41,10 +41,15 @@ Working in a terminal on a real repository means juggling plans, edits, tests, a
 ## Quick start
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv tool install --python 3.12 --force "git+https://github.com/KhanUzeb/kite.git"
+# macOS / Linux / WSL (public repo; private → git clone fallback in script help)
+curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash
 cd ~/projects/my-app && kite
 kite setup   # guided API key + model picker on first run
+```
+
+```powershell
+# Windows (ExecutionPolicy bypass if needed — see Setup)
+irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.ps1 | iex
 ```
 
 ## Example
@@ -99,33 +104,18 @@ kite run --mode plan "how should we add auth?"
 
 Install once per user. Puts `kite` on your PATH. Then open any folder and run it — no project clone, no `.venv` activate.
 
-**Recommended (works on a new machine; uses public uv installer + git):**
-
-```bash
-# macOS / Linux / WSL
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv tool install --python 3.12 --force "git+https://github.com/KhanUzeb/kite.git"
-uv tool update-shell
-```
-
-```powershell
-# Windows PowerShell
-irm https://astral.sh/uv/install.ps1 | iex
-uv tool install --python 3.12 --force "git+https://github.com/KhanUzeb/kite.git"
-uv tool update-shell
-```
-
-**Script one-liner** (requires the GitHub repo to be **public**, otherwise raw.githubusercontent.com returns 404):
+**Recommended — bootstrap scripts** (install `uv` if needed, then `uv tool install` from **GitHub only**, not PyPI):
 
 ```bash
 # macOS / Ubuntu / Linux / WSL
 curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash
+curl -fsSL .../download.sh | bash -s -- --setup    # run kite setup after install
+curl -fsSL .../download.sh | bash -s -- -- --force # reinstall global CLI
 ```
 
 ```powershell
 # Windows
 irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.ps1 | iex
-# or: irm …/scripts/install.ps1 | iex
 ```
 
 If ExecutionPolicy blocks PowerShell:
@@ -134,7 +124,17 @@ If ExecutionPolicy blocks PowerShell:
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.ps1 | iex"
 ```
 
+Requires the GitHub repo to be **public** for `raw.githubusercontent.com`. On 404 (private repo), the scripts print exact **git clone** or **uv tool install git+…** fallbacks (`KITE_REPO_SLUG`, `KITE_BRANCH`, `KITE_REPO_URL` override the default `KhanUzeb/kite`).
+
 Needs: `curl`/`irm` + `git` (macOS: `xcode-select --install`; Ubuntu: `sudo apt-get install -y curl git`).
+
+**Manual (uv + git only):**
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install --python 3.12 --force "git+https://github.com/KhanUzeb/kite.git"
+uv tool update-shell
+```
 
 Then from **any** directory:
 
