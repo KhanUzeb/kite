@@ -3,21 +3,22 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
-import pytest
-
+from kite.agent.hooks import HookBus
 from kite.sol_pi.action_fusion import THEN_RUN_SUCCEEDED, merge_then_run_output, run_mutation_then_run
 from kite.sol_pi.config import load_sol_pi_config
 from kite.sol_pi.economics import decide_compaction, estimate_remaining_requests
 from kite.sol_pi.evidence import (
-    ArchiveObject,
     REDUCER_RECEIPT_SCHEMA,
+    ArchiveObject,
     is_diagnostic_command,
     receipt_text,
     sha256_text,
     validate_receipt,
 )
+from kite.sol_pi.integration import attach_sol_pi
 from kite.sol_pi.observation_core import (
     FULL_SENDS,
     THRESHOLD_BYTES,
@@ -33,7 +34,24 @@ def test_config_defaults_when_missing(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     cfg = load_sol_pi_config(tmp_path)
     assert cfg.action_fusion is False
+    assert cfg.observation_pack is False
+    assert cfg.evidence_preserving_reducer is False
+    assert cfg.online_context_compact is False
     assert cfg.enabled is False
+
+
+@dataclass
+class _HarnessStub:
+    hooks: HookBus = field(default_factory=HookBus)
+    sol_pi: object | None = field(default=None, init=False)
+
+
+def test_attach_sol_pi_noop_without_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    harness = _HarnessStub()
+    assert attach_sol_pi(harness, str(tmp_path)) is None
+    assert harness.sol_pi is None
+    assert "sol_pi_session" not in harness.hooks.context
 
 
 def test_config_loads_project_file(tmp_path: Path, monkeypatch) -> None:
