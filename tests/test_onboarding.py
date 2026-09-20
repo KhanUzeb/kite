@@ -14,6 +14,8 @@ from kite.config.readiness import offer_setup_interactive
 
 def test_fresh_install_may_offer_setup_tty(kite_home, monkeypatch) -> None:
     monkeypatch.delenv("KITE_SKIP_SETUP", raising=False)
+    monkeypatch.setattr("kite.config.onboarding.any_provider_connection", lambda: False)
+    monkeypatch.setattr("kite.config.onboarding.onboarding_marker_exists", lambda: False)
     monkeypatch.setattr("kite.config.readiness.is_interactive_tty", lambda: True)
     console = MagicMock()
     console.input.return_value = "y"
@@ -57,6 +59,8 @@ def test_byos_linked_no_auto_prompt(kite_home, monkeypatch) -> None:
 
 def test_headless_never_offers_setup(kite_home, monkeypatch) -> None:
     monkeypatch.delenv("KITE_SKIP_SETUP", raising=False)
+    monkeypatch.setattr("kite.config.onboarding.any_provider_connection", lambda: False)
+    monkeypatch.setattr("kite.config.onboarding.onboarding_marker_exists", lambda: False)
     monkeypatch.setattr("kite.config.readiness.is_interactive_tty", lambda: False)
     assert should_auto_prompt_setup() is True
     console = MagicMock()
