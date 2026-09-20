@@ -141,6 +141,9 @@ def login_oauth(
     if result.exit_code != 0:
         return result.exit_code, result.message, None
 
+    from kite.config.onboarding import mark_setup_complete
+
+    mark_setup_complete()
     _oauth_model_cache.pop(key, None)
     msg = result.message
     if set_default:

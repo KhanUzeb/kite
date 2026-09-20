@@ -403,6 +403,9 @@ def write_api_key(env_var: str, value: str) -> Path:
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
     _secure_env_file(path)
     os.environ[env_var] = secret
+    from kite.config.onboarding import mark_setup_complete
+
+    mark_setup_complete()
     return path
 
 
