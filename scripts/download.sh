@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 0.9.9
+# kite-release-version: 1.0.0
 # Cross-platform Unix bootstrap (macOS + Ubuntu/Linux + WSL).
 #
 #   curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash

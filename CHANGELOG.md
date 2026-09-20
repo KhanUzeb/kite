@@ -4,6 +4,23 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-20
+
+### Added
+- MiniMax-style project bootstrap: `kite init`, REPL `/init`, init skill,
+  `examples/clamp`, `/context` and `/status` digests, memory-layer prompt,
+  `resolve_verification_command()` for discovery/status/AGENTS scaffold
+  (#96).
+- SoL-Pi optional harness efficiency layer (`src/kite/sol_pi/`): Action
+  Fusion (`then_run` on edit/write), ObservationPack (`obs_recall` +
+  projection), Evidence-Preserving Reducer receipts, Online Context Compact
+  at plan boundaries — all **disabled by default** via JSON config (#97).
+- `docs/RELEASE-1.0.0.md`, `src/kite/data/sol-pi.example.json`.
+
+### Changed
+- Version stamps and docs aligned to **1.0.0** across pyproject, README,
+  AGENTS.md, and install scripts.
+
 ## [0.9.9] - 2026-09-15
 
 ### Added
