@@ -7,7 +7,6 @@ from kite.config.readiness import (
     RECOMMENDED_PROVIDERS,
     assess_setup_status,
     config_path,
-    is_fresh_install,
     offer_setup_interactive,
 )
 from kite.providers.byos import is_oauth_provider
