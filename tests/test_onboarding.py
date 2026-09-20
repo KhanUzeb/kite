@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from kite.config.onboarding import (
     mark_setup_complete,
     onboarding_marker_path,
