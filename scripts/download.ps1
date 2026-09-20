@@ -12,12 +12,6 @@
 #   .\scripts\download.ps1 -Force
 #   .\scripts\download.ps1 -Setup
 
-param(
-    [switch]$Help,
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [object[]]$Remaining
-)
-
 $ErrorActionPreference = "Stop"
 
 $RepoSlug = if ($env:KITE_REPO_SLUG) { $env:KITE_REPO_SLUG } else { "KhanUzeb/kite" }
@@ -79,7 +73,7 @@ function Write-PrivateRepoFallback {
     Write-Host "Override: `$env:KITE_REPO_SLUG, `$env:KITE_BRANCH, `$env:KITE_REPO_URL"
 }
 
-if ($Help) {
+if ($args -contains "-Help" -or $args -contains "-h" -or $args -contains "--help") {
     Show-DownloadUsage
     exit 0
 }
@@ -110,8 +104,8 @@ try {
         Copy-Item (Join-Path $repoDir "scripts\install.ps1") $installPs1
     }
 
-    & $installPs1 @Remaining
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # Forward switches to install.ps1 (local file only; irm|iex has no args).
+    & $installPs1 @args
 
     $kiteVersion = ""
     try { $kiteVersion = (kite --version 2>$null).Trim() } catch { }
