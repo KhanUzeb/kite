@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from kite.agent.hooks import HookBus
 from kite.sol_pi import action_fusion, evidence, observation_core, plan
@@ -41,10 +42,7 @@ def runtime_root_for_session(session_id: str, cwd: str) -> Path:
 
 def attach_sol_pi(harness: Any, cwd: str = ".") -> SolPiSession | None:
     """Load config, register hooks, and stash session state on the harness."""
-    try:
-        config = load_sol_pi_config(cwd)
-    except ValueError as exc:
-        raise
+    config = load_sol_pi_config(cwd)
     if not config.enabled:
         harness.sol_pi = None
         return None
