@@ -40,7 +40,6 @@ from kite.ui.style import SYMBOL_FAIL, SYMBOL_PROMPT, make_console
 from kite.ui.tables import kite_table
 
 
-
 def _resume_exe() -> str:
     """Executable name for copy-pasteable resume hints — prefers installed `kite`, else argv[0] basename."""
     import shutil

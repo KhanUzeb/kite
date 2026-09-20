@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from kite.application.verification import discover_workspace_profile
+from kite.config.runtime import load_runtime_config
 from kite.context.ci_hints import canonical_test_command
 from kite.context.discovery import gather_project_context, invalidate_project_context_cache
 from kite.context.project_init import (
@@ -15,7 +16,6 @@ from kite.context.project_init import (
     scaffold_project_docs,
 )
 from kite.context.verify_hint import resolve_verification_command
-from kite.config.runtime import load_runtime_config
 from kite.prompts import assemble_system_prompt, load_prompt_template
 
 
