@@ -3,7 +3,9 @@
 # Cross-platform Unix bootstrap (macOS + Ubuntu/Linux + WSL).
 #
 #   curl -fsSL https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.sh | bash
+#   curl -fsSL .../download.sh | bash -s -- --setup
 #
+# Installs via `uv tool install git+https://github.com/...` only (not PyPI).
 # Prefers raw download of install.sh; if that 404s (private repo / CDN), falls back
 # to a shallow git clone. Does not leave a clone in your project directory.
 set -euo pipefail
@@ -13,26 +15,59 @@ BRANCH="${KITE_BRANCH:-main}"
 REPO_URL="${KITE_REPO_URL:-https://github.com/${REPO_SLUG}.git}"
 RAW_BASE="${KITE_RAW_BASE:-https://raw.githubusercontent.com/${REPO_SLUG}/${BRANCH}}"
 
+git_tool_spec() {
+  local url="${REPO_URL%.git}"
+  echo "git+${url}.git@${BRANCH}"
+}
+
+print_private_repo_fallback() {
+  cat <<EOF >&2
+
+Raw download failed (HTTP 404 or private repo — raw.githubusercontent.com only works for public repos).
+
+Option A — shallow clone, then install (uses your git credentials):
+  git clone --depth 1 --branch ${BRANCH} ${REPO_URL} /tmp/kite-get
+  bash /tmp/kite-get/scripts/install.sh
+  rm -rf /tmp/kite-get
+
+Option B — uv + git only (no bootstrap scripts):
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  uv tool install --python 3.12 --force "$(git_tool_spec)"
+  uv tool update-shell
+
+Override repo/branch for any option:
+  export KITE_REPO_SLUG=your-org/kite
+  export KITE_BRANCH=main
+  export KITE_REPO_URL=https://github.com/your-org/kite.git
+EOF
+}
+
 usage() {
   cat <<EOF
 Usage: download.sh [install.sh options]
 
-Unix bootstrap for macOS and Linux. Fetches install.sh and runs a global CLI install.
+Unix bootstrap for macOS and Linux. Fetches install.sh and runs a global CLI install
+via \`uv tool install\` from GitHub (not PyPI).
 
 One-liner (repo must be public for raw.githubusercontent.com):
   curl -fsSL ${RAW_BASE}/scripts/download.sh | bash
   curl -fsSL ${RAW_BASE}/scripts/download.sh | bash -s -- --setup
+  curl -fsSL ${RAW_BASE}/scripts/download.sh | bash -s -- -- --force
 
-If the repo is private, use git (your credentials) instead:
-  git clone --depth 1 ${REPO_URL} /tmp/kite-get && bash /tmp/kite-get/scripts/install.sh && rm -rf /tmp/kite-get
+Pass-through to install.sh (local checkout):
+  ./scripts/download.sh -- --force --setup
 
-Or skip scripts entirely (needs uv + git):
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  uv tool install --force "git+${REPO_URL%@*}@${BRANCH}"
-  uv tool update-shell
+Environment overrides:
+  KITE_REPO_SLUG   (default: ${REPO_SLUG})
+  KITE_BRANCH      (default: ${BRANCH})
+  KITE_REPO_URL    (default: ${REPO_URL})
+  KITE_RAW_BASE    (default: ${RAW_BASE})
+
+If the repo is private, see fallback commands printed on raw 404 (git clone or uv only).
 
 Windows (PowerShell):
-  irm ${RAW_BASE}/scripts/install.ps1 | iex
+  irm ${RAW_BASE}/scripts/download.ps1 | iex
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm ${RAW_BASE}/scripts/download.ps1 | iex"
 EOF
 }
 
@@ -41,12 +76,18 @@ if [[ "${1:-}" == "-h" ]] || [[ "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
+# Allow `download.sh -- --force` (strip optional `--` before install.sh).
+if [[ "${1:-}" == "--" ]]; then
+  shift
+fi
+
 uname_s="$(uname -s 2>/dev/null || echo unknown)"
 case "${uname_s}" in
   Darwin*|Linux*) ;;
   MINGW*|MSYS*|CYGWIN*)
     echo "On Windows use PowerShell:" >&2
-    echo "  irm ${RAW_BASE}/scripts/install.ps1 | iex" >&2
+    echo "  irm ${RAW_BASE}/scripts/download.ps1 | iex" >&2
+    echo "  powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm ${RAW_BASE}/scripts/download.ps1 | iex\"" >&2
     exit 1
     ;;
   *)
@@ -84,8 +125,13 @@ echo "Fetching install.sh (${BRANCH})..."
 if curl -fsSL "${RAW_URL}" -o "${INSTALL_SH}"; then
   :
 else
-  echo "Raw download failed (HTTP error / private repo). Falling back to git clone..." >&2
-  git clone --depth 1 --branch "${BRANCH}" "${REPO_URL}" "${WORKDIR}/repo"
+  echo "Raw download failed for ${RAW_URL}" >&2
+  print_private_repo_fallback
+  echo "Attempting git clone fallback..." >&2
+  if ! git clone --depth 1 --branch "${BRANCH}" "${REPO_URL}" "${WORKDIR}/repo"; then
+    echo "git clone failed — sign in to GitHub or check KITE_REPO_URL / KITE_BRANCH." >&2
+    exit 1
+  fi
   cp "${WORKDIR}/repo/scripts/install.sh" "${INSTALL_SH}"
 fi
 
