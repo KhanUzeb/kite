@@ -305,6 +305,12 @@ def discover_workspace_profile(workspace_root: str | Path) -> WorkspaceProfile:
     """Discover packages and verification commands for any workspace layout."""
     workspace = Path(workspace_root).expanduser().resolve()
     workspace_commands, user_packages = _load_user_profile(workspace)
+    if not workspace_commands:
+        from kite.context.verify_hint import resolve_verification_command
+
+        cmd, _src = resolve_verification_command(workspace)
+        if cmd:
+            workspace_commands = (cmd,)
     packages = tuple(_scan_packages(workspace, user_packages))
     return WorkspaceProfile(
         workspace_root=str(workspace),

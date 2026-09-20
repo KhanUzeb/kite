@@ -47,17 +47,30 @@ class ProjectContext:
     git_status: str
     tree_snippet: str
     repo_map: str = ""
+    verification_command: str = ""
+    verification_source: str = ""  # ci | manifest | empty
 
     def render_for_prompt(self, *, max_chars: int = 12_000) -> str:
+        from kite.context.project_init import agent_nudges_markdown
+
         parts: list[str] = [
             f"## Workspace\n- cwd: {self.cwd}\n- project_root: {self.root}",
         ]
+        nudges = agent_nudges_markdown(self.root)
+        if nudges:
+            parts.append(nudges)
         if self.repo_map:
             parts.append(f"## Repo map (symbols)\n```\n{self.repo_map}\n```")
         if self.tree_snippet:
             parts.append(f"## Directory sketch\n```\n{self.tree_snippet}\n```")
         if self.git_status:
             parts.append(f"## Git status\n```\n{self.git_status}\n```")
+        if self.verification_command:
+            src = self.verification_source or "detected"
+            parts.append(
+                f"## Canonical verification ({src})\n"
+                f"Prefer this command before claiming done:\n`{self.verification_command}`"
+            )
         for cf in self.files:
             parts.append(f"## Project instructions ({cf.path})\n{cf.content.strip()}")
         text = "\n\n".join(parts)
@@ -178,6 +191,10 @@ def tree_snippet(root: Path, *, max_entries: int = 80) -> str:
 _CTX_CACHE: TtlCache[tuple[str, bool, bool, bool, int], ProjectContext] = TtlCache(120.0, maxsize=8)
 
 
+def invalidate_project_context_cache() -> None:
+    _CTX_CACHE.clear()
+
+
 def gather_project_context(
     cwd: str | Path,
     *,
@@ -190,10 +207,13 @@ def gather_project_context(
     key = (str(cwd_path), include_git, include_tree, include_repo_map, tree_max_entries)
 
     def build() -> ProjectContext:
+        from kite.context.verify_hint import resolve_verification_command
+
         root = find_project_root(cwd_path)
         repo_map = ""
         if include_repo_map and build_repo_map is not None:
             repo_map = build_repo_map(root, max_chars=4_000)
+        verify_cmd, verify_src = resolve_verification_command(root)
         return ProjectContext(
             root=root,
             cwd=cwd_path,
@@ -201,6 +221,8 @@ def gather_project_context(
             git_status=git_status_snippet(cwd_path) if include_git else "",
             tree_snippet=tree_snippet(root, max_entries=tree_max_entries) if include_tree else "",
             repo_map=repo_map,
+            verification_command=verify_cmd,
+            verification_source=verify_src,
         )
 
     return _CTX_CACHE.get_or_set(key, build)

@@ -192,9 +192,11 @@ def test_continuity_budget_and_memory_opt_in(workspace, kite_home) -> None:
     assert decide_budget_continue(exit_status="LimitsExceeded", continues_used=2, max_continues=2, todos=[{"status": "pending", "content": "x"}], tool_call_count=2, inbox_queued=False) == "stop"
     store.remember("prefer ruff", scope="project")
     cfg = AgentRuntimeConfig(memory=MemoryConfig(inject="opt_in"))
-    assert "# Memory" not in assemble_system_prompt(config=cfg, memory="", continuity="")
+    empty_system = assemble_system_prompt(config=cfg, memory="", continuity="")
+    assert "## Memory layers" in empty_system
+    assert "# Memory\n" not in empty_system
     system = assemble_system_prompt(config=cfg, memory=store.render_for_prompt(), continuity="")
-    assert "# Memory" in system and "prefer ruff" in system
+    assert "# Memory\n" in system and "prefer ruff" in system
     assert "# Memory" not in format_continuity_section("## Continuity\n- Mission: ship fix")
     save_continuity(store=store, brief=brief, session_id="s1", cwd=str(workspace))
     steps, cost = resolve_interactive_limits(interactive=True, user_step=40, user_cost=5.0, runtime_step=40, runtime_cost=5.0)
@@ -225,7 +227,8 @@ def test_user_context_profiles_and_working_style(workspace, kite_home) -> None:
     assert "small diffs" in rendered
     cfg = AgentRuntimeConfig(memory=MemoryConfig(inject="opt_in"))
     system = assemble_system_prompt(config=cfg, memory="", working_style=render_working_context(store), continuity="")
-    assert "Working rhythm" in system and "# Memory" not in system
+    assert "Working rhythm" in system and "## Memory layers" in system
+    assert "# Memory\n" not in system
     ids = {p.id for p in list_profiles()}
     assert "scout" in ids and "coder" in ids
     composed, role, label = resolve_subagent_task(prompt="find auth module", profile="scout", role="", label="")
