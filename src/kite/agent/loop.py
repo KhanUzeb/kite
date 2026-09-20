@@ -545,7 +545,10 @@ class DefaultAgent:
             messages = self.hooks.call("before_compact", messages)
         compactor = self._ensure_compactor()
         compactor.extra_facts = self._compaction_extra_facts()
-        result = compactor.maybe_compact(messages)
+        force = False
+        if self.hooks is not None:
+            force = bool(self.hooks.context.pop("sol_pi_force_compact", False))
+        result = compactor.maybe_compact(messages, force=force)
         self.last_usage_estimate = result.usage
         if result.compacted:
             self.messages = result.messages
@@ -553,6 +556,17 @@ class DefaultAgent:
                 self.session.replace_messages(self.messages)
             if self.hooks is not None:
                 self.hooks.fire("after_compact", before=result.before, after=result.after)
+            try:
+                from kite.sol_pi.integration import note_compaction_completed
+
+                sol_pi = self.hooks.context.get("sol_pi_session") if self.hooks is not None else None
+                note_compaction_completed(
+                    sol_pi,
+                    before_tokens=result.usage.total_tokens,
+                    after_tokens=result.usage.total_tokens,
+                )
+            except Exception:
+                pass
             try:
                 from kite.memory.continuity import record_continuity_after_compact
                 from kite.memory.store import MemoryStore
