@@ -8,9 +8,6 @@
   <a href="https://github.com/KhanUzeb/kite/actions">
     <img src="https://img.shields.io/github/actions/workflow/status/KhanUzeb/kite/tests.yml" alt="CI status">
   </a>
-  <a href="https://pypi.org/project/kite/">
-    <img src="https://img.shields.io/pypi/v/kite" alt="PyPI version">
-  </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License">
   </a>
@@ -326,7 +323,7 @@ Canonical markdown:
 - [`architecture.md`](architecture.md): system overview — layers, lifecycle, memory, extension points
 - `CONTEXT.md`: domain glossary (terms agents and humans share)
 - `AGENTS.md`: how to hack on this repo (map, conventions, tests)
-- [`docs/RELEASE-0.9.8.md`](docs/RELEASE-0.9.8.md): latest release notes
+- [`docs/RELEASE-1.0.0.md`](docs/RELEASE-1.0.0.md): latest release notes
 - [`CHANGELOG.md`](CHANGELOG.md): version history
 
 ```
