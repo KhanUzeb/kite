@@ -1,8 +1,9 @@
 # kite-release-version: 1.0.0
 # Install Kite as a global CLI (default via irm|iex) or editable checkout (-Dev).
+# Global install uses `uv tool install git+https://github.com/...` only (not PyPI).
 #
-# Windows / PowerShell. If ExecutionPolicy blocks you, use:
-#   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex"
+# Windows / PowerShell. Prefer download.ps1; if ExecutionPolicy blocks you:
+#   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.ps1 | iex"
 # Or once per user:
 #   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 #
@@ -61,8 +62,9 @@ Options:
   -Setup           Run kite setup after install (interactive console only)
 
 Examples:
-  irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | iex
-  .\scripts\install.ps1 -Force
+  irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.ps1 | iex
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.ps1 | iex"
+  .\scripts\download.ps1 -Force
   .\scripts\install.ps1 -Dev
 '@
 }
