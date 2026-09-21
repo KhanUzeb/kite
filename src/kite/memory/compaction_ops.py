@@ -101,20 +101,12 @@ def run_compaction(
         )
 
     if not will_compact:
-        if working is not messages:
-            return CompactionRunResult(
-                messages=working,
-                compacted=False,
-                before=len(messages),
-                after=len(working),
-                usage=usage,
-                checkpoint=checkpoint,
-            )
+        changed = working != messages
         return CompactionRunResult(
-            messages=messages,
-            compacted=False,
-            before=before,
-            after=before,
+            messages=working if changed else messages,
+            compacted=changed,
+            before=len(messages),
+            after=len(working),
             usage=usage,
             checkpoint=checkpoint,
         )
@@ -131,7 +123,7 @@ def run_compaction(
         force=force,
         extra_facts=extra_facts,
     )
-    did = compacted != working
+    did = compacted != messages
     if did or working is not messages:
         usage = estimate_usage(system=system, messages=compacted, tool_schemas=tool_schemas, window=window)
     return CompactionRunResult(

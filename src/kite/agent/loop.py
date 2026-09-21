@@ -1002,12 +1002,27 @@ class DefaultAgent:
                 else:
                     self._execute_sequential_actions(batch, outputs)
         except Submitted:
+            if outputs:
+                self.add_messages(*self.model.format_observation_messages(message, outputs))
             self._answer_unfinished_calls(message, outputs)
             raise
+        self._pad_missing_outputs(message, outputs)
         obs = self.add_messages(*self.model.format_observation_messages(message, outputs))
         if self._interrupt:
             raise _user_interrupt()
         return obs
+
+    def _pad_missing_outputs(self, message: dict, outputs: list[dict]) -> None:
+        """Give every tool call in this turn an observation.
+
+        Interrupt and budget stops break out of a batch after recording only the
+        calls that started. Providers reject the next request when an assistant
+        tool_call has no matching tool message.
+        """
+        actions = message.get("extra", {}).get("actions", [])
+        reason = "interrupted" if self._interrupt else "not executed"
+        while len(outputs) < len(actions):
+            outputs.append({"ok": False, "error": reason, "output": reason, "blocked": True})
 
     def _answer_unfinished_calls(self, message: dict, outputs: list[dict]) -> None:
         """Record results for tool calls left dangling when the turn ended.

@@ -332,3 +332,18 @@ def test_model_tool_support_is_metadata_driven() -> None:
     assert remote.supports_tools() is True
     assert model_supports_parallel_tool_calls(raw={"supported_parameters": ["parallel_tool_calls", "tools"]}) is True
     assert model_supports_parallel_tool_calls(raw={"capabilities": {"tools": False}}) is False
+
+
+def test_default_model_does_not_cross_providers(kite_home) -> None:
+    from kite.config.user import UserConfig
+    from kite.providers.resolve import resolve_model
+
+    cfg = UserConfig.load()
+    cfg.default_provider = "groq"
+    cfg.default_model = "llama-3.3-70b-versatile"
+    cfg.provider_defaults = {}
+    groq = resolve_model(provider="groq", config=cfg)
+    openai = resolve_model(provider="openai", config=cfg)
+    assert groq.model == "llama-3.3-70b-versatile"
+    assert openai.provider == "openai"
+    assert openai.model != "llama-3.3-70b-versatile"

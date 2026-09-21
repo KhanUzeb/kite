@@ -115,11 +115,14 @@ def resolve_model(
     spec = cat.get(requested)
     provider_name = spec.name
 
+    saved_default = ""
+    if cfg.default_model and (cfg.default_provider or "") in {provider_name, requested}:
+        saved_default = cfg.default_model
     model_name = (
         model
         or cfg.provider_defaults.get(provider_name)
         or cfg.provider_defaults.get(requested)
-        or cfg.default_model
+        or saved_default
         or spec.default_model
         or ""
     )

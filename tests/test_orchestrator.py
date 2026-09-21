@@ -225,6 +225,21 @@ def test_gate_rubric_empty_partial_done() -> None:
     assert (ok, quality, summary) == (True, "done", "all good")
 
 
+def test_submitted_out_of_scope_triggers_revise() -> None:
+    calls: list[str] = []
+
+    def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
+        calls.append(prompt)
+        if len(calls) == 1:
+            return {"exit_status": "Submitted", "submission": "done", "files_touched": ["etc/passwd"]}
+        return {"exit_status": "Submitted", "submission": "fixed", "files_touched": ["src/kite/a.py"]}
+
+    orch = SubagentOrchestrator(runner=runner, timeout_seconds=0)
+    out = orch.run_one("edit the module", label="w", scope=["src/kite"])
+    assert len(calls) == 2 and "## Revise" in calls[1]
+    assert out["ok"] is True and out["quality"] == "done"
+
+
 def test_gate_result_scope_block() -> None:
     from kite.agent.orchestrator import SubagentTask
 
