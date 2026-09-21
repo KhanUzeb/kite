@@ -145,7 +145,13 @@ class SessionStats:
 
 
 def _stats_sidecar(session_id: str) -> Path:
-    return sessions_dir() / f"{session_id}.stats.json"
+    from kite.memory.secure_io import storage_id
+
+    root = sessions_dir().resolve()
+    path = (root / f"{storage_id(session_id, label='session id')}.stats.json").resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("invalid session id")
+    return path
 
 
 def _stats_from_dict(data: dict[str, Any], *, session_id: str) -> SessionStats:
@@ -237,7 +243,13 @@ def _merge_sidecar(stats: SessionStats, sidecar: SessionStats) -> None:
 
 
 def _trajectory_path(session_id: str) -> Path:
-    return kite_home() / "trajectories" / f"{session_id}.json"
+    from kite.memory.secure_io import storage_id
+
+    root = (kite_home() / "trajectories").resolve()
+    path = (root / f"{storage_id(session_id, label='session id')}.json").resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("invalid session id")
+    return path
 
 
 def _merge_trajectory(stats: SessionStats) -> None:

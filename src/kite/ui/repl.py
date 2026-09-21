@@ -3204,7 +3204,7 @@ class ChatSession:
         except Exception:
             pass
         self.state.set_todos(self.todos.read())
-        if self._session_id and self.todos.read():
+        if self._session_id:
             try:
                 from kite.memory.session import persist_session_todos
 

@@ -135,6 +135,36 @@ SENSITIVE_NAMES = frozenset(
     }
 )
 
+_SENSITIVE_ENV_FILE = re.compile(
+    r"(?i)(?:^|[\\/'\"\s=])(?:\.env(?:\.[A-Za-z0-9_-]+)?|[A-Za-z0-9_.-]+\.env)\b"
+)
+_ENV_FILE_READERS = re.compile(
+    r"(?i)\b(?:cat|type|gc|head|tail|less|more|strings|Get-Content|sed|awk|rg|grep|source)\b"
+)
+_DOT_SOURCE_ENV = re.compile(
+    r"(?i)(?:^|[;&|]\s*)\.\s+\S*(?:\.env(?:\.[A-Za-z0-9_-]+)?|[A-Za-z0-9_.-]+\.env)\b"
+)
+_SCRIPT_ENV_OPEN = re.compile(r"(?i)\b(?:python3?|perl|ruby|node|php)\b")
+
+
+def is_sensitive_basename(name: str) -> bool:
+    """Credential-like filenames: denylist plus dotenv variants (`.env`, `.env.*`, `*.env`)."""
+    low = (name or "").lower()
+    if not low:
+        return False
+    if low in {item.lower() for item in SENSITIVE_NAMES}:
+        return True
+    return low == ".env" or low.startswith(".env.") or low.endswith(".env")
+
+
+def command_reads_sensitive_env(command: str) -> bool:
+    """True when a shell command reads or sources a dotenv-style file."""
+    if not command or not _SENSITIVE_ENV_FILE.search(command):
+        return False
+    if _DOT_SOURCE_ENV.search(command) or _ENV_FILE_READERS.search(command):
+        return True
+    return bool(_SCRIPT_ENV_OPEN.search(command))
+
 _GIT_WRITE_BLOCK = frozenset({"hooks", "config", "HEAD", "index"})
 
 
@@ -277,7 +307,7 @@ def is_protected(path: Path) -> bool:
     if is_os_interface_path(resolved):
         return True
     name = resolved.name
-    if name in SENSITIVE_NAMES:
+    if is_sensitive_basename(name):
         return True
     parts = resolved.parts
     if ".git" in parts:
@@ -573,6 +603,8 @@ def is_inspection_bash(command: str) -> bool:
     """True when bash only explores (read-only). Allowed in plan mode."""
     cmd = (command or "").strip()
     if not cmd:
+        return False
+    if command_reads_sensitive_env(cmd):
         return False
     if check_dangerous(cmd):
         return False

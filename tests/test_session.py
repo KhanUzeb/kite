@@ -161,3 +161,43 @@ def test_resolve_session_path_prefix_is_literal(kite_home) -> None:
         resolve_session_path("")
     with pytest.raises(FileNotFoundError):
         resolve_session_path("*")
+    with pytest.raises(ValueError):
+        resolve_session_path("../../tmp/escape")
+
+
+def test_load_session_skips_corrupt_tail_and_cleared_todos(kite_home) -> None:
+    from kite.memory.session import load_session_todos, persist_session_todos
+
+    session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
+    session.append({"role": "user", "content": "keep me"})
+    assert session.path is not None
+    with session.path.open("a", encoding="utf-8") as handle:
+        handle.write("{not-json\n")
+    loaded = load_session(session.id)
+    assert loaded.messages[-1]["content"] == "keep me"
+    persist_session_todos(session.id, [{"id": "1", "content": "ship", "status": "pending"}])
+    persist_session_todos(session.id, [])
+    assert load_session_todos(session.id) == []
+
+
+def test_checkpoint_redacts_and_confines_session_id(kite_home) -> None:
+    import stat
+
+    from kite.config.user import UserConfig
+    from kite.memory.context_checkpoint import save_checkpoint
+
+    cfg = UserConfig.load()
+    cfg.session_persistence = "redacted"
+    cfg.save()
+    cp = save_checkpoint(
+        session_id="sess-1",
+        messages=[{"role": "user", "content": "Bearer SECRETTOKEN"}],
+        cwd="/tmp",
+    )
+    text = (kite_home / "checkpoints" / "sess-1" / f"{cp.id}.json").read_text(encoding="utf-8")
+    assert "SECRETTOKEN" not in text
+    if __import__("sys").platform != "win32":
+        mode = (kite_home / "checkpoints" / "sess-1" / f"{cp.id}.json").stat().st_mode
+        assert mode & 0o777 == stat.S_IRUSR | stat.S_IWUSR
+    with pytest.raises(ValueError):
+        save_checkpoint(session_id="../../tmp/escape", messages=[], cwd="/tmp")

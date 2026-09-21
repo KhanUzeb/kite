@@ -235,6 +235,33 @@ def _from_path(src: Path, dest: Path) -> list[str]:
     return _copy_skill_trees(src, dest, fallback=src.name)
 
 
+def _safe_extract_tar(tar: tarfile.TarFile, dest: Path) -> None:
+    """Extract a skill tarball without writing outside *dest*.
+
+    Python 3.12+ accepts ``filter='data'``. 3.11 raises TypeError, so members
+    are checked by hand before the unrestricted extract.
+    """
+    root = dest.resolve()
+    try:
+        tar.extractall(dest, filter="data")
+        return
+    except TypeError:
+        pass
+    except Exception as exc:
+        if type(exc).__module__ == "tarfile":
+            raise RuntimeError(f"skill archive path escapes unpack dir: {exc}") from exc
+        raise
+    for member in tar.getmembers():
+        target = (dest / member.name).resolve()
+        if not target.is_relative_to(root):
+            raise RuntimeError(f"skill archive path escapes unpack dir: {member.name}")
+        if member.issym() or member.islnk():
+            link = Path(member.linkname)
+            if link.is_absolute() or ".." in link.parts:
+                raise RuntimeError(f"skill archive link escapes unpack dir: {member.name}")
+    tar.extractall(dest)
+
+
 def _from_npm(ref: str, dest: Path) -> list[str]:
     npm = _which("npm")
     if not npm:
@@ -251,10 +278,7 @@ def _from_npm(ref: str, dest: Path) -> list[str]:
         unpack = tmp_path / "unpacked"
         unpack.mkdir()
         with tarfile.open(tgz) as tar:
-            try:
-                tar.extractall(unpack, filter="data")
-            except TypeError:
-                tar.extractall(unpack)
+            _safe_extract_tar(tar, unpack)
         return _copy_skill_trees(unpack, dest, fallback=ref)
 
 

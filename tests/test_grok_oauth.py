@@ -173,3 +173,34 @@ def test_resolve_model_grok_kwargs_include_oauth_extras(
     assert kwargs["use_xai_oauth"] is True
     assert isinstance(kwargs["extra_headers"], dict)
     assert kwargs["extra_headers"]["x-grok-client-version"] != ""
+
+
+def test_logout_clears_materialized_xai_oauth(kite_home: Path, monkeypatch) -> None:
+    import os
+
+    from kite.providers.byos import clear_materialized_oauth, logout_oauth
+    from kite.providers.catalog import load_catalog
+
+    spec = load_catalog().get("grok")
+    folder = kite_home / "oauth" / "xai"
+    folder.mkdir(parents=True)
+    (folder / "auth.json").write_text('{"access_token":"secret-token"}', encoding="utf-8")
+    monkeypatch.setenv("XAI_OAUTH_TOKEN_DIR", str(folder))
+    monkeypatch.setenv("XAI_OAUTH_API_BASE", "https://cli-chat-proxy.grok.com/v1")
+    assert clear_materialized_oauth(spec) is True
+    assert not folder.exists()
+    assert "XAI_OAUTH_TOKEN_DIR" not in os.environ
+    assert "XAI_OAUTH_API_BASE" not in os.environ
+
+    folder.mkdir(parents=True)
+    (folder / "auth.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("XAI_OAUTH_TOKEN_DIR", str(folder))
+
+    class _Auth:
+        def logout(self) -> bool:
+            return False
+
+    monkeypatch.setattr("kite.providers.byos._auth", lambda _spec: _Auth())
+    assert logout_oauth(spec) is True
+    assert not (folder / "auth.json").exists()
+    assert "XAI_OAUTH_TOKEN_DIR" not in os.environ

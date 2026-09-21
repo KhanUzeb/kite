@@ -164,11 +164,45 @@ def login_oauth(
     return 0, msg, spec.name
 
 
+_MATERIALIZED_OAUTH_DIRS = {
+    "xai": "xai",
+    "grok": "xai",
+    "chatgpt": "chatgpt",
+    "codex": "chatgpt",
+    "openai": "chatgpt",
+}
+_MATERIALIZED_OAUTH_ENV = {
+    "xai": ("XAI_OAUTH_TOKEN_DIR", "XAI_OAUTH_API_BASE"),
+    "chatgpt": ("CHATGPT_TOKEN_DIR",),
+}
+
+
+def clear_materialized_oauth(spec: ProviderSpec) -> bool:
+    """Drop Kite's flattened OAuth copy and the env vars that point at it."""
+    key = resolve_login_provider(spec.oauth_provider or spec.name)
+    sub = _MATERIALIZED_OAUTH_DIRS.get(key)
+    removed = False
+    if sub:
+        from kite.config.user import kite_home
+
+        folder = kite_home() / "oauth" / sub
+        if folder.exists():
+            import shutil
+
+            shutil.rmtree(folder, ignore_errors=True)
+            removed = not folder.exists()
+        for env_key in _MATERIALIZED_OAUTH_ENV.get(sub, ()):
+            if os.environ.pop(env_key, None) is not None:
+                removed = True
+    return removed
+
+
 def logout_oauth(spec: ProviderSpec) -> bool:
     auth = _auth(spec)
     if auth is None:
         return False
     removed = auth.logout()
+    removed = clear_materialized_oauth(spec) or removed
     _oauth_model_cache.pop(_provider_key(spec), None)
     return removed
 

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kite.skills.install import _copy_skill_trees, parse_install_spec
+import io
+import tarfile
+
+import pytest
+
+from kite.plugins.loader import write_plugin_stub
+from kite.skills.install import _copy_skill_trees, _safe_extract_tar, parse_install_spec
 from kite.skills.loader import classify_skill_dir, invalidate_skills, load_skills
 
 
@@ -23,6 +29,25 @@ def test_parse_install_specs_and_copy(tmp_path: Path) -> None:
     dest = tmp_path / "dest"
     dest.mkdir()
     assert _copy_skill_trees(packed, dest, fallback="pkg") == ["cool-skill"]
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        info = tarfile.TarInfo(name="../escape.txt")
+        payload = b"pwned"
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+    buf.seek(0)
+    unpack = tmp_path / "unpack"
+    unpack.mkdir()
+    with tarfile.open(fileobj=buf, mode="r") as tar:
+        with pytest.raises(RuntimeError, match="escapes"):
+            _safe_extract_tar(tar, unpack)
+    assert not (tmp_path / "escape.txt").exists()
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    stub = write_plugin_stub(plugins, "my-plugin")
+    assert stub == plugins / "my-plugin" and (stub / "plugin.toml").is_file()
+    with pytest.raises(ValueError):
+        write_plugin_stub(plugins, "../../my-plugin")
 
 
 def test_classify_and_load_user_skills(kite_home: Path, workspace: Path, tmp_path: Path, monkeypatch) -> None:
