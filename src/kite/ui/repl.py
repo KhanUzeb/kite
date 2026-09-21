@@ -39,6 +39,8 @@ from kite.ui.status import render_status
 from kite.ui.style import SYMBOL_FAIL, SYMBOL_PROMPT, make_console
 from kite.ui.tables import kite_table
 
+_GENERIC_LAUNCHERS = ("__main__", "pytest", "python", "uv", "_pytest", "-c")
+
 
 def _resume_exe() -> str:
     """Executable name for copy-pasteable resume hints — prefers installed `kite`, else argv[0] basename."""
@@ -55,7 +57,14 @@ def _resume_exe() -> str:
         raw = (sys.argv[0] or "").strip() if sys.argv else ""
         if raw:
             name = Path(raw).name.strip()
-            if name and len(name) <= 64 and all(c.isalnum() or c in "._-" for c in name):
+            low = name.lower()
+            if (
+                name
+                and len(name) <= 64
+                and all(c.isalnum() or c in "._-" for c in name)
+                and low not in {"__main__.py", "__main__", "-c"}
+                and not low.startswith(_GENERIC_LAUNCHERS)
+            ):
                 return name
     except Exception:
         pass

@@ -38,6 +38,27 @@ def test_print_resume_hint_contains_session_id(tmp_path, kite_home, monkeypatch)
     assert f"kite resume {created.id}" in out
 
 
+def test_resume_exe_ignores_generic_launchers(monkeypatch) -> None:
+    import sys
+
+    from kite.ui import repl as repl_mod
+
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    for argv0 in (
+        "/usr/lib/python3.12/site-packages/pytest/__main__.py",
+        "/usr/local/bin/pytest",
+        "/usr/bin/python3",
+        "",
+    ):
+        monkeypatch.setattr(sys, "argv", [argv0])
+        assert repl_mod._resume_exe() == "kite", argv0
+    monkeypatch.setattr(sys, "argv", ["/usr/local/bin/kite-dev"])
+    assert repl_mod._resume_exe() == "kite-dev"
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/kite" if name == "kite" else None)
+    monkeypatch.setattr(sys, "argv", ["whatever"])
+    assert repl_mod._resume_exe() == "kite"
+
+
 def test_print_resume_hint_absent_without_session(tmp_path, kite_home, monkeypatch) -> None:
     session = _quiet_session(tmp_path, monkeypatch)
     assert session._session_id is None
