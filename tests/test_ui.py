@@ -120,7 +120,8 @@ def _render_card(
     from kite.ui.render import render_startup_card
 
     buf = StringIO()
-    Console(file=buf, width=width, theme=KITE_THEME).print(
+    # Rich ≥15 only honors an explicit width when height is set too.
+    Console(file=buf, width=width, height=40, theme=KITE_THEME).print(
         render_startup_card(
             version="0.9.8.5",
             provider=provider,
@@ -157,6 +158,20 @@ def test_startup_card_shows_identity_and_adapts_to_width() -> None:
 
     # Missing configuration renders an em dash, not an empty field.
     assert "—/gpt-5.6-luna" in _render_card(100, provider="—")
+
+
+def test_startup_card_truncates_long_identity_and_context() -> None:
+    long_model = "a-very-long-model-id-that-keeps-going-and-going-xyz"
+    card = _render_card(100, provider="openrouter", model=long_model)
+    assert "…" in card and "a-very-long-model-id" in card and long_model not in card
+    assert "…" not in _render_card(100)
+    many = _render_card(100, context=["a.md", "b.md", "c.md", "d.md", "e.md"])
+    assert "+2 more" in many and "a.md" in many and "e.md" not in many
+    narrow_long = _render_card(
+        50, provider="openrouter", model=long_model, workspace="a-deeply-nested-workspace-name-that-overflows"
+    )
+    for line in narrow_long.splitlines():
+        assert len(line) <= 50
 
 
 def test_startup_card_omits_context_separator_when_no_files() -> None:
@@ -402,7 +417,7 @@ def test_stream_answer_keeps_chunk_boundaries_inline() -> None:
 def test_submitted_user_row_fills_width_with_surface() -> None:
     from kite.ui.render import render_user_cell
 
-    console = Console(file=StringIO(), width=48, theme=KITE_THEME)
+    console = Console(file=StringIO(), width=48, height=24, theme=KITE_THEME)
     rows = console.render_lines(render_user_cell("ship the fix"), console.options)
     assert len(rows) == 3
     assert all(len("".join(segment.text for segment in row)) == 48 for row in rows)
