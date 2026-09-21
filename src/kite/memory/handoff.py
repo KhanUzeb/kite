@@ -129,9 +129,14 @@ def write_handoff(
     system: str = "",
 ) -> HandoffBundle:
     """Save checkpoint + markdown + JSON handoff bundle."""
+    from kite.memory.session_policy import prepare_persisted_value, secure_session_file
+
+    safe_messages = prepare_persisted_value(list(session.messages))
+    if not isinstance(safe_messages, list):
+        safe_messages = list(session.messages)
     cp = save_checkpoint(
         session_id=session.id,
-        messages=session.messages,
+        messages=safe_messages,
         cwd=cwd,
         label=label,
         reason="manual",
@@ -141,7 +146,7 @@ def write_handoff(
     )
     md = build_handoff_markdown(
         meta=session.meta,
-        messages=session.messages,
+        messages=safe_messages,
         cwd=cwd,
         todos=todos,
         checkpoint_id=cp.id,
@@ -155,7 +160,8 @@ def write_handoff(
     md_path = kite_dir / f"handoff-{session.id}.md"
     json_path = kite_dir / f"handoff-{session.id}.json"
     md_path.write_text(md, encoding="utf-8")
-    payload = {
+    secure_session_file(md_path)
+    payload = prepare_persisted_value({
         "format": "kite-handoff-v1",
         "generated_at": time.time(),
         "checkpoint": cp.to_dict(),
@@ -166,8 +172,9 @@ def write_handoff(
             "command": f"kite resume {session.id}",
         },
         "markdown_excerpt": md[:8000],
-    }
+    })
     json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    secure_session_file(json_path)
     return HandoffBundle(
         session_id=session.id,
         markdown=md,

@@ -261,10 +261,12 @@ class Session:
         self._touch_meta_timestamp(path)
 
     def _write_meta_sidecar(self, path: Path) -> None:
-        _meta_sidecar(path).write_text(
+        side = _meta_sidecar(path)
+        side.write_text(
             json.dumps({"updated_at": self.meta.updated_at}, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
+        secure_session_file(side)
 
     def _touch_meta_timestamp(self, path: Path) -> None:
         """Patch updated_at on line 1 — reads only the meta row, not the full transcript."""
@@ -324,16 +326,27 @@ def create_session(
 
 def resolve_session_path(session_id: str, *, unique: bool = False) -> Path:
     """Exact id, or a filename prefix. `unique` refuses an ambiguous prefix."""
-    folder = sessions_dir()
-    exact = folder / f"{session_id}.jsonl"
-    if exact.is_file():
-        return exact
+    from kite.memory.secure_io import storage_id
+
+    folder = sessions_dir().resolve()
     prefix = (session_id or "").strip()
     if not prefix:
         raise FileNotFoundError(f"No session matching '{session_id}'")
+    try:
+        token = storage_id(prefix, label="session id")
+    except ValueError as e:
+        raise ValueError(f"invalid session id '{session_id}'") from e
+    exact = (folder / f"{token}.jsonl").resolve()
+    if not exact.is_relative_to(folder):
+        raise ValueError(f"invalid session id '{session_id}'")
+    if exact.is_file():
+        return exact
     # Literal prefix scan (not a glob): session ids come from tool/CLI input
     # and may contain glob metacharacters like * ? [.
-    matches = sorted(p for p in folder.glob("*.jsonl") if p.stem.startswith(prefix))
+    matches = sorted(
+        (p for p in folder.glob("*.jsonl") if p.stem.startswith(token)),
+        key=lambda p: p.stat().st_mtime if p.is_file() else 0.0,
+    )
     if not matches:
         raise FileNotFoundError(f"No session matching '{session_id}'")
     if unique and len(matches) > 1:
@@ -359,7 +372,10 @@ def load_session(session_id: str, *, unique: bool = False) -> Session:
         for line in f:
             if not line.strip():
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
             if row.get("type") == "meta":
                 meta = SessionMeta.from_dict(row)
                 meta.updated_at = _session_updated_at(path, meta)
@@ -379,12 +395,15 @@ def load_session_todos(session_id: str) -> list[dict[str, Any]]:
             for line in f:
                 if not line.strip():
                     continue
-                row = json.loads(line)
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
                 if row.get("type") != "event" or row.get("kind") != "todo":
                     continue
                 payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
                 items = payload.get("items")
-                if isinstance(items, list) and items:
+                if isinstance(items, list):
                     latest = [x for x in items if isinstance(x, dict)]
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return []
@@ -393,7 +412,7 @@ def load_session_todos(session_id: str) -> list[dict[str, Any]]:
 
 def persist_session_todos(session_id: str, items: list[dict[str, Any]]) -> None:
     """Append a durable todo snapshot for resume after restart."""
-    if not session_id or not items:
+    if not session_id:
         return
     try:
         session = load_session(session_id)
@@ -441,7 +460,13 @@ class DeletedSession:
 
 
 def _trajectory_path(session_id: str) -> Path:
-    return kite_home() / "trajectories" / f"{session_id}.json"
+    from kite.memory.secure_io import storage_id
+
+    root = (kite_home() / "trajectories").resolve()
+    path = (root / f"{storage_id(session_id, label='session id')}.json").resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("invalid session id")
+    return path
 
 
 def delete_session(session_id: str) -> DeletedSession:
@@ -485,7 +510,10 @@ def iter_session_messages(session_id: str) -> Iterator[dict]:
         for line in f:
             if not line.strip():
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
             if row.get("type") == "meta":
                 continue
             messages = _apply_session_row(row, messages)

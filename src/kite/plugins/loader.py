@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,8 @@ name = "{name}"
 description = ""
 version = "0.1.0"
 """
+
+_PLUGIN_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 
 
 @dataclass(frozen=True)
@@ -117,10 +120,13 @@ def plugin_skill_dirs(cwd: str | Path) -> list[Path]:
 
 
 def write_plugin_stub(directory: Path, name: str) -> Path:
-    clean = name.strip().lstrip("/").replace(" ", "-")
-    if not clean:
-        raise ValueError("plugin name required")
-    root = directory / clean
+    clean = name.strip().replace(" ", "-")
+    if not _PLUGIN_NAME_RE.match(clean):
+        raise ValueError("plugin name must be a single name (letters, numbers, _ or -)")
+    base = directory.resolve()
+    root = (base / clean).resolve()
+    if not root.is_relative_to(base):
+        raise ValueError("plugin path escapes plugins directory")
     if root.exists():
         raise FileExistsError(str(root))
     (root / "commands").mkdir(parents=True)

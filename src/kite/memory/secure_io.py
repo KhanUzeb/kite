@@ -18,6 +18,14 @@ def clamp_memory_text(text: str, *, max_chars: int = MAX_MEMORY_NOTE_CHARS) -> s
     return cleaned
 
 
+def storage_id(value: str, *, label: str = "id") -> str:
+    """Reject path separators and `..` so ids cannot escape their storage root."""
+    token = (value or "").strip()
+    if not token or token in {".", ".."} or "/" in token or "\\" in token or "\x00" in token or ".." in token:
+        raise ValueError(f"invalid {label}")
+    return token
+
+
 def secure_memory_write(path: Path, text: str) -> None:
     from kite.memory.session_policy import secure_session_file
     from kite.util.atomic import atomic_write_text

@@ -10,6 +10,15 @@ from pathlib import Path
 from typing import Any
 
 _SKIP_PARTS = frozenset({".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"})
+_GREP_MAX_FILE_BYTES = 1_000_000
+_RG_DENY_GLOBS = (
+    "!.env",
+    "!.env.*",
+    "!**/.env",
+    "!**/.env.*",
+    "!*.env",
+    "!**/*.env",
+)
 
 
 def _safe_int(value: Any, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
@@ -26,6 +35,12 @@ def _safe_int(value: Any, default: int, *, minimum: int = 0, maximum: int | None
 
 def _skip_path(path: Path) -> bool:
     return any(part in _SKIP_PARTS for part in path.parts)
+
+
+def _sensitive_file(path: Path) -> bool:
+    from kite.guardrails.sandbox import is_sensitive_basename
+
+    return is_sensitive_basename(path.name)
 
 
 def _is_file_safe(path: Path) -> bool:
@@ -152,6 +167,8 @@ def grep_search(
             "-g",
             "!__pycache__",
         ]
+        for glob in _RG_DENY_GLOBS:
+            cmd.extend(["-g", glob])
         if files_only:
             cmd.append("--files-with-matches")
         elif count_only:
@@ -182,8 +199,12 @@ def grep_search(
             )
         except (OSError, subprocess.TimeoutExpired) as e:
             return {"ok": False, "error": str(e), "output": str(e)}
+        if proc.returncode not in (0, 1):
+            err = (proc.stderr or "ripgrep failed").strip() or f"ripgrep exited {proc.returncode}"
+            return {"ok": False, "error": err, "output": err}
         lines = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
         if files_only:
+            lines = [ln for ln in lines if not _sensitive_file(Path(ln))]
             rels = []
             for ln in lines[:max_files]:
                 try:
@@ -205,6 +226,7 @@ def grep_search(
                 "summary": summary,
             }
         if count_only:
+            lines = [ln for ln in lines if not _sensitive_file(Path(ln.rsplit(":", 1)[0]))]
             body = "\n".join(lines[:max_files]) if lines else "(no matches)"
             total = sum(c for ln in lines if (c := _parse_rg_count(ln)) is not None) if lines else 0
             return {
@@ -219,7 +241,7 @@ def grep_search(
         parsed: list[tuple[str, int, str]] = []
         for ln in lines:
             row = _parse_rg_line(ln, root)
-            if row:
+            if row and not _sensitive_file(Path(row[0])):
                 parsed.append(row)
         if context > 0:
             body = "\n".join(lines[: max_hits * (1 + context * 2)]) or "(no matches)"
@@ -250,17 +272,18 @@ def grep_search(
         }
 
     # Python fallback
-    try:
-        rx = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
-    except re.error as e:
-        return {"ok": False, "error": f"invalid regex: {e}", "output": f"invalid regex: {e}"}
-    if fixed:
-        needle = pattern
+    needle = pattern
+    rx = None
+    if not fixed:
+        try:
+            rx = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
+        except re.error as e:
+            return {"ok": False, "error": f"invalid regex: {e}", "output": f"invalid regex: {e}"}
 
     def _match(line: str) -> bool:
         if fixed:
             return needle in line if not ignore_case else needle.lower() in line.lower()
-        return rx.search(line) is not None
+        return rx.search(line) is not None if rx is not None else False
 
     hits: list[tuple[str, int, str]] = []
     file_hits: dict[str, int] = {}
@@ -272,10 +295,12 @@ def grep_search(
     else:
         paths = sorted(p for p in root.rglob("*") if _is_file_safe(p) and not _skip_path(p))
     for p in paths:
-        if not _is_file_safe(p) or _skip_path(p):
+        if not _is_file_safe(p) or _skip_path(p) or _sensitive_file(p):
             continue
         rel = _rel(p, root if _is_dir_safe(root) else p.parent)
         try:
+            if p.stat().st_size > _GREP_MAX_FILE_BYTES:
+                continue
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
