@@ -554,6 +554,11 @@ class SubagentOrchestrator:
 
         result = runner_result or {}
         ok, quality, summary = evaluate_subagent_result(result)
+        scope_reason = gate_result(task, result)
+        if scope_reason:
+            ok = False
+            quality = "failed"
+            summary = scope_reason
         status = str(result.get("exit_status") or "done")
         task.exit_status = status
         task.summary = summarize_result(summary, limit=4000) if summary else f"finished ({status})"

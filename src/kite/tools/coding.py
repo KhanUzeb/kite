@@ -346,6 +346,7 @@ def make_coding_tools(
         except Exception as e:
             reason = f"cwd sandbox check failed: {e}"
             return {"ok": False, "error": reason, "output": reason, "blocked": True}
+        limit = _safe_int(args.get("timeout"), timeout, minimum=1, maximum=3600)
         if background:
             if jobs is None:
                 return {
@@ -358,6 +359,7 @@ def make_coding_tools(
                     command,
                     cwd=workdir,
                     env=_child_env(workdir, command),
+                    timeout_seconds=float(limit),
                 )
             except OSError as e:
                 return {"ok": False, "returncode": -1, "output": "", "error": str(e)}
@@ -369,7 +371,6 @@ def make_coding_tools(
                 "output": f"background job {job.id} (pid {job.pid})",
             }
         try:
-            limit = _safe_int(args.get("timeout"), timeout, minimum=1, maximum=3600)
             from kite.env.shell import resolve_shell_invocation
 
             argv, cmd_text = resolve_shell_invocation(command)

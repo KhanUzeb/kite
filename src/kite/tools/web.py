@@ -876,8 +876,9 @@ def webcrawl(
             lines.append(f"   {p['excerpt'][:600]}")
         lines.append("")
 
+    succeeded = any(not page.get("error") for page in pages)
     return {
-        "ok": True,
+        "ok": succeeded,
         "output": "\n".join(lines).strip(),
         "pages": pages,
         "count": len(pages),

@@ -1645,6 +1645,11 @@ def main(argv: list[str] | None = None) -> int:
         print(__version__)
         return 0
 
+    if not raw or raw[0] not in {"-h", "--help", "help"}:
+        from kite.providers.credentials import load_kite_env
+
+        load_kite_env()
+
     if raw[:1] == ["--print"]:
         # Pi -p: `kite --print "prompt"` bypasses the subcommand parser so a
         # multi-word prompt is never mistaken for a COMMAND.
@@ -1652,11 +1657,6 @@ def main(argv: list[str] | None = None) -> int:
         if rest[:1] == ["--"]:
             rest = rest[1:]
         return cmd_print(argparse.Namespace(task=rest))
-
-    if raw and raw[0] not in {"-h", "--help", "help"}:
-        from kite.providers.credentials import load_kite_env
-
-        load_kite_env()
 
     parser = build_parser()
     args = parser.parse_args(raw)
