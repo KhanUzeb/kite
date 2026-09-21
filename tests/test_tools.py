@@ -152,7 +152,7 @@ def test_submit_task_blocked_without_verification(tmp_path) -> None:
 
 
 def test_background_job_survives_log_cap_and_honors_timeout(tmp_path) -> None:
-    script = "import sys\nfor _ in range(20000):\n    sys.stdout.write('x' * 40 + '\\n')\n"
+    script = "import sys; [sys.stdout.write('x'*40+'\\n') for _ in range(20000)]"
     reg = JobRegistry()
     job = reg.spawn_bash(f"{sys.executable} -c {json.dumps(script)}", cwd=str(tmp_path), timeout_seconds=8)
     deadline = time.monotonic() + 7
