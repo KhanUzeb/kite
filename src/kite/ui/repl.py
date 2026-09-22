@@ -2887,23 +2887,32 @@ class ChatSession:
         return "\n\n".join(parts)
 
     def _queue_message(self, text: str) -> None:
+        queued = False
         if self._harness is not None:
-            self._harness.inject_user_message(text)
-        elif not self._inbox.enqueue(text):
+            queued = bool(self._harness.inject_user_message(text))
+        if not queued:
+            queued = bool(self._inbox.enqueue(text))
+        if not queued:
             return
         self._sync_queue_count()
         preview = text[:80] + ("…" if len(text) > 80 else "")
         self._flash_note(f"queued {len(self._inbox)}  {preview}")
 
     def _queue_steer(self, text: str) -> None:
+        queued = False
         if self._harness is not None:
-            if not self._harness.inject_user_message(text, steer=True):
-                return
-        elif not self._inbox.steer(text):
+            queued = bool(self._harness.inject_user_message(text, steer=True))
+        if not queued:
+            queued = bool(self._inbox.steer(text))
+        if not queued:
             return
         self._sync_queue_count()
         preview = text[:80] + ("…" if len(text) > 80 else "")
         self._flash_note(f"steer  {preview}")
+        # Interrupt the running turn so the agent picks the steer up mid-turn
+        # via _continue_after_steer — without leaving the pinned composer.
+        if self._harness is not None:
+            self._harness.request_interrupt()
 
     def _request_stop(self) -> None:
         if self._harness is not None:
@@ -3077,10 +3086,6 @@ class ChatSession:
                         continue
                     got = self._read_input()
                     if done.is_set():
-                        break
-                    if got.kind == "steer":
-                        self._queue_steer(got.text)
-                        self._request_stop()
                         break
                     if apply_busy_composer_result(got, handlers):
                         break

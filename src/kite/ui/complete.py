@@ -131,9 +131,12 @@ def dispatch_classified_busy(result: ComposerResult, handlers: BusyComposerHandl
         handlers.on_stop()
         return True
     if result.kind == "steer":
+        # Steering injects a correction and interrupts the running turn so the
+        # agent picks it up mid-turn — but the pinned composer must stay alive.
+        # (on_steer itself requests the interrupt; breaking here would leave
+        # the session with no composer until the turn ends.)
         handlers.on_steer(result.text)
-        handlers.on_stop()
-        return True
+        return False
     if result.kind == "approval" and handlers.on_approval is not None:
         handlers.on_approval(result.text)
         return False

@@ -319,6 +319,7 @@ _RENDER_EVENT_KINDS = (
     "checkpoint",
     "commit",
     "interrupt",
+    "steer",
     "provider_retry",
     "provider_fault",
     "approval",
@@ -1146,6 +1147,22 @@ class RunDisplay:
         self._spin(False)
         self.state.interrupted = True
         self._print(f"[kite.error]{SYMBOL_FAIL} stopped[/] [kite.muted]— steer with a follow-up to continue[/]")
+
+    def _on_steer(self, p: dict[str, Any]) -> None:
+        self._end_stream_line()
+        # A steer was picked up mid-turn: the run continues with the
+        # correction instead of stopping, so clear the stopped flag.
+        self.state.interrupted = False
+        preview = str(p.get("text") or "").strip().replace("\n", " ")
+        if len(preview) > 80:
+            preview = preview[:80] + "…"
+        line = Text()
+        line.append(f"{GUTTER}{SYMBOL_OK} ", style="kite.success")
+        line.append("steering — continuing turn", style="kite.success")
+        if preview:
+            line.append(f"  ·  {preview}", style="kite.muted")
+        line.append("\n")
+        self._print(line)
 
     def _on_provider_retry(self, p: dict[str, Any]) -> None:
         import time

@@ -541,3 +541,62 @@ def test_toolbar_busy_and_approval_states() -> None:
 
     idle_html = str(_toolbar_html(SessionUiState(busy=False)))
     assert "Esc stop" not in idle_html
+
+
+def test_busy_steer_keeps_composer_alive() -> None:
+    """Steering must not stop/leave the busy composer — it interrupts the
+    turn so the agent continues, while the composer stays pinned."""
+    from kite.ui.complete import (
+        BusyComposerHandlers,
+        ComposerResult,
+        dispatch_classified_busy,
+    )
+
+    calls: list[str] = []
+
+    def _on_steer(text: str) -> None:
+        calls.append(f"steer:{text}")
+
+    def _on_stop() -> None:
+        calls.append("stop")
+
+    handlers = BusyComposerHandlers(
+        on_queue=lambda t: calls.append(f"queue:{t}"),
+        on_stop=_on_stop,
+        on_steer=_on_steer,
+        on_slash_while_busy=lambda: calls.append("slash-busy"),
+    )
+    # Steer queues + interrupts but keeps the pinned composer (returns False).
+    assert dispatch_classified_busy(ComposerResult("steer", "use grep"), handlers) is False
+    assert calls == ["steer:use grep"]
+    # Explicit stop still leaves the composer loop.
+    assert dispatch_classified_busy(ComposerResult("stop"), handlers) is True
+    assert calls[-1] == "stop"
+    # Queue never stops the loop either.
+    assert dispatch_classified_busy(ComposerResult("text", "later"), handlers) is False
+    assert calls[-1] == "queue:later"
+
+
+def test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path, monkeypatch) -> None:
+    """A steer typed mid-turn must never be dropped when harness inject fails."""
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(
+        "kite.providers.resolve.resolve_model",
+        lambda **_: MagicMock(provider="groq", model="test"),
+    )
+    from kite.ui.repl import ChatSession
+
+    chat = ChatSession(cwd=str(tmp_path))
+    harness = MagicMock()
+    harness.inject_user_message.return_value = False
+    chat._harness = harness
+    chat._queue_steer("use grep not find")
+    assert list(chat._inbox) == ["use grep not find"]
+    harness.request_interrupt.assert_called_once()
+
+    harness2 = MagicMock()
+    harness2.inject_user_message.return_value = False
+    chat._harness = harness2
+    chat._queue_message("later")
+    assert list(chat._inbox) == ["use grep not find", "later"]
