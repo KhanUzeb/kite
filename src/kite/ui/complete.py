@@ -695,8 +695,15 @@ def _toolbar_busy_bits(state: SessionUiState) -> list[str]:
     head = (state.queue_head or "").strip()
     if head:
         kind = "steer" if state.queue_head_kind == "steer" else "follow-up"
-        if len(head) > 36:
-            head = head[:33] + "…"
+        try:
+            import shutil
+
+            term_width = max(40, int(shutil.get_terminal_size(fallback=(120, 24)).columns or 120))
+        except OSError:
+            term_width = 120
+        head_limit = 36 if term_width >= 100 else 20
+        if len(head) > head_limit:
+            head = head[: max(1, head_limit - 3)] + "…"
         bits.append(f"next {kind}: {head}")
     if state.compacting:
         bits.append("compacting")

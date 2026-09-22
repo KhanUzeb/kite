@@ -15,12 +15,16 @@ from kite.ui.theme import glyph
 _CONTEXT_BAR_WIDTH = 8
 
 
-def _terminal_compact() -> bool:
+def terminal_width(default: int = 120) -> int:
+    """Live terminal width — read fresh so windowed ↔ fullscreen resizes apply."""
     try:
-        width = shutil.get_terminal_size(fallback=(120, 24)).columns
+        return max(40, int(shutil.get_terminal_size(fallback=(default, 24)).columns or default))
     except OSError:
-        width = 120
-    return width < 100
+        return default
+
+
+def _terminal_compact() -> bool:
+    return terminal_width() < 100
 
 
 def cache_meter(ratio: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
@@ -67,16 +71,21 @@ def format_running_status(state: SessionUiState) -> str:
     from kite.ui.animations import loader_glyph
 
     ts = state.running_since or "—"
+    width = terminal_width()
     label = state.running_label
-    if len(label) > 72:
-        label = label[:69] + "…"
+    # Scale truncation to the live width: narrow windowed terminals clip
+    # early so the line never wraps; wide fullscreen uses the full budget.
+    label_limit = max(24, min(72, width - 52))
+    if len(label) > label_limit:
+        label = label[: max(1, label_limit - 1)] + "…"
     tick = int(time.monotonic() * 10)
     spin = loader_glyph("spin", tick)
     line = f"{spin} [{ts}] {label}  running"
     preview = sanitize_status_text(state.activity_preview)
     if preview:
-        if len(preview) > 60:
-            preview = preview[:57] + "…"
+        preview_limit = max(16, min(60, width - len(label) - 46))
+        if len(preview) > preview_limit:
+            preview = preview[: max(1, preview_limit - 1)] + "…"
         line += f"  › {preview}"
     return line
 

@@ -184,6 +184,31 @@ def test_status_footer_modes() -> None:
     assert segments[0][0] == "approval"
 
 
+def test_running_status_truncation_follows_terminal_width(monkeypatch) -> None:
+    import shutil
+
+    from kite.ui.state import SessionUiState
+    from kite.ui.status import format_running_status
+
+    state = SessionUiState(busy=True)
+    state.running_label = "x" * 200
+    state.running_since = "12:00:00"
+    state.activity_preview = "y" * 200
+
+    import os
+
+    monkeypatch.setattr(
+        shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((50, 24))
+    )
+    narrow = format_running_status(state)
+    monkeypatch.setattr(
+        shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((200, 24))
+    )
+    wide = format_running_status(state)
+    assert len(narrow) < len(wide)
+    assert narrow.endswith("…") or "›" in narrow
+
+
 def test_status_render_terminal_widths() -> None:
     state = SessionUiState(mode=AgentMode.PLAN, provider="groq", model="llama-3.3-70b", cost=0.01)
     for width in (50, 80, 120):

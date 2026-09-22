@@ -131,6 +131,39 @@ def test_loop_guard_warns_and_hard_stops() -> None:
     assert hard.record("bash", mutating, {"ok": True, "output": "same"}).hard_stop
 
 
+def test_estimate_cost_from_usage_falls_back_to_price_map(monkeypatch) -> None:
+    import litellm
+
+    from kite.models.litellm_model import estimate_cost_from_usage
+
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "groq/llama-3.3-70b-versatile": {
+                "input_cost_per_token": 0.00000059,
+                "output_cost_per_token": 0.00000079,
+                "cache_read_input_token_cost": 0.0000001,
+            },
+            "gpt-4o": {
+                "input_cost_per_token": 0.0000025,
+                "output_cost_per_token": 0.00001,
+            },
+        },
+        raising=False,
+    )
+    cost = estimate_cost_from_usage("groq/llama-3.3-70b-versatile", 1_000_000, 1_000_000)
+    assert cost == pytest.approx(0.59 + 0.79)
+    # Provider prefix is optional — prefixed names resolve via the bare id.
+    assert estimate_cost_from_usage("openai/gpt-4o", 1_000_000, 0) == pytest.approx(2.5)
+    cached = estimate_cost_from_usage(
+        "groq/llama-3.3-70b-versatile", 1_000_000, 0, cache_read_tokens=500_000
+    )
+    assert cached == pytest.approx(500_000 * 0.00000059 + 500_000 * 0.0000001)
+    assert estimate_cost_from_usage("unknown-model-xyz", 1000, 1000) == 0.0
+    assert estimate_cost_from_usage("groq/llama-3.3-70b-versatile", 0, 0) == 0.0
+
+
 def test_steer_follow_up_and_compaction_events() -> None:
     queue = RunMessageQueue()
     queue.steer("focus on tests only")

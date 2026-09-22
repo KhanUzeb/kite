@@ -55,6 +55,51 @@ def _quiet_litellm_usage_serialization():
         yield
 
 
+def estimate_cost_from_usage(
+    model_name: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cache_read_tokens: int = 0,
+) -> float:
+    """Fallback price from LiteLLM's cost map when a response has no cost.
+
+    Providers (proxies, gateways, streaming assemblers) often omit
+    ``_hidden_params.response_cost`` — without a fallback every such turn
+    meters $0.000. This prices the counted tokens from LiteLLM's own
+    per-token map instead of hardcoding model prices in Kite.
+    """
+    if prompt_tokens <= 0 and completion_tokens <= 0:
+        return 0.0
+    try:
+        import litellm
+
+        cost_map = getattr(litellm, "model_cost", None) or {}
+        name = (model_name or "").strip()
+        entry = cost_map.get(name) or {}
+        if not entry and "/" in name:
+            entry = cost_map.get(name.split("/", 1)[-1]) or {}
+        if not entry:
+            return 0.0
+        input_rate = float(entry.get("input_cost_per_token") or 0.0)
+        output_rate = float(entry.get("output_cost_per_token") or 0.0)
+        if input_rate <= 0 and output_rate <= 0:
+            return 0.0
+        cached = max(0, int(cache_read_tokens or 0))
+        fresh_prompt = max(0, int(prompt_tokens or 0) - cached)
+        cache_rate = entry.get("cache_read_input_token_cost")
+        try:
+            cache_rate = float(cache_rate) if cache_rate is not None else input_rate
+        except (TypeError, ValueError):
+            cache_rate = input_rate
+        return (
+            fresh_prompt * input_rate
+            + cached * cache_rate
+            + max(0, int(completion_tokens or 0)) * output_rate
+        )
+    except Exception:
+        return 0.0
+
+
 def extract_reasoning_and_content(delta: Any) -> tuple[str, str]:
     """Split a stream delta / message into (reasoning, answer). Never mix the two."""
     reasoning = ""
@@ -441,6 +486,14 @@ class LitellmModel:
             self._emit("stream_end", ok=False)
             raise
 
+        if cost <= 0:
+            usage = self.last_usage if isinstance(self.last_usage, dict) else {}
+            cost = estimate_cost_from_usage(
+                self.model_name,
+                int(usage.get("prompt_tokens") or 0),
+                int(usage.get("completion_tokens") or 0),
+                int(usage.get("cache_read_tokens") or usage.get("cached_tokens") or 0),
+            )
         self.cost += cost
         ttft_ms = int((time.monotonic() - started) * 1000) if first_token else None
         return self._finalize_response(
@@ -468,6 +521,14 @@ class LitellmModel:
         hidden_resp = getattr(response, "_hidden_params", None) or {}
         self._record_usage(usage, hidden_resp if isinstance(hidden_resp, dict) else {})
         cost = float(getattr(response, "_hidden_params", {}).get("response_cost") or 0.0)
+        if cost <= 0:
+            recorded = self.last_usage if isinstance(self.last_usage, dict) else {}
+            cost = estimate_cost_from_usage(
+                self.model_name,
+                int(recorded.get("prompt_tokens") or 0),
+                int(recorded.get("completion_tokens") or 0),
+                int(recorded.get("cache_read_tokens") or recorded.get("cached_tokens") or 0),
+            )
         self.cost += cost
 
         think, answer = extract_reasoning_and_content(message)
