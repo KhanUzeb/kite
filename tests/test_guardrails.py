@@ -161,7 +161,12 @@ def test_secret_write_guard_covers_edit(workspace: Path) -> None:
 
 
 def test_env_file_readers_blocked(workspace: Path) -> None:
-    from kite.guardrails.sandbox import command_reads_sensitive_env, is_inspection_bash, is_protected, is_sensitive_basename
+    from kite.guardrails.sandbox import (
+        command_reads_sensitive_env,
+        is_inspection_bash,
+        is_protected,
+        is_sensitive_basename,
+    )
 
     policy = GuardrailPolicy(GuardrailConfig(), workspace)
     for cmd in (
