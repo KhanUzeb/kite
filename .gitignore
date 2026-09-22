@@ -59,3 +59,6 @@ dashboard.html
 .hermes/
 .peek/
 src/app.py
+
+# Local example scratch (untracked; history purged)
+examples/clamp/
