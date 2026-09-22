@@ -61,6 +61,9 @@ def test_config_loads_project_file(tmp_path: Path, monkeypatch) -> None:
         json.dumps({"version": 1, "actionFusion": True, "observationPack": True}),
         encoding="utf-8",
     )
+    # Anchor project-root discovery at tmp_path so ancestor markers
+    # (e.g. a dotfiles git repo at $HOME) cannot shadow the fixture.
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='sol-pi-fixture'\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     cfg = load_sol_pi_config(tmp_path)
     assert cfg.action_fusion is True
