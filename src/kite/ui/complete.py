@@ -680,7 +680,9 @@ def _toolbar_busy_bits(state: SessionUiState) -> list[str]:
         "Esc/Ctrl+C stop",
         f"Enter {'queue' if legacy else 'steer'}",
         f"Alt+Enter {'steer' if legacy else 'queue'}",
-        "Ctrl+G steer",
+        # Ctrl+G is the explicit steer key — only advertise it when Enter
+        # queues (legacy mode); by default Enter already steers.
+        *([] if not legacy else ["Ctrl+G steer"]),
         "Ctrl+U dequeue",
         "F8 attach clip",
     ]

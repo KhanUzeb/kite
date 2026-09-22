@@ -476,6 +476,22 @@ def test_parser_skips_heavy_backend_imports() -> None:
     assert callable(assess_setup_status)
 
 
+def test_purge_home_removes_readonly_files(tmp_path) -> None:
+    import os
+
+    from kite.cli.self_manage import _count_files, _purge_home
+
+    home = tmp_path / ".kite"
+    nested = home / "sessions"
+    nested.mkdir(parents=True)
+    target = nested / "s.jsonl"
+    target.write_text("{}\n", encoding="utf-8")
+    os.chmod(target, 0o444)
+    assert _count_files(str(home)) == 1
+    removed, leftover, error = _purge_home(str(home))
+    assert removed and leftover == 0 and error == "" and not home.exists()
+
+
 def test_main_loads_env_before_bare_chat_and_print(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr("kite.providers.credentials.load_kite_env", lambda: calls.append("load"))

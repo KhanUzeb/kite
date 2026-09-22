@@ -30,7 +30,7 @@ Prefer one module per domain. Combine related asserts in a single test (or a loo
 | `test_cli.py` | apply/diff, slash help, chat/resume flags, numbered pickers |
 | `test_headless_tasks.py` | JSONL tasks, Submitted-only success, non-interactive approval |
 | `test_ui.py` | render, theme, REPL slash/jobs, attach, preview |
-| `test_composer.py` | Ctrl-C steer/stop, queue, approval composer |
+| `test_composer.py` | Ctrl-C steer/stop, queue, approval composer, steer-keeps-composer, inbox fallback |
 | `test_memory.py` | persistence modes, continuity, USER/PROFILE, prompts |
 | `test_session.py` | append-only JSONL, compact rewrite, stats |
 | `test_tools.py` | paid web chain, jobs, compaction, shell |

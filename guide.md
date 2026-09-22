@@ -121,8 +121,9 @@ Q: The agent is going the wrong direction but still running.
 
 A:
   Esc or Ctrl+C     → stop this turn (session stays open)
-  Ctrl+G            → stop AND send your correction as the next turn
-  Enter (while busy)→ queue a follow-up for after this turn
+  Enter (while busy)→ steer: redirect the running turn, same session
+  Alt+Enter         → queue a follow-up for after this turn
+  Ctrl+G            → steer (same as Enter while busy)
   /tasks            → see queue + running work
 ```
 
@@ -246,14 +247,14 @@ A:
 ```text
 IDLE                         WHILE RUNNING
 ────                         ─────────────
-Enter          send          Enter          queue follow-up
-Tab            complete       Esc / Ctrl+C   stop turn
-Ctrl+P         plan           Ctrl+G         steer
-Ctrl+B         build          Ctrl+U         dequeue → composer
-Ctrl+O         expand tools   /tasks         queue + status
-Ctrl+T         thinking       /live          stream bash
-F2             flash status   /live agents   stream crew
-Ctrl+D         quit
+Enter          send          Enter          steer running turn
+Tab            complete       Alt+Enter      queue follow-up
+Ctrl+P         plan           Esc / Ctrl+C   stop turn
+Ctrl+B         build          Ctrl+G         steer (same as Enter)
+Ctrl+O         expand tools   Ctrl+U         dequeue → composer
+Ctrl+T         thinking       /tasks         queue + status
+F2             flash status   /live          stream bash
+Ctrl+D         quit           /live agents   stream crew
 @file          attach inline
 ```
 
@@ -303,7 +304,7 @@ Details: [SECURITY.md](SECURITY.md)
 
 ```text
 Q: Agent keeps repeating the same tool call
-A: Esc → steer with a different strategy; or /stop and narrow the task.
+A: Steer mid-turn (Enter) with a different strategy; or Esc//stop, then narrow the task.
 
 Q: No API key / model errors
 A: kite keys --set <provider>  or  /login <provider>

@@ -577,6 +577,21 @@ def test_busy_steer_keeps_composer_alive() -> None:
     assert calls[-1] == "queue:later"
 
 
+def test_busy_toolbar_steer_hint_follows_enter_mode(monkeypatch) -> None:
+    from kite.ui.complete import _toolbar_busy_bits
+    from kite.ui.state import SessionUiState
+
+    monkeypatch.delenv("KITE_BUSY_ENTER", raising=False)
+    default_bits = _toolbar_busy_bits(SessionUiState(busy=True))
+    assert "Enter steer" in default_bits
+    # No duplicate explicit steer hint when Enter already steers.
+    assert "Ctrl+G steer" not in default_bits
+    monkeypatch.setenv("KITE_BUSY_ENTER", "queue")
+    legacy_bits = _toolbar_busy_bits(SessionUiState(busy=True))
+    assert "Enter queue" in legacy_bits
+    assert "Ctrl+G steer" in legacy_bits
+
+
 def test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path, monkeypatch) -> None:
     """A steer typed mid-turn must never be dropped when harness inject fails."""
     from unittest.mock import MagicMock

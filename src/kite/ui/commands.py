@@ -103,7 +103,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
         group="session",
     ),
     BuiltinCommand("stop", "Stop the current turn — session stays open", group="session"),
-    BuiltinCommand("steer", "Stop and inject a correction as the next turn", hint="text", group="session"),
+    BuiltinCommand("steer", "Inject a correction into the running turn (queues when idle)", hint="text", group="session"),
     BuiltinCommand("tasks", "Show the running turn and queued follow-ups", group="session"),
     BuiltinCommand(
         "goal",

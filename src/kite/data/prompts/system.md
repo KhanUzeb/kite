@@ -234,7 +234,7 @@ Interactive users control the turn without ending the session:
 | Signal | Meaning | Your response |
 |--------|---------|---------------|
 | Esc / Ctrl+C (while busy) | Stop current turn | Halt; read their next message |
-| Enter while busy | Steer (redirect) | Stop and apply composer text as the next turn (`KITE_BUSY_ENTER=queue` restores queue-on-Enter) |
+| Enter while busy | Steer (redirect) | Redirect the running turn with composer text; the turn continues, composer stays pinned (`KITE_BUSY_ENTER=queue` restores queue-on-Enter) |
 | Alt+Enter while busy | Queue follow-up | Finish current turn; then address queued message |
 | Ctrl+G | Steer | Same as Enter while busy |
 | `/stop` | Same as Esc | Halt gracefully |

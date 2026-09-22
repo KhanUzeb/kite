@@ -156,6 +156,42 @@ def cmd_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def _purge_home(home: str) -> tuple[bool, int, str]:
+    """Remove the ~/.kite data dir, retrying read-only files (Windows/git).
+
+    Returns (removed, leftover_files, error). `removed` is True only when the
+    dir is fully gone; otherwise `leftover_files` counts what is still on
+    disk so the CLI can report removed vs kept instead of a bare failure.
+    """
+    import stat
+
+    def _onerror(func, path, _exc_info) -> None:
+        try:
+            os.chmod(path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+            func(path)
+        except OSError:
+            pass
+
+    try:
+        shutil.rmtree(home, ignore_errors=False, onerror=_onerror)
+    except OSError as e:
+        leftover = _count_files(home)
+        return False, leftover, str(e)
+    if os.path.exists(home):
+        return False, _count_files(home), f"{home} still exists"
+    return True, 0, ""
+
+
+def _count_files(root: str) -> int:
+    total = 0
+    try:
+        for _dir, _subdirs, files in os.walk(root):
+            total += len(files)
+    except OSError:
+        pass
+    return total
+
+
 def cmd_uninstall(args: argparse.Namespace) -> int:
     """Remove the managed kite CLI. ~/.kite data (sessions, keys) is kept unless --purge."""
     console = _console()
@@ -195,11 +231,17 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         console.print("[red]uninstall failed[/]  [kite.muted]try: uv tool uninstall kite[/]")
         return 1
     if purge:
-        try:
-            shutil.rmtree(home, ignore_errors=False)
+        removed, leftover, error = _purge_home(home)
+        if removed:
             console.print(f"[kite.muted]removed data dir[/]  {home}")
-        except OSError as e:
-            console.print(f"[yellow]CLI removed, but could not delete {home}: {e}[/]")
+        elif leftover:
+            console.print(
+                f"[yellow]CLI removed, but kept {leftover} leftover file(s) in {home}: {error}[/]"
+            )
+            console.print("[kite.muted]close shells/editors using it, then:[/]  kite uninstall --purge")
+            return 1
+        else:
+            console.print(f"[yellow]CLI removed, but could not delete {home}: {error}[/]")
             return 1
     else:
         console.print(f"[kite.muted]kept data at[/]  {home}  [kite.muted](sessions, keys)[/]")

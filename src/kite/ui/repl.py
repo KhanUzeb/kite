@@ -2064,7 +2064,13 @@ class ChatSession:
         else:
             self.console.print("[kite.muted]nothing running[/]  — session stays open")
         if not self._inbox:
-            self.console.print("[kite.muted]queue empty[/]  · Enter adds a follow-up while Kite works")
+            from kite.ui.complete import busy_enter_queues_followup
+
+            if busy_enter_queues_followup():
+                hint = "Enter queues a follow-up · Alt+Enter steers"
+            else:
+                hint = "Enter steers the turn · Alt+Enter queues a follow-up"
+            self.console.print(f"[kite.muted]queue empty[/]  · {hint} while Kite works")
             return
         steer, follow = self._inbox.counts()
         self.console.print(

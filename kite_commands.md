@@ -103,7 +103,7 @@ kite sessions --delete <id> [<id> ...]
 kite sessions --delete-all     # TTY confirms; else pass -y
 kite setup [-p provider]       # first-run wizard: credentials + model
 kite update [--check] [--ref REF] [--force]  # upgrade installed CLI via uv tool (fallback: git reinstall); bare `kite update` updates, it does NOT open chat
-kite uninstall [-y] [--purge]  # remove CLI; keeps ~/.kite data unless --purge
+kite uninstall [-y] [--purge]  # remove CLI; keeps ~/.kite data unless --purge (--purge retries read-only files and reports leftovers)
 kite login [provider]          # pick provider if omitted → BYOK key or BYOS browser → pick model
                                # BYOS (chatgpt/claude/grok): opens your browser to the sign-in URL as soon as
                                # the provider CLI prints it (grok uses `grok login --oauth` interactively,
@@ -249,7 +249,7 @@ These never go to the model.
 | `/compact` | Summarize older turns now; ctx meter updates immediately |
 | `/cost` | Legacy alias → `/status` (includes cost) |
 | `/stop` | Stop the current turn; session stays open |
-| `/steer text` | Stop and run `text` as the next turn |
+| `/steer text` | Inject `text` into the running turn (queues when idle); the turn continues with the correction |
 | `/tasks` | Show the running turn and queued follow-ups |
 | `/goal [text]` | Persistent long-horizon objective (survives provider errors) |
 | `/goal` | View current goal status |
@@ -307,7 +307,7 @@ Ctrl+C stops the **current turn**, not the process.
 | `F8` / `Esc` then `v` | Attach clipboard to the next turn (same as `/clip`) |
 | `Ctrl+Insert` | Copy composer selection to OS clipboard |
 | `Ctrl+L` | Clear screen |
-| `Ctrl+G` | Steer: stop and send the composer text as the next turn |
+| `Ctrl+G` | Steer: redirect the running turn with the composer text (same as `Enter` while busy); the composer stays pinned |
 | `Ctrl+U` | Dequeue: restore all queued messages into the composer for editing |
 | `Enter` | Send the line. With an open slash menu, accept the highlighted completion first. **While a turn runs:** steers (redirects) by default — set `KITE_BUSY_ENTER=queue` for legacy queue-on-Enter |
 | `Alt+Enter` | Newline when idle. **While a turn runs:** queues a follow-up (steer when `KITE_BUSY_ENTER=queue`) |
