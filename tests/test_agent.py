@@ -345,6 +345,48 @@ def test_submit_leaves_no_unanswered_tool_call(kite_home) -> None:
     assert answered == ["call_submit"]
 
 
+def test_stopped_batches_answer_every_tool_call(workspace: Path) -> None:
+    from kite.agent.exceptions import Interrupted, Submitted
+    from kite.agent.loop import DefaultAgent
+
+    class _PairModel:
+        def format_observation_messages(self, message, outputs, template_vars=None):
+            actions = message.get("extra", {}).get("actions", [])
+            return [
+                {"role": "tool", "tool_call_id": action["id"], "content": str(output.get("output"))}
+                for action, output in zip(actions, outputs, strict=False)
+            ]
+
+    def _turn(*names: str) -> dict:
+        actions = [{"tool": name, "id": f"call_{i}", "arguments": {"path": "a.py"}} for i, name in enumerate(names)]
+        return {"role": "assistant", "content": "", "extra": {"actions": actions}}
+
+    agent = DefaultAgent(_PairModel(), LocalEnvironment(registry=ToolRegistry(make_coding_tools(cwd=str(workspace), enabled=["read"]))), step_limit=3)
+    agent._interrupt = True
+    try:
+        agent.execute_actions(_turn("read", "read", "read"))
+        raised = False
+    except Interrupted:
+        raised = True
+    assert raised
+    answered = [m.get("tool_call_id") for m in agent.messages if m.get("role") == "tool"]
+    assert answered == ["call_0", "call_1", "call_2"]
+
+    class _SubmitEnv:
+        def execute(self, action, cwd=""):
+            if action.get("tool") == "submit":
+                raise Submitted({"role": "exit", "content": "submitted"})
+            return {"ok": True, "output": "saw file"}
+
+    follow = DefaultAgent(_PairModel(), _SubmitEnv(), step_limit=3)
+    try:
+        follow.execute_actions(_turn("read", "submit"))
+    except Submitted:
+        pass
+    answered = [m.get("tool_call_id") for m in follow.messages if m.get("role") == "tool"]
+    assert answered == ["call_0", "call_1"]
+
+
 def test_dispatch_mode_inference() -> None:
     assert resolve_dispatch_mode({"prompt": "x", "background": True}) == (True, "explicit-async")
     assert resolve_dispatch_mode({"prompts": ["a", "b"], "labels": ["x", "y"]})[0] is False

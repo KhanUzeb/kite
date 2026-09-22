@@ -474,3 +474,18 @@ def test_parser_skips_heavy_backend_imports() -> None:
 
     assert UserConfig.load() is not None
     assert callable(assess_setup_status)
+
+
+def test_main_loads_env_before_bare_chat_and_print(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr("kite.providers.credentials.load_kite_env", lambda: calls.append("load"))
+    monkeypatch.setattr("kite.cli.run.cmd_print", lambda args: 7)
+    monkeypatch.setattr("kite.cli.setup.maybe_run_first_setup", lambda console: None)
+    monkeypatch.setattr("kite.cli.run.cmd_chat", lambda args: 0)
+    from kite.cli.run import main
+
+    assert main(["--print", "hello"]) == 7
+    assert main([]) == 0
+    assert calls == ["load", "load"]
+    assert main(["--version"]) == 0
+    assert calls == ["load", "load"]

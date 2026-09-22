@@ -254,3 +254,11 @@ def test_webcrawl_skips_private_links(mock_fetch):
     fetched = [call.args[0] for call in mock_fetch.call_args_list]
     assert "http://127.0.0.1/secret" not in fetched
     assert "https://example.com/public" in fetched
+
+
+@patch("kite.tools.web._fetch_url")
+def test_webcrawl_not_ok_when_every_fetch_fails(mock_fetch):
+    mock_fetch.return_value = (b"", "text/html", "https://example.com/", "connection failed")
+    out = web.webcrawl("https://example.com/", max_pages=2, max_depth=1)
+    assert out["ok"] is False
+    assert out["pages"] and out["pages"][0]["error"] == "connection failed"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,7 @@ from kite.context.window import compact_messages, scale_keep_recent_tokens, trim
 from kite.env.shell import resolve_shell_invocation, sanitize_shell_line
 from kite.memory.compaction_ops import run_compaction
 from kite.tools import web
+from kite.tools.coding import make_coding_tools
 from kite.tools.jobs import JobRegistry
 from kite.tools.web_providers import resolve_search_engines, resolve_web_tool_env
 
@@ -148,6 +150,32 @@ def test_submit_task_blocked_without_verification(tmp_path) -> None:
     assert relaxed.run({"message": "finished"}).get("ok") is True
 
 
+def test_background_job_survives_log_cap_and_honors_timeout(tmp_path) -> None:
+    script = "import sys; [sys.stdout.write('x'*40+'\\n') for _ in range(20000)]"
+    reg = JobRegistry()
+    job = reg.spawn_bash(f"{sys.executable} -c {json.dumps(script)}", cwd=str(tmp_path), timeout_seconds=8)
+    deadline = time.monotonic() + 7
+    while job.status == "running" and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert job.status == "done"
+
+    seen: dict[str, float] = {}
+
+    class _Jobs:
+        def spawn_bash(self, command, *, cwd, env=None, timeout_seconds=3600.0):
+            seen["timeout"] = timeout_seconds
+
+            class _Job:
+                id = "j1"
+                pid = 1
+
+            return _Job()
+
+    bash = next(t for t in make_coding_tools(cwd=str(tmp_path), jobs=_Jobs(), enabled=["bash"], auto_venv=False) if t.name == "bash")
+    out = bash.run({"command": "echo hi", "background": True, "timeout": 12})
+    assert out["ok"] is True and seen["timeout"] == 12.0
+
+
 def test_jobs_and_orchestrator(tmp_path) -> None:
     sleep = f'{sys.executable} -c "import time; time.sleep(60)"'
     reg = JobRegistry()
@@ -224,6 +252,25 @@ def test_observation_compaction_and_shell() -> None:
         compaction_llm_ratio=0.99,
     )
     assert result.compacted and calls == []
+    old_tool = "y" * 5000
+    trimmed_only = [{"role": "user", "content": "old"}]
+    for i in range(4):
+        trimmed_only.extend(
+            [
+                {"role": "assistant", "content": "", "tool_calls": [{"id": str(i), "function": {"name": "bash"}}]},
+                {"role": "tool", "tool_call_id": str(i), "content": old_tool},
+            ]
+        )
+    trimmed_only.append({"role": "user", "content": "new"})
+    trim_result = run_compaction(
+        trimmed_only,
+        window=8_000,
+        reserve_tokens=1_000,
+        compact_ratio=0.95,
+        force=False,
+        checkpoint_before=False,
+    )
+    assert trim_result.compacted and trim_result.messages != trimmed_only
     assert sanitize_shell_line("hello\r\nworld\t!") == "hello world !"
     argv, cmd = resolve_shell_invocation("pytest -q")
     if sys.platform != "win32":

@@ -193,18 +193,23 @@ class JobRegistry:
             return
         drained_bytes = 0
         max_bytes = 512_000
+        deadline = time.monotonic() + max(1.0, timeout_seconds)
+        truncated = False
         try:
             for line in iter(proc.stdout.readline, ""):
+                if time.monotonic() >= deadline:
+                    break
+                if truncated:
+                    continue
                 drained_bytes += len(line.encode("utf-8", errors="replace"))
                 safe = redact_string(sanitize_shell_line(line))
                 job.append_log(safe)
                 self._emit("job_output", id=job.id, line=safe, kind="bash")
                 if drained_bytes >= max_bytes:
                     job.append_log("\n...[job output truncated]...\n")
-                    break
+                    truncated = True
         except OSError:
             pass
-        deadline = time.monotonic() + max(1.0, timeout_seconds)
         rc: int | None = None
         while rc is None and time.monotonic() < deadline:
             try:
