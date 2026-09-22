@@ -158,7 +158,7 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
             "[bold]Welcome to Kite[/]\n\n"
             "Choose how you connect to a model:\n"
             "  · [cyan]BYOK[/] — API key (groq, openai, anthropic, …) → [cyan]~/.kite/.env[/]\n"
-            "  · [cyan]BYOS[/] — subscription auth via Codex / Claude Code / Grok CLI\n\n"
+            "  · [cyan]BYOS[/] — subscription auth via Codex / Claude Code / Grok / Antigravity CLI\n\n"
             "This wizard will:\n"
             "  1. Link credentials for your provider\n"
             "  2. Pick a provider and model (BYOK: live list; BYOS: plan default)\n"
@@ -166,7 +166,7 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
             "[dim]Recommended free/local:[/] "
             + " · ".join(f"[cyan]{p}[/]" for p in RECOMMENDED_PROVIDERS)
             + "\n"
-            "[dim]Subscriptions:[/] [cyan]chatgpt[/] · [cyan]claude[/] · [cyan]grok[/]\n\n"
+            "[dim]Subscriptions:[/] [cyan]chatgpt[/] · [cyan]claude[/] · [cyan]grok[/] · [cyan]antigravity[/]\n\n"
             "Later: [cyan]/login provider[/]  [cyan]kite login provider[/]  [cyan]/keys[/]\n\n"
             f"Config: [dim]{config_path()}[/]\n"
             f"Keys:   [dim]{env_path}[/]",
@@ -183,7 +183,7 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
         console.print("[yellow]No credentials linked yet[/]")
         console.print(
             "[dim]Tip:[/] [cyan]groq[/] has a generous free tier (BYOK), or link "
-            "[cyan]chatgpt[/]/[cyan]claude[/]/[cyan]grok[/] (BYOS subscription)."
+            "[cyan]chatgpt[/]/[cyan]claude[/]/[cyan]grok[/]/[cyan]antigravity[/] (BYOS subscription)."
         )
 
     picked = provider or select_provider_interactive(console, oauth_first=True)
@@ -270,12 +270,12 @@ def cmd_keys(args) -> int:
     print_keys_table(console)
     console.print(
         f"[dim]BYOK keys:[/] {env_path}  "
-        f"[dim]BYOS:[/] provider CLIs (~/.codex, Claude Code, ~/.grok)"
+        f"[dim]BYOS:[/] provider CLIs (~/.codex, Claude Code, ~/.grok, agy)"
     )
     console.print(
         "[dim]Add:[/] [cyan]kite keys --set groq[/] (BYOK)  ·  "
         "[cyan]kite web-keys set tavily|exa|firecrawl[/] (web)  ·  "
-        "[cyan]kite login codex|claude|grok[/] (BYOS)  ·  "
+        "[cyan]kite login codex|claude|grok|antigravity[/] (BYOS)  ·  "
         "[cyan]kite logout <provider>[/]"
     )
     from kite.cli.web_keys import print_web_keys_status

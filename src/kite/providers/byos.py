@@ -185,6 +185,8 @@ def login_oauth(
             msg += f"  ·  default provider → {spec.name}"
         elif spec.oauth_provider == "anthropic":
             msg += "  ·  API key required for Kite — kite keys --set anthropic"
+        elif spec.oauth_provider == "antigravity":
+            msg += "  ·  API key required for Kite — kite keys --set gemini"
 
     return 0, msg, spec.name
 

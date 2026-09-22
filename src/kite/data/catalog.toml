@@ -116,6 +116,20 @@ default_model = ""
 docs_url = "https://ollama.com"
 
 [[providers]]
+name = "antigravity"
+display_name = "Antigravity (subscription)"
+kind = "gemini"
+litellm_prefix = "gemini/"
+base_url = "https://generativelanguage.googleapis.com"
+api_key_env = ""
+auth_kind = "oauth"
+oauth_provider = "antigravity"
+models = []
+default_model = "gemini-2.5-pro"
+docs_url = "https://antigravity.google/docs/cli/install/"
+billing_note = "OAuth — uses your Google subscription via the agy CLI, not API credits. Kite model calls need GEMINI_API_KEY"
+
+[[providers]]
 name = "gemini"
 display_name = "Google Gemini"
 kind = "gemini"

@@ -158,8 +158,9 @@ def resolve_model(
                 api_key = None
             else:
                 api_key = None
-            if spec.oauth_provider == "anthropic":
-                # Claude subscription auth is CLI-owned; LiteLLM needs BYOK API key for direct calls.
+            if spec.oauth_provider in {"anthropic", "antigravity"}:
+                # Claude/Antigravity subscription auth is CLI-owned; LiteLLM
+                # needs a BYOK API key for direct calls.
                 api_key = api_key_for(spec) or None
 
     window = cfg.context_window or spec.context_window_for(model_name or "unknown")
@@ -203,6 +204,11 @@ def missing_credentials(resolved: ResolvedModel) -> str | None:
             return (
                 "Claude Code is linked, but Kite model calls need ANTHROPIC_API_KEY. "
                 "Run `kite keys --set anthropic`."
+            )
+        if resolved.spec.oauth_provider == "antigravity" and not resolved.api_key:
+            return (
+                "Antigravity is linked, but Kite model calls need GEMINI_API_KEY. "
+                "Run `kite keys --set gemini`."
             )
         if oauth_id == "chatgpt":
             try:

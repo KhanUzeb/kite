@@ -105,13 +105,15 @@ kite setup [-p provider]       # first-run wizard: credentials + model
 kite update [--check] [--ref REF] [--force]  # upgrade installed CLI via uv tool (fallback: git reinstall); bare `kite update` updates, it does NOT open chat
 kite uninstall [-y] [--purge]  # remove CLI; keeps ~/.kite data unless --purge (--purge retries read-only files and reports leftovers)
 kite login [provider]          # pick provider if omitted → BYOK key or BYOS browser → pick model
-                               # BYOS (chatgpt/claude/grok): opens your browser to the sign-in URL as soon as
-                               # the provider CLI prints it (grok uses `grok login --oauth` interactively,
-                               # `--device-auth` when headless); ChatGPT opens the OAuth/device URL too.
-                               # Already linked → reuses the session (no browser) and jumps to model pick.
-                               # `kite login grok` also bridges tokens to LiteLLM under ~/.kite/oauth/xai
-                               # via the xAI subscription chat proxy.
-kite logout [provider]         # unlink BYOS subscription (codex, claude, grok/xai)
+                                # BYOS (chatgpt/claude/grok/antigravity): opens your browser to the sign-in URL
+                                # as soon as the provider CLI prints it (grok uses `grok login --oauth`
+                                # interactively, `--device-auth` when headless); ChatGPT opens the OAuth/device
+                                # URL too. `agy` drives its own Google sign-in (browser or SSH URL loop).
+                                # Already linked → reuses the session (no browser) and jumps to model pick.
+                                # `kite login grok` also bridges tokens to LiteLLM under ~/.kite/oauth/xai
+                                # via the xAI subscription chat proxy. Claude/Antigravity stay CLI-owned:
+                                # calls need ANTHROPIC_API_KEY / GEMINI_API_KEY.
+kite logout [provider]         # unlink BYOS subscription (codex, claude, grok/xai, antigravity)
 kite keys                      # TTY: status then pick a provider to link
 kite keys [--set [provider]]   # paste BYOK API keys (hidden); also tavily|exa|firecrawl
 kite web-keys                  # show optional web tool key status (Tavily / Exa / Firecrawl)
@@ -235,7 +237,7 @@ These never go to the model.
 | `/models [provider [model]]` | Pick a live model and save to `~/.kite/config.toml`. Empty: pick provider first. Two+ provider names: pick among them |
 | `/models refresh [provider]` `/refresh` | Clear the model cache, re-fetch from the provider API, then pick (also **F5**) |
 | `/provider [name]` | Empty: same connect flow as `/select`. With a name: set provider |
-| `/login [provider]` | Always (re)link credentials, then pick a model. BYOS opens a browser to the live sign-in URL (ChatGPT OAuth/device, Grok `--oauth` / device code); already-linked sessions skip the browser |
+| `/login [provider]` | Always (re)link credentials, then pick a model. BYOS opens a browser to the live sign-in URL (ChatGPT OAuth/device, Grok `--oauth` / device code, Antigravity via `agy`); already-linked sessions skip the browser |
 | `/logout [provider]` | Unlink; omit provider to pick |
 | `/sessions` `/session list` | Numbered picker: open / show / delete |
 | `/session open [id]` `/resume [id]` | Continue that chat (prints full transcript); omit id to pick a card — prompt on top, project · age · size · status beneath; current folder first |

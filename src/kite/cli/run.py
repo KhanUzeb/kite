@@ -1399,7 +1399,7 @@ def build_parser() -> argparse.ArgumentParser:
         "login",
         help="Link provider — BYOK API key (hidden) or BYOS OAuth subscription",
     )
-    login.add_argument("provider", nargs="?", help="Provider name (chatgpt, groq, claude, …)")
+    login.add_argument("provider", nargs="?", help="Provider name (chatgpt, groq, claude, antigravity, …)")
     login.add_argument(
         "--no-set-default",
         action="store_false",
@@ -1410,9 +1410,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     logout = sub.add_parser(
         "logout",
-        help="Unlink a BYOS subscription (chatgpt/codex, claude, grok/xai)",
+        help="Unlink a BYOS subscription (chatgpt/codex, claude, grok/xai, antigravity)",
     )
-    logout.add_argument("provider", nargs="?", help="Provider name (codex, claude, grok, xai, …)")
+    logout.add_argument("provider", nargs="?", help="Provider name (codex, claude, grok, xai, antigravity, …)")
     logout.set_defaults(func=_lazy_cmd("kite.cli.setup", "cmd_logout"))
 
     keys = sub.add_parser(

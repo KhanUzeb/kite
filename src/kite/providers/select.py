@@ -85,9 +85,15 @@ def select_model_interactive(
 
     cred = inspect_provider_credentials(spec)
     if not cred.usable:
+        if spec.oauth_provider == "anthropic":
+            key_hint = "anthropic"
+        elif spec.oauth_provider == "antigravity":
+            key_hint = "gemini"
+        else:
+            key_hint = ""
         console.print(
-            f"[yellow]{cred.detail}[/]  Run [cyan]kite keys --set anthropic[/]"
-            if spec.oauth_provider == "anthropic"
+            f"[yellow]{cred.detail}[/]  Run [cyan]kite keys --set {key_hint}[/]"
+            if key_hint
             else f"[yellow]{spec.display_name}[/] is not ready for Kite model calls."
         )
         return 1, None, None

@@ -1555,15 +1555,37 @@ class ChatSession:
                 f"Output (exit {completed.returncode}):\n\n```\n{preview}\n```"
             )
 
-    def _slash_plan(self, _arg: str) -> None:
+    def _slash_plan(self, arg: str) -> None:
         self._apply_plan_mode()
-        self.console.print(
-            "[kite.plan]plan mode[/]  read-only checklist — no edits; /build when ready"
-        )
-
-    def _slash_build(self, _arg: str) -> None:
-        self._apply_build_mode()
+        text = (arg or "").strip()
         n = len(self.state.todos)
+        if text:
+            # `/plan <text>` plans immediately — same as switching then typing.
+            self.console.print(
+                "[kite.plan]plan mode[/]  read-only checklist — no edits; /build when ready"
+            )
+            self.display.print_user_turn(text)
+            self._run_task(text)
+            return
+        if n:
+            self.console.print(
+                f"[kite.plan]plan mode[/]  read-only checklist — resuming {n} item(s); /build when ready"
+            )
+        else:
+            self.console.print(
+                "[kite.plan]plan mode[/]  read-only checklist — no edits; /build when ready"
+            )
+
+    def _slash_build(self, arg: str) -> None:
+        self._apply_build_mode()
+        text = (arg or "").strip()
+        n = len(self.state.todos)
+        if text:
+            # `/build <text>` applies immediately — same as switching then typing.
+            self.console.print("[kite.build]build mode[/]  default — edits are on")
+            self.display.print_user_turn(text)
+            self._run_task(text)
+            return
         if n:
             self.console.print(
                 f"[kite.build]build mode[/]  edits on — continuing {n} checklist item(s)"

@@ -658,6 +658,35 @@ def test_fold_toggle_and_any_key_bindings() -> None:
     assert buf.text.split("\n") == [f"line {i}" for i in range(12)]
 
 
+def test_plan_build_slash_text_runs_task(tmp_path, monkeypatch) -> None:
+    """`/plan <text>` and `/build <text>` act immediately; bare forms report state."""
+    from unittest.mock import MagicMock
+
+    from kite.agent.mode import AgentMode
+    from kite.ui.repl import ChatSession
+
+    monkeypatch.setattr(
+        "kite.providers.resolve.resolve_model",
+        lambda **_: MagicMock(provider="groq", model="test"),
+    )
+    chat = ChatSession(cwd=str(tmp_path))
+    ran: list[str] = []
+    chat._run_task = lambda task: ran.append(task)  # type: ignore[method-assign]
+    chat.display.print_user_turn = lambda text: None  # type: ignore[method-assign]
+
+    chat.state.todos = [{"status": "pending", "content": "survey"}]
+    chat._slash_plan("")
+    assert ran == [] and chat.state.mode is AgentMode.PLAN
+    chat._slash_plan("survey auth")
+    assert ran == ["survey auth"]
+
+    ran.clear()
+    chat._slash_build("")
+    assert ran == [] and chat.state.mode is AgentMode.BUILD
+    chat._slash_build("fix it")
+    assert ran == ["fix it"]
+
+
 def test_reasoning_support_redetects_on_model_switch(tmp_path, monkeypatch) -> None:
     """Thinking levels must follow the current model, never a stale cache."""
     from unittest.mock import MagicMock

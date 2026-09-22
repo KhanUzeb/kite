@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from kite.providers.auth.antigravity import AntigravityAuthProvider
 from kite.providers.auth.base import AuthProvider
 from kite.providers.auth.claude import ClaudeCodeAuthProvider
 from kite.providers.auth.codex import CodexAuthProvider
@@ -14,12 +15,14 @@ LOGIN_ALIASES: dict[str, str] = {
     "claude-sub": "claude",
     "grok-sub": "grok",
     "xai": "grok",  # subscription login shorthand; BYOK `xai` uses keys --set
+    "antigravity-sub": "antigravity",
 }
 
 _PROVIDERS: dict[str, AuthProvider] = {
     "chatgpt": CodexAuthProvider(),
     "anthropic": ClaudeCodeAuthProvider(),
     "xai": GrokCliAuthProvider(),
+    "antigravity": AntigravityAuthProvider(),
 }
 
 

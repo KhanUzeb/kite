@@ -188,8 +188,13 @@ def inspect_provider_credentials(spec) -> ProviderCredentialStatus:
         )
     if is_oauth_provider(spec):
         linked = has_oauth_session(spec.oauth_provider or spec.name)
-        if spec.oauth_provider == "anthropic":
-            key_ready = bool(api_key_for(spec))
+        if spec.oauth_provider in {"anthropic", "antigravity"}:
+            # Subscription auth is CLI-owned; Kite model calls need the BYOK
+            # key (ANTHROPIC_API_KEY / GEMINI_API_KEY respectively).
+            byok_spec = spec
+            if spec.oauth_provider == "antigravity":
+                byok_spec = load_catalog().get("gemini")
+            key_ready = bool(api_key_for(byok_spec))
             usable = linked and key_ready
             if linked and not key_ready:
                 detail = "CLI linked · API key required for Kite"

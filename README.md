@@ -181,6 +181,7 @@ kite keys --set firecrawl     # same storage path as web-keys set
 kite login codex              # BYOS: ChatGPT/Codex via openai-codex SDK
 kite login claude             # BYOS: Claude Code CLI (claude auth login)
 kite login grok               # BYOS: Grok CLI (or kite login xai)
+kite login antigravity      # BYOS: Google subscription via agy CLI (calls need GEMINI_API_KEY)
 kite logout codex             # unlink BYOS subscription
 kite models -p groq --select
 kite models -p zen --select          # OpenCode Zen (OPENCODE_API_KEY)

@@ -138,6 +138,7 @@ API keys live in `~/.kite/.env` (or the repo `.env`, which is gitignored). Never
 | ChatGPT / Codex | `openai-codex` SDK (`Codex.login_chatgpt`, device code, `account`, `logout`) | `~/.codex/` (Codex runtime). For LiteLLM `chatgpt/` calls, Kite flattens Codex nested `tokens` into `~/.kite/oauth/chatgpt/auth.json` (owner-only); it does not start a second device-code login. |
 | Claude subscription | Claude Code CLI (`claude auth login/status/logout`) | Claude Code (Keychain or platform store) |
 | Grok subscription | `grok` CLI (`grok login`, `--device-auth`, `logout`) | `~/.grok/auth.json` |
+| Antigravity subscription | `agy` CLI (browser/keyring flow; `/logout` in agy purges the keyring) | OS keyring (agy-owned); Kite keeps only a `~/.kite/oauth/antigravity/status.json` linkage marker |
 | xAI API (BYOK) | `XAI_API_KEY` in `~/.kite/.env` | `~/.kite/.env` |
 
 Kite never copies subscription OAuth tokens into `~/.kite/.env` or logs access/refresh tokens. The ChatGPT LiteLLM bridge file under `~/.kite/oauth/chatgpt/` is derived from the official Codex store for API compatibility only — treat it like a password.

@@ -19,6 +19,7 @@ ALIASES: dict[str, str] = {
     "chatgpt-sub": "chatgpt",
     "claude-sub": "claude",
     "grok-sub": "grok",
+    "antigravity-sub": "antigravity",
     "nim": "nvidia",
     "nvidia-nim": "nvidia",
     "nvidia_nim": "nvidia",

@@ -42,6 +42,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand(
         "build",
         "Apply edits (default) — continues any plan checklist",
+        hint="[text]",
         aliases=("b",),
         group="session",
         visibility="primary",
@@ -49,6 +50,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand(
         "plan",
         "Opt-in read-only explore + checklist — /build to apply",
+        hint="[text]",
         aliases=("p",),
         group="session",
         visibility="primary",
