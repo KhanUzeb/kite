@@ -26,18 +26,6 @@ def _out(session: ChatSession) -> str:
     return strip_ansi(session._buf.getvalue())  # type: ignore[attr-defined]
 
 
-def test_print_resume_hint_contains_session_id(tmp_path, kite_home, monkeypatch) -> None:
-    from kite.memory.session import create_session
-
-    created = create_session(task="demo", cwd=str(tmp_path), provider="p", model="m")
-    session = _quiet_session(tmp_path, monkeypatch)
-    session._session_id = created.id
-    session._print_resume_hint()
-    out = _out(session)
-    assert "Resume this session with" in out
-    assert f"kite resume {created.id}" in out
-
-
 def test_resume_exe_ignores_generic_launchers(monkeypatch) -> None:
     import sys
 
@@ -59,60 +47,62 @@ def test_resume_exe_ignores_generic_launchers(monkeypatch) -> None:
     assert repl_mod._resume_exe() == "kite"
 
 
-def test_print_resume_hint_absent_without_session(tmp_path, kite_home, monkeypatch) -> None:
-    session = _quiet_session(tmp_path, monkeypatch)
-    assert session._session_id is None
-    session._print_resume_hint()
-    assert "Resume this session" not in _out(session)
-
-
-def test_print_resume_hint_absent_when_not_persisted(tmp_path, kite_home, monkeypatch) -> None:
-    session = _quiet_session(tmp_path, monkeypatch)
-    session._session_id = "nope-not-persisted-0000"
-    session._print_resume_hint()
-    assert "Resume this session" not in _out(session)
-
-
-def test_print_resume_hint_never_leaks_secrets(tmp_path, kite_home, monkeypatch) -> None:
+def test_print_resume_hint_states(tmp_path, kite_home, monkeypatch) -> None:
     from kite.memory.session import create_session
 
+    created = create_session(task="demo", cwd=str(tmp_path), provider="p", model="m")
+    session = _quiet_session(tmp_path, monkeypatch)
+    session._session_id = created.id
+    session._print_resume_hint()
+    out = _out(session)
+    assert "Resume this session with" in out
+    assert f"kite resume {created.id}" in out
+
+    # Absent without any session.
+    nosession = _quiet_session(tmp_path, monkeypatch)
+    assert nosession._session_id is None
+    nosession._print_resume_hint()
+    assert "Resume this session" not in _out(nosession)
+
+    # Absent when the id was never persisted.
+    stale = _quiet_session(tmp_path, monkeypatch)
+    stale._session_id = "nope-not-persisted-0000"
+    stale._print_resume_hint()
+    assert "Resume this session" not in _out(stale)
+
+    # Persisted hint never leaks secrets from the task text.
     secret = "sk-ant-testsecret-does-not-leave-hint-999"
-    created = create_session(task=f"fix bug key={secret}", cwd=str(tmp_path), provider="p", model="m")
-    session = _quiet_session(tmp_path, monkeypatch)
-    session._session_id = created.id
-    session._print_resume_hint()
-    out = _out(session)
-    assert created.id in out
-    assert secret not in out
+    secreted = create_session(task=f"fix bug key={secret}", cwd=str(tmp_path), provider="p", model="m")
+    secret_session = _quiet_session(tmp_path, monkeypatch)
+    secret_session._session_id = secreted.id
+    secret_session._print_resume_hint()
+    secret_out = _out(secret_session)
+    assert secreted.id in secret_out
+    assert secret not in secret_out
 
 
-def test_run_eof_prints_resume_hint(tmp_path, kite_home, monkeypatch) -> None:
+def test_run_eof_and_quit_print_resume_hint(tmp_path, kite_home, monkeypatch) -> None:
     from kite.memory.session import create_session
     from kite.ui.complete import ComposerResult
 
-    created = create_session(task="demo", cwd=str(tmp_path), provider="p", model="m")
-    session = _quiet_session(tmp_path, monkeypatch)
-    session._session_id = created.id
-    session._read_input = lambda: ComposerResult("eof")  # type: ignore[method-assign]
-    assert session.run() == 0
-    out = _out(session)
-    assert "bye" in out
-    assert f"kite resume {created.id}" in out
+    eof_created = create_session(task="demo", cwd=str(tmp_path), provider="p", model="m")
+    eof_session = _quiet_session(tmp_path, monkeypatch)
+    eof_session._session_id = eof_created.id
+    eof_session._read_input = lambda: ComposerResult("eof")  # type: ignore[method-assign]
+    assert eof_session.run() == 0
+    eof_out = _out(eof_session)
+    assert "bye" in eof_out
+    assert f"kite resume {eof_created.id}" in eof_out
 
-
-def test_run_quit_prints_resume_hint(tmp_path, kite_home, monkeypatch) -> None:
-    from kite.memory.session import create_session
-    from kite.ui.complete import ComposerResult
-
-    created = create_session(task="demo", cwd=str(tmp_path), provider="p", model="m")
-    session = _quiet_session(tmp_path, monkeypatch)
-    session._session_id = created.id
+    quit_created = create_session(task="demo", cwd=str(tmp_path), provider="p", model="m")
+    quit_session = _quiet_session(tmp_path, monkeypatch)
+    quit_session._session_id = quit_created.id
     prompts = [ComposerResult("text", "/quit")]
-    session._read_input = lambda: prompts.pop(0)  # type: ignore[method-assign]
-    assert session.run() == 0
-    out = _out(session)
-    assert "bye" in out
-    assert f"kite resume {created.id}" in out
+    quit_session._read_input = lambda: prompts.pop(0)  # type: ignore[method-assign]
+    assert quit_session.run() == 0
+    quit_out = _out(quit_session)
+    assert "bye" in quit_out
+    assert f"kite resume {quit_created.id}" in quit_out
 
 
 def test_run_eof_without_session_has_no_hint(tmp_path, kite_home, monkeypatch) -> None:

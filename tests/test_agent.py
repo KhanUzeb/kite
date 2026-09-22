@@ -75,7 +75,8 @@ class _StubEnv:
         return {"ok": True, "output": ""}
 
 
-def test_query_limits_retry_and_fault() -> None:
+def test_query_limits_retry_fault_and_budget_guard() -> None:
+    # (merged from test_query_limits_retry_and_fault)
     model = _StubModel()
     agent = DefaultAgent(model, LocalEnvironment(registry=ToolRegistry([])), step_limit=2, cost_limit=5.0)
     agent.n_calls = 2
@@ -106,9 +107,32 @@ def test_query_limits_retry_and_fault() -> None:
     bad.messages = [exhausted.format_message("user", content="hi")]
     with pytest.raises(ProviderFault):
         bad.query()
+    # (merged from test_pre_tool_budget_guard_refuses_dispatch)
+    budget_events: list[str] = []
+
+    def _over_budget(**kwargs) -> DefaultAgent:
+        budgeted = DefaultAgent(_StubModel(), _StubEnv(), on_event=lambda e: budget_events.append(e.kind), **kwargs)
+        budgeted.env.execute = lambda action, cwd="": (_ for _ in ()).throw(AssertionError("tool must not dispatch"))  # type: ignore[method-assign]
+        return budgeted
+
+    stepped = _over_budget(step_limit=2)
+    stepped.n_calls = 2
+    stepped.execute_actions(
+        {"role": "assistant", "content": "", "extra": {"actions": [{"tool": "read", "arguments": {"path": "x"}}]}}
+    )
+    costed = _over_budget(cost_limit=1.0)
+    costed.cost = 1.0
+    costed.execute_actions(
+        {"role": "assistant", "content": "", "extra": {"actions": [{"tool": "read", "arguments": {"path": "x"}}]}}
+    )
+    assert "limits" in budget_events
+    for budgeted in (stepped, costed):
+        blob = "\n".join(str(m.get("content") or "") for m in budgeted.messages)
+        assert "budget" in blob
 
 
-def test_loop_guard_warns_and_hard_stops() -> None:
+def test_loop_guard_and_schema_repair(workspace: Path) -> None:
+    # (merged from test_loop_guard_warns_and_hard_stops)
     guard = LoopGuard(repeat_threshold=3)
     mutating = {"command": "make build"}
     for _ in range(2):
@@ -129,130 +153,21 @@ def test_loop_guard_warns_and_hard_stops() -> None:
     for _ in range(3):
         hard.record("bash", mutating, {"ok": True, "output": "same"})
     assert hard.record("bash", mutating, {"ok": True, "output": "same"}).hard_stop
+    # (merged from test_schema_repair_nudge_names_expected_keys)
+    tools = make_coding_tools(cwd=str(workspace), enabled=["read"])
+    repair_agent = DefaultAgent(_StubModel(), LocalEnvironment(registry=ToolRegistry(tools)))
+    tool, args, action = repair_agent._prepare_action({"tool": "read", "arguments": "x.py"})
+    assert args == {}
+    hint = str(action.get("_schema_repair_hint") or "")
+    assert "arguments must be an object" in hint and "path" in hint
+    outputs: list[dict] = []
+    repair_agent._after_tool(tool, args, action, {"ok": False, "error": "boom", "output": "boom"}, 1, outputs)
+    assert "Schema repair" in outputs[0]["output"] and "path" in outputs[0]["output"]
 
 
-def test_estimate_cost_from_usage_falls_back_to_price_map(monkeypatch) -> None:
-    import litellm
-
-    from kite.models.litellm_model import estimate_cost_from_usage
-
-    monkeypatch.setattr(
-        litellm,
-        "model_cost",
-        {
-            "groq/llama-3.3-70b-versatile": {
-                "input_cost_per_token": 0.00000059,
-                "output_cost_per_token": 0.00000079,
-                "cache_read_input_token_cost": 0.0000001,
-            },
-            "gpt-4o": {
-                "input_cost_per_token": 0.0000025,
-                "output_cost_per_token": 0.00001,
-            },
-        },
-        raising=False,
-    )
-    cost = estimate_cost_from_usage("groq/llama-3.3-70b-versatile", 1_000_000, 1_000_000)
-    assert cost == pytest.approx(0.59 + 0.79)
-    # Provider prefix is optional — prefixed names resolve via the bare id.
-    assert estimate_cost_from_usage("openai/gpt-4o", 1_000_000, 0) == pytest.approx(2.5)
-    cached = estimate_cost_from_usage(
-        "groq/llama-3.3-70b-versatile", 1_000_000, 0, cache_read_tokens=500_000
-    )
-    assert cached == pytest.approx(500_000 * 0.00000059 + 500_000 * 0.0000001)
-    assert estimate_cost_from_usage("unknown-model-xyz", 1000, 1000) == 0.0
-    assert estimate_cost_from_usage("groq/llama-3.3-70b-versatile", 0, 0) == 0.0
-
-
-def test_steer_follow_up_and_compaction_events() -> None:
-    queue = RunMessageQueue()
-    queue.steer("focus on tests only")
-    events: list[str] = []
-
-    class _SteerModel(_StubModel):
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def query(self, messages):
-            self.calls += 1
-            if self.calls == 1:
-                return {"role": "assistant", "content": "working", "extra": {"actions": [{"tool": "read", "arguments": {"path": "x"}}], "cost": 0.0}}
-            return {"role": "assistant", "content": "done after steer", "extra": {"cost": 0.0}}
-
-    model = _SteerModel()
-    agent = DefaultAgent(model, LocalEnvironment(registry=ToolRegistry([])), step_limit=5, message_queue=queue, on_event=lambda e: events.append(e.kind))
-    agent.messages = [model.format_message("system", content="sys"), model.format_message("user", content="ship it")]
-
-    def _interrupt_mid_tool(*_a, **_k):
-        agent.request_interrupt()
-        return {"ok": True, "output": "file"}
-
-    agent.env.execute = _interrupt_mid_tool  # type: ignore[method-assign]
-    result = agent.run("ship it")
-    assert result.get("exit_status") != "Interrupted"
-    assert any("focus on tests only" in str(m.get("content") or "") for m in agent.messages if m.get("role") == "user")
-    kinds: list[str] = []
-    LoopCompactor(CompactionConfig(enabled=True, window=1000, compact_ratio=0.5), system="sys", on_event=lambda e: kinds.append(e.kind)).maybe_compact(
-        [{"role": "system", "content": "x" * 400}, {"role": "user", "content": "y" * 400}, {"role": "assistant", "content": "z" * 400}],
-        force=True,
-    )
-    assert "compaction_start" in kinds and "compaction_end" in kinds
-    from kite.agent.hooks import HookBus
-    from kite.agent.runtime import AgentRuntime, RuntimeOptions
-
-    fired: list[str] = []
-    runtime = AgentRuntime(RuntimeOptions(cwd="."), hooks=HookBus())
-    runtime.hooks.on("after_prepare", lambda **_: fired.append("yes"))
-    from unittest.mock import patch
-
-    with patch("kite.agent.runtime.resolve_model", return_value=MagicMock(provider="test", model="m", context_window=128000)):
-        with patch("kite.providers.resolve.missing_credentials", return_value=None):
-            with patch("kite.providers.resolve.missing_model", return_value=None):
-                runtime.prepare()
-    assert fired == ["yes"]
-
-
-def test_plan_build_tools_and_plan_submit_block(workspace: Path) -> None:
-    assert "write" not in PLAN_TOOLS and "edit" not in PLAN_TOOLS
-    assert READONLY_TOOLS <= PLAN_TOOLS
-    nested = tools_for_nested_subagent(["read", "grep", "subagent", "task", "bash", "memory"])
-    assert "subagent" not in nested and "memory" not in nested
-    enabled = ["read", "write", "edit", "bash", "todo_write", "grep", "task", "submit"]
-    plan = tools_for_mode(AgentMode.PLAN, enabled)
-    assert "write" not in plan and "submit" not in plan
-    assert "submit" in tools_for_mode(AgentMode.BUILD, enabled)
-    assert PARALLEL_SAFE_TOOLS.issubset(READONLY_TOOLS)
-    assert is_parallel_safe("read") and is_parallel_safe("websearch") and is_parallel_safe("webfetch")
-    assert not is_parallel_safe("write") and not is_parallel_safe("bash")
-    from kite.agent.parallel import action_parallel_eligible, can_parallelize_batch
-
-    assert action_parallel_eligible("write") and action_parallel_eligible("edit")
-    cwd = str(workspace)
-    assert can_parallelize_batch(
-        [
-            {"tool": "write", "arguments": {"path": "x.py", "content": "1"}},
-            {"tool": "write", "arguments": {"path": "y.py", "content": "2"}},
-        ],
-        cwd=cwd,
-    )
-    assert {"write", "edit", "bash"} <= MUTATING_TOOLS
-    assert "Checklist handoff" in load_prompt_template("mode_build")
-    plan_prompt = load_prompt_template("mode_plan")
-    assert "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in plan_prompt
-    from kite.guardrails import GuardrailConfig, GuardrailPolicy
-
-    tools = make_coding_tools(cwd=str(workspace), guardrails=GuardrailPolicy(GuardrailConfig(), workspace), enabled=["bash"])
-    agent = DefaultAgent(object(), LocalEnvironment(registry=ToolRegistry(tools)), mode=AgentMode.PLAN)
-    cmd = "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
-    cmd_action = {"tool": "bash", "arguments": {"command": cmd}}
-    out = agent._invoke_tool("bash", {"command": cmd}, cmd_action)
-    assert out.get("ok") is False
-    submit = next(t for t in make_coding_tools(cwd=str(workspace), enabled=["submit"]) if t.name == "submit")
-    assert not submit.run({}).get("ok")
-
-
-def test_informational_turn_returns_answer_not_report() -> None:
-    """Issue #81: `tell main features of kite` ends with the answer text, not a turn report."""
+def test_informational_completion_idle_and_error(monkeypatch) -> None:
+    # (merged from test_informational_turn_returns_answer_not_report)
+    # Issue #81: `tell main features of kite` ends with the answer text, not a turn report.
     assert _is_casual_user_turn("tell main features of kite")
     assert _allow_text_submit(
         "Kite features: fast runs",
@@ -272,15 +187,13 @@ def test_informational_turn_returns_answer_not_report() -> None:
         agent.execute_actions({"role": "assistant", "content": "Kite features: fast runs", "extra": {"actions": []}})
     assert ei.value.messages[0].get("content") == "Kite features: fast runs"
     assert "## Verification" not in (ei.value.messages[0].get("content") or "")
-
-
-def test_completion_idle_and_error_stop(monkeypatch) -> None:
+    # (merged from test_completion_idle_and_error_stop)
     assert not _allow_text_submit("I finished the refactor.", mode=AgentMode.BUILD, interactive=True)
     assert _allow_text_submit("Hey! 👋", mode=AgentMode.BUILD, interactive=True, last_user="hi")
-    agent = DefaultAgent(_TextOnlyModel(), _StubEnv(), interactive=True, mode=AgentMode.BUILD, provider_max_retries=1)
-    agent.messages = [{"role": "user", "content": "run the test suite"}]
-    agent.execute_actions({"role": "assistant", "content": "All tests pass. Task complete.", "extra": {"actions": []}})
-    blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
+    gated = DefaultAgent(_TextOnlyModel(), _StubEnv(), interactive=True, mode=AgentMode.BUILD, provider_max_retries=1)
+    gated.messages = [{"role": "user", "content": "run the test suite"}]
+    gated.execute_actions({"role": "assistant", "content": "All tests pass. Task complete.", "extra": {"actions": []}})
+    blob = "\n".join(str(m.get("content") or "") for m in gated.messages)
     assert "Submit blocked" in blob or "claims" in blob.lower()
     idle = DefaultAgent(_TextOnlyModel(), _StubEnv(), interactive=True, mode=AgentMode.BUILD, provider_max_retries=1)
     idle.verification.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
@@ -308,37 +221,10 @@ def test_completion_idle_and_error_stop(monkeypatch) -> None:
     assert result.get("exit_status") == "Error"
 
 
-def test_cancel_parallel_reads_and_interrupt(workspace: Path) -> None:
-    import threading
-    import time
-
-    cancel = CancelToken()
-    tools = make_coding_tools(cwd=str(workspace), cancel=cancel, enabled=["bash"], timeout=30)
-    env = LocalEnvironment(registry=ToolRegistry(tools))
-    threading.Thread(target=lambda: (time.sleep(0.3), cancel.request()), daemon=True).start()
-    out = env.execute({"tool": "bash", "arguments": {"command": "sleep 5 && echo done"}})
-    assert out.get("cancelled") is True and out["ok"] is False
-    src = workspace / "src"
-    (src / "b.py").write_text("y = 2\n", encoding="utf-8")
-    model = MagicMock()
-    model.format_observation_messages.return_value = [{"role": "user", "content": "ok"}]
-    agent = DefaultAgent(model, LocalEnvironment(registry=ToolRegistry(make_coding_tools(cwd=str(workspace), enabled=["read"]))), step_limit=5, cost_limit=1.0)
-    agent.execute_actions(
-        {
-            "role": "assistant",
-            "content": "",
-            "extra": {"actions": [{"tool": "read", "arguments": {"path": str(src / "app.py")}}, {"tool": "read", "arguments": {"path": str(src / "b.py")}}]},
-        }
-    )
-    assert len(model.format_observation_messages.call_args[0][1]) == 2
-    token = CancelToken()
-    DefaultAgent(MagicMock(), MagicMock(), cancel=token).request_interrupt()
-    assert token.is_set()
-
-
-def test_submit_leaves_no_unanswered_tool_call(kite_home) -> None:
-    from kite.agent.exceptions import Submitted
-    from kite.agent.loop import DefaultAgent
+def test_submit_tool_call_accounting(workspace: Path) -> None:
+    # (merged from test_submit_leaves_no_unanswered_tool_call)
+    from kite.agent.exceptions import Submitted as _Submitted
+    from kite.agent.loop import DefaultAgent as _DefaultAgent
 
     class _SubmitModel:
         def format_message(self, **kwargs):
@@ -366,21 +252,17 @@ def test_submit_leaves_no_unanswered_tool_call(kite_home) -> None:
 
     class _SubmitEnv:
         def execute(self, action, cwd=""):
-            raise Submitted({"role": "exit", "content": "submitted", "extra": {"exit_status": "Submitted"}})
+            raise _Submitted({"role": "exit", "content": "submitted", "extra": {"exit_status": "Submitted"}})
 
-    agent = DefaultAgent(_SubmitModel(), _SubmitEnv(), step_limit=2)
-    agent.run("do it")
-
-    transcript = [m for m in agent.messages if m.get("role") != "exit"]
+    submit_agent = _DefaultAgent(_SubmitModel(), _SubmitEnv(), step_limit=2)
+    submit_agent.run("do it")
+    transcript = [m for m in submit_agent.messages if m.get("role") != "exit"]
     calls = [tc["id"] for m in transcript if m.get("tool_calls") for tc in m["tool_calls"]]
     answered = [m.get("tool_call_id") for m in transcript if m.get("role") == "tool"]
     assert calls == ["call_submit"]
     assert answered == ["call_submit"]
-
-
-def test_stopped_batches_answer_every_tool_call(workspace: Path) -> None:
-    from kite.agent.exceptions import Interrupted, Submitted
-    from kite.agent.loop import DefaultAgent
+    # (merged from test_stopped_batches_answer_every_tool_call)
+    from kite.agent.exceptions import Interrupted
 
     class _PairModel:
         def format_observation_messages(self, message, outputs, template_vars=None):
@@ -394,67 +276,34 @@ def test_stopped_batches_answer_every_tool_call(workspace: Path) -> None:
         actions = [{"tool": name, "id": f"call_{i}", "arguments": {"path": "a.py"}} for i, name in enumerate(names)]
         return {"role": "assistant", "content": "", "extra": {"actions": actions}}
 
-    agent = DefaultAgent(_PairModel(), LocalEnvironment(registry=ToolRegistry(make_coding_tools(cwd=str(workspace), enabled=["read"]))), step_limit=3)
-    agent._interrupt = True
+    interrupted = _DefaultAgent(_PairModel(), LocalEnvironment(registry=ToolRegistry(make_coding_tools(cwd=str(workspace), enabled=["read"]))), step_limit=3)
+    interrupted._interrupt = True
     try:
-        agent.execute_actions(_turn("read", "read", "read"))
+        interrupted.execute_actions(_turn("read", "read", "read"))
         raised = False
     except Interrupted:
         raised = True
     assert raised
-    answered = [m.get("tool_call_id") for m in agent.messages if m.get("role") == "tool"]
+    answered = [m.get("tool_call_id") for m in interrupted.messages if m.get("role") == "tool"]
     assert answered == ["call_0", "call_1", "call_2"]
 
-    class _SubmitEnv:
+    class _SubmitEnv2:
         def execute(self, action, cwd=""):
             if action.get("tool") == "submit":
-                raise Submitted({"role": "exit", "content": "submitted"})
+                raise _Submitted({"role": "exit", "content": "submitted"})
             return {"ok": True, "output": "saw file"}
 
-    follow = DefaultAgent(_PairModel(), _SubmitEnv(), step_limit=3)
+    follow = _DefaultAgent(_PairModel(), _SubmitEnv2(), step_limit=3)
     try:
         follow.execute_actions(_turn("read", "submit"))
-    except Submitted:
+    except _Submitted:
         pass
     answered = [m.get("tool_call_id") for m in follow.messages if m.get("role") == "tool"]
     assert answered == ["call_0", "call_1"]
 
 
-def test_dispatch_mode_inference() -> None:
-    assert resolve_dispatch_mode({"prompt": "x", "background": True}) == (True, "explicit-async")
-    assert resolve_dispatch_mode({"prompts": ["a", "b"], "labels": ["x", "y"]})[0] is False
-    assert resolve_dispatch_mode({"prompt": "Survey routes in the background while I refactor the CLI."})[1] == "auto-async"
-    assert resolve_dispatch_mode({"prompt": "Map the auth module and report back before continuing."})[1] == "auto-sync"
-    assert resolve_dispatch_mode({"prompt": "Read the background jobs module under src/kite/tools"})[1] == "default-sync"
-    assert "async" in dispatch_hint("auto-async")
-
-
-def test_harness_build_and_recovery(kite_home, workspace: Path) -> None:
-    cfg = build_harness_config()
-    assert cfg.mode == "build" and cfg.memory_in_prompt is False
-    shaped = build_harness_config(provider="groq", interactive=True, memory_in_prompt=True, reasoning="fast")
-    assert shaped.interactive and shaped.reasoning == "fast"
-    with pytest.raises(TypeError, match="unknown harness config"):
-        build_harness_config(not_a_field=True)
-    save_session_goal("sess-1", SessionGoal(objective="Ship feature X", status="active"))
-    assert load_session_goal("sess-1") is not None
-    assert "Keep tests green" in format_goal_section("Keep tests green")
-    assert should_auto_recover(exit_status="ProviderFault", continues_used=0, goal_active=False)
-    assert not should_auto_recover(exit_status="Interrupted", continues_used=0, goal_active=False)
-    assert decide_recovery_continue(exit_status="LimitsExceeded", continues_used=0, max_continues=3, goal_active=True, todos=[{"status": "pending", "content": "fix tests"}], tool_call_count=1) == "continue"
-    assert "Finish migration" in build_recovery_follow_up(exit_status="ProviderFault", continuity_markdown="## Continuity\n- Mission: x", goal_objective="Finish migration")
-    from kite.memory.session import create_session
-
-    session = create_session(task="demo", cwd=str(workspace), provider="groq", model="test")
-    persist_session_todos(session.id, [{"id": "1", "content": "run pytest", "status": "pending"}])
-    assert load_session_todos(session.id)[0]["content"] == "run pytest"
-    from kite.cli.run import build_parser
-
-    args = build_parser().parse_args(["resume", "--last", "--retry", "abc12345"])
-    assert args.retry is True and args.session == "abc12345"
-
-
-def test_submit_gate_and_executor_approval(workspace: Path) -> None:
+def test_submit_gate_and_verification(workspace: Path) -> None:
+    # (merged from test_submit_gate_and_executor_approval)
     class _EditThenSubmit:
         def __init__(self) -> None:
             self.step = 0
@@ -516,56 +365,140 @@ def test_submit_gate_and_executor_approval(workspace: Path) -> None:
         {"command": "git status"},
         {"tool": "bash", "arguments": {"command": "git status"}},
     ).get("ok") is True
-
-
-def test_pre_tool_budget_guard_refuses_dispatch() -> None:
-    events: list[str] = []
-
-    def _over_budget(**kwargs) -> DefaultAgent:
-        agent = DefaultAgent(_StubModel(), _StubEnv(), on_event=lambda e: events.append(e.kind), **kwargs)
-        agent.env.execute = lambda action, cwd="": (_ for _ in ()).throw(AssertionError("tool must not dispatch"))  # type: ignore[method-assign]
-        return agent
-
-    stepped = _over_budget(step_limit=2)
-    stepped.n_calls = 2
-    stepped.execute_actions(
-        {"role": "assistant", "content": "", "extra": {"actions": [{"tool": "read", "arguments": {"path": "x"}}]}}
-    )
-    costed = _over_budget(cost_limit=1.0)
-    costed.cost = 1.0
-    costed.execute_actions(
-        {"role": "assistant", "content": "", "extra": {"actions": [{"tool": "read", "arguments": {"path": "x"}}]}}
-    )
-    assert "limits" in events
-    for agent in (stepped, costed):
-        blob = "\n".join(str(m.get("content") or "") for m in agent.messages)
-        assert "budget" in blob
-
-
-def test_schema_repair_nudge_names_expected_keys(workspace: Path) -> None:
-    tools = make_coding_tools(cwd=str(workspace), enabled=["read"])
-    agent = DefaultAgent(_StubModel(), LocalEnvironment(registry=ToolRegistry(tools)))
-    tool, args, action = agent._prepare_action({"tool": "read", "arguments": "x.py"})
-    assert args == {}
-    hint = str(action.get("_schema_repair_hint") or "")
-    assert "arguments must be an object" in hint and "path" in hint
-    outputs: list[dict] = []
-    agent._after_tool(tool, args, action, {"ok": False, "error": "boom", "output": "boom"}, 1, outputs)
-    assert "Schema repair" in outputs[0]["output"] and "path" in outputs[0]["output"]
-
-
-def test_submit_tool_gated_on_verification() -> None:
-    agent = DefaultAgent(_StubModel(), _StubEnv(), verify_before_submit=True)
-    agent.verification.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
-    blocked = agent._invoke_tool(
+    # (merged from test_submit_tool_gated_on_verification)
+    submit_agent = DefaultAgent(_StubModel(), _StubEnv(), verify_before_submit=True)
+    submit_agent.verification.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+    blocked_submit = submit_agent._invoke_tool(
         "submit", {"message": "finished"}, {"tool": "submit", "arguments": {"message": "finished"}}
     )
-    assert blocked.get("blocked") is True and "Submit blocked" in str(blocked.get("error") or "")
+    assert blocked_submit.get("blocked") is True and "Submit blocked" in str(blocked_submit.get("error") or "")
     clean = DefaultAgent(_StubModel(), _StubEnv(), verify_before_submit=True)
     assert clean.verification.submit_block_reason("hi") is None
 
 
-def test_harness_keeps_job_registry_after_run_error() -> None:
+def test_plan_tools_and_dispatch_mode(workspace: Path) -> None:
+    # (merged from test_plan_build_tools_and_plan_submit_block)
+    assert "write" not in PLAN_TOOLS and "edit" not in PLAN_TOOLS
+    assert READONLY_TOOLS <= PLAN_TOOLS
+    nested = tools_for_nested_subagent(["read", "grep", "subagent", "task", "bash", "memory"])
+    assert "subagent" not in nested and "memory" not in nested
+    enabled = ["read", "write", "edit", "bash", "todo_write", "grep", "task", "submit"]
+    plan = tools_for_mode(AgentMode.PLAN, enabled)
+    assert "write" not in plan and "submit" not in plan
+    assert "submit" in tools_for_mode(AgentMode.BUILD, enabled)
+    assert PARALLEL_SAFE_TOOLS.issubset(READONLY_TOOLS)
+    assert is_parallel_safe("read") and is_parallel_safe("websearch") and is_parallel_safe("webfetch")
+    assert not is_parallel_safe("write") and not is_parallel_safe("bash")
+    from kite.agent.parallel import action_parallel_eligible, can_parallelize_batch
+
+    assert action_parallel_eligible("write") and action_parallel_eligible("edit")
+    cwd = str(workspace)
+    assert can_parallelize_batch(
+        [
+            {"tool": "write", "arguments": {"path": "x.py", "content": "1"}},
+            {"tool": "write", "arguments": {"path": "y.py", "content": "2"}},
+        ],
+        cwd=cwd,
+    )
+    assert {"write", "edit", "bash"} <= MUTATING_TOOLS
+    assert "Checklist handoff" in load_prompt_template("mode_build")
+    plan_prompt = load_prompt_template("mode_plan")
+    assert "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in plan_prompt
+    from kite.guardrails import GuardrailConfig, GuardrailPolicy
+
+    tools = make_coding_tools(cwd=str(workspace), guardrails=GuardrailPolicy(GuardrailConfig(), workspace), enabled=["bash"])
+    plan_agent = DefaultAgent(object(), LocalEnvironment(registry=ToolRegistry(tools)), mode=AgentMode.PLAN)
+    cmd = "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+    cmd_action = {"tool": "bash", "arguments": {"command": cmd}}
+    out = plan_agent._invoke_tool("bash", {"command": cmd}, cmd_action)
+    assert out.get("ok") is False
+    submit = next(t for t in make_coding_tools(cwd=str(workspace), enabled=["submit"]) if t.name == "submit")
+    assert not submit.run({}).get("ok")
+    # (merged from test_dispatch_mode_inference)
+    assert resolve_dispatch_mode({"prompt": "x", "background": True}) == (True, "explicit-async")
+    assert resolve_dispatch_mode({"prompts": ["a", "b"], "labels": ["x", "y"]})[0] is False
+    assert resolve_dispatch_mode({"prompt": "Survey routes in the background while I refactor the CLI."})[1] == "auto-async"
+    assert resolve_dispatch_mode({"prompt": "Map the auth module and report back before continuing."})[1] == "auto-sync"
+    assert resolve_dispatch_mode({"prompt": "Read the background jobs module under src/kite/tools"})[1] == "default-sync"
+    assert "async" in dispatch_hint("auto-async")
+
+
+def test_steer_follow_up_and_compaction_events() -> None:
+    queue = RunMessageQueue()
+    queue.steer("focus on tests only")
+    events: list[str] = []
+
+    class _SteerModel(_StubModel):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def query(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                return {"role": "assistant", "content": "working", "extra": {"actions": [{"tool": "read", "arguments": {"path": "x"}}], "cost": 0.0}}
+            return {"role": "assistant", "content": "done after steer", "extra": {"cost": 0.0}}
+
+    model = _SteerModel()
+    agent = DefaultAgent(model, LocalEnvironment(registry=ToolRegistry([])), step_limit=5, message_queue=queue, on_event=lambda e: events.append(e.kind))
+    agent.messages = [model.format_message("system", content="sys"), model.format_message("user", content="ship it")]
+
+    def _interrupt_mid_tool(*_a, **_k):
+        agent.request_interrupt()
+        return {"ok": True, "output": "file"}
+
+    agent.env.execute = _interrupt_mid_tool  # type: ignore[method-assign]
+    result = agent.run("ship it")
+    assert result.get("exit_status") != "Interrupted"
+    assert any("focus on tests only" in str(m.get("content") or "") for m in agent.messages if m.get("role") == "user")
+    kinds: list[str] = []
+    LoopCompactor(CompactionConfig(enabled=True, window=1000, compact_ratio=0.5), system="sys", on_event=lambda e: kinds.append(e.kind)).maybe_compact(
+        [{"role": "system", "content": "x" * 400}, {"role": "user", "content": "y" * 400}, {"role": "assistant", "content": "z" * 400}],
+        force=True,
+    )
+    assert "compaction_start" in kinds and "compaction_end" in kinds
+    from kite.agent.hooks import HookBus
+    from kite.agent.runtime import AgentRuntime, RuntimeOptions
+
+    fired: list[str] = []
+    runtime = AgentRuntime(RuntimeOptions(cwd="."), hooks=HookBus())
+    runtime.hooks.on("after_prepare", lambda **_: fired.append("yes"))
+    from unittest.mock import patch
+
+    with patch("kite.agent.runtime.resolve_model", return_value=MagicMock(provider="test", model="m", context_window=128000)):
+        with patch("kite.providers.resolve.missing_credentials", return_value=None):
+            with patch("kite.providers.resolve.missing_model", return_value=None):
+                runtime.prepare()
+    assert fired == ["yes"]
+
+
+def test_cancel_parallel_and_job_registry(workspace: Path) -> None:
+    # (merged from test_cancel_parallel_reads_and_interrupt)
+    import threading
+    import time
+
+    cancel = CancelToken()
+    tools = make_coding_tools(cwd=str(workspace), cancel=cancel, enabled=["bash"], timeout=30)
+    env = LocalEnvironment(registry=ToolRegistry(tools))
+    threading.Thread(target=lambda: (time.sleep(0.3), cancel.request()), daemon=True).start()
+    out = env.execute({"tool": "bash", "arguments": {"command": "sleep 5 && echo done"}})
+    assert out.get("cancelled") is True and out["ok"] is False
+    src = workspace / "src"
+    (src / "b.py").write_text("y = 2\n", encoding="utf-8")
+    model = MagicMock()
+    model.format_observation_messages.return_value = [{"role": "user", "content": "ok"}]
+    agent = DefaultAgent(model, LocalEnvironment(registry=ToolRegistry(make_coding_tools(cwd=str(workspace), enabled=["read"]))), step_limit=5, cost_limit=1.0)
+    agent.execute_actions(
+        {
+            "role": "assistant",
+            "content": "",
+            "extra": {"actions": [{"tool": "read", "arguments": {"path": str(src / "app.py")}}, {"tool": "read", "arguments": {"path": str(src / "b.py")}}]},
+        }
+    )
+    assert len(model.format_observation_messages.call_args[0][1]) == 2
+    token = CancelToken()
+    DefaultAgent(MagicMock(), MagicMock(), cancel=token).request_interrupt()
+    assert token.is_set()
+    # (merged from test_harness_keeps_job_registry_after_run_error)
     from kite.agent.harness import Harness, HarnessConfig
 
     jobs = MagicMock()
@@ -585,3 +518,60 @@ def test_harness_keeps_job_registry_after_run_error() -> None:
         h.run("task")
     assert h.job_registry is jobs
     assert h.teardown_jobs() == 0
+
+
+def test_cost_estimate_harness_build_and_recovery(kite_home, workspace: Path, monkeypatch) -> None:
+    # (merged from test_estimate_cost_from_usage_falls_back_to_price_map)
+    import litellm
+
+    from kite.models.litellm_model import estimate_cost_from_usage
+
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "groq/llama-3.3-70b-versatile": {
+                "input_cost_per_token": 0.00000059,
+                "output_cost_per_token": 0.00000079,
+                "cache_read_input_token_cost": 0.0000001,
+            },
+            "gpt-4o": {
+                "input_cost_per_token": 0.0000025,
+                "output_cost_per_token": 0.00001,
+            },
+        },
+        raising=False,
+    )
+    cost = estimate_cost_from_usage("groq/llama-3.3-70b-versatile", 1_000_000, 1_000_000)
+    assert cost == pytest.approx(0.59 + 0.79)
+    # Provider prefix is optional — prefixed names resolve via the bare id.
+    assert estimate_cost_from_usage("openai/gpt-4o", 1_000_000, 0) == pytest.approx(2.5)
+    cached = estimate_cost_from_usage(
+        "groq/llama-3.3-70b-versatile", 1_000_000, 0, cache_read_tokens=500_000
+    )
+    assert cached == pytest.approx(500_000 * 0.00000059 + 500_000 * 0.0000001)
+    assert estimate_cost_from_usage("unknown-model-xyz", 1000, 1000) == 0.0
+    assert estimate_cost_from_usage("groq/llama-3.3-70b-versatile", 0, 0) == 0.0
+    # (merged from test_harness_build_and_recovery)
+    cfg = build_harness_config()
+    assert cfg.mode == "build" and cfg.memory_in_prompt is False
+    shaped = build_harness_config(provider="groq", interactive=True, memory_in_prompt=True, reasoning="fast")
+    assert shaped.interactive and shaped.reasoning == "fast"
+    with pytest.raises(TypeError, match="unknown harness config"):
+        build_harness_config(not_a_field=True)
+    save_session_goal("sess-1", SessionGoal(objective="Ship feature X", status="active"))
+    assert load_session_goal("sess-1") is not None
+    assert "Keep tests green" in format_goal_section("Keep tests green")
+    assert should_auto_recover(exit_status="ProviderFault", continues_used=0, goal_active=False)
+    assert not should_auto_recover(exit_status="Interrupted", continues_used=0, goal_active=False)
+    assert decide_recovery_continue(exit_status="LimitsExceeded", continues_used=0, max_continues=3, goal_active=True, todos=[{"status": "pending", "content": "fix tests"}], tool_call_count=1) == "continue"
+    assert "Finish migration" in build_recovery_follow_up(exit_status="ProviderFault", continuity_markdown="## Continuity\n- Mission: x", goal_objective="Finish migration")
+    from kite.memory.session import create_session
+
+    session = create_session(task="demo", cwd=str(workspace), provider="groq", model="test")
+    persist_session_todos(session.id, [{"id": "1", "content": "run pytest", "status": "pending"}])
+    assert load_session_todos(session.id)[0]["content"] == "run pytest"
+    from kite.cli.run import build_parser
+
+    args = build_parser().parse_args(["resume", "--last", "--retry", "abc12345"])
+    assert args.retry is True and args.session == "abc12345"

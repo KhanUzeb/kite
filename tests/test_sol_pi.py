@@ -30,31 +30,26 @@ from kite.sol_pi.observation_core import (
 from kite.sol_pi.plan import analyze_plan_transition, parse_todo_items
 
 
-def test_config_defaults_when_missing(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    cfg = load_sol_pi_config(tmp_path)
-    assert cfg.action_fusion is False
-    assert cfg.observation_pack is False
-    assert cfg.evidence_preserving_reducer is False
-    assert cfg.online_context_compact is False
-    assert cfg.enabled is False
-
-
 @dataclass
 class _HarnessStub:
     hooks: HookBus = field(default_factory=HookBus)
     sol_pi: object | None = field(default=None, init=False)
 
 
-def test_attach_sol_pi_noop_without_config(tmp_path: Path, monkeypatch) -> None:
+def test_sol_pi_config_load_and_attach(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
+    missing = load_sol_pi_config(tmp_path)
+    assert missing.action_fusion is False
+    assert missing.observation_pack is False
+    assert missing.evidence_preserving_reducer is False
+    assert missing.online_context_compact is False
+    assert missing.enabled is False
+
     harness = _HarnessStub()
     assert attach_sol_pi(harness, str(tmp_path)) is None
     assert harness.sol_pi is None
     assert "sol_pi_session" not in harness.hooks.context
 
-
-def test_config_loads_project_file(tmp_path: Path, monkeypatch) -> None:
     kite_dir = tmp_path / ".kite"
     kite_dir.mkdir()
     (kite_dir / "sol-pi.json").write_text(
@@ -131,7 +126,7 @@ def test_observation_pack_threshold_and_recall(tmp_path: Path) -> None:
     assert FULL_SENDS == 2
 
 
-def test_evidence_receipt_validation() -> None:
+def test_evidence_receipt_and_plan_transition() -> None:
     body = "FAILED test_foo\n" + ("x" * 5000)
     digest = sha256_text(body)
     archive = ArchiveObject(hash=digest, bytes=len(body), lines=2, body=body)
@@ -151,8 +146,6 @@ def test_evidence_receipt_validation() -> None:
     rendered = receipt_text(validated, archive, "pytest -q")
     assert "sol_pi_evidence_receipt_v1" in rendered
 
-
-def test_plan_transition_from_todos() -> None:
     prev = parse_todo_items([{"content": "a", "status": "in_progress"}])
     assert prev is not None
     nxt = parse_todo_items(
@@ -166,7 +159,7 @@ def test_plan_transition_from_todos() -> None:
     assert len(transition.completed_steps) == 1
 
 
-def test_action_fusion_then_run(tmp_path: Path) -> None:
+def test_action_fusion_then_run_and_merge(tmp_path: Path) -> None:
     target = tmp_path / "f.txt"
     target.write_text("old\n", encoding="utf-8")
 
@@ -180,8 +173,6 @@ def test_action_fusion_then_run(tmp_path: Path) -> None:
     out = run_mutation_then_run(target, {"command": "true"}, mutate, bash)
     assert THEN_RUN_SUCCEEDED in str(out.get("output"))
 
-
-def test_action_fusion_merge_nonzero_exit() -> None:
     merged = merge_then_run_output(
         {"ok": True, "output": "wrote"},
         {"ok": False, "output": "fail", "returncode": 1},

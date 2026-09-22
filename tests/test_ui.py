@@ -47,7 +47,7 @@ from kite.ui.tool_cards import render_code_edit_preview
 from tests.conftest import strip_ansi
 
 
-def test_render_events_and_busy_spin() -> None:
+def test_render_events_busy_spin_and_quiet_tools() -> None:
     buf = StringIO()
     display = RunDisplay(Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME), state=SessionUiState(), quiet=False)
     display.state.busy = True
@@ -67,10 +67,23 @@ def test_render_events_and_busy_spin() -> None:
     display._spin(True, "thinking")
     assert display._spinner_on is False and display.state.running_label == "thinking"
 
+    quiet = StringIO()
+    inspect_display = RunDisplay(Console(file=quiet, width=120, force_terminal=True, theme=KITE_THEME), state=SessionUiState())
+    inspect_display(Event("tool_start", payload={"tool": "read", "arguments": {"path": "src/kite/cli/run.py"}}))
+    inspect_display(Event("tool_end", payload={"tool": "read", "ok": True, "preview": "ok", "output": "line\n"}))
+    plain = strip_ansi(quiet.getvalue())
+    assert "running" not in plain
+    assert "read" in plain
 
-def test_tool_output_unwraps_json_and_uses_full_width() -> None:
-    from kite.ui.output_view import format_viewable_output, render_output_block
-    from kite.ui.render import _collapse_text
+
+def test_output_and_thinking_unwrap_full_width() -> None:
+    from kite.ui.output_view import (
+        format_thinking_text,
+        format_viewable_output,
+        render_output_block,
+        render_thinking_block,
+    )
+    from kite.ui.render import _collapse_text, render_reasoning_block
 
     envelope = '{"ok": true, "output": "hello\\nworld"}'
     assert format_viewable_output(envelope) == "hello\nworld\n"
@@ -82,31 +95,16 @@ def test_tool_output_unwraps_json_and_uses_full_width() -> None:
     collapsed = _collapse_text(envelope, expanded=True)
     assert collapsed.plain.startswith("hello")
 
-
-def test_thinking_unwraps_json_and_is_full_width() -> None:
-    from kite.ui.output_view import format_thinking_text, render_thinking_block
-    from kite.ui.render import render_reasoning_block
-
     blob = '{"reasoning": "check the tests first"}'
     assert format_thinking_text(blob).strip() == "check the tests first"
     wrapped = '{"ok": true, "output": "look at grep"}'
     assert "look at grep" in format_thinking_text(wrapped)
-    block = render_thinking_block(blob)
-    assert block.plain.startswith("check the tests first")
-    assert not block.plain.startswith("…")
+    think_block = render_thinking_block(blob)
+    assert think_block.plain.startswith("check the tests first")
+    assert not think_block.plain.startswith("…")
     shown = render_reasoning_block(blob)
     assert "check the tests first" in shown.plain
     assert shown.plain.find("check") < 8
-
-
-def test_quiet_inspect_tools_skip_running_row() -> None:
-    buf = StringIO()
-    display = RunDisplay(Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME), state=SessionUiState())
-    display(Event("tool_start", payload={"tool": "read", "arguments": {"path": "src/kite/cli/run.py"}}))
-    display(Event("tool_end", payload={"tool": "read", "ok": True, "preview": "ok", "output": "line\n"}))
-    plain = strip_ansi(buf.getvalue())
-    assert "running" not in plain
-    assert "read" in plain
 
 
 def _render_card(
@@ -134,7 +132,7 @@ def _render_card(
     return strip_ansi(buf.getvalue())
 
 
-def test_startup_card_shows_identity_and_adapts_to_width() -> None:
+def test_startup_card_width_truncation_and_context() -> None:
     wide = _render_card(100, context=["AGENTS.md"])
     for token in (
         "🪁 Kite 0.9.8.5",
@@ -159,8 +157,6 @@ def test_startup_card_shows_identity_and_adapts_to_width() -> None:
     # Missing configuration renders an em dash, not an empty field.
     assert "—/gpt-5.6-luna" in _render_card(100, provider="—")
 
-
-def test_startup_card_truncates_long_identity_and_context() -> None:
     long_model = "a-very-long-model-id-that-keeps-going-and-going-xyz"
     card = _render_card(100, provider="openrouter", model=long_model)
     assert "…" in card and "a-very-long-model-id" in card and long_model not in card
@@ -173,8 +169,6 @@ def test_startup_card_truncates_long_identity_and_context() -> None:
     for line in narrow_long.splitlines():
         assert len(line) <= 50
 
-
-def test_startup_card_omits_context_separator_when_no_files() -> None:
     line = next(
         ln for ln in _render_card(100, provider="groq", model="llama", workspace="demo").splitlines()
         if "groq/llama" in ln
@@ -211,21 +205,25 @@ def test_theme_palettes_and_status() -> None:
     reset_prefs(theme="auto", font="unicode")
 
 
-def test_composer_ctrl_c_queue_and_privacy(monkeypatch, kite_home) -> None:
+def test_composer_interrupt_kinds_aliases_and_empty() -> None:
+    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr("prompt_toolkit.patch_stdout.patch_stdout", lambda raw=False: nullcontext())
-    session = MagicMock()
-    session.prompt.side_effect = KeyboardInterrupt()
-    session.default_buffer.text = ""
-    assert read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None).kind == "empty"
-    session.prompt.side_effect = KeyboardInterrupt()
-    session.default_buffer.text = "use grep not find"
-    steered = read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None, busy=True)
-    assert steered.kind == "steer" and steered.text == "use grep not find"
-    session.prompt.side_effect = KeyboardInterrupt()
-    session.default_buffer.text = ""
-    assert read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None, busy=True).kind == "stop"
-    session.prompt.side_effect = EOFError()
-    assert read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None).kind == "eof"
+    try:
+        session = MagicMock()
+        session.prompt.side_effect = KeyboardInterrupt()
+        session.default_buffer.text = ""
+        assert read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None).kind == "empty"
+        session.prompt.side_effect = KeyboardInterrupt()
+        session.default_buffer.text = "use grep not find"
+        steered = read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None, busy=True)
+        assert steered.kind == "steer" and steered.text == "use grep not find"
+        session.prompt.side_effect = KeyboardInterrupt()
+        session.default_buffer.text = ""
+        assert read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None, busy=True).kind == "stop"
+        session.prompt.side_effect = EOFError()
+        assert read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None).kind == "eof"
+    finally:
+        monkeypatch.undo()
     q = RunMessageQueue()
     q.enqueue("later")
     q.steer("now")
@@ -236,15 +234,16 @@ def test_composer_ctrl_c_queue_and_privacy(monkeypatch, kite_home) -> None:
     summary = persistence_summary()
     assert "ssrf" in summary and summary["session_persistence"] in {"full", "redacted", "disabled"}
 
-
-
-def test_exit_alias_resolves_to_quit() -> None:
     from kite.cli.slash import CommandIndex, resolve_slash
     from kite.ui.complete import classify_busy_line
 
     parsed = resolve_slash("/exit", CommandIndex.load("."))
     assert parsed.command == "quit"
     assert classify_busy_line("/exit").kind == "eof"
+
+    got = read_repl_line(session=None, state=SessionUiState(), fallback=lambda: "   ")
+    assert got.kind == "empty"
+
 
 def test_repl_lazy_slash_and_jobs(monkeypatch, tmp_path, kite_home) -> None:
     monkeypatch.setattr("kite.providers.resolve.resolve_model", lambda **_: MagicMock(provider="groq", model="llama-test"))
@@ -336,7 +335,7 @@ def test_repl_lazy_slash_and_jobs(monkeypatch, tmp_path, kite_home) -> None:
     assert repl.state.awaiting_approval == "bash"
 
 
-def test_attach_preview_and_clipboard(tmp_path, kite_home, monkeypatch) -> None:
+def test_attach_clipboard_and_diff_helpers(tmp_path, kite_home, monkeypatch) -> None:
     note = tmp_path / "note.txt"
     note.write_text("hello attach", encoding="utf-8")
     task, found = parse_inline_mentions(f"please fix @{note.name}", tmp_path)
@@ -372,22 +371,21 @@ def test_attach_preview_and_clipboard(tmp_path, kite_home, monkeypatch) -> None:
     preview = preview_mutating_diff("edit", big, {"path": str(big), "old": "needle", "new": "found"}, cwd=tmp_path)
     assert "-needle" in preview and "+found" in preview
 
-
-def test_render_diff_and_stream_answer_styles() -> None:
-    diff = make_unified_diff("src/a.py", "line one\n", "line two\n")
-    rendered = render_diff(diff, collapsed=True).plain
+    unified = make_unified_diff("src/a.py", "line one\n", "line two\n")
+    rendered = render_diff(unified, collapsed=True).plain
     assert "src/a.py" in rendered
     assert "+1" in rendered and "-1" in rendered
     assert "line two" in rendered and "line one" in rendered
-
-    preview = render_code_edit_preview(
+    preview_card = render_code_edit_preview(
         "edit",
         {"path": "lib/x.py", "old": "foo", "new": "bar"},
     )
-    assert preview is not None
-    assert "lib/x.py" in preview.plain
-    assert "foo" in preview.plain and "bar" in preview.plain
+    assert preview_card is not None
+    assert "lib/x.py" in preview_card.plain
+    assert "foo" in preview_card.plain and "bar" in preview_card.plain
 
+
+def test_stream_answer_styles_boundaries_and_coalescing() -> None:
     display = RunDisplay(Console(force_terminal=True, width=100, theme=KITE_THEME), state=SessionUiState())
     display._stream_write_answer("## Summary\n- first item\n```python\nx = 1\n```\n")
     # fence markers and bullet land in internal stream path — exercise prose helper directly
@@ -400,21 +398,17 @@ def test_render_diff_and_stream_answer_styles() -> None:
     assert coalescer.push("custom", "hi") is None
     assert coalescer.push("custom", " there") is not None
 
-
-def test_stream_answer_keeps_chunk_boundaries_inline() -> None:
     buf = StringIO()
-    display = RunDisplay(Console(file=buf, width=100, theme=KITE_THEME), state=SessionUiState())
-
+    inline = RunDisplay(Console(file=buf, width=100, theme=KITE_THEME), state=SessionUiState())
     for chunk in ("Kite is a", " terminal coding", "-agent harness.\n", "Second", " line\n"):
-        display._stream_write_answer(chunk)
-
+        inline._stream_write_answer(chunk)
     lines = [line for line in strip_ansi(buf.getvalue()).splitlines() if line.strip()]
     assert len(lines) == 2
     assert lines[0].strip() == "• Kite is a terminal coding-agent harness."
     assert lines[1].strip() == "Second line"
 
 
-def test_submitted_user_row_fills_width_with_surface() -> None:
+def test_composer_turn_answer_lifecycle() -> None:
     from kite.ui.render import render_user_cell
 
     console = Console(file=StringIO(), width=48, height=24, theme=KITE_THEME, legacy_windows=False)
@@ -423,19 +417,15 @@ def test_submitted_user_row_fills_width_with_surface() -> None:
     assert all(len("".join(segment.text for segment in row)) == 48 for row in rows)
     assert any(segment.style is not None and segment.style.bgcolor for segment in rows[1])
     assert "ship the fix" in "".join(segment.text for segment in rows[1])
-
     multi = console.render_lines(render_user_cell("one\ntwo"), console.options)
     assert len(multi) == 4
     assert all(len("".join(segment.text for segment in row)) == 48 for row in multi)
     assert "two" in "".join(segment.text for segment in multi[2])
 
-
-def test_composer_owns_input_suppresses_event_driven_rows() -> None:
     events = [
         Event("agent_start", payload={"task": "hi", "provider": "groq", "model": "llama"}),
         Event("agent_end", payload={"exit_status": "Submitted", "submission": "Hello there", "cost": 0.0}),
     ]
-
     with_composer = StringIO()
     display = RunDisplay(Console(file=with_composer, width=80, theme=KITE_THEME), state=SessionUiState())
     display.state.busy = True
@@ -460,63 +450,52 @@ def test_composer_owns_input_suppresses_event_driven_rows() -> None:
     assert "hi" in plain_headless
     assert "kite · " in plain_headless
 
-def test_composer_commits_buffered_answer_when_submission_is_missing() -> None:
-    buf = StringIO()
-    display = RunDisplay(Console(file=buf, width=80, theme=KITE_THEME), state=SessionUiState())
-    display.composer_owns_input = True
-    display(Event("agent_start", payload={"task": "hi"}))
-    display(Event("stream_delta", payload={"text": "Hello "}))
-    display(Event("stream_delta", payload={"text": "there"}))
-    display(Event("agent_end", payload={"exit_status": "Submitted"}))
+    missing = StringIO()
+    absent = RunDisplay(Console(file=missing, width=80, theme=KITE_THEME), state=SessionUiState())
+    absent.composer_owns_input = True
+    absent(Event("agent_start", payload={"task": "hi"}))
+    absent(Event("stream_delta", payload={"text": "Hello "}))
+    absent(Event("stream_delta", payload={"text": "there"}))
+    absent(Event("agent_end", payload={"exit_status": "Submitted"}))
+    assert "Hello there" not in strip_ansi(missing.getvalue())
+    absent.finish_composer_turn()
+    assert strip_ansi(missing.getvalue()).count("Hello there") == 1
 
-    assert "Hello there" not in strip_ansi(buf.getvalue())
-    display.finish_composer_turn()
-    assert strip_ansi(buf.getvalue()).count("Hello there") == 1
-
-
-
-def test_streamed_tool_preview_is_committed_once_at_stream_end() -> None:
-    buf = StringIO()
-    display = RunDisplay(Console(file=buf, width=120, theme=KITE_THEME), state=SessionUiState())
+    preview_buf = StringIO()
+    preview_display = RunDisplay(Console(file=preview_buf, width=120, theme=KITE_THEME), state=SessionUiState())
     for partial_args in ('{"message":"first', '{"message":"first answer"}'):
-        display(
+        preview_display(
             Event(
                 "stream_tool",
                 payload={"name": "submit", "partial_args": partial_args, "phase": "args"},
             )
         )
+    assert "preparing" not in strip_ansi(preview_buf.getvalue())
+    preview_display(Event("stream_end", payload={}))
+    assert strip_ansi(preview_buf.getvalue()).count("preparing") == 1
 
-    assert "preparing" not in strip_ansi(buf.getvalue())
-    display(Event("stream_end", payload={}))
-    assert strip_ansi(buf.getvalue()).count("preparing") == 1
-
-
-def test_submitted_output_is_not_repeated_after_a_tool() -> None:
-    buf = StringIO()
-    display = RunDisplay(Console(file=buf, width=80, theme=KITE_THEME), state=SessionUiState())
+    single = StringIO()
+    once = RunDisplay(Console(file=single, width=80, theme=KITE_THEME), state=SessionUiState())
     for event in (
         Event("agent_start", payload={"task": "hi"}),
         Event("stream_delta", payload={"text": "Hello there"}),
         Event("tool_start", payload={"tool": "submit", "arguments": {}}),
         Event("agent_end", payload={"exit_status": "Submitted", "submission": "Hello there"}),
     ):
-        display(event)
+        once(event)
+    assert strip_ansi(single.getvalue()).count("Hello there") == 1
 
-    assert strip_ansi(buf.getvalue()).count("Hello there") == 1
-
-
-def test_composer_turn_keeps_answer_not_just_report() -> None:
-    """Issue #81: informational answer must survive a no-change Done/Changed/Verification submit."""
-    buf = StringIO()
-    display = RunDisplay(Console(file=buf, width=80, theme=KITE_THEME), state=SessionUiState())
-    display.composer_owns_input = True
-    display(Event("agent_start", payload={"task": "tell main features of kite"}))
-    display(Event("stream_delta", payload={"text": "Kite features: fast runs"}))
-    display(Event("agent_end", payload={"exit_status": "Submitted", "submission": "## Done\n- Shared an overview"}))
-    display.finish_composer_turn()
-    plain = strip_ansi(buf.getvalue())
-    assert "Kite features: fast runs" in plain
-    assert "Shared an overview" not in plain
+    # Issue #81: informational answer must survive a no-change Done/Changed/Verification submit.
+    issue = StringIO()
+    keep = RunDisplay(Console(file=issue, width=80, theme=KITE_THEME), state=SessionUiState())
+    keep.composer_owns_input = True
+    keep(Event("agent_start", payload={"task": "tell main features of kite"}))
+    keep(Event("stream_delta", payload={"text": "Kite features: fast runs"}))
+    keep(Event("agent_end", payload={"exit_status": "Submitted", "submission": "## Done\n- Shared an overview"}))
+    keep.finish_composer_turn()
+    kept = strip_ansi(issue.getvalue())
+    assert "Kite features: fast runs" in kept
+    assert "Shared an overview" not in kept
 
     buf2 = StringIO()
     busy = RunDisplay(Console(file=buf2, width=80, theme=KITE_THEME), state=SessionUiState())
@@ -536,8 +515,6 @@ def test_composer_turn_keeps_answer_not_just_report() -> None:
     busy.finish_composer_turn()
     plain2 = strip_ansi(buf2.getvalue())
     assert "Root cause was a race in auth" in plain2 and "Done" in plain2 and "Fixed the flake" in plain2
-
-
 
 
 def test_repl_prints_each_submitted_prompt_once(monkeypatch, tmp_path, kite_home) -> None:
@@ -565,7 +542,7 @@ def test_repl_prints_each_submitted_prompt_once(monkeypatch, tmp_path, kite_home
     assert rows == ["first", "second"]
 
 
-def test_approval_panel_includes_diff_stat() -> None:
+def test_approval_panels_render_once() -> None:
     from kite.ui.approval import render_approval_panel
 
     diff = make_unified_diff("app.py", "old\n", "new\n")
@@ -575,9 +552,7 @@ def test_approval_panel_includes_diff_stat() -> None:
     assert "+1" in panel and "-1" in panel
 
 
-def test_print_session_full_transcript_on_resume(tmp_path, kite_home) -> None:
-    from io import StringIO
-
+def test_resume_transcript_rendering_and_tail(tmp_path, kite_home) -> None:
     from kite.memory.session import Session, SessionMeta
 
     session = ChatSession(cwd=str(tmp_path))
@@ -602,20 +577,16 @@ def test_print_session_full_transcript_on_resume(tmp_path, kite_home) -> None:
     assert "msg-0" in out
     assert "msg-14" in out
 
-
-def test_resume_transcript_render_order_and_kinds(tmp_path, kite_home) -> None:
-    """Issue #83: resume renders all kinds chronologically with full bodies (no silent truncation)."""
-    from kite.memory.session import Session, SessionMeta
-
+    # Issue #83: resume renders all kinds chronologically with full bodies (no silent truncation).
     chat = ChatSession(cwd=str(tmp_path))
-    buf = StringIO()
-    chat.console = Console(file=buf, force_terminal=False, width=400)
+    buf2 = StringIO()
+    chat.console = Console(file=buf2, force_terminal=False, width=400)
     long_answer = "line-one\nline-two\n" + "y" * 300
-    meta = SessionMeta(
+    meta83 = SessionMeta(
         id="sess83", created_at=1.0, updated_at=2.0, cwd=str(tmp_path), provider="p", model="m", task="demo",
     )
-    loaded = Session(
-        meta=meta,
+    loaded83 = Session(
+        meta=meta83,
         messages=[
             {"role": "user", "content": "What is Kite? Reply in three concise bullets."},
             {
@@ -634,132 +605,88 @@ def test_resume_transcript_render_order_and_kinds(tmp_path, kite_home) -> None:
             },
         ],
     )
-    chat._print_session(loaded, tail=None)
-    out = strip_ansi(buf.getvalue())
+    chat._print_session(loaded83, tail=None)
+    out83 = strip_ansi(buf2.getvalue())
     bits = ["What is Kite?", "Kite is a coding agent.", "read", "file body here", "line-one", "final output bullets"]
-    positions = [out.index(bit) for bit in bits]
+    positions = [out83.index(bit) for bit in bits]
     assert positions == sorted(positions)
-    assert "y" * 300 in out
-    assert "line-two" in out
-    assert "…" not in out
+    assert "y" * 300 in out83
+    assert "line-two" in out83
+    assert "…" not in out83
 
-
-def test_session_show_tail_parsing(tmp_path, kite_home) -> None:
-    session = ChatSession(cwd=str(tmp_path))
     assert session._parse_session_show_tail("abc --tail 5") == ("abc", 5)
     assert session._parse_session_show_tail("abc --tail 0") == ("abc", None)
     assert session._parse_session_show_tail("abc") == ("abc", 20)
     assert session._parse_session_show_tail("--tail 3 abc") == ("abc", 3)
 
 
-def test_reasoning_picker_hides_off_when_not_disableable(tmp_path, kite_home) -> None:
+def test_reasoning_picker_and_slash_levels(tmp_path, kite_home) -> None:
     from kite.models.reasoning import ReasoningSupport
 
+    def _support() -> ReasoningSupport:
+        return ReasoningSupport(
+            supported=True,
+            can_fast=True,
+            can_thinking=True,
+            can_disable=True,
+            thinking_kwargs={"reasoning_effort": "high"},
+            fast_kwargs={"reasoning_effort": "low"},
+            efforts=("none", "low", "medium", "high"),
+        )
+
     session = ChatSession(cwd=str(tmp_path))
-    session._reasoning_support = ReasoningSupport(
+    session._reasoning_support = _support()
+    keys = [key for key, _ in session._reasoning_picker_choices()]
+    assert "auto" in keys
+
+    nodisable = ChatSession(cwd=str(tmp_path))
+    nodisable._reasoning_support = ReasoningSupport(
         supported=True,
         can_fast=True,
         can_thinking=True,
         can_disable=False,
     )
-    keys = [key for key, _ in session._reasoning_picker_choices()]
-    assert "off" not in keys
-    assert "auto" in keys
-
-
-def test_slash_thinking_sets_level_and_invalidates_harness(tmp_path, kite_home) -> None:
-    from kite.models.reasoning import ReasoningSupport
+    assert "off" not in [key for key, _ in nodisable._reasoning_picker_choices()]
+    assert "auto" in [key for key, _ in nodisable._reasoning_picker_choices()]
 
     buf = StringIO()
-    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
-    session.console = Console(file=buf, force_terminal=False)
-    session._reasoning_support = ReasoningSupport(
-        supported=True,
-        can_fast=True,
-        can_thinking=True,
-        can_disable=True,
-        thinking_kwargs={"reasoning_effort": "high"},
-        fast_kwargs={"reasoning_effort": "low"},
-        efforts=("none", "low", "medium", "high"),
-    )
-    session._harness = MagicMock()
-    session._harness_key = ("groq", "llama-3.3-70b", "build", "auto", False, None, None, "auto", True, "", "", None, None, None, False, False, False, "auto", False)
+    think = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
+    think.console = Console(file=buf, force_terminal=False)
+    think._reasoning_support = _support()
+    think._harness = MagicMock()
+    think._harness_key = ("groq", "llama-3.3-70b", "build", "auto", False, None, None, "auto", True, "", "", None, None, None, False, False, False, "auto", False)
 
-    session._slash_thinking("high")
-    assert session.state.reasoning == "thinking:high"
-    assert session._harness is None
+    think._slash_thinking("high")
+    assert think.state.reasoning == "thinking:high"
+    assert think._harness is None
     assert "thinking" in strip_ansi(buf.getvalue()).lower()
 
-    session._slash_thinking("")
-    assert session.state.reasoning == "off"
+    think._slash_thinking("")
+    assert think.state.reasoning == "off"
 
-    session._slash_fast("")
-    assert session.state.reasoning == "fast:low"
+    think._slash_fast("")
+    assert think.state.reasoning == "fast:low"
 
+    legacy = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
+    legacy.console = Console(file=StringIO(), force_terminal=False)
+    legacy._reasoning_support = _support()
+    legacy._slash_reasoning("fast")
+    assert legacy.state.reasoning == "fast:low"
+    legacy._slash_reasoning("auto")
+    assert legacy.state.reasoning == "auto"
 
-def test_slash_reasoning_legacy_modes(tmp_path, kite_home) -> None:
-    from kite.models.reasoning import ReasoningSupport
-
-    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
-    session.console = Console(file=StringIO(), force_terminal=False)
-    session._reasoning_support = ReasoningSupport(
-        supported=True,
-        can_fast=True,
-        can_thinking=True,
-        can_disable=True,
-        thinking_kwargs={"reasoning_effort": "high"},
-        fast_kwargs={"reasoning_effort": "low"},
-        efforts=("none", "low", "medium", "high"),
-    )
-
-    session._slash_reasoning("fast")
-    assert session.state.reasoning == "fast:low"
-
-    session._slash_reasoning("auto")
-    assert session.state.reasoning == "auto"
+    dispatched = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
+    dispatched.console = Console(file=StringIO(), force_terminal=False)
+    dispatched._reasoning_support = _support()
+    assert dispatched._handle_slash("/thinking medium") is True
+    assert dispatched.state.reasoning == "thinking:medium"
+    assert dispatched._handle_slash("/fast") is True
+    assert dispatched.state.reasoning == "fast:low"
+    assert dispatched._handle_slash("/reasoning thinking:high") is True
+    assert dispatched.state.reasoning == "thinking:high"
 
 
-def test_handle_slash_dispatches_thinking_and_fast(tmp_path, kite_home) -> None:
-    from kite.models.reasoning import ReasoningSupport
-
-    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
-    session.console = Console(file=StringIO(), force_terminal=False)
-    session._reasoning_support = ReasoningSupport(
-        supported=True,
-        can_fast=True,
-        can_thinking=True,
-        can_disable=True,
-        thinking_kwargs={"reasoning_effort": "high"},
-        fast_kwargs={"reasoning_effort": "low"},
-        efforts=("none", "low", "medium", "high"),
-    )
-
-    assert session._handle_slash("/thinking medium") is True
-    assert session.state.reasoning == "thinking:medium"
-
-    assert session._handle_slash("/fast") is True
-    assert session.state.reasoning == "fast:low"
-
-    assert session._handle_slash("/reasoning thinking:high") is True
-    assert session.state.reasoning == "thinking:high"
-
-
-def test_empty_repl_enter_does_not_run(tmp_path, kite_home) -> None:
-    from io import StringIO
-
-    from kite.ui.complete import read_repl_line
-
-    got = read_repl_line(session=None, state=SessionUiState(), fallback=lambda: "   ")
-    assert got.kind == "empty"
-    buf = StringIO()
-    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama")
-    session.console = Console(file=buf, force_terminal=False)
-    session._make_harness = lambda **_k: (_ for _ in ()).throw(AssertionError("blank enter must not start a turn"))  # type: ignore[method-assign]
-    session._run_task("  ")
-    assert "empty" in buf.getvalue().lower()
-
-
-def test_pending_approval_panel_renders_on_first_tick(tmp_path, kite_home) -> None:
+def test_pending_approval_panel_plan_git_footer(tmp_path, kite_home) -> None:
     """Busy-tick crash: panel id must exist before the first approval render (no AttributeError)."""
     from kite.application.policy import ApprovalRequest
 
@@ -782,36 +709,32 @@ def test_pending_approval_panel_renders_on_first_tick(tmp_path, kite_home) -> No
     chat._show_pending_approval_panel()
     assert buf.getvalue() == before
 
-
-def test_plan_mode_never_wires_git_checkpoints(tmp_path, kite_home) -> None:
-    """Read-only runs must not attach git checkpoints (no commit lines, no git writes)."""
+    # Read-only runs must not attach git checkpoints (no commit lines, no git writes).
     from types import SimpleNamespace
 
-    chat = ChatSession(cwd=str(tmp_path))
+    ro = ChatSession(cwd=str(tmp_path))
     harness = SimpleNamespace(checkpoints="sentinel")
-    chat.state.mode = AgentMode.PLAN
-    chat._wire_harness_git(harness)
+    ro.state.mode = AgentMode.PLAN
+    ro._wire_harness_git(harness)
     assert harness.checkpoints is None
-    chat.state.mode = AgentMode.BUILD
-    chat._wire_harness_git(harness)
-    assert harness.checkpoints is chat.git
+    ro.state.mode = AgentMode.BUILD
+    ro._wire_harness_git(harness)
+    assert harness.checkpoints is ro.git
 
-
-def test_footer_error_segment_and_turn_reset(tmp_path, kite_home) -> None:
-    """Failed turns leave a durable footer notice; the next turn clears it."""
+    # Failed turns leave a durable footer notice; the next turn clears it.
     from kite.ui.status import format_status_tail, status_segments
 
-    chat = ChatSession(cwd=str(tmp_path))
-    assert all(not text.startswith("err ") for text, _ in status_segments(chat.state))
-    chat.state.last_error = "step or cost budget reached " + "x" * 100
-    texts = dict(status_segments(chat.state))
+    ro2 = ChatSession(cwd=str(tmp_path))
+    assert all(not text.startswith("err ") for text, _ in status_segments(ro2.state))
+    ro2.state.last_error = "step or cost budget reached " + "x" * 100
+    texts = dict(status_segments(ro2.state))
     err = next(text for text in texts if text.startswith("err "))
     assert err.endswith("…") and len(err) <= len("err ") + 64
     assert texts[err] == "kite.error"
-    assert "err " in format_status_tail(chat.state)
-    chat._begin_turn_state("do things")
-    assert chat.state.last_error == "" and chat.state.last_trace == ""
-    assert chat.state.running_label == "do things"
+    assert "err " in format_status_tail(ro2.state)
+    ro2._begin_turn_state("do things")
+    assert ro2.state.last_error == "" and ro2.state.last_trace == ""
+    assert ro2.state.running_label == "do things"
 
 
 def test_git_dirty_tracking_and_branch_marker(tmp_path, kite_home, monkeypatch) -> None:

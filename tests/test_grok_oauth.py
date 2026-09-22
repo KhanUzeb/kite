@@ -34,7 +34,7 @@ def _nested_payload() -> dict:
 
 def _write_grok_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, payload: dict) -> Path:
     grok_home = tmp_path / "grok_home"
-    grok_home.mkdir()
+    grok_home.mkdir(exist_ok=True)
     (grok_home / "auth.json").write_text(json.dumps(payload), encoding="utf-8")
     monkeypatch.setenv("GROK_HOME", str(grok_home))
     return grok_home
@@ -47,7 +47,7 @@ def _offline_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(urllib.request, "urlopen", _raise)
 
 
-def test_flatten_nested_grok_cli_shape() -> None:
+def test_flatten_grok_auth_shapes() -> None:
     flat = flatten_grok_auth_record(_nested_payload())
     assert flat["access_token"] == "ACC"
     assert flat["refresh_token"] == "REF"
@@ -55,24 +55,18 @@ def test_flatten_nested_grok_cli_shape() -> None:
     assert flat["expires_at"] == pytest.approx(
         datetime(2030, 1, 1, tzinfo=UTC).timestamp()
     )
-
-
-def test_flatten_already_flat_passes_through() -> None:
-    flat = flatten_grok_auth_record(
+    passthrough = flatten_grok_auth_record(
         {"access_token": "ACC", "refresh_token": "REF", "expires_at": 123.0}
     )
-    assert flat["access_token"] == "ACC"
-    assert flat["refresh_token"] == "REF"
-    assert flat["expires_at"] == 123.0
-
-
-def test_flatten_empty_or_keyless_returns_empty() -> None:
+    assert passthrough["access_token"] == "ACC"
+    assert passthrough["refresh_token"] == "REF"
+    assert passthrough["expires_at"] == 123.0
     assert flatten_grok_auth_record({}) == {}
     assert flatten_grok_auth_record({_NESTED_KEY: {"refresh_token": "REF"}}) == {}
     assert flatten_grok_auth_record({_NESTED_KEY: "not-a-dict"}) == {}
 
 
-def test_epoch_conversion_accepts_iso_and_numeric() -> None:
+def test_epoch_conversion_iso_numeric_and_garbage() -> None:
     iso = flatten_grok_auth_record({"access_token": "A", "expires_at": _ISO_EXPIRY})
     assert isinstance(iso["expires_at"], float)
     numeric = flatten_grok_auth_record({"access_token": "A", "expires_at": 1700000000})
@@ -80,16 +74,13 @@ def test_epoch_conversion_accepts_iso_and_numeric() -> None:
     assert isinstance(numeric["expires_at"], float)
     numeric_str = flatten_grok_auth_record({"access_token": "A", "expires_at": "1700000000"})
     assert numeric_str["expires_at"] == pytest.approx(1700000000.0)
-
-
-def test_epoch_conversion_garbage_omits_key() -> None:
     flat = flatten_grok_auth_record({"access_token": "A", "expires_at": "not-a-date"})
     assert "expires_at" not in flat
     missing = flatten_grok_auth_record({"access_token": "A"})
     assert "expires_at" not in missing
 
 
-def test_materialize_offline_discovery_omits_token_endpoint(
+def test_materialize_litellm_xai_auth(
     kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_grok_home(monkeypatch, tmp_path, _nested_payload())
@@ -105,26 +96,15 @@ def test_materialize_offline_discovery_omits_token_endpoint(
     assert isinstance(payload["expires_at"], float)
     assert "token_endpoint" not in payload
 
-
-def test_materialize_missing_auth_file_raises(
-    kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
     empty_home = tmp_path / "empty_grok_home"
     empty_home.mkdir()
     monkeypatch.setenv("GROK_HOME", str(empty_home))
-
     with pytest.raises(GrokLitellmAuthError):
         materialize_litellm_xai_auth()
 
-
-def test_litellm_xai_env_points_at_kite_home(
-    kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
     _write_grok_home(monkeypatch, tmp_path, _nested_payload())
     _offline_discovery(monkeypatch)
-
     env = litellm_xai_env()
-
     assert env["XAI_OAUTH_TOKEN_DIR"].startswith(str(kite_home))
     assert (Path(env["XAI_OAUTH_TOKEN_DIR"]) / "auth.json").is_file()
     assert env["XAI_OAUTH_API_BASE"] == "https://cli-chat-proxy.grok.com/v1"
@@ -175,17 +155,14 @@ def test_resolve_model_grok_kwargs_include_oauth_extras(
     assert kwargs["extra_headers"]["x-grok-client-version"] != ""
 
 
-def test_oauth_session_resolves_grok_by_oauth_id_and_catalog_name(
+def test_grok_oauth_session_and_interactive_login(
     kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """has_oauth_session must find GrokCliAuthProvider for both 'xai' and 'grok'.
+    """has_oauth_session covers xai/grok ids; interactive login opens the sign-in URL."""
+    import subprocess
 
-    LOGIN_ALIASES maps xai→grok (a catalog name) while the auth registry is
-    keyed by oauth_provider id 'xai'. Misresolving made a linked Grok CLI
-    look logged out (`kite login grok` contradicted itself; `kite keys`
-    showed login required).
-    """
     from kite.providers.auth import _PROVIDERS
+    from kite.providers.auth.grok import GrokCliAuthProvider
     from kite.providers.byos import has_oauth_session
     from kite.providers.catalog import load_catalog
     from kite.providers.credentials import inspect_provider_credentials
@@ -200,15 +177,6 @@ def test_oauth_session_resolves_grok_by_oauth_id_and_catalog_name(
     status = inspect_provider_credentials(load_catalog().get("grok"))
     assert status.linked is True and status.usable is True
     assert status.detail == "linked"
-
-
-def test_grok_login_opens_browser_with_streamed_url(
-    kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Interactive `kite login grok` must open the sign-in URL, not hide it."""
-    import subprocess
-
-    from kite.providers.auth.grok import GrokCliAuthProvider
 
     grok_home = tmp_path / "grok_home_login"
     grok_home.mkdir()

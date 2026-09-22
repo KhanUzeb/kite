@@ -17,7 +17,7 @@ def _chat(tmp_path, kite_home, **kwargs):
     return chat, buf
 
 
-def test_new_and_usage_registered_in_help_and_completion(tmp_path, kite_home) -> None:
+def test_new_registration_and_reset(tmp_path, kite_home) -> None:
     from kite.cli.slash import CommandIndex, help_text
     from kite.ui.commands import is_primary_slash, parse_slash, primary_builtins
 
@@ -32,8 +32,6 @@ def test_new_and_usage_registered_in_help_and_completion(tmp_path, kite_home) ->
     assert "new" in index.specs and "usage" in index.specs
     assert "/new" in help_text(index) and "/usage" in help_text(index)
 
-
-def test_new_resets_session_but_keeps_provider_model(tmp_path, kite_home) -> None:
     chat, buf = _chat(tmp_path, kite_home, provider="groq", model="llama-3.3-70b-versatile")
     chat._session_id = "sess-old"
     chat.state.cost = 1.25
@@ -56,7 +54,9 @@ def test_new_resets_session_but_keeps_provider_model(tmp_path, kite_home) -> Non
     assert chat.provider == "groq" and chat.model == "llama-3.3-70b-versatile"
 
 
-def test_usage_empty_and_normal_reports(tmp_path, kite_home) -> None:
+def test_usage_reports_json_and_format(tmp_path, kite_home) -> None:
+    from kite.models.usage import format_usage_report, provider_quota
+
     chat, buf = _chat(tmp_path, kite_home, provider="groq", model="m")
     chat._slash_usage("")
     out = buf.getvalue()
@@ -79,20 +79,15 @@ def test_usage_empty_and_normal_reports(tmp_path, kite_home) -> None:
     assert "12,430" in out and "4,210" in out and "8,900" in out and "1,200" in out
     assert "26,740" in out and "$0.0842" in out and "12.7%" in out
 
-
-def test_usage_json_and_bad_arg(tmp_path, kite_home) -> None:
-    chat, buf = _chat(tmp_path, kite_home, provider="groq", model="m")
+    buf.truncate(0)
+    buf.seek(0)
     chat._slash_usage("--json")
     payload = json.loads(buf.getvalue())
-    assert payload["total_tokens"] == 0 and payload["provider"] == "groq" and payload["quota"] is None
+    assert payload["total_tokens"] == 26740 and payload["provider"] == "groq" and payload["quota"] is None
     buf.truncate(0)
     buf.seek(0)
     chat._slash_usage("bogus")
     assert "usage" in buf.getvalue().lower()
-
-
-def test_format_usage_report_data_shape() -> None:
-    from kite.models.usage import format_usage_report, provider_quota
 
     assert provider_quota("groq") is None
     report = format_usage_report()

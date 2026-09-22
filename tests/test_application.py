@@ -111,7 +111,7 @@ def test_run_state_and_legacy_event_bridge() -> None:
     assert back.kind == "tool_start" and back.payload["tool"] == "read"
 
 
-def test_policy_paths_executor_and_journal(workspace: Path, tmp_path: Path) -> None:
+def test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path) -> None:
     ok, _ = check_path_access("../outside", workspace)
     assert not ok
     sibling = tmp_path / "proj-ok"
@@ -160,17 +160,13 @@ def test_policy_paths_executor_and_journal(workspace: Path, tmp_path: Path) -> N
     app.write_text("user edit\n", encoding="utf-8")
     _, conflicts = journal.restore()
     assert conflicts and app.read_text(encoding="utf-8") == "user edit\n"
-
-
-def test_policy_glob_root_sandboxed(workspace: Path, tmp_path: Path) -> None:
-    """glob takes `root` (not `path`) — it must be authorized like every other path target."""
-    engine = PolicyEngine(workspace)
+    # glob takes `root` (not `path`) — it must be authorized like every other path target.
     outside = tmp_path / "outside"
     outside.mkdir()
-    denied = engine.authorize(
+    denied_glob = engine.authorize(
         engine.derive_intent(ToolCall(call_id="g1", name="glob", arguments={"pattern": "**/*.py", "root": str(outside)}))
     )
-    assert not denied.allowed, denied.reason
+    assert not denied_glob.allowed, denied_glob.reason
     inside = engine.authorize(
         engine.derive_intent(ToolCall(call_id="g2", name="glob", arguments={"pattern": "**/*.py", "root": str(workspace)}))
     )
@@ -185,7 +181,7 @@ def test_policy_glob_root_sandboxed(workspace: Path, tmp_path: Path) -> None:
         assert not decision.allowed, (name, decision.reason)
 
 
-def test_verification_plans_and_replay(workspace: Path, tmp_path: Path) -> None:
+def test_verification_plans_replay_and_package_paths(workspace: Path, tmp_path: Path) -> None:
     vc = VerificationCollector()
     vc.on_tool_end("bash", {"command": "pytest tests/ -q"}, {"ok": True, "returncode": 0, "output": "out"})
     assert any(a.kind == "test" for a in vc.artifacts) and vc.status() == "verified"
@@ -240,8 +236,7 @@ def test_verification_plans_and_replay(workspace: Path, tmp_path: Path) -> None:
         acceptance={"content_contains": "expected phrase"},
     )
     assert not run_replay(fail)["ok"]
-
-def test_verification_normalizes_absolute_package_paths(tmp_path: Path) -> None:
+    # Absolute package paths normalize to repo-relative.
     profile = WorkspaceProfile(
         workspace_root=str(tmp_path),
         packages=(
@@ -254,26 +249,24 @@ def test_verification_normalizes_absolute_package_paths(tmp_path: Path) -> None:
         ),
     )
     absolute = tmp_path / "packages" / "foo" / "src" / "app.py"
-
     plan = build_verification_plan((str(absolute),), profile=profile)
-
     assert plan.touched_paths == ("packages/foo/src/app.py",)
     assert len(plan.required_checks) == 1
     assert plan.required_checks[0].package_root == "packages/foo"
     assert plan.required_checks[0].command == "cd packages/foo && pytest -q"
-
     collector = VerificationCollector(workspace_root=str(tmp_path))
     collector.on_tool_end(
         "edit",
         {"path": str(absolute)},
         {"ok": True, "path": str(absolute), "diff": "d"},
     )
-
     assert collector.paths_touched == {"packages/foo/src/app.py"}
     assert collector.artifacts[-1].path == str(absolute)
 
 
-def test_effects_nested_policy_and_coordinator(workspace: Path) -> None:
+def test_effects_coordinator_runner_and_cli_result(workspace: Path, tmp_path: Path) -> None:
+    import sys
+
     assert set(derive_effects(ToolCall("1", "bash", {"command": "rm -rf build"}))) == {"destructive", "long_running"}
     assert derive_effects(ToolCall("1", "memory", {"action": "remember", "text": "x"})) == ("durable_memory",)
     assert normalize_legacy_effect("read") == "workspace_read"
@@ -284,18 +277,10 @@ def test_effects_nested_policy_and_coordinator(workspace: Path) -> None:
     coord = ApprovalCoordinator(interactive=True, timeout_seconds=0.05)
     assert coord.request("bash", {"command": "curl x"}, mandatory=True) == "deny"
     assert coord.pending is None
-    import sys
-
     runner = ProcessRunner(timeout_seconds=5.0)
     result = runner.run(["cmd", "/c", "echo", "hi"] if sys.platform == "win32" else ["echo", "hi"])
     assert result.exit_code == 0 and "hi" in result.stdout
-
-
-def test_process_runner_prefers_project_venv(tmp_path) -> None:
-    """0.9 executor must resolve `python` from the project .venv like the bash tool."""
-    import sys
-    from pathlib import Path
-
+    # 0.9 executor must resolve `python` from the project .venv like the bash tool.
     venv = tmp_path / ".venv"
     bindir = venv / ("Scripts" if sys.platform == "win32" else "bin")
     bindir.mkdir(parents=True)
@@ -306,9 +291,6 @@ def test_process_runner_prefers_project_venv(tmp_path) -> None:
     first = env[key].split(";" if sys.platform == "win32" else ":")[0]
     assert Path(first).resolve() == bindir.resolve()
     assert "PATH" in ProcessRunner._child_env(None) or "Path" in ProcessRunner._child_env(None)
-
-
-def test_cli_result_ok_only_when_submitted() -> None:
     from kite.application.cli import CliResult
     from kite.application.contracts import RunResult
     from kite.application.service import _map_exit_status

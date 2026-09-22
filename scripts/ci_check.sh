@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 1.0.0
+# kite-release-version: 1.0.1
 # Same gates as .github/workflows/tests.yml — run before push to main.
 set -euo pipefail
 RELEASE=0

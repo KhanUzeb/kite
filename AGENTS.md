@@ -6,7 +6,7 @@ Instructions for coding agents (Cursor, Claude Code, Kite itself, etc.) hacking 
 
 ## What this repo is
 
-**Kite** v1.0.0 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
+**Kite** v1.0.1 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
 
 - **Engine:** mini-swe-agent style loop (`agent/loop.py`) — query → tools → observe → repeat
 - **Cockpit:** tau-inspired assembly — catalog providers, skills, guardrails, Rich TUI, JSONL sessions
@@ -39,7 +39,7 @@ src/kite/
   commands/       Markdown slash prompt loader
   plugins/        .kite/plugins discovery + extensions loader (register_tool → Harness.extra_tools)
   data/           Bundled catalog.toml, prompts, skills, commands
-tests/            compact pytest suite (~150 tests, no live LLM; see tests/README.md)
+tests/            compact pytest suite (~210 tests, no live LLM; see tests/README.md)
 docs/             current RELEASE notes only (`docs/RELEASE-X.Y.Z.md`)
 scripts/          install.sh, install.ps1, download.sh, download.ps1, sync_version.py, bump_release.sh
 ```
@@ -67,7 +67,7 @@ Editable install: `uv pip install -e ".[dev]"` (or `./scripts/install.sh --dev`)
 - **Local:** `pytest` from repo root (uses `tests/`, `conftest.py` isolates `KITE_HOME`).
 - **CI:** `.github/workflows/tests.yml` runs pytest on every push and PR to `main` (Python 3.11 + 3.12). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Add tests for real behavior in the matching `tests/test_*.py` domain module. Combine related asserts; skip one-assert slop. No live provider calls. Target size is ~150 collected tests.
+Add tests for real behavior in the matching `tests/test_*.py` domain module. Combine related asserts; skip one-assert slop. No live provider calls. Target size is ~210 collected tests.
 
 ---
 

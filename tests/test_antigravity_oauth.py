@@ -15,37 +15,34 @@ def _marker(kite_home: Path) -> Path:
     return kite_home / "oauth" / "antigravity" / "status.json"
 
 
-def test_status_missing_cli_points_to_install(monkeypatch: pytest.MonkeyPatch) -> None:
+def _use_real_auth_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bypass conftest's autouse OAuth stub so the real registry resolves."""
+    from kite.providers.auth import _PROVIDERS
+
+    monkeypatch.setattr("kite.providers.auth.get_auth_provider", _PROVIDERS.get)
+    monkeypatch.setattr("kite.providers.byos.get_auth_provider", _PROVIDERS.get)
+
+
+def test_status_states(monkeypatch: pytest.MonkeyPatch, kite_home: Path) -> None:
     monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: None)
+    missing = AntigravityAuthProvider().status()
+    assert missing.authenticated is False
+    assert "antigravity.google" in missing.message
 
-    status = AntigravityAuthProvider().status()
-
-    assert status.authenticated is False
-    assert "antigravity.google" in status.message
-
-
-def test_status_unlinked_points_to_login(monkeypatch: pytest.MonkeyPatch, kite_home: Path) -> None:
     monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: "agy")
     assert not _marker(kite_home).exists()
+    unlinked = AntigravityAuthProvider().status()
+    assert unlinked.authenticated is False
+    assert "kite login antigravity" in unlinked.message
 
-    status = AntigravityAuthProvider().status()
-
-    assert status.authenticated is False
-    assert "kite login antigravity" in status.message
-
-
-def test_status_linked_via_marker(monkeypatch: pytest.MonkeyPatch, kite_home: Path) -> None:
-    monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: "agy")
     marker = _marker(kite_home)
-    marker.parent.mkdir(parents=True)
+    marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(json.dumps({"linked": True}), encoding="utf-8")
-
-    status = AntigravityAuthProvider().status()
-
-    assert status.authenticated is True
+    linked = AntigravityAuthProvider().status()
+    assert linked.authenticated is True
 
 
-def test_login_opens_streamed_url_headless(
+def test_login_headless_and_short_circuit(
     kite_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Headless `kite login antigravity` must surface the sign-in URL."""
@@ -73,24 +70,14 @@ def test_login_opens_streamed_url_headless(
     assert _marker(kite_home).is_file()
     assert "GEMINI_API_KEY" in result.message
 
-
-def test_login_short_circuits_when_linked(
-    kite_home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: "agy")
-    marker = _marker(kite_home)
-    marker.parent.mkdir(parents=True)
-    marker.write_text(json.dumps({"linked": True}), encoding="utf-8")
-
+    # Short-circuit when already linked: must not spawn agy again.
     def _fail(*_a: object, **_k: object) -> object:
         raise AssertionError("must not spawn agy when already linked")
 
     monkeypatch.setattr("kite.providers.auth.cli.run_cli_streaming", _fail)
-
-    result = AntigravityAuthProvider().login(console=None)
-
-    assert result.exit_code == 0
-    assert "already linked" in result.message
+    again = AntigravityAuthProvider().login(console=None)
+    assert again.exit_code == 0
+    assert "already linked" in again.message
 
 
 def test_logout_clears_marker(kite_home: Path) -> None:
@@ -103,20 +90,14 @@ def test_logout_clears_marker(kite_home: Path) -> None:
     assert not marker.exists()
 
 
-def _use_real_auth_registry(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bypass conftest's autouse OAuth stub so the real registry resolves."""
-    from kite.providers.auth import _PROVIDERS
-
-    monkeypatch.setattr("kite.providers.auth.get_auth_provider", _PROVIDERS.get)
-    monkeypatch.setattr("kite.providers.byos.get_auth_provider", _PROVIDERS.get)
-
-
-def test_registry_and_session_resolution(
+def test_registry_session_and_credentials(
     kite_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import kite.providers.auth as auth_mod
     from kite.providers.auth import _PROVIDERS, resolve_login_provider
     from kite.providers.byos import has_oauth_session
+    from kite.providers.catalog import load_catalog
+    from kite.providers.credentials import inspect_provider_credentials
 
     _use_real_auth_registry(monkeypatch)
     assert resolve_login_provider("antigravity-sub") == "antigravity"
@@ -131,23 +112,14 @@ def test_registry_and_session_resolution(
     marker.write_text(json.dumps({"linked": True}), encoding="utf-8")
     assert has_oauth_session("antigravity") is True
 
-
-def test_credentials_need_gemini_key_for_calls(
-    kite_home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from kite.providers.catalog import load_catalog
-    from kite.providers.credentials import inspect_provider_credentials
-
-    _use_real_auth_registry(monkeypatch)
-    monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: "agy")
     spec = load_catalog().get("antigravity")
     assert spec.oauth_provider == "antigravity"
-
+    fresh_marker = _marker(kite_home)
+    fresh_marker.unlink()
     assert inspect_provider_credentials(spec).usable is False
 
-    marker = _marker(kite_home)
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(json.dumps({"linked": True}), encoding="utf-8")
+    fresh_marker.parent.mkdir(parents=True, exist_ok=True)
+    fresh_marker.write_text(json.dumps({"linked": True}), encoding="utf-8")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     linked_only = inspect_provider_credentials(spec)
     assert linked_only.linked is True and linked_only.usable is False

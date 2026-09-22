@@ -18,16 +18,13 @@ from kite.ui.style import KITE_THEME
 from tests.conftest import strip_ansi
 
 
-def test_cli_brief_and_full_help() -> None:
+def test_cli_help_and_parser_lists_usable_commands() -> None:
     brief = cli_help_brief()
     full = cli_help_text()
     assert "kite run" in brief and "kite help all" in brief
     assert "kite keys" not in brief
     assert "kite keys" in full
     assert "interactive session" in CLI_EPILOG
-
-
-def test_cli_parser_lists_usable_commands() -> None:
     parser = build_parser()
     help_text_cli = parser.format_help()
     for name in ("run", "resume", "setup", "sessions", "tasks", "help", "models", "chat", "exec", "config", "bench"):
@@ -40,7 +37,7 @@ def test_cli_parser_lists_usable_commands() -> None:
     assert parser.parse_args(["-r"]).resume_pick is True
 
 
-def test_repl_help_primary_vs_all() -> None:
+def test_repl_help_and_legacy_slash_dispatch() -> None:
     index = CommandIndex.load(".")
     brief = help_text(index)
     full = help_text(index, all=True)
@@ -57,9 +54,6 @@ def test_repl_help_primary_vs_all() -> None:
     assert any(b.name == "thinking" for b in primary)
     assert any(b.name == "new" for b in primary)
     assert any(b.name == "usage" for b in primary)
-
-
-def test_legacy_slash_still_dispatches() -> None:
     assert parse_slash("/compact").command == "compact"
     assert parse_slash("/thinking").command == "thinking"
     assert parse_slash("/reasoning").command == "reasoning"
@@ -70,7 +64,7 @@ def test_legacy_slash_still_dispatches() -> None:
     assert is_primary_slash("plan")
 
 
-def test_completion_lists_commands_and_skills_with_cues() -> None:
+def test_completion_skills_cues_bare_slash_and_mouse() -> None:
     index = CommandIndex.load(".")
     from kite.models.reasoning import ReasoningSupport
     from kite.ui.complete import _slash_display, _slash_meta, _slash_origin
@@ -113,25 +107,18 @@ def test_completion_lists_commands_and_skills_with_cues() -> None:
     assert "commit" in completion_names
     assert "tools" in names
 
-
-def test_bare_slash_does_not_resolve_reasoning_or_auth() -> None:
-    index = CommandIndex.load(".")
-
     def unexpected_resolution() -> None:
         raise AssertionError("bare slash completion must not resolve a model")
 
-    completer = SlashCompleter(lambda: index, reasoning_info=unexpected_resolution)
-    completions = list(
-        completer.get_completions(
+    bare_completer = SlashCompleter(lambda: index, reasoning_info=unexpected_resolution)
+    bare_completions = list(
+        bare_completer.get_completions(
             type("D", (), {"text_before_cursor": "/"})(),
             None,
         )
     )
+    assert any(completion.text == "model" for completion in bare_completions)
 
-    assert any(completion.text == "model" for completion in completions)
-
-
-def test_composer_mouse_defaults_off() -> None:
     import os
 
     from kite.ui.complete import _mouse_support_enabled
@@ -184,18 +171,17 @@ def test_status_footer_modes() -> None:
     assert segments[0][0] == "approval"
 
 
-def test_running_status_truncation_follows_terminal_width(monkeypatch) -> None:
+def test_running_status_truncation_and_terminal_widths(monkeypatch) -> None:
+    import os
     import shutil
 
-    from kite.ui.state import SessionUiState
+    from kite.ui.state import SessionUiState as _State
     from kite.ui.status import format_running_status
 
-    state = SessionUiState(busy=True)
+    state = _State(busy=True)
     state.running_label = "x" * 200
     state.running_since = "12:00:00"
     state.activity_preview = "y" * 200
-
-    import os
 
     monkeypatch.setattr(
         shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((50, 24))
@@ -208,12 +194,10 @@ def test_running_status_truncation_follows_terminal_width(monkeypatch) -> None:
     assert len(narrow) < len(wide)
     assert narrow.endswith("…") or "›" in narrow
 
-
-def test_status_render_terminal_widths() -> None:
-    state = SessionUiState(mode=AgentMode.PLAN, provider="groq", model="llama-3.3-70b", cost=0.01)
+    render_state = SessionUiState(mode=AgentMode.PLAN, provider="groq", model="llama-3.3-70b", cost=0.01)
     for width in (50, 80, 120):
         buf = StringIO()
         console = Console(file=buf, width=width, force_terminal=True, theme=KITE_THEME)
-        console.print(render_status(state))
+        console.print(render_status(render_state))
         plain = strip_ansi(buf.getvalue())
         assert "kite" in plain and "plan" in plain and "$0.010" in plain

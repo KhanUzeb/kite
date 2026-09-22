@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode
 from kite.tasks import (
@@ -18,68 +16,83 @@ from kite.tasks import (
 )
 
 
-def test_parse_plain_task_line() -> None:
+def test_task_parsing_plain_and_json_combined() -> None:
+    # (merged from test_parse_plain_task_line)
     task = parse_task_line("fix the tests", default_cwd="/tmp/ws")
     assert task is not None
     assert task.task == "fix the tests"
     assert task.cwd == "/tmp/ws"
-
-
-def test_parse_json_task_line() -> None:
+    # (merged from test_parse_json_task_line)
     row = '{"task": "scout auth", "label": "auth", "profile": "scout", "mode": "plan"}'
-    task = parse_task_line(row)
-    assert task is not None
-    assert task.label == "auth"
-    assert task.mode == "plan"
+    json_task = parse_task_line(row)
+    assert json_task is not None
+    assert json_task.label == "auth"
+    assert json_task.mode == "plan"
 
 
-def test_load_tasks_skips_comments_and_blanks() -> None:
+def test_task_loading_and_invalid_line_combined() -> None:
+    # (merged from test_load_tasks_skips_comments_and_blanks)
     text = "# header\n\nrun tests\n\n{\"task\": \"lint\", \"label\": \"lint\"}\n"
     tasks = load_tasks_text(text, default_cwd=".")
     assert len(tasks) == 2
     assert tasks[0].task == "run tests"
     assert tasks[1].label == "lint"
+    # (merged from test_invalid_json_task_line_raises)
+    import pytest
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        parse_task_line("{not json}")
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [("approve", ApprovalMode.APPROVE), ("readonly", ApprovalMode.READONLY)],
-)
-def test_resolve_headless_approval_preserves_user_mode(raw: str, expected: ApprovalMode) -> None:
-    assert resolve_headless_approval(raw, AgentMode.BUILD, headless=True) is expected
-
-
-def test_resolve_headless_approval_uses_one_shot_auto_default() -> None:
+def test_headless_approval_resolution_combined() -> None:
+    # (merged from test_resolve_headless_approval_preserves_user_mode)
+    assert resolve_headless_approval("approve", AgentMode.BUILD, headless=True) is ApprovalMode.APPROVE
+    assert resolve_headless_approval("readonly", AgentMode.BUILD, headless=True) is ApprovalMode.READONLY
+    # (merged from test_resolve_headless_approval_uses_one_shot_auto_default)
     assert resolve_headless_approval(None, AgentMode.BUILD, headless=True) is ApprovalMode.AUTO
 
 
-def test_is_headless_run_flag() -> None:
+def test_headless_flags_and_cli_parsers_combined() -> None:
+    # (merged from test_is_headless_run_flag)
     assert is_headless_run(headless_flag=True, quiet=False)
     assert is_headless_run(headless_flag=False, quiet=True)
+    # (merged from test_kite_tasks_parser_registered)
+    from kite.cli.run import build_parser
+
+    args = build_parser().parse_args(["tasks", "run", "tasks.jsonl", "--dry-run"])
+    assert args.command == "tasks"
+    assert args.tasks_action == "run"
+    assert args.file == "tasks.jsonl"
+    assert args.dry_run is True
+    # (merged from test_kite_run_headless_flag)
+    run_args = build_parser().parse_args(["run", "--headless", "--no-stream", "fix tests"])
+    assert run_args.headless is True
+    assert run_args.no_stream is True
+    assert run_args.task == "fix tests"
 
 
-def test_headless_display_tool_start(capsys) -> None:
+def test_headless_display_combined(capsys) -> None:
+    # (merged from test_headless_display_tool_start)
     display = HeadlessRunDisplay(stream_tools=True)
     display(Event("tool_start", payload={"tool": "bash", "arguments": {"command": "pytest -q"}}))
     err = capsys.readouterr().err
     assert "[tool]" in err
     assert "pytest" in err
-
-
-def test_headless_display_subagent(capsys) -> None:
-    display = HeadlessRunDisplay()
-    display(
+    # (merged from test_headless_display_subagent)
+    crew_display = HeadlessRunDisplay()
+    crew_display(
         Event(
             "subagent_start",
             payload={"label": "scout", "profile": "scout", "id": "abc"},
         )
     )
-    err = capsys.readouterr().err
-    assert "[crew]" in err
-    assert "scout" in err
+    crew_err = capsys.readouterr().err
+    assert "[crew]" in crew_err
+    assert "scout" in crew_err
 
 
-def test_run_headless_batch_dry_integration(monkeypatch, workspace, kite_home) -> None:
+def test_headless_batch_and_approval_wiring_combined(monkeypatch, workspace, kite_home) -> None:
+    # (merged from test_run_headless_batch_dry_integration)
     calls: list[str] = []
 
     def fake_run(task: HeadlessTask, **kwargs):  # noqa: ANN003
@@ -102,61 +115,29 @@ def test_run_headless_batch_dry_integration(monkeypatch, workspace, kite_home) -
     batch = run_headless_batch(tasks, continue_on_error=True)
     assert batch.ok
     assert calls == ["one", "two"]
-
-
-@pytest.mark.parametrize(
-    ("approval", "expected"),
-    [("auto", "allow"), ("readonly", "deny"), ("approve", "deny")],
-)
-def test_headless_task_wires_noninteractive_approval(
-    monkeypatch, workspace, kite_home, approval: str, expected: str
-) -> None:
+    # (merged from test_headless_task_wires_noninteractive_approval)
     from kite.application.contracts import RunResult
 
-    observed: list[str] = []
+    for approval, expected in (("auto", "allow"), ("readonly", "deny"), ("approve", "deny")):
+        observed: list[str] = []
 
-    def fake_execute(harness, task):  # noqa: ANN001, ANN202
-        observed.append(
-            harness.approver("write", {"path": str(workspace / "generated.txt")}, {})
+        def fake_execute(harness, task, _observed=observed):  # noqa: ANN001, ANN202
+            _observed.append(
+                harness.approver("write", {"path": str(workspace / "generated.txt")}, {})
+            )
+            return RunResult(
+                status="completed",
+                stop_reason="submitted",
+                final_message="done",
+                legacy={"exit_status": "Submitted", "submission": "done"},
+            )
+
+        monkeypatch.setattr("kite.application.cli.execute_harness_task", fake_execute)
+        result = run_headless_task(
+            HeadlessTask(task="generate a file", cwd=str(workspace), approval=approval)
         )
-        return RunResult(
-            status="completed",
-            stop_reason="submitted",
-            final_message="done",
-            legacy={"exit_status": "Submitted", "submission": "done"},
-        )
-
-    monkeypatch.setattr("kite.application.cli.execute_harness_task", fake_execute)
-    result = run_headless_task(
-        HeadlessTask(task="generate a file", cwd=str(workspace), approval=approval)
-    )
-
-    assert result.ok is True
-    assert observed == [expected]
-
-
-def test_invalid_json_task_line_raises() -> None:
-    with pytest.raises(ValueError, match="invalid JSON"):
-        parse_task_line("{not json}")
-
-
-def test_kite_tasks_parser_registered() -> None:
-    from kite.cli.run import build_parser
-
-    args = build_parser().parse_args(["tasks", "run", "tasks.jsonl", "--dry-run"])
-    assert args.command == "tasks"
-    assert args.tasks_action == "run"
-    assert args.file == "tasks.jsonl"
-    assert args.dry_run is True
-
-
-def test_kite_run_headless_flag() -> None:
-    from kite.cli.run import build_parser
-
-    args = build_parser().parse_args(["run", "--headless", "--no-stream", "fix tests"])
-    assert args.headless is True
-    assert args.no_stream is True
-    assert args.task == "fix tests"
+        assert result.ok is True
+        assert observed == [expected]
 
 
 def test_headless_budgets_leftover_jobs_and_cli_flags(monkeypatch, workspace, kite_home) -> None:

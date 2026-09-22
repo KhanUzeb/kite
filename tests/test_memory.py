@@ -125,7 +125,9 @@ def test_session_persistence_modes(kite_home) -> None:
     assert not off.path.is_file() or off.path.stat().st_size == 0
 
 
-def test_session_format_and_search(kite_home) -> None:
+def test_session_format_search_and_resume(kite_home, tmp_path) -> None:
+    from kite.memory.session_format import transcript_entries
+
     session = create_session(task="long task text", cwd="/tmp", provider="p", model="m", label="Humanize docs")
     assert session_title(session.meta) == "Humanize docs"
     _, _, rel = format_session_when(time.time() - 120, now=time.time())
@@ -140,11 +142,6 @@ def test_session_format_and_search(kite_home) -> None:
     assert "Humanize docs" in hint or "long task" in hint
     short = session.id.split("-")[-1]
     assert any(row.id == session.id for row in suggest_sessions(short, limit=3))
-
-
-def test_resume_transcript_entries_cover_all_kinds() -> None:
-    """Issue #83: every persisted message kind yields one chronological transcript entry."""
-    from kite.memory.session_format import transcript_entries
 
     messages = [
         {"role": "system", "content": "sys prompt"},
@@ -164,13 +161,10 @@ def test_resume_transcript_entries_cover_all_kinds() -> None:
     assert "c1" in entries[3]["label"] and entries[3]["body"] == "file body"
     assert entries[5]["status"] == "Submitted" and entries[5]["body"] == "done"
 
-
-def test_resume_continuation_persists_to_same_session(kite_home, tmp_path) -> None:
-    """Issue #83: continued turns keep appending to the resumed session file."""
-    session = create_session(task="What is Kite?", cwd=str(tmp_path), provider="p", model="m")
-    session.append({"role": "user", "content": "What is Kite?"})
-    session.append({"role": "assistant", "content": "A coding agent."})
-    sid = session.id
+    resumed = create_session(task="What is Kite?", cwd=str(tmp_path), provider="p", model="m")
+    resumed.append({"role": "user", "content": "What is Kite?"})
+    resumed.append({"role": "assistant", "content": "A coding agent."})
+    sid = resumed.id
     loaded = load_session(sid)
     assert [m.get("content") for m in loaded.messages] == ["What is Kite?", "A coding agent."]
     loaded.append({"role": "user", "content": "continue"})
@@ -179,7 +173,7 @@ def test_resume_continuation_persists_to_same_session(kite_home, tmp_path) -> No
     assert reloaded.messages[-1].get("content") == "continue" and len(reloaded.messages) == 3
 
 
-def test_continuity_budget_and_memory_opt_in(workspace, kite_home) -> None:
+def test_continuity_budget_memory_render(workspace, kite_home) -> None:
     brief = build_continuity_brief(messages=[{"role": "user", "content": "Add auth tests"}], todos=[{"status": "in_progress", "content": "write failing test"}], task="Add auth tests")
     assert "Add auth tests" in brief.to_markdown()
     assert should_budget_auto_continue(exit_status="LimitsExceeded", continues_used=0, max_continues=2, todos=[{"status": "pending", "content": "x"}], tool_call_count=2, inbox_queued=False)
@@ -205,11 +199,6 @@ def test_continuity_budget_and_memory_opt_in(workspace, kite_home) -> None:
     assert low_s == 20 and low_c == 1.0
     long_s, long_c = effective_agent_limits(interactive=False, options_step=None, options_cost=None, runtime_step=40, runtime_cost=5.0, user_step=40, user_cost=5.0, interactive_step=80, interactive_cost=10.0, long_task=True)
     assert long_s == 120 and long_c == 25.0
-
-
-def test_memory_render_single_budget_cap(workspace, kite_home) -> None:
-    store = MemoryStore.open(workspace)
-    store.remember("prefer ruff", scope="project")
     text = store.render_for_prompt()
     assert "# Memory" in text and "prefer ruff" in text
     assert len(store.render_for_prompt(max_chars=1200)) <= 1200
@@ -249,7 +238,7 @@ def test_user_context_profiles_and_working_style(workspace, kite_home) -> None:
     assert "untrusted" in format_working_section("### Signals\n- tends to plan first").lower()
 
 
-def test_prompts_keep_chat_literal(tmp_path, monkeypatch) -> None:
+def test_prompts_chat_literal_and_checkpoint_lookup(tmp_path, kite_home) -> None:
     agent = DefaultAgent(_StubModel(), _StubEnv(), instance_prompt="Please solve this task:\n\n{task}\nInspect before editing.", interactive=True)
     text = agent._user_turn_text("hi", follow="hi", kwargs={})
     assert text == "hi" and "Please solve this task" not in text
@@ -257,9 +246,7 @@ def test_prompts_keep_chat_literal(tmp_path, monkeypatch) -> None:
     assert oneshot._user_turn_text("hi", follow="hi", kwargs={}) == "TASK:hi"
     assembled = assemble_system_prompt(config=load_runtime_config())
     assert "## Effort" in assembled and "## Credentials & secrets" in assembled and "## Skills (trust & supply chain)" in assembled
-    home = tmp_path / "kite_home"
-    home.mkdir()
-    monkeypatch.setenv("KITE_HOME", str(home))
+    home = kite_home
     (home / "SYSTEM.md").write_text("GLOBAL BASE", encoding="utf-8")
     project = tmp_path / "proj"
     (project / ".kite").mkdir(parents=True)
@@ -267,9 +254,6 @@ def test_prompts_keep_chat_literal(tmp_path, monkeypatch) -> None:
     override, _append = discover_system_prompt_files(project)
     assert override == "PROJECT BASE" and load_prompt_template("system")
 
-
-def test_checkpoint_prefix_lookup_is_literal(kite_home) -> None:
-    """Glob metacharacters in checkpoint ids must not match unrelated checkpoints."""
     from kite.memory.context_checkpoint import delete_checkpoint, load_checkpoint, save_checkpoint
 
     cp = save_checkpoint(session_id="sess-1", messages=[], cwd="/tmp")

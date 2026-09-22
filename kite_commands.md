@@ -566,4 +566,4 @@ pytest -q
 kite bench --check
 ```
 
-See `tests/README.md` for the compact pytest map (~150 tests: security, approval, agent, CLI/UI, providers).
+See `tests/README.md` for the compact pytest map (~210 tests: security, approval, agent, CLI/UI, providers).

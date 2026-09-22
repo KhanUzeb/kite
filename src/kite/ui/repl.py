@@ -664,7 +664,11 @@ class ChatSession:
         # that skips explicit invalidation) re-detects from the live API +
         # LiteLLM metadata instead of serving the previous model's levels.
         key = (provider or "", model or "")
-        if self._reasoning_support is not None and self._reasoning_support_key == key:
+        if self._reasoning_support is not None and (
+            self._reasoning_support_key is None or self._reasoning_support_key == key
+        ):
+            # A None key means the support object was injected directly
+            # (tests / external setup) rather than detected — trust it.
             return self._reasoning_support
         if not provider or not model:
             return None

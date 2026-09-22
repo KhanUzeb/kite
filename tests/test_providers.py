@@ -43,7 +43,8 @@ from kite.providers.resolve import missing_credentials, resolve_model
 from kite.providers.select import _can_use_radiolist, _numbered_pick, select_model_interactive
 
 
-def test_api_key_store_and_validation(tmp_path, monkeypatch) -> None:
+def test_api_key_store_and_env_placeholder_combined(tmp_path, monkeypatch) -> None:
+    # (merged from test_api_key_store_and_validation)
     env = tmp_path / ".env"
     env.write_text("OPENAI_API_KEY=old\nOTHER=1\n", encoding="utf-8")
     monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
@@ -66,9 +67,7 @@ def test_api_key_store_and_validation(tmp_path, monkeypatch) -> None:
     if os.name != "nt":
         write_api_key("GROQ_API_KEY", "secret")
         assert stat.S_IMODE(env.stat().st_mode) == 0o600
-
-
-def test_kite_env_placeholder_and_alias_cleanup(tmp_path, monkeypatch) -> None:
+    # (merged from test_kite_env_placeholder_and_alias_cleanup)
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
     (project_dir / ".env").write_text("GROQ_API_KEY=\n", encoding="utf-8")
@@ -80,13 +79,13 @@ def test_kite_env_placeholder_and_alias_cleanup(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     load_kite_env()
     assert os.getenv("GROQ_API_KEY") == "from-kite-home"
-    env = tmp_path / ".env"
-    env.write_text("NGC_API_KEY=old-alias\nOTHER=1\n", encoding="utf-8")
-    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
+    env2 = tmp_path / ".env2"
+    env2.write_text("NGC_API_KEY=old-alias\nOTHER=1\n", encoding="utf-8")
+    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env2)
     monkeypatch.setattr("kite.providers.credentials.read_secret", lambda _p: "new-primary-key")
     code, _msg, name = login_provider("nvidia", set_default=False, console=None)
     assert code == 0 and name == "nvidia"
-    assert "NGC_API_KEY" not in env.read_text(encoding="utf-8")
+    assert "NGC_API_KEY" not in env2.read_text(encoding="utf-8")
 
 
 def test_web_tool_keys_and_cli(tmp_path, monkeypatch) -> None:
@@ -114,7 +113,8 @@ def test_web_tool_keys_and_cli(tmp_path, monkeypatch) -> None:
     assert rows["tavily"] is True and rows["exa"] is False
 
 
-def test_claude_linked_without_key_is_not_usable(monkeypatch, kite_home) -> None:
+def test_claude_link_and_login_combined(monkeypatch, kite_home) -> None:
+    # (merged from test_claude_linked_without_key_is_not_usable)
     from kite.config.readiness import assess_setup_status
     from kite.providers.credentials import configured_providers, inspect_provider_credentials
 
@@ -133,6 +133,23 @@ def test_claude_linked_without_key_is_not_usable(monkeypatch, kite_home) -> None
     assert setup.ready is False
     blob = " ".join(setup.blockers + setup.hints)
     assert "claude auth login" not in blob.lower()
+    # (merged from test_claude_login_mentions_api_key_when_unusable)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("kite.providers.auth.claude.claude_cli_path", lambda: "claude")
+    provider = ClaudeCodeAuthProvider()
+    states = [AuthStatus(False, "need login"), AuthStatus(True, "Claude Code subscription linked.")]
+    monkeypatch.setattr(provider, "status", lambda: states.pop(0) if states else AuthStatus(True, "Claude Code subscription linked."))
+
+    class _Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr("kite.providers.auth.claude._run_claude_auth", lambda *_a, **_k: _Proc())
+    result = provider.login()
+    assert result.exit_code == 0
+    assert "ANTHROPIC_API_KEY" in result.message
+    assert "kite keys --set anthropic" in result.message
 
 
 def test_fast_setup_ready_with_key_but_no_saved_model(monkeypatch, kite_home) -> None:
@@ -155,26 +172,8 @@ def test_fast_setup_ready_with_key_but_no_saved_model(monkeypatch, kite_home) ->
     assert format_setup_banner(explicit) == ""
 
 
-def test_claude_login_mentions_api_key_when_unusable(monkeypatch, kite_home) -> None:
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr("kite.providers.auth.claude.claude_cli_path", lambda: "claude")
-    provider = ClaudeCodeAuthProvider()
-    states = [AuthStatus(False, "need login"), AuthStatus(True, "Claude Code subscription linked.")]
-    monkeypatch.setattr(provider, "status", lambda: states.pop(0) if states else AuthStatus(True, "Claude Code subscription linked."))
-
-    class _Proc:
-        returncode = 0
-        stdout = ""
-        stderr = ""
-
-    monkeypatch.setattr("kite.providers.auth.claude._run_claude_auth", lambda *_a, **_k: _Proc())
-    result = provider.login()
-    assert result.exit_code == 0
-    assert "ANTHROPIC_API_KEY" in result.message
-    assert "kite keys --set anthropic" in result.message
-
-
-def test_byos_oauth_session_and_login_hints(kite_home: Path) -> None:
+def test_byos_oauth_session_login_and_hygiene_combined(kite_home: Path, tmp_path: Path, monkeypatch, caplog) -> None:
+    # (merged from test_byos_oauth_session_and_login_hints)
     auth = CodexAuthProvider()
     with patch.object(auth, "status", return_value=AuthStatus(True, "linked")):
         with patch("kite.providers.byos.get_auth_provider", return_value=auth):
@@ -208,11 +207,9 @@ def test_byos_oauth_session_and_login_hints(kite_home: Path) -> None:
     with patch("kite.providers.byos.get_auth_provider", return_value=grok_auth):
         code, _msg = logout_provider("xai", byos_aliases=True)
     assert code == 0
-
-
-def test_codex_device_login_opens_browser(kite_home, monkeypatch) -> None:
-    """Headless/device ChatGPT login must still open the verification URL."""
-    auth = CodexAuthProvider()
+    # (merged from test_codex_device_login_opens_browser)
+    # Headless/device ChatGPT login must still open the verification URL.
+    device_auth = CodexAuthProvider()
     linked = {"ok": False}
 
     class _Root:
@@ -257,22 +254,18 @@ def test_codex_device_login_opens_browser(kite_home, monkeypatch) -> None:
         "kite.providers.auth.ui.open_browser",
         lambda url: opened.append(url) or True,
     )
-
-    result = auth.login(console=None)
-
-    assert result.exit_code == 0
+    login_result = device_auth.login(console=None)
+    assert login_result.exit_code == 0
     assert opened and opened[0].startswith("https://chatgpt.com/")
-
-
-def test_oauth_does_not_write_project_env_or_api_keys(kite_home: Path, tmp_path: Path, monkeypatch, caplog) -> None:
+    # (merged from test_oauth_does_not_write_project_env_or_api_keys)
     project_env = tmp_path / ".env"
     project_env.write_text("FOO=bar\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    spec = load_catalog().get("chatgpt")
-    auth = CodexAuthProvider()
-    with patch.object(auth, "login", return_value=LoginResult(0, "linked")):
-        with patch("kite.providers.byos.get_auth_provider", return_value=auth):
-            login_oauth(spec)
+    chatgpt_spec = load_catalog().get("chatgpt")
+    oauth_auth = CodexAuthProvider()
+    with patch.object(oauth_auth, "login", return_value=LoginResult(0, "linked")):
+        with patch("kite.providers.byos.get_auth_provider", return_value=oauth_auth):
+            login_oauth(chatgpt_spec)
     assert project_env.read_text(encoding="utf-8") == "FOO=bar\n"
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     claude = ClaudeCodeAuthProvider()
@@ -291,7 +284,8 @@ def test_oauth_does_not_write_project_env_or_api_keys(kite_home: Path, tmp_path:
     assert secret not in caplog.text
 
 
-def test_select_model_byos_and_windows_picker(kite_home, monkeypatch) -> None:
+def test_select_model_and_reasoning_combined(kite_home, monkeypatch) -> None:
+    # (merged from test_select_model_byos_and_windows_picker)
     monkeypatch.setattr("kite.providers.select.sys.platform", "win32")
     assert _can_use_radiolist() is False
     console = MagicMock()
@@ -306,9 +300,7 @@ def test_select_model_byos_and_windows_picker(kite_home, monkeypatch) -> None:
     console.input.return_value = "2"
     code, provider, model = select_model_interactive(console, "chatgpt", persist=False)
     assert code == 0 and provider == "chatgpt" and model == "gpt-5.4"
-
-
-def test_reasoning_levels_and_slash_visibility() -> None:
+    # (merged from test_reasoning_levels_and_slash_visibility)
     from kite.cli.slash import CommandIndex, SlashSpec
     from kite.models.reasoning import (
         ReasoningSupport,
@@ -373,7 +365,8 @@ def test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: py
         codex_litellm.materialize_litellm_chatgpt_auth()
 
 
-def test_model_tool_support_is_metadata_driven() -> None:
+def test_model_capabilities_and_default_resolution_combined(kite_home) -> None:
+    # (merged from test_model_tool_support_is_metadata_driven)
     assert agent_model_warning("") == "No model selected — agent mode requires a tool-capable chat model."
     assert agent_model_warning("text-embedding-3-small") is not None
     assert agent_model_warning("my-custom-agent-model") is None
@@ -386,18 +379,16 @@ def test_model_tool_support_is_metadata_driven() -> None:
     assert remote.supports_tools() is True
     assert model_supports_parallel_tool_calls(raw={"supported_parameters": ["parallel_tool_calls", "tools"]}) is True
     assert model_supports_parallel_tool_calls(raw={"capabilities": {"tools": False}}) is False
-
-
-def test_default_model_does_not_cross_providers(kite_home) -> None:
+    # (merged from test_default_model_does_not_cross_providers)
     from kite.config.user import UserConfig
-    from kite.providers.resolve import resolve_model
+    from kite.providers.resolve import resolve_model as _resolve_model
 
     cfg = UserConfig.load()
     cfg.default_provider = "groq"
     cfg.default_model = "llama-3.3-70b-versatile"
     cfg.provider_defaults = {}
-    groq = resolve_model(provider="groq", config=cfg)
-    openai = resolve_model(provider="openai", config=cfg)
+    groq = _resolve_model(provider="groq", config=cfg)
+    openai = _resolve_model(provider="openai", config=cfg)
     assert groq.model == "llama-3.3-70b-versatile"
     assert openai.provider == "openai"
     assert openai.model != "llama-3.3-70b-versatile"

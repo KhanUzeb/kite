@@ -9,7 +9,7 @@ from kite.ui.complete import read_repl_line
 from kite.ui.state import SessionUiState
 
 
-def test_idle_ctrl_c_does_not_quit(monkeypatch) -> None:
+def test_composer_interrupt_kinds_queue_and_eof(monkeypatch) -> None:
     monkeypatch.setattr(
         "prompt_toolkit.patch_stdout.patch_stdout",
         lambda raw=False: nullcontext(),
@@ -20,13 +20,6 @@ def test_idle_ctrl_c_does_not_quit(monkeypatch) -> None:
     result = read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None)
     assert result.kind == "empty"
 
-
-def test_busy_ctrl_c_with_text_steers(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "prompt_toolkit.patch_stdout.patch_stdout",
-        lambda raw=False: nullcontext(),
-    )
-    session = MagicMock()
     session.prompt.side_effect = KeyboardInterrupt()
     session.default_buffer.text = "use grep not find"
     result = read_repl_line(
@@ -38,13 +31,6 @@ def test_busy_ctrl_c_with_text_steers(monkeypatch) -> None:
     assert result.kind == "steer"
     assert result.text == "use grep not find"
 
-
-def test_busy_ctrl_c_empty_stops(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "prompt_toolkit.patch_stdout.patch_stdout",
-        lambda raw=False: nullcontext(),
-    )
-    session = MagicMock()
     session.prompt.side_effect = KeyboardInterrupt()
     session.default_buffer.text = ""
     result = read_repl_line(
@@ -55,19 +41,10 @@ def test_busy_ctrl_c_empty_stops(monkeypatch) -> None:
     )
     assert result.kind == "stop"
 
-
-def test_eof_quits(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "prompt_toolkit.patch_stdout.patch_stdout",
-        lambda raw=False: nullcontext(),
-    )
-    session = MagicMock()
     session.prompt.side_effect = EOFError()
     result = read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None)
     assert result.kind == "eof"
 
-
-def test_queue_counts_and_drain() -> None:
     from kite.agent.queue import RunMessageQueue
 
     q = RunMessageQueue()
@@ -80,41 +57,7 @@ def test_queue_counts_and_drain() -> None:
     assert len(q) == 0
 
 
-def test_compaction_start_end_render() -> None:
-    from io import StringIO
-
-    from rich.console import Console
-
-    from kite.agent.events import Event
-    from kite.ui.render import RunDisplay
-    from kite.ui.state import SessionUiState
-    from kite.ui.style import KITE_THEME
-    from tests.conftest import strip_ansi
-
-    buf = StringIO()
-    console = Console(file=buf, width=100, force_terminal=True, theme=KITE_THEME)
-    state = SessionUiState(busy=True)
-    display = RunDisplay(console, state=state, quiet=False)
-    display(Event("compaction_start", payload={"total_tokens": 90000, "window": 128000}))
-    display(Event("compaction_end", payload={"compacted": True, "total_tokens": 40000, "window": 128000}))
-    out = strip_ansi(buf.getvalue())
-    assert "compacting context" in out
-    assert state.compacting is False
-
-
-def test_retry_running_status_counts_down() -> None:
-    import time
-
-    from kite.ui.state import SessionUiState
-    from kite.ui.status import format_running_status
-
-    state = SessionUiState(busy=True, retry_until=time.monotonic() + 3, retry_label="2/5")
-    line = format_running_status(state)
-    assert "retrying in" in line
-    assert "2/5" in line
-
-
-def test_queue_steer_order(tmp_path, monkeypatch) -> None:
+def test_busy_enter_steer_queue_classification(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "kite.providers.resolve.resolve_model",
         lambda **_: MagicMock(provider="groq", model="test"),
@@ -129,29 +72,25 @@ def test_queue_steer_order(tmp_path, monkeypatch) -> None:
     assert chat.state.queue_steer == 1
     assert chat.state.queue_follow == 1
 
-
-def test_busy_enter_default_steer(monkeypatch) -> None:
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock as _MagicMock
 
     from kite.ui.complete import _prompt_once, busy_enter_queues_followup
-    from kite.ui.state import SessionUiState
+    from kite.ui.state import SessionUiState as _State
 
     monkeypatch.delenv("KITE_BUSY_ENTER", raising=False)
     assert not busy_enter_queues_followup()
     monkeypatch.setattr("prompt_toolkit.patch_stdout.patch_stdout", lambda raw=False: nullcontext())
-    session = MagicMock()
+    session = _MagicMock()
     session.prompt.return_value = "redirect me"
     slot = {"kind": "submit"}
-    result = _prompt_once(session, SessionUiState(busy=True), busy=True, action_slot=slot)
+    result = _prompt_once(session, _State(busy=True), busy=True, action_slot=slot)
     assert result.kind == "steer" and result.text == "redirect me"
     monkeypatch.setenv("KITE_BUSY_ENTER", "queue")
     assert busy_enter_queues_followup()
     slot = {"kind": "submit"}
-    result = _prompt_once(session, SessionUiState(busy=True), busy=True, action_slot=slot)
+    result = _prompt_once(session, _State(busy=True), busy=True, action_slot=slot)
     assert result.kind == "text" and result.text == "redirect me"
 
-
-def test_classify_busy_line() -> None:
     from kite.ui.complete import classify_busy_line
 
     assert classify_busy_line("/stop").kind == "stop"
@@ -164,8 +103,6 @@ def test_classify_busy_line() -> None:
     assert classify_busy_line("/model").kind == "slash"
     assert classify_busy_line("follow up").kind == "text"
 
-
-def test_approval_choice_and_busy_slash() -> None:
     from kite.ui.complete import is_busy_safe_slash, parse_approval_choice
 
     assert is_busy_safe_slash("/tasks")
@@ -177,7 +114,7 @@ def test_approval_choice_and_busy_slash() -> None:
     assert parse_approval_choice("n", mandatory=True) == "deny"
 
 
-def test_approval_wake_empty_does_not_deny(monkeypatch) -> None:
+def test_approval_composer_keys(monkeypatch) -> None:
     """Composer wake exits empty while awaiting — must not auto-deny."""
     from kite.ui.complete import _prompt_once
 
@@ -193,8 +130,6 @@ def test_approval_wake_empty_does_not_deny(monkeypatch) -> None:
     assert result.kind == "empty"
     assert result.text == ""
 
-
-def test_approval_enter_empty_allows_once() -> None:
     from prompt_toolkit.keys import Keys
 
     from kite.ui.complete import make_repl_key_bindings
@@ -218,7 +153,7 @@ def test_approval_enter_empty_allows_once() -> None:
     event.app.exit.assert_called_once_with(result="a")
 
 
-def test_slash_completion_selection_is_separate_from_input() -> None:
+def test_slash_completion_wiring() -> None:
     from prompt_toolkit.buffer import Buffer, CompletionState
     from prompt_toolkit.completion import Completion
     from prompt_toolkit.document import Document
@@ -244,72 +179,27 @@ def test_slash_completion_selection_is_separate_from_input() -> None:
     assert state.complete_index == 1
     assert buffer.text == "/se"
 
-
-def test_exit_alias_gets_its_own_completion_row(kite_home) -> None:
     from prompt_toolkit.completion import CompleteEvent
-    from prompt_toolkit.document import Document
 
     import kite.ui.complete as complete
     from kite.cli.slash import CommandIndex
 
     completer = complete.SlashCompleter(lambda: CommandIndex.load("."))
-
     exit_rows = list(completer.get_completions(Document("/exi"), CompleteEvent()))
     assert [row.text for row in exit_rows] == ["exit"]
     assert "Leave the REPL" in str(exit_rows[0].display_meta)
     assert "exit" in str(exit_rows[0].display)
-
     prefix_rows = list(completer.get_completions(Document("/ex"), CompleteEvent()))
     assert "exit" in [row.text for row in prefix_rows]
-
     all_rows = list(completer.get_completions(Document("/"), CompleteEvent()))
     names = [row.text for row in all_rows]
     assert "quit" in names and "exit" in names
 
 
-def test_prompt_session_wires_automatic_slash_selection(monkeypatch) -> None:
+def test_composer_layout_multiline_and_newlines(kite_home, monkeypatch) -> None:
     from types import SimpleNamespace
 
-    from prompt_toolkit.completion import Completion
-
-    import kite.ui.complete as complete
-
-    class Hook:
-        callback = None
-
-        def __iadd__(self, callback):
-            self.callback = callback
-            return self
-
-    completion = Completion("security", start_position=-2)
-    state = SimpleNamespace(
-        completions=[completion],
-        complete_index=None,
-        current_completion=None,
-        go_to_index=lambda index: setattr(state, "complete_index", index),
-    )
-    buffer = SimpleNamespace(
-        complete_state=state,
-        document=SimpleNamespace(text_before_cursor="/se"),
-        on_completions_changed=Hook(),
-    )
-    session = SimpleNamespace(default_buffer=buffer)
-    seen: dict = {}
-    monkeypatch.setattr(
-        complete,
-        "PromptSession",
-        lambda **kwargs: (seen.update(kwargs) or session),
-    )
-
-    complete.make_prompt_session(complete.SlashCompleter(lambda: None))
-    buffer.on_completions_changed.callback(None)
-
-    assert state.complete_index == 0
-    assert seen["erase_when_done"] is True
-
-
-
-def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
+    from prompt_toolkit.keys import Keys
     from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
     from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
     from prompt_toolkit.output import DummyOutput
@@ -384,13 +274,7 @@ def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
     column_menu = next(child for child in body.children if isinstance(child, CompletionsMenu))
     assert column_menu.content.right_margins == []
 
-
-def test_composer_session_and_prompt_are_multiline(kite_home, monkeypatch) -> None:
-    """The session must not force single-line mode — long prompts clip there."""
-    from prompt_toolkit.output import DummyOutput
-
-    import kite.ui.complete as complete
-
+    # The session must not force single-line mode — long prompts clip there.
     real_session_cls = complete.PromptSession
     seen: dict = {}
 
@@ -399,31 +283,24 @@ def test_composer_session_and_prompt_are_multiline(kite_home, monkeypatch) -> No
         return real_session_cls(**kwargs)
 
     monkeypatch.setattr(complete, "PromptSession", _recording_session)
-    session = complete.make_prompt_session(
+    multiline_session = complete.make_prompt_session(
         complete.SlashCompleter(lambda: None),
         state=SessionUiState(),
         output=DummyOutput(),
     )
     assert seen.get("multiline") is True
-    assert session is not None
+    assert multiline_session is not None
 
     prompt_seen: dict = {}
-    session.prompt = lambda *a, **k: (prompt_seen.update(k) or "hello")  # type: ignore[method-assign]
+    multiline_session.prompt = lambda *a, **k: (prompt_seen.update(k) or "hello")  # type: ignore[method-assign]
     result = complete._prompt_once(
-        session, SessionUiState(), busy=False, action_slot={"kind": "submit"}
+        multiline_session, SessionUiState(), busy=False, action_slot={"kind": "submit"}
     )
     assert prompt_seen.get("multiline") is True
     assert result.kind == "text" and result.text == "hello"
 
-
-def test_composer_newline_keys_insert_without_submitting() -> None:
-    from types import SimpleNamespace
-
-    from prompt_toolkit.keys import Keys
-
-    from kite.ui.complete import make_repl_key_bindings
-
-    bindings = make_repl_key_bindings()
+    # Ctrl+J and Alt+Enter insert newlines without submitting.
+    bindings = complete.make_repl_key_bindings()
     inserted: list[str] = []
     buffer = SimpleNamespace(
         insert_text=inserted.append,
@@ -445,12 +322,16 @@ def test_composer_newline_keys_insert_without_submitting() -> None:
     assert inserted == ["\n", "\n"]
     buffer.validate_and_handle.assert_not_called()
 
-def test_exact_slash_completion_does_not_leave_empty_menu_selected() -> None:
+
+def test_slash_completion_submit_flow() -> None:
+    from types import SimpleNamespace
+
     from prompt_toolkit.buffer import Buffer, CompletionState
     from prompt_toolkit.completion import Completion
     from prompt_toolkit.document import Document
+    from prompt_toolkit.keys import Keys
 
-    from kite.ui.complete import _select_first_slash_completion
+    from kite.ui.complete import _select_first_slash_completion, make_repl_key_bindings
 
     buffer = Buffer()
     buffer.document = Document("/security")
@@ -459,29 +340,18 @@ def test_exact_slash_completion_does_not_leave_empty_menu_selected() -> None:
         [Completion("security", start_position=-8)],
     )
     buffer.complete_state = state
-
     _select_first_slash_completion(buffer)
-
     assert state.complete_index is None
 
-
-def test_enter_applies_selected_slash_completion_before_submit() -> None:
-    from types import SimpleNamespace
-
-    from prompt_toolkit.completion import Completion
-    from prompt_toolkit.keys import Keys
-
-    from kite.ui.complete import make_repl_key_bindings
-
     completion = Completion("security", start_position=-2)
-    state = SimpleNamespace(
+    menu_state = SimpleNamespace(
         completions=[completion],
         complete_index=0,
         current_completion=completion,
     )
     applied: list[Completion] = []
-    buffer = SimpleNamespace(
-        complete_state=state,
+    submit_buffer = SimpleNamespace(
+        complete_state=menu_state,
         document=SimpleNamespace(text_before_cursor="/se"),
         text="/se",
         apply_completion=applied.append,
@@ -493,19 +363,25 @@ def test_enter_applies_selected_slash_completion_before_submit() -> None:
         for binding in bindings.get_bindings_for_keys((Keys.ControlM,))
         if binding.handler.__name__ == "_submit"
     )
-
-    enter.handler(SimpleNamespace(current_buffer=buffer))
-
+    enter.handler(SimpleNamespace(current_buffer=submit_buffer))
     assert applied == [completion]
-    assert buffer.complete_state is None
-    buffer.validate_and_handle.assert_called_once_with()
+    assert submit_buffer.complete_state is None
+    submit_buffer.validate_and_handle.assert_called_once_with()
 
 
-def test_toolbar_busy_and_approval_states() -> None:
-    from kite.ui.complete import _activity_html, _toolbar_html
+def test_toolbar_busy_approval_and_hints(monkeypatch) -> None:
+    import time
+
+    from kite.ui.complete import _activity_html, _toolbar_busy_bits, _toolbar_html
+    from kite.ui.state import SessionUiState as _State
     from kite.ui.status import format_running_status
 
-    busy = SessionUiState(
+    retry_state = SessionUiState(busy=True, retry_until=time.monotonic() + 3, retry_label="2/5")
+    line = format_running_status(retry_state)
+    assert "retrying in" in line
+    assert "2/5" in line
+
+    busy = _State(
         busy=True,
         queued=2,
         queue_steer=1,
@@ -533,14 +409,24 @@ def test_toolbar_busy_and_approval_states() -> None:
     assert "tok/s" not in busy_html
     assert "›" in format_running_status(busy)
 
-    approval = SessionUiState(awaiting_approval="bash", awaiting_approval_mandatory=True)
+    approval = _State(awaiting_approval="bash", awaiting_approval_mandatory=True)
     approval_html = str(_toolbar_html(approval))
     assert "[a] once" in approval_html
     assert "[Enter] once" not in approval_html
     assert "Enter queue" not in approval_html
 
-    idle_html = str(_toolbar_html(SessionUiState(busy=False)))
+    idle_html = str(_toolbar_html(_State(busy=False)))
     assert "Esc stop" not in idle_html
+
+    monkeypatch.delenv("KITE_BUSY_ENTER", raising=False)
+    default_bits = _toolbar_busy_bits(_State(busy=True))
+    assert "Enter steer" in default_bits
+    # No duplicate explicit steer hint when Enter already steers.
+    assert "Ctrl+G steer" not in default_bits
+    monkeypatch.setenv("KITE_BUSY_ENTER", "queue")
+    legacy_bits = _toolbar_busy_bits(_State(busy=True))
+    assert "Enter queue" in legacy_bits
+    assert "Ctrl+G steer" in legacy_bits
 
 
 def test_busy_steer_keeps_composer_alive() -> None:
@@ -577,23 +463,19 @@ def test_busy_steer_keeps_composer_alive() -> None:
     assert calls[-1] == "queue:later"
 
 
-def test_busy_toolbar_steer_hint_follows_enter_mode(monkeypatch) -> None:
-    from kite.ui.complete import _toolbar_busy_bits
-    from kite.ui.state import SessionUiState
+def test_fold_long_paste_collapse_expand_and_bindings() -> None:
+    from types import SimpleNamespace
 
-    monkeypatch.delenv("KITE_BUSY_ENTER", raising=False)
-    default_bits = _toolbar_busy_bits(SessionUiState(busy=True))
-    assert "Enter steer" in default_bits
-    # No duplicate explicit steer hint when Enter already steers.
-    assert "Ctrl+G steer" not in default_bits
-    monkeypatch.setenv("KITE_BUSY_ENTER", "queue")
-    legacy_bits = _toolbar_busy_bits(SessionUiState(busy=True))
-    assert "Enter queue" in legacy_bits
-    assert "Ctrl+G steer" in legacy_bits
+    from prompt_toolkit.keys import Keys
 
-
-def test_fold_long_text_collapses_to_head_plus_count() -> None:
-    from kite.ui.complete import fold_long_text
+    from kite.ui.complete import (
+        _paste_fold_changed,
+        fold_buffer,
+        fold_long_text,
+        is_folded,
+        make_repl_key_bindings,
+        unfold_buffer,
+    )
 
     assert fold_long_text("short\ntwo lines") is None
     assert fold_long_text("\n".join(f"line {i}" for i in range(9))) is None
@@ -602,12 +484,6 @@ def test_fold_long_text_collapses_to_head_plus_count() -> None:
     assert hidden == 9
     assert folded.startswith("line 0\nline 1\nline 2\n")
     assert "+9 lines" in folded
-
-
-def test_fold_buffer_roundtrip_and_paste_hook() -> None:
-    from types import SimpleNamespace
-
-    from kite.ui.complete import _paste_fold_changed, fold_buffer, is_folded, unfold_buffer
 
     buf = SimpleNamespace(text="", cursor_position=0)
     buf._kite_fold = {"folded": False, "full": "", "guard": False, "lines": 0}
@@ -629,14 +505,6 @@ def test_fold_buffer_roundtrip_and_paste_hook() -> None:
     assert not is_folded(buf)
     assert fold_buffer(SimpleNamespace(text="tiny")) is False
 
-
-def test_fold_toggle_and_any_key_bindings() -> None:
-    from types import SimpleNamespace
-
-    from prompt_toolkit.keys import Keys
-
-    from kite.ui.complete import is_folded, make_repl_key_bindings
-
     bindings = make_repl_key_bindings()
     fold_toggle = next(
         binding
@@ -648,14 +516,14 @@ def test_fold_toggle_and_any_key_bindings() -> None:
         for binding in bindings.get_bindings_for_keys((Keys.Any,))
         if binding.handler.__name__ == "_fold_expand"
     )
-    buf = SimpleNamespace(text="\n".join(f"line {i}" for i in range(12)), cursor_position=0)
-    event = SimpleNamespace(current_buffer=buf)
+    key_buf = SimpleNamespace(text="\n".join(f"line {i}" for i in range(12)), cursor_position=0)
+    event = SimpleNamespace(current_buffer=key_buf)
     fold_toggle.handler(event)
-    assert is_folded(buf)
+    assert is_folded(key_buf)
     # Placeholder is never what gets submitted — expansion restores first.
     expand.handler(event)
-    assert not is_folded(buf)
-    assert buf.text.split("\n") == [f"line {i}" for i in range(12)]
+    assert not is_folded(key_buf)
+    assert key_buf.text.split("\n") == [f"line {i}" for i in range(12)]
 
 
 def test_plan_build_slash_text_runs_task(tmp_path, monkeypatch) -> None:
@@ -692,7 +560,6 @@ def test_reasoning_support_redetects_on_model_switch(tmp_path, monkeypatch) -> N
     from unittest.mock import MagicMock
 
     import kite.models.reasoning as reasoning
-
     from kite.ui.repl import ChatSession
 
     calls: list[tuple[str, str]] = []

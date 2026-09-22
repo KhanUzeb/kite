@@ -1,6 +1,6 @@
 [project]
 name = "kite"
-version = "1.0.0"
+version = "1.0.1"
 description = "Slim hybrid coding-agent harness (mini-swe-agent loop + tau-style tools/events/providers/memory)"
 readme = "README.md"
 requires-python = ">=3.11"

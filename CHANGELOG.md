@@ -4,6 +4,41 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-22
+
+### Added
+- Antigravity (Google subscription) OAuth via the official `agy` CLI:
+  `kite login antigravity` (browser / SSH URL loop), link status/logout,
+  catalog provider, fallback Gemini model list. Kite model calls need
+  `GEMINI_API_KEY` (`kite keys --set gemini`) — subscription stays CLI-owned.
+- Composer fold for long pastes: first lines + `+N lines` placeholder (F9
+  toggles, auto-folds sudden pastes, any key expands, submit always sends
+  the full text).
+- `/plan <text>` and `/build <text>` act immediately; bare `/plan`
+  reports a resumed checklist like `/build` does.
+- Cost fallback: usage-based pricing from LiteLLM's cost map when a
+  provider omits `response_cost` (footer no longer stuck at $0.000).
+- Terminal-responsive truncation: running line and toolbar queue preview
+  follow the live terminal width (windowed vs fullscreen).
+- Thinking levels re-detect on provider/model switch (model-keyed cache).
+
+### Changed
+- Steering a busy turn interrupts the agent but keeps the pinned composer
+  alive; a `steering — continuing turn` event clears the stopped flag.
+- Steer/queue messages fall back to the inbox when harness inject fails,
+  so they are never silently dropped.
+- Busy toolbar and `/tasks` hints follow `KITE_BUSY_ENTER` (steer default).
+- `uninstall --purge` retries read-only files and reports leftover counts.
+- Test suite consolidated 425 → ~217 collected with identical assertions;
+  suite-size references updated across docs.
+
+### Removed
+- `examples/clamp` untracked (`.gitignore`) and purged from git history.
+
+### Fixed
+- Websearch tests force the free path (paid chain mocked) so a live
+  `TAVILY_API_KEY` in the environment cannot hijack hermetic asserts.
+
 ## [1.0.0] - 2026-09-20
 
 ### Added

@@ -127,9 +127,8 @@ def test_paid_web_providers_chain(monkeypatch) -> None:
     assert resolve_web_tool_env("tavily") == "TAVILY_API_KEY" and resolve_web_tool_env("unknown") is None
 
 
-def test_submit_task_blocked_without_verification(tmp_path) -> None:
+def test_submit_verification_background_jobs_and_orchestrator(tmp_path) -> None:
     from kite.agent.verification import VerificationCollector
-    from kite.tools.coding import make_coding_tools
 
     collector = VerificationCollector()
     collector.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
@@ -149,8 +148,6 @@ def test_submit_task_blocked_without_verification(tmp_path) -> None:
     )
     assert relaxed.run({"message": "finished"}).get("ok") is True
 
-
-def test_background_job_survives_log_cap_and_honors_timeout(tmp_path) -> None:
     script = "import sys; [sys.stdout.write('x'*40+'\\n') for _ in range(20000)]"
     reg = JobRegistry()
     job = reg.spawn_bash(f"{sys.executable} -c {json.dumps(script)}", cwd=str(tmp_path), timeout_seconds=8)
@@ -175,18 +172,16 @@ def test_background_job_survives_log_cap_and_honors_timeout(tmp_path) -> None:
     out = bash.run({"command": "echo hi", "background": True, "timeout": 12})
     assert out["ok"] is True and seen["timeout"] == 12.0
 
-
-def test_jobs_and_orchestrator(tmp_path) -> None:
     sleep = f'{sys.executable} -c "import time; time.sleep(60)"'
-    reg = JobRegistry()
-    job = reg.spawn_bash(sleep, cwd=str(tmp_path))
-    assert job.status == "running" and reg.kill(job.id) is True
-    a = reg.spawn_bash(sleep, cwd=str(tmp_path))
-    b = reg.spawn_bash(sleep, cwd=str(tmp_path))
-    assert reg.kill_all() == 2 and a.status == "killed" and b.status == "killed"
+    reg2 = JobRegistry()
+    job2 = reg2.spawn_bash(sleep, cwd=str(tmp_path))
+    assert job2.status == "running" and reg2.kill(job2.id) is True
+    a = reg2.spawn_bash(sleep, cwd=str(tmp_path))
+    b = reg2.spawn_bash(sleep, cwd=str(tmp_path))
+    assert reg2.kill_all() == 2 and a.status == "killed" and b.status == "killed"
     token = CancelToken()
-    sub = reg.register_subagent(label="worker-1", prompt="do stuff", cancel=token)
-    assert reg.kill(sub.id) is True and token.is_set()
+    sub = reg2.register_subagent(label="worker-1", prompt="do stuff", cancel=token)
+    assert reg2.kill(sub.id) is True and token.is_set()
     events: list[str] = []
     live = JobRegistry(on_event=lambda e: events.append(e.kind))
     short = live.spawn_bash(f'{sys.executable} -c "print(1)"', cwd=str(tmp_path))
@@ -316,26 +311,32 @@ def _stub_session_fallback(monkeypatch, *, complete_result="session summary", cr
     return summ, calls, tried
 
 
-def test_llm_summarize_falls_back_to_session_model(monkeypatch) -> None:
+def test_llm_summarize_session_fallback_matrix(monkeypatch) -> None:
     summ, calls, _tried = _stub_session_fallback(monkeypatch)
     out = summ.llm_summarize([{"role": "user", "content": "hello"}], config=_summarize_cfg())
     assert out == "session summary"
     assert ("openai", "gpt-4o-mini") in calls
 
-
-def test_llm_summarize_no_fallback_when_opted_out(monkeypatch) -> None:
-    summ, _calls, tried = _stub_session_fallback(monkeypatch)
-    out = summ.llm_summarize(
+    summ2, _calls2, tried2 = _stub_session_fallback(monkeypatch)
+    out2 = summ2.llm_summarize(
         [{"role": "user", "content": "hello"}],
         config=_summarize_cfg(compaction_fallback_session=False),
     )
-    assert out is None and tried == []
+    assert out2 is None and tried2 == []
 
+    summ3, _calls3, tried3 = _stub_session_fallback(monkeypatch, creds_ok=False)
+    out3 = summ3.llm_summarize([{"role": "user", "content": "hello"}], config=_summarize_cfg())
+    assert out3 is None and tried3 == []
 
-def test_llm_summarize_no_fallback_without_session_credentials(monkeypatch) -> None:
-    summ, _calls, tried = _stub_session_fallback(monkeypatch, creds_ok=False)
-    out = summ.llm_summarize([{"role": "user", "content": "hello"}], config=_summarize_cfg())
-    assert out is None and tried == []
+    summ4, calls4, _tried4 = _stub_session_fallback(monkeypatch)
+    out4 = summ4.llm_summarize(
+        [{"role": "user", "content": "hello"}],
+        config=_summarize_cfg(),
+        session_provider="anthropic",
+        session_model="claude-x",
+    )
+    assert out4 == "session summary"
+    assert ("anthropic", "claude-x") in calls4
 
 
 def test_llm_summarize_no_duplicate_session_attempt(monkeypatch) -> None:
@@ -360,18 +361,6 @@ def test_llm_summarize_no_duplicate_session_attempt(monkeypatch) -> None:
     monkeypatch.setattr(summ, "_try_complete", lambda r, _t: tried.append((r.provider, r.model)) or None)
     assert summ.llm_summarize([{"role": "user", "content": "hello"}], config=cfg) is None
     assert tried == [("openrouter", "m1")]
-
-
-def test_llm_summarize_session_overrides_take_precedence(monkeypatch) -> None:
-    summ, calls, _tried = _stub_session_fallback(monkeypatch)
-    out = summ.llm_summarize(
-        [{"role": "user", "content": "hello"}],
-        config=_summarize_cfg(),
-        session_provider="anthropic",
-        session_model="claude-x",
-    )
-    assert out == "session summary"
-    assert ("anthropic", "claude-x") in calls
 
 
 def test_make_summarizer_forwards_session_overrides(monkeypatch) -> None:

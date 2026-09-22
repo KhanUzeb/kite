@@ -112,7 +112,7 @@ def test_slash_help_and_legacy_routing() -> None:
     assert "kite-system-design" not in text and "docs/memory.md" not in text
 
 
-def test_chat_flags_rejects_and_resume(monkeypatch, tmp_path: Path, kite_home) -> None:
+def test_chat_resume_flags_transcript_and_context(monkeypatch, tmp_path: Path, kite_home) -> None:
     captured: dict = {}
 
     class FakeSession:
@@ -193,16 +193,12 @@ def test_chat_flags_rejects_and_resume(monkeypatch, tmp_path: Path, kite_home) -
     assert _resume(argparse.Namespace(session=None)) == 2
 
 
-def test_resume_renders_transcript_and_restores_context(monkeypatch, tmp_path: Path, kite_home) -> None:
-    """Issue #83: one-shot resume prints the full transcript and forwards resume context to the harness."""
+    # Issue #83: one-shot resume prints the full transcript and forwards resume context to the harness.
     from io import StringIO
 
     from rich.console import Console
 
-    from kite.application.contracts import RunResult
     from kite.cli import run as run_mod
-    from kite.cli.run import build_parser, cmd_resume
-    from kite.memory.session import Session, SessionMeta
 
     meta = SessionMeta(
         id="sess83", created_at=1.0, updated_at=2.0, cwd=str(tmp_path), provider="groq", model="x", task="t",
@@ -261,7 +257,7 @@ def test_resume_renders_transcript_and_restores_context(monkeypatch, tmp_path: P
     assert seen.get("follow_up") == "continue"
 
 
-def test_headless_tasks_status_and_approval(monkeypatch, workspace, kite_home, capsys) -> None:
+def test_headless_tasks_status_approval_and_parsing(monkeypatch, workspace, kite_home, capsys) -> None:
     task = parse_task_line("fix the tests", default_cwd="/tmp/ws")
     assert task and task.task == "fix the tests"
     json_task = parse_task_line('{"task": "scout auth", "label": "auth", "profile": "scout", "mode": "plan"}')
@@ -307,9 +303,7 @@ def test_headless_tasks_status_and_approval(monkeypatch, workspace, kite_home, c
     assert run_args.headless is True and run_args.task == "fix tests"
 
 
-def test_headless_wires_noninteractive_approval(monkeypatch, workspace, kite_home) -> None:
-    from kite.application.contracts import RunResult
-
+    # Non-interactive approval wiring across auto/readonly/approve.
     observed: list[str] = []
 
     def fake_execute(harness, task):  # noqa: ANN001
@@ -323,7 +317,7 @@ def test_headless_wires_noninteractive_approval(monkeypatch, workspace, kite_hom
         assert result.ok is True and observed == [expected]
 
 
-def test_ci_workflows_run_ruff_pytest_and_bench() -> None:
+def test_ci_scripts_and_implicit_routing() -> None:
     root = Path(__file__).resolve().parents[1]
     tests_yml = (root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     release_yml = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
@@ -341,7 +335,7 @@ def test_ci_workflows_run_ruff_pytest_and_bench() -> None:
         assert ".venv" in check
 
 
-def test_scripts_dir_keeps_only_supported_files() -> None:
+    # Supported scripts directory contents.
     names = {p.name for p in Path(__file__).resolve().parents[1].joinpath("scripts").iterdir() if p.is_file()}
     assert names == {
         "bump_release.sh",
@@ -355,7 +349,7 @@ def test_scripts_dir_keeps_only_supported_files() -> None:
     }
 
 
-def test_implicit_prompt_rewrites_like_pi() -> None:
+    # Implicit prompt routing (Pi-style): bare words become chat/run.
     from kite.cli.run import rewrite_implicit_task
 
     assert rewrite_implicit_task(["run", "x"]) == ["run", "x"]
@@ -459,10 +453,12 @@ def test_gh_cli_dispatch(monkeypatch, kite_home, capsys) -> None:
     assert "OPENAI_API_KEY" not in seen["env"]
 
 
-def test_parser_skips_heavy_backend_imports() -> None:
+def test_parser_env_purge_and_main_loading(monkeypatch, tmp_path) -> None:
+    import os
     import sys
 
     from kite.cli.run import build_parser
+    from kite.cli.self_manage import _count_files, _purge_home
 
     before = set(sys.modules)
     build_parser()
@@ -475,12 +471,7 @@ def test_parser_skips_heavy_backend_imports() -> None:
     assert UserConfig.load() is not None
     assert callable(assess_setup_status)
 
-
-def test_purge_home_removes_readonly_files(tmp_path) -> None:
-    import os
-
-    from kite.cli.self_manage import _count_files, _purge_home
-
+    # Safer --purge removes even read-only files and reports leftovers.
     home = tmp_path / ".kite"
     nested = home / "sessions"
     nested.mkdir(parents=True)
@@ -490,9 +481,6 @@ def test_purge_home_removes_readonly_files(tmp_path) -> None:
     assert _count_files(str(home)) == 1
     removed, leftover, error = _purge_home(str(home))
     assert removed and leftover == 0 and error == "" and not home.exists()
-
-
-def test_main_loads_env_before_bare_chat_and_print(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr("kite.providers.credentials.load_kite_env", lambda: calls.append("load"))
     monkeypatch.setattr("kite.cli.run.cmd_print", lambda args: 7)

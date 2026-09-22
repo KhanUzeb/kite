@@ -15,76 +15,61 @@ def _tree(root: Path) -> None:
     (root / "tests" / "test_a.py").write_text("def test_foo():\n    assert foo()\n", encoding="utf-8")
 
 
-def test_grep_files_only(tmp_path: Path) -> None:
+def test_grep_output_modes(tmp_path: Path) -> None:
     _tree(tmp_path)
-    out = grep_search(pattern="def foo", root=tmp_path, cwd=str(tmp_path), files_only=True)
-    assert out["ok"] is True
-    assert "src/a.py" in out["output"]
-    assert "return 1" not in out["output"]
-    assert out.get("summary")
+    files_only = grep_search(pattern="def foo", root=tmp_path, cwd=str(tmp_path), files_only=True)
+    assert files_only["ok"] is True
+    assert "src/a.py" in files_only["output"]
+    assert "return 1" not in files_only["output"]
+    assert files_only.get("summary")
+
+    count_only = grep_search(pattern="def ", root=tmp_path, cwd=str(tmp_path), count_only=True)
+    assert count_only["ok"] is True
+    assert ":" in count_only["output"]
+    assert count_only["hits"] >= 2
+
+    grouped = grep_search(pattern="def", root=tmp_path, cwd=str(tmp_path), max_hits=20)
+    assert grouped["ok"] is True
+    assert "hit" in grouped["output"]
+    assert "summary" in grouped
 
 
-def test_grep_count_only(tmp_path: Path) -> None:
+def test_grep_filter_and_python_fallback(monkeypatch, tmp_path: Path) -> None:
     _tree(tmp_path)
-    out = grep_search(pattern="def ", root=tmp_path, cwd=str(tmp_path), count_only=True)
-    assert out["ok"] is True
-    assert ":" in out["output"]
-    assert out["hits"] >= 2
-
-
-def test_grep_grouped_output(tmp_path: Path) -> None:
-    _tree(tmp_path)
-    out = grep_search(pattern="def", root=tmp_path, cwd=str(tmp_path), max_hits=20)
-    assert out["ok"] is True
-    assert "hit" in out["output"]
-    assert "summary" in out
-
-
-def test_grep_glob_filter(tmp_path: Path) -> None:
-    _tree(tmp_path)
-    out = grep_search(
+    filtered = grep_search(
         pattern="def",
         root=tmp_path / "src",
         cwd=str(tmp_path),
         glob_pat="*.py",
         files_only=True,
     )
-    assert out["ok"] is True
-    assert "a.py" in out["output"]
-    assert "tests" not in out["output"]
+    assert filtered["ok"] is True
+    assert "a.py" in filtered["output"]
+    assert "tests" not in filtered["output"]
 
-
-def test_grep_python_fallback(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("kite.tools.search.shutil.which", lambda _name: None)
+    fallback = grep_search(pattern="class Bar", root=tmp_path, cwd=str(tmp_path))
+    assert fallback["ok"] is True
+    assert fallback["engine"] == "python"
+    assert "Bar" in fallback["output"]
+
+
+def test_glob_and_ls(tmp_path: Path) -> None:
     _tree(tmp_path)
-    out = grep_search(pattern="class Bar", root=tmp_path, cwd=str(tmp_path))
-    assert out["ok"] is True
-    assert out["engine"] == "python"
-    assert "Bar" in out["output"]
+    recursive = glob_search(pattern="**/*.py", root=tmp_path)
+    assert recursive["ok"] is True
+    assert recursive["count"] >= 3
+    assert "src/a.py" in recursive["output"]
 
+    by_mtime = glob_search(pattern="**/*.py", root=tmp_path, sort="mtime")
+    assert by_mtime["ok"] is True
+    assert by_mtime["count"] >= 1
 
-def test_glob_recursive(tmp_path: Path) -> None:
-    _tree(tmp_path)
-    out = glob_search(pattern="**/*.py", root=tmp_path)
-    assert out["ok"] is True
-    assert out["count"] >= 3
-    assert "src/a.py" in out["output"]
-
-
-def test_glob_mtime_sort(tmp_path: Path) -> None:
-    _tree(tmp_path)
-    out = glob_search(pattern="**/*.py", root=tmp_path, sort="mtime")
-    assert out["ok"] is True
-    assert out["count"] >= 1
-
-
-def test_ls_with_glob(tmp_path: Path) -> None:
-    _tree(tmp_path)
-    out = ls_search(path=tmp_path / "src", glob_pat="*.py")
-    assert out["ok"] is True
-    assert "a.py" in out["output"]
-    assert "b.py" in out["output"]
-    assert "subdir" not in out["output"]
+    listed = ls_search(path=tmp_path / "src", glob_pat="*.py")
+    assert listed["ok"] is True
+    assert "a.py" in listed["output"]
+    assert "b.py" in listed["output"]
+    assert "subdir" not in listed["output"]
 
 
 def test_glob_mtime_sort_skips_unreadable_files(tmp_path: Path, monkeypatch) -> None:

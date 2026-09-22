@@ -12,7 +12,7 @@
     <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License">
   </a>
   <a href="CHANGELOG.md">
-    <img src="https://img.shields.io/badge/version-1.0.0-cyan.svg" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.0.1-cyan.svg" alt="Version">
   </a>
   <a href="https://www.python.org">
     <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
@@ -23,7 +23,7 @@
   Plan, build, review, and automate work across local repositories.
 </p>
 
-**Version:** 1.0.0
+**Version:** 1.0.1
 
 **Keywords:** coding agent, AI code assistant, terminal coding assistant, agent CLI, SWE-agent style loop, repository automation, code review automation
 
@@ -224,7 +224,7 @@ pytest                    # guardrails, agent, sessions, git-stat diffs, skills,
 pytest -v                 # verbose
 ```
 
-Coverage is a compact ~150-test suite: guardrails/SSRF, approval, agent loop, sessions, verification, orchestrator, credentials/BYOS, CLI/REPL, and `PolicyEngine`/`ToolExecutor`. It is not a full integration suite against live LLM APIs. See `tests/README.md`.
+Coverage is a compact ~210-test suite: guardrails/SSRF, approval, agent loop, sessions, verification, orchestrator, credentials/BYOS, CLI/REPL, and `PolicyEngine`/`ToolExecutor`. It is not a full integration suite against live LLM APIs. See `tests/README.md`.
 
 ```bash
 python scripts/sync_version.py --check
@@ -342,5 +342,5 @@ src/kite/
   eval.py                  # ReplayBundle + acceptance criteria (no live LLM)
   tasks.py                 # kite tasks / --headless batches
 scripts/                   # install + download (unix/win), sync_version.py, bump_release.sh
-tests/                     # pytest suite (~150 tests, no live LLM)
+tests/                     # pytest suite (~210 tests, no live LLM)
 ```

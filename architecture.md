@@ -1,6 +1,6 @@
 # Kite architecture
 
-**Version:** 1.0.0 · Python 3.11+ · Entry: `kite.cli.run:main`
+**Version:** 1.0.1 · Python 3.11+ · Entry: `kite.cli.run:main`
 
 Kite is a **slim hybrid coding-agent harness**: a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) style control loop wrapped in tau-inspired **runtime assembly** (providers, tools, guardrails, compaction, sessions). 0.9 adds an **application layer** (`RunSpec`, `ApplicationRunService`, `PolicyEngine`, `ToolExecutor`) while `Harness` remains the compatibility adapter. The brain never renders UI; the CLI never calls LiteLLM directly.
 
@@ -212,7 +212,7 @@ Streaming uses stderr for loaders; stdout stays clean for copy/paste.
 
 ## Testing & CI
 
-- **Local:** `pytest` from repo root (~150 tests, no live LLM; `KITE_HOME` isolated in fixtures). Layout: `tests/README.md`.
+- **Local:** `pytest` from repo root (~210 tests, no live LLM; `KITE_HOME` isolated in fixtures). Layout: `tests/README.md`.
 - **CI:** `.github/workflows/tests.yml` — Linux and Windows × Python 3.11/3.12: `sync_version --check`, `ruff check src tests`, `pytest -q`, `kite bench --check`.
 
 Focus areas: guardrails/SSRF, approval, agent loop, sessions, CLI/REPL, credentials/BYOS.

@@ -19,7 +19,7 @@ from kite.memory.session import (
 from kite.memory.session_analytics import SessionStats, save_session_stats, scan_session_file
 
 
-def test_append_messages_without_full_rewrite(kite_home) -> None:
+def test_append_meta_lifecycle_and_touch(kite_home, monkeypatch) -> None:
     session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
     session.append({"role": "user", "content": "hi"})
     path = session.path
@@ -34,8 +34,7 @@ def test_append_messages_without_full_rewrite(kite_home) -> None:
     assert json.loads(lines[0])["type"] == "meta"
     assert sum(1 for ln in lines if '"type": "message"' in ln) == 2
 
-
-def test_meta_updated_at_refreshed_on_append(kite_home) -> None:
+    # updated_at refreshes on append
     meta = SessionMeta(
         id="test-id",
         created_at=time.time(),
@@ -45,18 +44,16 @@ def test_meta_updated_at_refreshed_on_append(kite_home) -> None:
         model="m",
         task="t",
     )
-    session = Session(meta=meta)
-    session.save()
-    before = json.loads(session.path.read_text(encoding="utf-8").splitlines()[0])["updated_at"]
-
+    tracked = Session(meta=meta)
+    tracked.save()
+    before = json.loads(tracked.path.read_text(encoding="utf-8").splitlines()[0])["updated_at"]
     time.sleep(0.01)
-    session.append({"role": "user", "content": "x"})
-    after = json.loads(session.path.read_text(encoding="utf-8").splitlines()[0])["updated_at"]
+    tracked.append({"role": "user", "content": "x"})
+    after = json.loads(tracked.path.read_text(encoding="utf-8").splitlines()[0])["updated_at"]
     assert after > before
 
-
-def test_meta_line_length_stable_on_timestamp_patch() -> None:
-    meta = SessionMeta(
+    # meta line length stays stable across timestamp patches
+    stable = SessionMeta(
         id="x",
         created_at=1_700_000_000.0,
         updated_at=1_700_000_000.0,
@@ -65,30 +62,28 @@ def test_meta_line_length_stable_on_timestamp_patch() -> None:
         model="m",
         task="t",
     )
-    first = format_meta_line(meta)
-    meta.updated_at = 1_700_000_123.456789
-    second = format_meta_line(meta)
+    first = format_meta_line(stable)
+    stable.updated_at = 1_700_000_123.456789
+    second = format_meta_line(stable)
     assert len(first) == len(second)
 
-
-def test_touch_meta_reads_only_first_line(kite_home, monkeypatch) -> None:
-    session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
-    session.append({"role": "user", "content": "hi"})
-    path = session.path
-    assert path is not None
-
+    # touch_meta must not read the whole session file
+    touch = create_session(task="demo", cwd="/tmp", provider="p", model="m")
+    touch.append({"role": "user", "content": "hi"})
+    touch_path = touch.path
+    assert touch_path is not None
     original_read = Path.read_bytes
 
     def spy_read_bytes(self: Path) -> bytes:
-        if self == path:
+        if self == touch_path:
             raise AssertionError("touch_meta should not read the whole session file")
         return original_read(self)
 
     monkeypatch.setattr(Path, "read_bytes", spy_read_bytes)
-    session.append({"role": "assistant", "content": "hello"})
+    touch.append({"role": "assistant", "content": "hello"})
 
 
-def test_replace_messages_rewrites_session_file(kite_home) -> None:
+def test_replace_and_load_resilience(kite_home) -> None:
     session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
     for i in range(5):
         session.append({"role": "user", "content": f"turn {i}" * 50})
@@ -115,8 +110,22 @@ def test_replace_messages_rewrites_session_file(kite_home) -> None:
     assert len(loaded.messages) == 3
     assert loaded.messages[-1]["content"] == "follow-up"
 
+    # corrupt tail lines are skipped; cleared todos persist as empty
+    from kite.memory.session import load_session_todos, persist_session_todos
 
-def test_save_and_scan_session_stats(kite_home, tmp_path) -> None:
+    tail_session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
+    tail_session.append({"role": "user", "content": "keep me"})
+    assert tail_session.path is not None
+    with tail_session.path.open("a", encoding="utf-8") as handle:
+        handle.write("{not-json\n")
+    reloaded = load_session(tail_session.id)
+    assert reloaded.messages[-1]["content"] == "keep me"
+    persist_session_todos(tail_session.id, [{"id": "1", "content": "ship", "status": "pending"}])
+    persist_session_todos(tail_session.id, [])
+    assert load_session_todos(tail_session.id) == []
+
+
+def test_session_stats_and_events(kite_home, tmp_path) -> None:
     session = create_session(task="demo", cwd=str(tmp_path), provider="groq", model="test")
     stats = SessionStats(
         session_id=session.id,
@@ -139,16 +148,14 @@ def test_save_and_scan_session_stats(kite_home, tmp_path) -> None:
     assert row.tool_calls == 3
     assert row.cache_hit_tokens >= 800
 
-
-def test_scan_session_events(kite_home, tmp_path) -> None:
-    session = create_session(task="events", cwd=str(tmp_path), provider="groq", model="test")
-    session.record_event("tool_end", {"tool": "grep", "ok": True})
-    session.record_event("compact", {"before": 10, "after": 4})
-    session.record_event("tool_end", {"tool": "edit", "ok": False, "blocked": True})
-    row = scan_session_file(session._session_path())
-    assert row is not None
-    assert row.compaction_count == 1
-    assert row.tool_blocked == 1
+    events_session = create_session(task="events", cwd=str(tmp_path), provider="groq", model="test")
+    events_session.record_event("tool_end", {"tool": "grep", "ok": True})
+    events_session.record_event("compact", {"before": 10, "after": 4})
+    events_session.record_event("tool_end", {"tool": "edit", "ok": False, "blocked": True})
+    event_row = scan_session_file(events_session._session_path())
+    assert event_row is not None
+    assert event_row.compaction_count == 1
+    assert event_row.tool_blocked == 1
 
 
 def test_resolve_session_path_prefix_is_literal(kite_home) -> None:
@@ -163,21 +170,6 @@ def test_resolve_session_path_prefix_is_literal(kite_home) -> None:
         resolve_session_path("*")
     with pytest.raises(ValueError):
         resolve_session_path("../../tmp/escape")
-
-
-def test_load_session_skips_corrupt_tail_and_cleared_todos(kite_home) -> None:
-    from kite.memory.session import load_session_todos, persist_session_todos
-
-    session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
-    session.append({"role": "user", "content": "keep me"})
-    assert session.path is not None
-    with session.path.open("a", encoding="utf-8") as handle:
-        handle.write("{not-json\n")
-    loaded = load_session(session.id)
-    assert loaded.messages[-1]["content"] == "keep me"
-    persist_session_todos(session.id, [{"id": "1", "content": "ship", "status": "pending"}])
-    persist_session_todos(session.id, [])
-    assert load_session_todos(session.id) == []
 
 
 def test_checkpoint_redacts_and_confines_session_id(kite_home) -> None:

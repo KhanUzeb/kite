@@ -14,7 +14,6 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from kite.providers.auth.base import AuthStatus, LoginResult, sanitize_auth_message
-from kite.providers.auth.cli import run_cli
 
 if TYPE_CHECKING:
     from rich.console import Console

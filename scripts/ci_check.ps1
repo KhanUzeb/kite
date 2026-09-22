@@ -1,4 +1,4 @@
-# kite-release-version: 1.0.0
+# kite-release-version: 1.0.1
 # Same gates as .github/workflows/tests.yml — run before push to main.
 # Usage: .\scripts\ci_check.ps1 [-Release]  # -Release adds RELEASE doc + CHANGELOG check
 param([switch]$Release)
