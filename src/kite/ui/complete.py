@@ -22,7 +22,7 @@ try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
     from prompt_toolkit.completion import Completer, Completion
-    from prompt_toolkit.filters import Condition
+    from prompt_toolkit.filters import Condition, to_filter
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.layout.containers import (
@@ -795,10 +795,13 @@ def _bound_prompt_layout(session: Any, state: SessionUiState | None = None) -> N
         if getattr(control, "buffer", None) is default_buffer:
             window.height = Dimension(min=1, max=_COMPOSER_MAX_LINES)
             window.style = "class:composer"
-            window.wrap_lines = True
-            window.allow_scroll_beyond_bottom = True
-            window.dont_extend_height = False
-            window.dont_extend_width = False
+            # prompt_toolkit stores these as Filters (called during render),
+            # so a raw bool assignment crashes layout with
+            # `TypeError: 'bool' object is not callable`.
+            window.wrap_lines = to_filter(True)
+            window.allow_scroll_beyond_bottom = to_filter(True)
+            window.dont_extend_height = to_filter(False)
+            window.dont_extend_width = to_filter(False)
             try:
                 window.scroll_offsets = ScrollOffsets(top=1, bottom=1)
             except Exception:
