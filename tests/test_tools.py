@@ -7,8 +7,6 @@ import sys
 import time
 from unittest.mock import MagicMock, patch
 
-from kite.tools.coding import make_coding_tools
-
 from kite.agent.cancel import CancelToken
 from kite.agent.orchestrator import SubagentOrchestrator, evaluate_subagent_result, worker_glyph
 from kite.context.observation import observation_content
@@ -16,6 +14,7 @@ from kite.context.window import compact_messages, scale_keep_recent_tokens, trim
 from kite.env.shell import resolve_shell_invocation, sanitize_shell_line
 from kite.memory.compaction_ops import run_compaction
 from kite.tools import web
+from kite.tools.coding import make_coding_tools
 from kite.tools.jobs import JobRegistry
 from kite.tools.web_providers import resolve_search_engines, resolve_web_tool_env
 

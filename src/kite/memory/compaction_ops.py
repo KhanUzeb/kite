@@ -83,7 +83,6 @@ def run_compaction(
         if trimmed is not messages:
             working = trimmed
             usage = estimate_usage(system=system, messages=working, tool_schemas=tool_schemas, window=window)
-    before = len(working)
     checkpoint: ContextCheckpoint | None = None
 
     will_compact = force or (enabled and should_compact(usage, reserve=reserve_tokens, ratio=compact_ratio))
