@@ -417,7 +417,7 @@ def test_stream_answer_keeps_chunk_boundaries_inline() -> None:
 def test_submitted_user_row_fills_width_with_surface() -> None:
     from kite.ui.render import render_user_cell
 
-    console = Console(file=StringIO(), width=48, height=24, theme=KITE_THEME)
+    console = Console(file=StringIO(), width=48, height=24, theme=KITE_THEME, legacy_windows=False)
     rows = console.render_lines(render_user_cell("ship the fix"), console.options)
     assert len(rows) == 3
     assert all(len("".join(segment.text for segment in row)) == 48 for row in rows)
