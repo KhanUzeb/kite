@@ -31,10 +31,14 @@ def _goals_dir() -> Path:
 
 
 def _goal_path(session_id: str) -> Path:
-    sid = (session_id or "").strip()
-    if not sid:
-        raise ValueError("session id required for goal")
-    return _goals_dir() / f"{sid}.json"
+    from kite.memory.secure_io import storage_id
+
+    sid = storage_id(session_id, label="session id")
+    root = _goals_dir().resolve()
+    path = (root / f"{sid}.json").resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("invalid session id")
+    return path
 
 
 def load_session_goal(session_id: str) -> SessionGoal | None:

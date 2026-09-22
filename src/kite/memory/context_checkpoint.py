@@ -59,12 +59,21 @@ class ContextCheckpoint:
 
 
 def checkpoints_dir(session_id: str) -> Path:
+    from kite.memory.secure_io import storage_id
+
     ensure_home()
-    return kite_home() / "checkpoints" / session_id
+    root = (kite_home() / "checkpoints").resolve()
+    folder = (root / storage_id(session_id, label="session id")).resolve()
+    if not folder.is_relative_to(root):
+        raise ValueError("invalid session id")
+    return folder
 
 
 def _checkpoint_path(session_id: str, checkpoint_id: str) -> Path:
-    return checkpoints_dir(session_id) / f"{checkpoint_id}.json"
+    from kite.memory.secure_io import storage_id
+
+    name = storage_id(checkpoint_id, label="checkpoint id")
+    return checkpoints_dir(session_id) / f"{name}.json"
 
 
 def make_checkpoint_id() -> str:
@@ -105,7 +114,11 @@ def save_checkpoint(
     folder = checkpoints_dir(session_id)
     folder.mkdir(parents=True, exist_ok=True)
     path = _checkpoint_path(session_id, cp.id)
-    path.write_text(json.dumps(cp.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    from kite.memory.session_policy import prepare_persisted_value, secure_session_file
+
+    blob = prepare_persisted_value(cp.to_dict())
+    path.write_text(json.dumps(blob, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    secure_session_file(path)
     _prune_checkpoints(session_id)
     return cp
 

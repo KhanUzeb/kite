@@ -112,6 +112,8 @@ Kite guardrails apply to **all tools**, not only web fetch/search:
 | **Network (restricted)** | `restricted` mode blocks **all** network side effects: bash curls, `webfetch`, `websearch`, `webcrawl`, Context7 |
 | **Web tools** | SSRF checks in `guardrails/ssrf.py` + `GuardrailPolicy.check_tool_call` + crawl/time/download budgets |
 
+Credential filenames (`.env`, `.env.*`, `*.env`, and the sensitive basename list) are refused by read/write/edit and omitted from `grep`. Bash that reads or sources those files is refused, including plan-mode inspection commands. Checkpoints and handoff files follow the session persistence mode (`redacted` by default) and are owner-only.
+
 **Execution mode:** default `host` keeps file and bash access outside the session cwd (protected paths above still blocked). `restricted` mode clamps paths to the session sandbox and blocks outbound network. Production tool calls also pass through **`PolicyEngine`** (path/network authorization). Toggle in the REPL with `/restricted on|off`, or set `[guardrails] execution_mode = "restricted"` in runtime config. Only use host mode when you understand the blast radius.
 
 ## SSRF protections (HTTP tools)

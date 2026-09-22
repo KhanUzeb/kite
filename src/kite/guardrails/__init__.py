@@ -9,12 +9,13 @@ from typing import Any
 
 from kite.config import GuardrailConfig
 from kite.guardrails.sandbox import (
-    SENSITIVE_NAMES,
     check_command_paths,
     check_dangerous,
     clamp_cwd,
+    command_reads_sensitive_env,
     is_inside,
     is_protected,
+    is_sensitive_basename,
     is_user_skill_read,
     resolve_in_workspace,
     workspace_root,
@@ -113,7 +114,7 @@ class GuardrailPolicy:
             kind = "write" if for_write else "touch"
             return GuardrailVerdict(False, f"refusing to {kind} protected path: {resolved}")
 
-        if for_write and self.config.block_secret_writes and resolved.name in SENSITIVE_NAMES:
+        if for_write and self.config.block_secret_writes and is_sensitive_basename(resolved.name):
             return GuardrailVerdict(False, f"refusing to write sensitive file: {resolved.name}")
 
         return GuardrailVerdict(True)
@@ -127,7 +128,7 @@ class GuardrailPolicy:
         for rx in self._deny:
             if rx.search(command):
                 return GuardrailVerdict(False, f"bash command blocked by guardrail pattern: {rx.pattern}")
-        if re.search(r"(?i)\b(cat|type|gc|head|tail|less|more|strings|Get-Content)\s+[^\n]*\.env\b", command):
+        if command_reads_sensitive_env(command):
             return GuardrailVerdict(False, "refusing to dump .env via bash; use careful read if needed")
         blocked = env_dump_blocked(command)
         if blocked:

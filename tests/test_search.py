@@ -102,3 +102,22 @@ def test_glob_mtime_sort_skips_unreadable_files(tmp_path: Path, monkeypatch) -> 
     out = glob_search(pattern="*.py", root=tmp_path, sort="mtime")
     assert out["ok"] is True
     assert "a.py" in out["output"]
+
+
+def test_grep_skips_credential_files_and_literal_patterns(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("token = visible\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("API_KEY=supersecret\n", encoding="utf-8")
+    (tmp_path / "config.env").write_text("API_KEY=alsosecret\n", encoding="utf-8")
+    monkeypatch.setattr("kite.tools.search.shutil.which", lambda _name: None)
+    hidden = grep_search(pattern="API_KEY", root=tmp_path, cwd=str(tmp_path))
+    assert hidden["ok"] is True
+    assert "supersecret" not in hidden["output"] and "alsosecret" not in hidden["output"]
+    visible = grep_search(pattern="visible", root=tmp_path, cwd=str(tmp_path))
+    assert "src/a.py" in visible["output"]
+    literal = grep_search(pattern="token =", root=tmp_path, cwd=str(tmp_path), fixed=True)
+    assert literal["ok"] is True and "src/a.py" in literal["output"]
+    special = grep_search(pattern="[error]", root=tmp_path, cwd=str(tmp_path), fixed=True)
+    assert special["ok"] is True and "invalid regex" not in special.get("error", "")
+    bad = grep_search(pattern="[", root=tmp_path, cwd=str(tmp_path))
+    assert bad["ok"] is False and "invalid regex" in bad["output"]

@@ -161,13 +161,41 @@ def test_secret_write_guard_covers_edit(workspace: Path) -> None:
 
 
 def test_env_file_readers_blocked(workspace: Path) -> None:
+    from kite.guardrails.sandbox import (
+        command_reads_sensitive_env,
+        is_inspection_bash,
+        is_protected,
+        is_sensitive_basename,
+    )
+
     policy = GuardrailPolicy(GuardrailConfig(), workspace)
-    for cmd in ("gc .env", "head -5 .env", "tail -n 20 .env", "less .env", "more .env", "strings .env"):
+    for cmd in (
+        "gc .env",
+        "head -5 .env",
+        "tail -n 20 .env",
+        "less .env",
+        "more .env",
+        "strings .env",
+        "sed -n '1,5p' .env",
+        "rg API_KEY .env.staging",
+        "source .env",
+        ". ./.env",
+        "python3 -c \"print(open('.env').read())\"",
+        "cat config.env",
+    ):
         verdict = policy.check_bash(cmd)
         assert not verdict.allowed, (cmd, verdict.reason)
-        assert ".env" in verdict.reason
+        assert command_reads_sensitive_env(cmd)
     assert policy.check_bash("echo hello").allowed
     assert policy.check_bash("npm test").allowed
+    assert not is_inspection_bash("sed -n '1,5p' .env")
+    assert is_inspection_bash("rg foo src")
+    assert is_sensitive_basename(".env.staging") and is_sensitive_basename("config.env")
+    assert not is_sensitive_basename("app.py")
+    assert is_protected(workspace / ".env.staging")
+    assert is_protected(workspace / "config.env")
+    assert not policy.check_path(".env.staging").allowed
+    assert not policy.check_tool_call("read", {"path": "local.env"}).allowed
 
 
 def test_blocks_rm_rf_dot_and_git_reset(workspace: Path) -> None:
