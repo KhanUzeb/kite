@@ -84,6 +84,8 @@ One-shot / headless flags (`kite run`, `kite resume <id> "continue"` — not `ki
 
 Persistent compaction is `kite config --auto-compact true|false` (not a run/chat flag).
 
+LLM compaction prefers OpenRouter free-tier (`compaction_provider` / `compaction_model` in `~/.kite/config.toml`); when OpenRouter is unavailable (no key, empty free list, all retries fail) it falls back to the session model — billed/metered, unlike free-tier. Opt out with `compaction_fallback_session = false` (or `compaction_use_llm = false` for deterministic summaries only).
+
 `--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto`/`yolo` permit routine in-workspace work (installs, tests, commits) while **SERIOUS** actions (network fetch, destructive delete, shell wrappers) prompt in `auto` and `yolo` skips those prompts; critical gates (outside workspace, sudo, remote shell) fail closed.
 
 **Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
