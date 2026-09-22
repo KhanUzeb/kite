@@ -335,8 +335,8 @@ def test_prompt_session_uses_bounded_composer_layout(kite_home) -> None:
     assert 6 <= complete._COMPOSER_MAX_LINES <= 8
     assert all(window.height.min == 1 and window.height.max == complete._COMPOSER_MAX_LINES for window in windows)
     assert all(window.height.max > 1 for window in windows)
-    assert all(window.wrap_lines for window in windows)
-    assert all(window.allow_scroll_beyond_bottom for window in windows)
+    assert all(window.wrap_lines() for window in windows)
+    assert all(window.allow_scroll_beyond_bottom() for window in windows)
 
     main = session.layout.container.children[0].alternative_content
     body = main.content

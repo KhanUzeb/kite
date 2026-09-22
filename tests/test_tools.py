@@ -275,3 +275,116 @@ def test_observation_compaction_and_shell() -> None:
     argv, cmd = resolve_shell_invocation("pytest -q")
     if sys.platform != "win32":
         assert argv is None and cmd == "pytest -q"
+
+
+def _summarize_cfg(**overrides):
+    from kite.config.user import UserConfig
+
+    base = {
+        "default_provider": "openai",
+        "default_model": "gpt-4o-mini",
+        "compaction_provider": "openrouter",
+        "compaction_model": None,
+        "compaction_use_llm": True,
+        "compaction_fallback_session": True,
+    }
+    base.update(overrides)
+    return UserConfig(**base)
+
+
+def _stub_session_fallback(monkeypatch, *, complete_result="session summary", creds_ok=True):  # noqa: ANN001, ANN202
+    """Empty free-tier list + stubbed resolve/creds/complete. Returns (summ, calls, tried)."""
+    from types import SimpleNamespace
+
+    from kite.agent import summarize as summ
+
+    monkeypatch.setattr(summ, "list_compaction_models", lambda _cfg: [])
+    calls: list[tuple] = []
+    tried: list[tuple] = []
+
+    def fake_resolve(*, provider=None, model=None, config=None, catalog=None):  # noqa: ANN001
+        calls.append((provider, model))
+        return SimpleNamespace(provider=provider or "openai", model=model or "gpt-4o-mini")
+
+    def fake_complete(resolved, _transcript):  # noqa: ANN001
+        tried.append((resolved.provider, resolved.model))
+        return complete_result
+
+    monkeypatch.setattr("kite.providers.resolve.resolve_model", fake_resolve)
+    monkeypatch.setattr("kite.providers.resolve.missing_credentials", lambda _r: None if creds_ok else "need key")
+    monkeypatch.setattr(summ, "_try_complete", fake_complete)
+    return summ, calls, tried
+
+
+def test_llm_summarize_falls_back_to_session_model(monkeypatch) -> None:
+    summ, calls, _tried = _stub_session_fallback(monkeypatch)
+    out = summ.llm_summarize([{"role": "user", "content": "hello"}], config=_summarize_cfg())
+    assert out == "session summary"
+    assert ("openai", "gpt-4o-mini") in calls
+
+
+def test_llm_summarize_no_fallback_when_opted_out(monkeypatch) -> None:
+    summ, _calls, tried = _stub_session_fallback(monkeypatch)
+    out = summ.llm_summarize(
+        [{"role": "user", "content": "hello"}],
+        config=_summarize_cfg(compaction_fallback_session=False),
+    )
+    assert out is None and tried == []
+
+
+def test_llm_summarize_no_fallback_without_session_credentials(monkeypatch) -> None:
+    summ, _calls, tried = _stub_session_fallback(monkeypatch, creds_ok=False)
+    out = summ.llm_summarize([{"role": "user", "content": "hello"}], config=_summarize_cfg())
+    assert out is None and tried == []
+
+
+def test_llm_summarize_no_duplicate_session_attempt(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from kite.agent import summarize as summ
+
+    cfg = _summarize_cfg(
+        default_provider="openrouter",
+        default_model="m1",
+        compaction_provider="openrouter",
+        compaction_model="m1",
+    )
+    monkeypatch.setattr(
+        "kite.providers.resolve.resolve_model",
+        lambda *, provider=None, model=None, config=None, catalog=None: SimpleNamespace(
+            provider=provider or "openrouter", model=model or "m1"
+        ),
+    )
+    monkeypatch.setattr("kite.providers.resolve.missing_credentials", lambda _r: None)
+    tried: list[tuple] = []
+    monkeypatch.setattr(summ, "_try_complete", lambda r, _t: tried.append((r.provider, r.model)) or None)
+    assert summ.llm_summarize([{"role": "user", "content": "hello"}], config=cfg) is None
+    assert tried == [("openrouter", "m1")]
+
+
+def test_llm_summarize_session_overrides_take_precedence(monkeypatch) -> None:
+    summ, calls, _tried = _stub_session_fallback(monkeypatch)
+    out = summ.llm_summarize(
+        [{"role": "user", "content": "hello"}],
+        config=_summarize_cfg(),
+        session_provider="anthropic",
+        session_model="claude-x",
+    )
+    assert out == "session summary"
+    assert ("anthropic", "claude-x") in calls
+
+
+def test_make_summarizer_forwards_session_overrides(monkeypatch) -> None:
+    from kite.agent import summarize as summ
+
+    seen: dict = {}
+
+    def fake_llm(messages, *, config=None, session_provider=None, session_model=None):  # noqa: ANN001
+        seen["session_provider"] = session_provider
+        seen["session_model"] = session_model
+        return "llm text"
+
+    monkeypatch.setattr(summ, "llm_summarize", fake_llm)
+    summarize = summ.make_summarizer(_summarize_cfg(), session_provider="groq", session_model="llama-x")
+    assert summarize([{"role": "user", "content": "hi"}]) == "llm text"
+    assert (seen["session_provider"], seen["session_model"]) == ("groq", "llama-x")

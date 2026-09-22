@@ -1,8 +1,13 @@
-"""LLM compaction via OpenRouter free-tier, with a deterministic fallback.
+"""LLM compaction via a configured provider (OpenRouter free-tier by default),
+with a billed/metered session-model fallback and a deterministic fallback.
 
 Free models are listed live from OpenRouter (zero price or `:free` in the
 payload). Nothing is hardcoded; if the catalog is empty we skip the LLM call.
-"""
+When the configured-provider candidates are exhausted without a result
+(missing credentials, empty candidate list, or all completions failed), we
+fall back to the session model (`default_provider`/`default_model`, or caller
+overrides) — note this fallback call is billed/metered, unlike free-tier.
+Opt out with `compaction_fallback_session = false`."""
 
 from __future__ import annotations
 
@@ -79,6 +84,8 @@ def llm_summarize(
     messages: list[dict],
     *,
     config: UserConfig | None = None,
+    session_provider: str | None = None,
+    session_model: str | None = None,
 ) -> str | None:
     cfg = config or UserConfig.load()
     if not getattr(cfg, "compaction_use_llm", True):
@@ -101,28 +108,58 @@ def llm_summarize(
         if getattr(cfg, "compaction_model", None):
             candidates.append(str(cfg.compaction_model).removeprefix(f"{provider}/"))
 
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for model in candidates:
-        if not model or model in seen:
+        if not model or (provider, model) in seen:
             continue
-        seen.add(model)
+        seen.add((provider, model))
         try:
             resolved = resolve_model(provider=provider, model=model, config=cfg)
         except Exception:
             continue
         if missing_credentials(resolved):
-            return None
+            continue
         text = _try_complete(resolved, transcript)
         if text:
             return text
-    return None
+
+    if not getattr(cfg, "compaction_fallback_session", True):
+        return None
+    fallback_provider = (session_provider or "") or (cfg.default_provider or "")
+    fallback_model = (session_model or "") or (cfg.default_model or "")
+    try:
+        resolved = resolve_model(
+            provider=fallback_provider or None,
+            model=fallback_model or None,
+            config=cfg,
+        )
+    except Exception:
+        return None
+    if (resolved.provider, resolved.model) in seen:
+        return None
+    if missing_credentials(resolved):
+        return None
+    try:
+        return _try_complete(resolved, transcript)
+    except Exception:
+        return None
 
 
-def make_summarizer(config: UserConfig | None = None) -> Callable[[list[dict]], str]:
+def make_summarizer(
+    config: UserConfig | None = None,
+    *,
+    session_provider: str | None = None,
+    session_model: str | None = None,
+) -> Callable[[list[dict]], str]:
     cfg = config or UserConfig.load()
 
     def summarize(dropped: list[dict]) -> str:
-        text = llm_summarize(dropped, config=cfg)
+        text = llm_summarize(
+            dropped,
+            config=cfg,
+            session_provider=session_provider,
+            session_model=session_model,
+        )
         if text:
             return text
         return deterministic_summary(dropped)

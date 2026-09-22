@@ -867,7 +867,7 @@ class ChatSession:
         self._ensure_model_resolved()
         resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
         before = len(session.messages)
-        summarizer = make_summarizer(cfg) if cfg.compaction_use_llm else None
+        summarizer = make_summarizer(cfg, session_provider=self.provider, session_model=self.model) if cfg.compaction_use_llm else None
         self.console.print("[kite.muted]compacting…[/]")
         result = run_compaction(
             session.messages,

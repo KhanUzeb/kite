@@ -50,6 +50,7 @@ class UserConfig:
     compaction_provider: str = "openrouter"
     compaction_model: str | None = None  # None = first live free-tier model
     compaction_use_llm: bool = True
+    compaction_fallback_session: bool = True
     reasoning: str = "auto"
     theme: str = ""
     font: str = ""
@@ -89,6 +90,7 @@ class UserConfig:
                 compaction_provider=str(data.get("compaction_provider") or "openrouter"),
                 compaction_model=data.get("compaction_model") or None,
                 compaction_use_llm=bool(data.get("compaction_use_llm", True)),
+                compaction_fallback_session=bool(data.get("compaction_fallback_session", True)),
                 reasoning=str(data.get("reasoning") or "auto"),
                 theme=str(data.get("theme") or ""),
                 font=str(data.get("font") or ""),
@@ -121,6 +123,7 @@ class UserConfig:
             "compaction_provider": self.compaction_provider,
             "compaction_model": self.compaction_model,
             "compaction_use_llm": self.compaction_use_llm,
+            "compaction_fallback_session": self.compaction_fallback_session,
             "reasoning": self.reasoning,
             "theme": self.theme,
             "font": self.font,
