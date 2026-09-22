@@ -61,6 +61,14 @@ def _looks_like_turn_report(text: str) -> bool:
     return "## done" in lowered or "## changed" in lowered or "## verification" in lowered
 
 
+def _ellipsize(text: str, limit: int) -> str:
+    """Shorten an overlong card segment so narrow terminals don't wrap mid-token."""
+    text = text or ""
+    if len(text) <= limit or limit <= 1:
+        return text
+    return text[: limit - 1] + "…"
+
+
 def render_startup_card(
     *,
     version: str,
@@ -75,6 +83,8 @@ def render_startup_card(
 
     Pure presentation: the caller supplies every value, so this stays testable at
     any width and never triggers provider/config work on the startup path.
+    Overlong identity/workspace segments are ellipsized so the card never
+    wraps mid-token on narrow terminals.
     """
     body = Text()
     blurb = (
@@ -83,12 +93,16 @@ def render_startup_card(
         else "A lightweight coding agent for inspecting, editing, and verifying code."
     )
     body.append(blurb + "\n", style="kite.muted")
-    body.append(f"{provider}/{model}", style="kite.highlight")
+    body.append(_ellipsize(f"{provider}/{model}", 48), style="kite.highlight")
     body.append(f" · {mode} · ", style="kite.muted")
-    body.append(workspace, style="kite.muted")
-    if context_files:
+    body.append(_ellipsize(workspace, 32), style="kite.muted")
+    shown_files = list(context_files or [])[:3]
+    if shown_files:
         body.append(" · ", style="kite.muted")
-        body.append(" · ".join(context_files), style="kite.muted")
+        body.append(" · ".join(_ellipsize(name, 32) for name in shown_files), style="kite.muted")
+        extra = len(context_files or []) - len(shown_files)
+        if extra > 0:
+            body.append(f" · +{extra} more", style="kite.muted")
     body.append("\n")
     body.append("/help", style="kite.brand")
     body.append(" commands · /model switch · @file attach", style="kite.muted")
