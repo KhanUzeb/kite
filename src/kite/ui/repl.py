@@ -129,6 +129,7 @@ class ChatSession:
         self._model_resolved = False
         self._prompt = None
         self._reasoning_support = None
+        self._reasoning_support_key: tuple[str, str] | None = None
         self._model_cache: list[str] = []
         self._model_cache_provider: str | None = None
         self._pending_open = session_id
@@ -193,6 +194,7 @@ class ChatSession:
 
     def _invalidate_reasoning_support(self) -> None:
         self._reasoning_support = None
+        self._reasoning_support_key = None
         self._invalidate_completer_cache()
 
     def _effective_model_pair(self) -> tuple[str, str]:
@@ -654,18 +656,24 @@ class ChatSession:
         return self._model_cache
 
     def _reasoning_info(self):
-        if self._reasoning_support is not None:
-            return self._reasoning_support
         from kite.models.reasoning import detect_reasoning
 
         self._ensure_model_resolved()
         provider, model = self._effective_model_pair()
+        # Key the cache by model: any provider/model switch (even on a path
+        # that skips explicit invalidation) re-detects from the live API +
+        # LiteLLM metadata instead of serving the previous model's levels.
+        key = (provider or "", model or "")
+        if self._reasoning_support is not None and self._reasoning_support_key == key:
+            return self._reasoning_support
         if not provider or not model:
             return None
         try:
             self._reasoning_support = detect_reasoning(provider, model)
+            self._reasoning_support_key = key
         except Exception:
             self._reasoning_support = None
+            self._reasoning_support_key = None
         return self._reasoning_support
 
     def _set_reasoning(self, raw: str, *, command: str = "") -> None:

@@ -309,6 +309,7 @@ Ctrl+C stops the **current turn**, not the process.
 | `Ctrl+L` | Clear screen |
 | `Ctrl+G` | Steer: redirect the running turn with the composer text (same as `Enter` while busy); the composer stays pinned |
 | `Ctrl+U` | Dequeue: restore all queued messages into the composer for editing |
+| `F9` | Fold a long composer paste to first lines + `+N lines` (any key expands; `Enter` submits the full text) |
 | `Enter` | Send the line. With an open slash menu, accept the highlighted completion first. **While a turn runs:** steers (redirects) by default — set `KITE_BUSY_ENTER=queue` for legacy queue-on-Enter |
 | `Alt+Enter` | Newline when idle. **While a turn runs:** queues a follow-up (steer when `KITE_BUSY_ENTER=queue`) |
 | `Shift+Tab` / `Ctrl+P` / `F3` | Plan mode |

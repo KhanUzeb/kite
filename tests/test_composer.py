@@ -592,6 +592,101 @@ def test_busy_toolbar_steer_hint_follows_enter_mode(monkeypatch) -> None:
     assert "Ctrl+G steer" in legacy_bits
 
 
+def test_fold_long_text_collapses_to_head_plus_count() -> None:
+    from kite.ui.complete import fold_long_text
+
+    assert fold_long_text("short\ntwo lines") is None
+    assert fold_long_text("\n".join(f"line {i}" for i in range(9))) is None
+    text = "\n".join(f"line {i}" for i in range(12))
+    folded, hidden = fold_long_text(text)  # type: ignore[misc]
+    assert hidden == 9
+    assert folded.startswith("line 0\nline 1\nline 2\n")
+    assert "+9 lines" in folded
+
+
+def test_fold_buffer_roundtrip_and_paste_hook() -> None:
+    from types import SimpleNamespace
+
+    from kite.ui.complete import _paste_fold_changed, fold_buffer, is_folded, unfold_buffer
+
+    buf = SimpleNamespace(text="", cursor_position=0)
+    buf._kite_fold = {"folded": False, "full": "", "guard": False, "lines": 0}
+    # Small typing never folds.
+    buf.text = "hello\nworld"
+    _paste_fold_changed(buf)
+    assert not is_folded(buf)
+    # A sudden long paste folds to head + placeholder.
+    buf.text = "\n".join(f"line {i}" for i in range(15))
+    _paste_fold_changed(buf)
+    assert is_folded(buf)
+    assert buf.text.startswith("line 0\nline 1\nline 2\n")
+    assert "+12 lines" in buf.text
+    # Full text is stashed, never lost.
+    assert buf._kite_fold["full"].split("\n") == [f"line {i}" for i in range(15)]
+    # Any interaction expands back to the full text.
+    assert unfold_buffer(buf) is True
+    assert buf.text.split("\n") == [f"line {i}" for i in range(15)]
+    assert not is_folded(buf)
+    assert fold_buffer(SimpleNamespace(text="tiny")) is False
+
+
+def test_fold_toggle_and_any_key_bindings() -> None:
+    from types import SimpleNamespace
+
+    from prompt_toolkit.keys import Keys
+
+    from kite.ui.complete import is_folded, make_repl_key_bindings
+
+    bindings = make_repl_key_bindings()
+    fold_toggle = next(
+        binding
+        for binding in bindings.get_bindings_for_keys((Keys.F9,))
+        if binding.handler.__name__ == "_fold_toggle"
+    )
+    expand = next(
+        binding
+        for binding in bindings.get_bindings_for_keys((Keys.Any,))
+        if binding.handler.__name__ == "_fold_expand"
+    )
+    buf = SimpleNamespace(text="\n".join(f"line {i}" for i in range(12)), cursor_position=0)
+    event = SimpleNamespace(current_buffer=buf)
+    fold_toggle.handler(event)
+    assert is_folded(buf)
+    # Placeholder is never what gets submitted — expansion restores first.
+    expand.handler(event)
+    assert not is_folded(buf)
+    assert buf.text.split("\n") == [f"line {i}" for i in range(12)]
+
+
+def test_reasoning_support_redetects_on_model_switch(tmp_path, monkeypatch) -> None:
+    """Thinking levels must follow the current model, never a stale cache."""
+    from unittest.mock import MagicMock
+
+    import kite.models.reasoning as reasoning
+
+    from kite.ui.repl import ChatSession
+
+    calls: list[tuple[str, str]] = []
+
+    def _fake_detect(provider: str, model: str, **_kwargs):
+        calls.append((provider, model))
+        return MagicMock(supported=True, model=model)
+
+    monkeypatch.setattr(reasoning, "detect_reasoning", _fake_detect)
+    monkeypatch.setattr(
+        "kite.providers.resolve.resolve_model",
+        lambda **_: MagicMock(provider="groq", model="test"),
+    )
+    chat = ChatSession(cwd=str(tmp_path))
+    chat._model_resolved = True
+    chat.provider, chat.model = "groq", "model-a"
+    assert chat._reasoning_info().model == "model-a"
+    # Switch models with no explicit invalidation — levels must still refresh.
+    chat.provider, chat.model = "groq", "model-b"
+    assert chat._reasoning_info().model == "model-b"
+    assert [model for _, model in calls] == ["model-a", "model-b"]
+
+
 def test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path, monkeypatch) -> None:
     """A steer typed mid-turn must never be dropped when harness inject fails."""
     from unittest.mock import MagicMock

@@ -781,6 +781,112 @@ def _mouse_support_enabled() -> bool:
 _COMPOSER_MAX_LINES = 7
 _COMPOSER_MAX_HEIGHT = _COMPOSER_MAX_LINES + 2
 
+# Folded long pastes: the composer shows the first lines plus a
+# "+N lines" placeholder; any interaction expands back to the full text
+# (stash-and-restore — the folded view is never submitted or edited).
+FOLD_VISIBLE_LINES = 3
+FOLD_MIN_LINES = 10
+FOLD_PASTE_JUMP = 8
+
+
+def fold_long_text(
+    text: str, *, visible: int = FOLD_VISIBLE_LINES, minimum: int = FOLD_MIN_LINES
+) -> tuple[str, int] | None:
+    """Collapse to the first `visible` lines + a placeholder, else None."""
+    lines = (text or "").split("\n")
+    if len(lines) < minimum:
+        return None
+    hidden = len(lines) - visible
+    head = "\n".join(lines[:visible])
+    return f"{head}\n… +{hidden} lines · Enter submits · any key expands to edit", hidden
+
+
+def _fold_slot(buf: Any) -> dict:
+    slot = getattr(buf, "_kite_fold", None)
+    if not isinstance(slot, dict):
+        slot = {"folded": False, "full": "", "guard": False, "lines": 0}
+        try:
+            buf._kite_fold = slot
+        except Exception:
+            pass
+    return slot
+
+
+def is_folded(buf: Any) -> bool:
+    try:
+        return bool(getattr(buf, "_kite_fold", {}).get("folded"))
+    except Exception:
+        return False
+
+
+def fold_buffer(buf: Any) -> bool:
+    """Replace long buffer text with the folded preview. True when folded."""
+    try:
+        text = buf.text or ""
+    except Exception:
+        return False
+    folded = fold_long_text(text)
+    if folded is None:
+        return False
+    slot = _fold_slot(buf)
+    slot["full"] = text
+    slot["folded"] = True
+    slot["guard"] = True
+    try:
+        buf.text = folded[0]
+        buf.cursor_position = len(buf.text or "")
+    finally:
+        slot["guard"] = False
+    return True
+
+
+def unfold_buffer(buf: Any) -> bool:
+    """Restore a folded buffer to its full text. True when it was folded."""
+    slot = _fold_slot(buf)
+    if not slot.get("folded"):
+        return False
+    full = str(slot.get("full") or "")
+    try:
+        cursor = int(buf.cursor_position or 0)
+    except Exception:
+        cursor = 0
+    slot["guard"] = True
+    try:
+        buf.text = full
+    finally:
+        slot["guard"] = False
+        slot["folded"] = False
+        slot["full"] = ""
+        slot["lines"] = len(full.split("\n"))
+    try:
+        boundary = len("\n".join(full.split("\n")[:FOLD_VISIBLE_LINES]))
+        buf.cursor_position = max(0, min(cursor, boundary, len(full)))
+    except Exception:
+        pass
+    return True
+
+
+def _paste_fold_changed(buf: Any) -> None:
+    """on_text_changed hook: fold sudden long pastes, reset when short."""
+    try:
+        slot = _fold_slot(buf)
+        if slot.get("guard"):
+            return
+        text = buf.text or ""
+        if slot.get("folded"):
+            if len(text.split("\n")) < FOLD_MIN_LINES:
+                slot["folded"] = False
+                slot["full"] = ""
+            slot["lines"] = len(text.split("\n"))
+            return
+        prev = int(slot.get("lines") or 0)
+        current = len(text.split("\n"))
+        slot["lines"] = current
+        if current >= FOLD_MIN_LINES and current - prev >= FOLD_PASTE_JUMP:
+            fold_buffer(buf)
+    except Exception:
+        pass
+
 
 def _bound_prompt_layout(session: Any, state: SessionUiState | None = None) -> None:
     """Keep the input row compact and render completion menus below it."""
@@ -908,6 +1014,10 @@ def make_prompt_session(
         kwargs["complete_style"] = CompleteStyle.COLUMN
     session = PromptSession(**kwargs)
     _bound_prompt_layout(session, state)
+    try:
+        session.default_buffer.on_text_changed += _paste_fold_changed
+    except Exception:
+        pass
 
     def _select_first(_event: Any = None) -> None:
         _select_first_slash_completion(session.default_buffer)
@@ -1016,7 +1126,23 @@ def make_repl_key_bindings(
     @bindings.add("c-g", eager=True, filter=busy)
     def _steer(event) -> None:  # noqa: ANN001
         slot["kind"] = "steer"
+        unfold_buffer(event.current_buffer)
         event.app.exit(result=event.current_buffer.text)
+
+    @bindings.add("f9", eager=True)
+    def _fold_toggle(event) -> None:  # noqa: ANN001
+        """F9 folds a long composer buffer (or expands a folded one)."""
+        buf = event.current_buffer
+        if not unfold_buffer(buf):
+            fold_buffer(buf)
+
+    @bindings.add("<any>", eager=True)
+    def _fold_expand(event) -> None:  # noqa: ANN001
+        """Any interaction with a folded composer expands it first."""
+        try:
+            unfold_buffer(event.current_buffer)
+        except Exception:
+            pass
 
     @bindings.add("escape", "enter", eager=True, filter=busy)
     def _busy_alt_enter(event) -> None:  # noqa: ANN001
@@ -1027,6 +1153,7 @@ def make_repl_key_bindings(
             slot["kind"] = "queue"
         buf = event.current_buffer
         buf.complete_state = None
+        unfold_buffer(buf)
         buf.validate_and_handle()
 
     @bindings.add("c-u", eager=True, filter=busy)
@@ -1051,6 +1178,7 @@ def make_repl_key_bindings(
         """Empty Enter = allow once (Pi/Codex). Typed text still submits as a choice."""
         buf = event.current_buffer
         buf.complete_state = None
+        unfold_buffer(buf)
         text = (buf.text or "").strip().lower()
         if not text:
             slot["kind"] = "approval"
@@ -1092,12 +1220,14 @@ def make_repl_key_bindings(
         buf = event.current_buffer
         _apply_selected_slash_completion(buf)
         buf.complete_state = None
+        unfold_buffer(buf)
         buf.validate_and_handle()
 
     @bindings.add("c-j", eager=True)
     @bindings.add("escape", "enter", eager=True, filter=idle)
     def _newline(event) -> None:  # noqa: ANN001
         """Alt+Enter / Ctrl+J — newline without submitting (Enter submits)."""
+        unfold_buffer(event.current_buffer)
         event.current_buffer.insert_text("\n")
 
     @bindings.add("tab", eager=True)
@@ -1133,6 +1263,7 @@ def make_repl_key_bindings(
         if not text:
             return
         buf = event.current_buffer
+        unfold_buffer(buf)
         buf.cut_selection()
         buf.insert_text(text.replace("\r\n", "\n").replace("\r", "\n"))
 
@@ -1346,6 +1477,7 @@ def _prompt_once(
     except KeyboardInterrupt:
         typed = ""
         try:
+            unfold_buffer(session.default_buffer)
             typed = str(session.default_buffer.text or "").strip()
         except Exception:
             typed = ""
