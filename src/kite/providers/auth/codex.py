@@ -143,20 +143,24 @@ class CodexAuthProvider:
                     login = codex.login_chatgpt_device_code()
                     url = login.verification_url
                     user_code = login.user_code
-                    opened = False
                 else:
                     login = codex.login_chatgpt()
                     url = login.auth_url
                     user_code = ""
-                    opened = open_browser(url)
+                # Device verification URLs also work in a browser — always try.
+                opened = bool(url) and open_browser(url)
 
                 show_byos_panel(
                     spec,
                     url=url,
                     console=console,
                     user_code=user_code,
-                    browser_opened=opened if not use_device else False,
-                    extra="Opening ChatGPT sign-in…" if not use_device else "",
+                    browser_opened=opened,
+                    extra=(
+                        "Opened your browser — finish sign-in there."
+                        if opened
+                        else "Open this URL to sign in."
+                    ),
                 )
 
                 wait_timeout = 600.0 if is_interactive_tty(require_stdout=False) else 30.0

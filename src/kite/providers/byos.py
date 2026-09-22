@@ -41,12 +41,37 @@ def _provider_key(spec: ProviderSpec) -> str:
 
 
 def _auth(spec_or_key: ProviderSpec | str) -> AuthProvider | None:
-    key = spec_or_key if isinstance(spec_or_key, str) else _provider_key(spec_or_key)
-    return get_auth_provider(key)
+    if isinstance(spec_or_key, str):
+        return _auth_by_name(spec_or_key)
+    return get_auth_provider(_provider_key(spec_or_key))
+
+
+def _auth_by_name(name: str) -> AuthProvider | None:
+    """Resolve catalog names, login aliases, and oauth ids → auth provider.
+
+    The auth registry is keyed by ``spec.oauth_provider`` (chatgpt, anthropic,
+    xai) while callers may pass a catalog name (grok, claude) or a login alias
+    (codex, xai→grok). Try each candidate, then fall back to the catalog's
+    ``oauth_provider``.
+    """
+    raw = (name or "").strip().lower()
+    if not raw:
+        return None
+    for key in dict.fromkeys((raw, resolve_login_provider(raw))):
+        auth = get_auth_provider(key)
+        if auth is not None:
+            return auth
+    from kite.providers.catalog import load_catalog
+
+    try:
+        spec = load_catalog().get(resolve_login_provider(raw))
+    except KeyError:
+        return None
+    return get_auth_provider(spec.oauth_provider or spec.name)
 
 
 def has_oauth_session(provider: str) -> bool:
-    auth = _auth(resolve_login_provider(provider))
+    auth = _auth(provider)
     if auth is None:
         return False
     return auth.status().authenticated

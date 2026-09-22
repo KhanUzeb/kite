@@ -210,6 +210,60 @@ def test_byos_oauth_session_and_login_hints(kite_home: Path) -> None:
     assert code == 0
 
 
+def test_codex_device_login_opens_browser(kite_home, monkeypatch) -> None:
+    """Headless/device ChatGPT login must still open the verification URL."""
+    auth = CodexAuthProvider()
+    linked = {"ok": False}
+
+    class _Root:
+        email = "user@example.com"
+
+    class _Account:
+        root = _Root()
+
+    class _Resp:
+        account = _Account()
+
+    class _Login:
+        verification_url = "https://chatgpt.com/codex/devices?user_code=ABCD-1234"
+        user_code = "ABCD-1234"
+        auth_url = "https://auth.openai.com/oauth/authorize?x=1"
+
+        def wait(self):
+            linked["ok"] = True
+            return MagicMock(success=True)
+
+    class _Codex:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def account(self):
+            return _Resp() if linked["ok"] else None
+
+        def login_chatgpt_device_code(self):
+            return _Login()
+
+        def login_chatgpt(self):
+            return _Login()
+
+    monkeypatch.setattr("kite.providers.auth.codex.require_codex_sdk", lambda: None)
+    monkeypatch.setattr("kite.providers.auth.codex._open_codex", lambda: _Codex())
+    monkeypatch.setattr("kite.util.tty.is_interactive_tty", lambda **_k: False)
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "kite.providers.auth.ui.open_browser",
+        lambda url: opened.append(url) or True,
+    )
+
+    result = auth.login(console=None)
+
+    assert result.exit_code == 0
+    assert opened and opened[0].startswith("https://chatgpt.com/")
+
+
 def test_oauth_does_not_write_project_env_or_api_keys(kite_home: Path, tmp_path: Path, monkeypatch, caplog) -> None:
     project_env = tmp_path / ".env"
     project_env.write_text("FOO=bar\n", encoding="utf-8")

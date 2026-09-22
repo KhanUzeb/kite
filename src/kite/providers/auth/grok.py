@@ -60,7 +60,9 @@ class GrokCliAuthProvider:
         )
 
     def login(self, *, device: bool = False, console: Console | None = None) -> LoginResult:
-        from kite.providers.auth.ui import show_byos_panel, wait_with_status
+        import re
+
+        from kite.providers.auth.ui import open_browser, show_byos_panel
         from kite.providers.catalog import load_catalog
         from kite.util.tty import is_interactive_tty
 
@@ -76,30 +78,63 @@ class GrokCliAuthProvider:
         if self.status().authenticated:
             return LoginResult(0, "Grok subscription already linked.")
 
-        use_device = device or not is_interactive_tty(require_stdout=False)
-        cmd = [_GROK_BIN, "login"]
-        if use_device:
-            cmd.append("--device-auth")
+        interactive = is_interactive_tty(require_stdout=False)
+        use_device = device or not interactive
+        # Interactive TTYs use the default browser OAuth flow (`--oauth`);
+        # headless / --device uses the device-code flow (no localhost callback).
+        # Stream the CLI output so Kite can open the printed sign-in URL
+        # immediately instead of hiding it until the child exits.
+        cmd = [_GROK_BIN, "login", "--device-auth" if use_device else "--oauth"]
 
-        show_byos_panel(
-            spec,
-            url="https://auth.x.ai",
-            console=console,
-            browser_opened=None if use_device else True,
-            extra="Opening xAI sign-in…" if not use_device else "Use the device code shown below.",
-        )
+        login_timeout = 600.0 if interactive else 30.0
+        seen: dict[str, object] = {"url": "", "code": "", "opened": False}
 
-        login_timeout = 600.0 if is_interactive_tty(require_stdout=False) else 30.0
+        def _on_line(line: str) -> None:
+            if seen["url"]:
+                return
+            match = re.search(r"https://[^\s]+", line)
+            if not match:
+                return
+            url = match.group(0).rstrip(".,)'\"")
+            seen["url"] = url
+            code_match = re.search(r"user_code=([A-Za-z0-9-]+)", url) or re.search(
+                r"\b([A-Z0-9]{4}-[A-Z0-9]{4})\b", line
+            )
+            if code_match:
+                seen["code"] = code_match.group(1)
+            if interactive:
+                seen["opened"] = open_browser(url)
+            show_byos_panel(
+                spec,
+                url=url,
+                console=console,
+                user_code=str(seen["code"] or ""),
+                browser_opened=bool(seen["opened"]) if interactive else None,
+                extra=(
+                    "Opened your browser — finish sign-in there."
+                    if seen["opened"]
+                    else "Open this URL to sign in."
+                ),
+            )
 
-        def _run_login():
-            return run_cli(*cmd, timeout=login_timeout)
+        if interactive:
+            show_byos_panel(
+                spec,
+                url="https://auth.x.ai",
+                console=console,
+                browser_opened=None,
+                extra="Starting xAI sign-in…",
+            )
+        wait_msg = "Waiting for xAI sign-in…"
+        if console is not None:
+            console.print(f"[dim]{wait_msg}[/]")
+        else:
+            print(wait_msg, flush=True)
+
+        from kite.providers.auth.cli import run_cli_streaming
 
         try:
-            proc = wait_with_status(
-                console,
-                "Waiting for xAI sign-in…",
-                _run_login,
-            )
+            proc = run_cli_streaming(*cmd, timeout=login_timeout, on_line=_on_line)
         except KeyboardInterrupt:
             return LoginResult(130, "cancelled")
         except subprocess.TimeoutExpired:
@@ -108,7 +143,7 @@ class GrokCliAuthProvider:
             return LoginResult(2, sanitize_auth_message(f"Grok login failed: {exc}"))
 
         if proc.returncode != 0:
-            detail = sanitize_auth_message((proc.stderr or proc.stdout or "").strip())
+            detail = sanitize_auth_message((proc.stdout or "").strip())
             return LoginResult(2, detail or "Grok login failed.")
 
         if not _grok_auth_present():

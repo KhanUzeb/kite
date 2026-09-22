@@ -175,6 +175,74 @@ def test_resolve_model_grok_kwargs_include_oauth_extras(
     assert kwargs["extra_headers"]["x-grok-client-version"] != ""
 
 
+def test_oauth_session_resolves_grok_by_oauth_id_and_catalog_name(
+    kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """has_oauth_session must find GrokCliAuthProvider for both 'xai' and 'grok'.
+
+    LOGIN_ALIASES maps xai→grok (a catalog name) while the auth registry is
+    keyed by oauth_provider id 'xai'. Misresolving made a linked Grok CLI
+    look logged out (`kite login grok` contradicted itself; `kite keys`
+    showed login required).
+    """
+    from kite.providers.auth import _PROVIDERS
+    from kite.providers.byos import has_oauth_session
+    from kite.providers.catalog import load_catalog
+    from kite.providers.credentials import inspect_provider_credentials
+
+    _write_grok_home(monkeypatch, tmp_path, _nested_payload())
+    monkeypatch.setattr("kite.providers.auth.grok.grok_cli_path", lambda: "grok")
+    monkeypatch.setattr("kite.providers.byos.get_auth_provider", _PROVIDERS.get)
+
+    assert has_oauth_session("xai") is True
+    assert has_oauth_session("grok") is True
+
+    status = inspect_provider_credentials(load_catalog().get("grok"))
+    assert status.linked is True and status.usable is True
+    assert status.detail == "linked"
+
+
+def test_grok_login_opens_browser_with_streamed_url(
+    kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Interactive `kite login grok` must open the sign-in URL, not hide it."""
+    import subprocess
+
+    from kite.providers.auth.grok import GrokCliAuthProvider
+
+    grok_home = tmp_path / "grok_home_login"
+    grok_home.mkdir()
+    monkeypatch.setenv("GROK_HOME", str(grok_home))
+    monkeypatch.setattr("kite.providers.auth.grok.grok_cli_path", lambda: "grok")
+    monkeypatch.setattr("kite.util.tty.is_interactive_tty", lambda **_k: True)
+
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "kite.providers.auth.ui.open_browser",
+        lambda url: opened.append(url) or True,
+    )
+
+    def fake_stream(cmd, *args, timeout=0.0, on_line=None, env=None):
+        if on_line is not None:
+            on_line("Signing in with Grok...\n")
+            on_line(
+                "Open this URL to sign in:\n"
+                "  https://auth.x.ai/oauth2/authorize?response_type=code&state=abc\n"
+            )
+            on_line("Waiting for authorization...\n")
+        (grok_home / "auth.json").write_text(
+            json.dumps({"k": {"key": "ACC"}}), encoding="utf-8"
+        )
+        return subprocess.CompletedProcess([cmd, *args], 0, "ok", "")
+
+    monkeypatch.setattr("kite.providers.auth.cli.run_cli_streaming", fake_stream)
+
+    result = GrokCliAuthProvider().login(console=None)
+
+    assert result.exit_code == 0
+    assert opened and opened[0].startswith("https://auth.x.ai/")
+
+
 def test_logout_clears_materialized_xai_oauth(kite_home: Path, monkeypatch) -> None:
     import os
 
