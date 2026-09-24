@@ -108,12 +108,21 @@ kite login [provider]          # pick provider if omitted → BYOK key or BYOS b
                                 # BYOS (chatgpt/claude/grok/antigravity): opens your browser to the sign-in URL
                                 # as soon as the provider CLI prints it (grok uses `grok login --oauth`
                                 # interactively, `--device-auth` when headless); ChatGPT opens the OAuth/device
-                                # URL too. `agy` drives its own Google sign-in (browser or SSH URL loop).
+                                # URL too. `agy` drives its own Google sign-in (launch `agy`:
+                                # silent keyring on local machines, browser when needed, manual URL
+                                # loop over SSH — the only official method, see
+                                # https://antigravity.google/docs/cli/install/). Kite verifies the
+                                # session with read-only `agy models` and only then marks linked
+                                # (quitting `agy` without signing in does NOT link); only auth URLs
+                                # are ever surfaced. Linked sessions are re-verified at most once a
+                                # day, so status checks stay instant.
                                 # Already linked → reuses the session (no browser) and jumps to model pick.
                                 # `kite login grok` also bridges tokens to LiteLLM under ~/.kite/oauth/xai
                                 # via the xAI subscription chat proxy. Claude/Antigravity stay CLI-owned:
                                 # calls need ANTHROPIC_API_KEY / GEMINI_API_KEY.
 kite logout [provider]         # unlink BYOS subscription (codex, claude, grok/xai, antigravity)
+                                # antigravity also needs `/logout` inside `agy` to purge its keyring
+                                # session (Kite only held a linkage marker).
 kite keys                      # TTY: status then pick a provider to link
 kite keys [--set [provider]]   # paste BYOK API keys (hidden); also tavily|exa|firecrawl
 kite web-keys                  # show optional web tool key status (Tavily / Exa / Firecrawl)

@@ -44,7 +44,7 @@ Workflow: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
 
 | Trigger | Checks |
 |---------|--------|
-| **Push** or **pull request** to `main` | pytest on **Linux and Windows** × Python 3.11 and 3.12 (~210 tests in `tests/`); `ruff check src tests`; `python scripts/sync_version.py --check`; `kite bench --check` |
+| **Push** or **pull request** to `main` | pytest on **Linux and Windows** × Python 3.11 and 3.12 (~210 tests in `tests/`); hermetic pytest on Linux with fail-loud `agy`/`claude`/`codex`/`grok` shims on `PATH` (catches tests that spawn real provider CLIs or depend on their absence — mock `*_cli_path`/`shutil.which` explicitly); `ruff check src tests`; `python scripts/sync_version.py --check`; `kite bench --check` |
 | **Actions → Tests → Run workflow** | manual re-run anytime |
 
 CI sets `KITE_HOME` to an isolated temp directory, `KITE_SKIP_SETUP=1` so tests never prompt for onboarding, and `KITE_TYPED_PICK=1` so model/session pickers stay on the scripted prompt (no TTY overlay).

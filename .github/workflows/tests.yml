@@ -71,6 +71,44 @@ jobs:
         shell: bash
         run: python -m pytest -q --tb=short -p faulthandler
 
+  test-hermetic:
+    # Same suite, but with provider CLIs present on PATH as fail-loud shims.
+    # Any test that spawns a real `agy`/`claude`/`codex`/`grok` without
+    # mocking fails here instead of hanging on a network/browser prompt or
+    # passing only because CI happens to lack the binary (cf. the agy-probe
+    # bug). Absence paths must mock `*_cli_path`/`shutil.which` explicitly.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KITE_HOME: /tmp/kite-home
+      KITE_SKIP_SETUP: "1"
+      KITE_TYPED_PICK: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install
+        shell: bash
+        run: uv pip install -e ".[dev]"
+
+      - name: Install fail-loud provider CLI shims
+        shell: bash
+        run: |
+          mkdir -p /tmp/fakebin
+          for bin in agy claude codex grok; do
+            printf '#!/bin/sh\necho "hermetic CI: test invoked real %s without mocking" >&2\nexit 99\n' "$bin" > "/tmp/fakebin/$bin"
+            chmod +x "/tmp/fakebin/$bin"
+          done
+          echo "/tmp/fakebin" >> "$GITHUB_PATH"
+
+      - name: Pytest (hermetic PATH)
+        shell: bash
+        run: python -m pytest -q --tb=short -p faulthandler
+
   bench:
     runs-on: ubuntu-latest
     timeout-minutes: 10

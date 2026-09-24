@@ -227,6 +227,9 @@ def test_fetch_model_ids_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_fetch_model_ids_live(kite_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     live = ("gemini-3.8-flash-medium", "claude-sonnet-4-6")
+    # Pin the binary too: CI runners have no `agy`, and without it the
+    # provider correctly falls back instead of probing.
+    monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: "agy")
     monkeypatch.setattr(
         "kite.providers.auth.antigravity.probe_session", lambda **_k: (True, live)
     )
