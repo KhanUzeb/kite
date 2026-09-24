@@ -179,6 +179,11 @@ def test_byos_oauth_session_login_and_hygiene_combined(kite_home: Path, tmp_path
         with patch("kite.providers.byos.get_auth_provider", return_value=auth):
             assert has_oauth_session("chatgpt") is True
             assert provider_needs_login(load_catalog().get("chatgpt")) is False
+    # Status verdicts are cached (slow CLI/SDK probes); a transition must
+    # invalidate explicitly — exactly what login_oauth/logout_oauth do.
+    from kite.providers.byos import invalidate_auth_status_cache
+
+    invalidate_auth_status_cache("chatgpt")
     with patch.object(auth, "status", return_value=AuthStatus(False, "not linked")):
         with patch("kite.providers.byos.get_auth_provider", return_value=auth):
             assert has_oauth_session("chatgpt") is False
@@ -363,6 +368,50 @@ def test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: py
     (codex_home / "auth.json").write_text(json.dumps({"auth_mode": "chatgpt"}), encoding="utf-8")
     with pytest.raises(CodexLitellmAuthError):
         codex_litellm.materialize_litellm_chatgpt_auth()
+
+
+def test_oauth_status_cache_and_materialize_idempotence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Slow status probes run once per TTL; per-turn materialize skips identical writes."""
+    from unittest.mock import MagicMock
+
+    from kite.providers.auth.base import AuthStatus
+    from kite.providers.byos import (
+        has_oauth_session,
+        invalidate_auth_status_cache,
+        oauth_session,
+    )
+
+    auth = MagicMock()
+    auth.provider_key = "chatgpt"
+    auth.status.return_value = AuthStatus(True, "linked", account_label="a@x.com")
+    monkeypatch.setattr("kite.providers.byos.get_auth_provider", lambda *_a, **_k: auth)
+    assert has_oauth_session("chatgpt") is True
+    assert oauth_session(type("S", (), {"oauth_provider": "chatgpt", "name": "chatgpt"})()) is not None
+    assert auth.status.call_count == 1  # second call served from cache
+
+    auth.status.return_value = AuthStatus(False, "not linked")
+    assert has_oauth_session("chatgpt") is True  # stale within TTL
+    invalidate_auth_status_cache("chatgpt")
+    assert has_oauth_session("chatgpt") is False
+    assert auth.status.call_count == 2
+
+    from kite.providers.auth import codex_litellm
+
+    codex_home = tmp_path / "codex2"
+    codex_home.mkdir()
+    (codex_home / "auth.json").write_text(
+        json.dumps({"tokens": {"access_token": "tok", "refresh_token": "r", "id_token": "i", "account_id": "a"}}),
+        encoding="utf-8",
+    )
+    out = tmp_path / "kite-oauth2"
+    monkeypatch.setattr(codex_litellm, "_codex_home", lambda: str(codex_home))
+    monkeypatch.setattr(codex_litellm, "_kite_chatgpt_token_dir", lambda: out)
+    dest = Path(codex_litellm.materialize_litellm_chatgpt_auth()) / "auth.json"
+    mtime = dest.stat().st_mtime_ns
+    Path(codex_litellm.materialize_litellm_chatgpt_auth())
+    assert dest.stat().st_mtime_ns == mtime  # identical content: no rewrite
 
 
 def test_model_capabilities_and_default_resolution_combined(kite_home) -> None:

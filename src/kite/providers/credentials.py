@@ -602,7 +602,13 @@ def logout_provider(provider: str, *, byos_aliases: bool = False) -> tuple[int, 
 
     if is_oauth_provider(spec):
         if logout_oauth(spec):
-            return 0, f"removed OAuth session for {spec.name}"
+            msg = f"removed OAuth session for {spec.name}"
+            if resolved == "antigravity":
+                # Kite only held a linkage marker; the Google session lives
+                # in the OS keyring — purge it with `/logout` inside agy
+                # (official method: antigravity.google/docs/cli/install/).
+                msg += " (also run `/logout` inside agy to clear its keyring session)"
+            return 0, msg
         return 0, f"no OAuth session for {spec.name}"
 
     env_names = api_key_env_names(spec)

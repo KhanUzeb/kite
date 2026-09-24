@@ -107,6 +107,16 @@ def _write_private_json(path: Path, payload: dict[str, Any]) -> None:
         pass
 
 
+def _write_private_json_if_changed(path: Path, payload: dict[str, Any]) -> None:
+    """Write flattened auth only when it differs — this runs every model turn."""
+    try:
+        if path.is_file() and path.read_text(encoding="utf-8") == json.dumps(payload, indent=2):
+            return
+    except OSError:
+        pass
+    _write_private_json(path, payload)
+
+
 def _grok_entry(data: dict[str, Any]) -> dict[str, Any]:
     """Pick the usable session record from grok-CLI (or already-flat) JSON."""
     if data.get("access_token"):
@@ -193,7 +203,7 @@ def materialize_litellm_xai_auth() -> str:
             flat["token_endpoint"] = endpoint
 
     dest_dir = _kite_xai_token_dir()
-    _write_private_json(dest_dir / "auth.json", flat)
+    _write_private_json_if_changed(dest_dir / "auth.json", flat)
     _log.debug("materialized LiteLLM xAI auth at %s", dest_dir / "auth.json")
     return str(dest_dir)
 

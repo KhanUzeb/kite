@@ -18,6 +18,13 @@ if TYPE_CHECKING:
 _OAUTH_MODEL_TTL = 300.0
 _oauth_model_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
 
+# OAuth status probes are slow (Codex SDK ~1.4s, `claude auth status` ~0.8s,
+# `agy models` ~5s) and `configured_providers()` fans out to every one of
+# them — ~1.2s per call with zero caching. Cache verdicts briefly; login and
+# logout invalidate explicitly so transitions stay exact.
+_AUTH_STATUS_TTL = 120.0
+_auth_status_cache: dict[tuple[str, str], tuple[float, Any]] = {}
+
 OAuthModelFetcher = Callable[[], tuple[str, ...]]
 
 
@@ -70,18 +77,55 @@ def _auth_by_name(name: str) -> AuthProvider | None:
     return get_auth_provider(spec.oauth_provider or spec.name)
 
 
+def _status_cache_key(key: str) -> tuple[str, str]:
+    from kite.config.user import kite_home
+
+    try:
+        home = str(kite_home())
+    except OSError:
+        home = ""
+    return (home, key)
+
+
+def _cached_status(key: str) -> Any | None:
+    """Fresh cached AuthStatus for an oauth provider key, if any."""
+    hit = _auth_status_cache.get(_status_cache_key(key))
+    if hit and (time.monotonic() - hit[0]) < _AUTH_STATUS_TTL:
+        return hit[1]
+    return None
+
+
+def invalidate_auth_status_cache(provider: str | None = None) -> None:
+    """Drop cached OAuth verdicts — call after login/logout transitions."""
+    if provider is None:
+        _auth_status_cache.clear()
+        return
+    for cache_key in [k for k in _auth_status_cache if k[1] == provider]:
+        _auth_status_cache.pop(cache_key, None)
+
+
 def has_oauth_session(provider: str) -> bool:
     auth = _auth(provider)
     if auth is None:
         return False
-    return auth.status().authenticated
+    key = getattr(auth, "provider_key", provider)
+    cached = _cached_status(key)
+    if cached is not None:
+        return bool(cached.authenticated)
+    status = auth.status()
+    _auth_status_cache[_status_cache_key(key)] = (time.monotonic(), status)
+    return status.authenticated
 
 
 def oauth_session(spec: ProviderSpec) -> OAuthSession | None:
     auth = _auth(spec)
     if auth is None:
         return None
-    status = auth.status()
+    key = getattr(auth, "provider_key", _provider_key(spec))
+    cached = _cached_status(key)
+    status = cached if cached is not None else auth.status()
+    if cached is None:
+        _auth_status_cache[_status_cache_key(key)] = (time.monotonic(), status)
     if not status.authenticated:
         return None
     return OAuthSession(linked=True, account_label=status.account_label)
@@ -170,6 +214,7 @@ def login_oauth(
 
     mark_setup_complete()
     _oauth_model_cache.pop(key, None)
+    invalidate_auth_status_cache(key)
     msg = result.message
     if set_default:
         from kite.providers.credentials import inspect_provider_credentials
@@ -231,6 +276,7 @@ def logout_oauth(spec: ProviderSpec) -> bool:
     removed = auth.logout()
     removed = clear_materialized_oauth(spec) or removed
     _oauth_model_cache.pop(_provider_key(spec), None)
+    invalidate_auth_status_cache(_provider_key(spec))
     return removed
 
 
@@ -257,7 +303,11 @@ def credential_label(spec: ProviderSpec) -> str:
 def subscription_login_hint(spec: ProviderSpec) -> str:
     auth = _auth(spec)
     if auth is not None:
-        status = auth.status()
+        key = getattr(auth, "provider_key", _provider_key(spec))
+        status = _cached_status(key)
+        if status is None:
+            status = auth.status()
+            _auth_status_cache[_status_cache_key(key)] = (time.monotonic(), status)
         if status.message and not status.authenticated:
             return status.message
     return (

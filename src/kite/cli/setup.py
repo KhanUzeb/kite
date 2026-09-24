@@ -80,7 +80,7 @@ def print_providers_table(console) -> None:
         for line in extras:
             console.print(f"[dim]{line}[/]")
     console.print(
-        "[dim]* = default · BYOK = API key · BYOS = oauth subscription (chatgpt/claude/grok)[/]"
+        "[dim]* = default · BYOK = API key · BYOS = oauth subscription (chatgpt/claude/grok/antigravity)[/]"
     )
 
 

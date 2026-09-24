@@ -77,6 +77,17 @@ def _read_codex_auth_file(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _write_private_json_if_changed(path: Path, payload: dict[str, Any]) -> None:
+    """Write flattened auth only when it differs — this runs every model turn."""
+    text = json.dumps(payload, indent=2)
+    try:
+        if path.is_file() and path.read_text(encoding="utf-8") == text:
+            return
+    except OSError:
+        pass
+    _write_private_json(path, payload)
+
+
 def _write_private_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, indent=2)
@@ -106,7 +117,7 @@ def materialize_litellm_chatgpt_auth() -> str:
 
     dest_dir = _kite_chatgpt_token_dir()
     dest = dest_dir / "auth.json"
-    _write_private_json(dest, flat)
+    _write_private_json_if_changed(dest, flat)
     _log.debug("materialized LiteLLM ChatGPT auth at %s", dest)
     return str(dest_dir)
 
