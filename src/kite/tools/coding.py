@@ -46,8 +46,13 @@ def _read_text_bounded(path: Path, *, max_bytes: int = _READ_MAX_BYTES) -> tuple
         data = handle.read(max_bytes + 1)
     if len(data) > max_bytes:
         data = data[:max_bytes]
-        return data.decode("utf-8", errors="replace"), True
-    return data.decode("utf-8", errors="replace"), False
+        text = data.decode("utf-8", errors="replace")
+        return text.replace("\r\n", "\n").replace("\r", "\n"), True
+    text = data.decode("utf-8", errors="replace")
+    # Normalize line endings so read output is byte-identical across
+    # platforms (Windows text-mode writes would otherwise leak \r\n into
+    # every later request and break the stable cache prefix).
+    return text.replace("\r\n", "\n").replace("\r", "\n"), False
 
 
 def _safe_int(value: Any, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
