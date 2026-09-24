@@ -102,8 +102,122 @@ def can_parallelize_batch(actions: list[dict[str, Any]], *, cwd: str) -> bool:
     return True
 
 
+def _crew_scalar(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _crew_sync_eligible(args: dict[str, Any]) -> bool:
+    """A lone sync `subagent` call that may join a coalesced crew."""
+    if args.get("wait_for") or args.get("job_ids"):
+        return False  # collect calls stay separate
+    if args.get("prompts") or args.get("tasks"):
+        return False  # already a crew
+    if args.get("background") is True:
+        return False  # async semantics differ
+    if "wait" in args and args.get("wait") is False:
+        return False
+    # Plural crew keys need positional alignment the merger cannot infer.
+    for key in ("labels", "profiles", "roles", "providers", "models", "contexts", "scopes", "timeouts"):
+        if args.get(key):
+            return False
+    return bool(_crew_scalar(args.get("prompt")))
+
+
+def _crew_compatible(first: dict[str, Any], second: dict[str, Any]) -> bool:
+    """Same dispatch semantics: retry/abort/parent/run/timeout-shape must match."""
+    if bool(first.get("retryable", True)) != bool(second.get("retryable", True)):
+        return False
+    if bool(first.get("abort_on_failure", False)) != bool(second.get("abort_on_failure", False)):
+        return False
+    for key in ("parent_id", "run_id", "parent_run_id", "provider", "model", "profile", "role"):
+        if _crew_scalar(first.get(key)) != _crew_scalar(second.get(key)):
+            # Scalars that differ per call are preserved positionally below,
+            # except identity keys that would split the crew's run scope.
+            if key in ("parent_id", "run_id", "parent_run_id"):
+                return False
+    return True
+
+
+_CREW_POSITIONAL = (
+    ("labels", "label"),
+    ("profiles", "profile"),
+    ("roles", "role"),
+    ("providers", "provider"),
+    ("models", "model"),
+    ("contexts", "context"),
+    ("timeouts", "timeout_s"),
+)
+
+
+def _merge_crew_calls(group: list[dict[str, Any]]) -> dict[str, Any]:
+    """Combine sibling sync subagent calls into one `prompts` crew dispatch."""
+    first_args = group[0].get("arguments") if isinstance(group[0].get("arguments"), dict) else {}
+    merged_args: dict[str, Any] = {"prompts": [_crew_scalar(a.get("arguments", {}).get("prompt")) for a in group]}
+    member_args = [
+        a.get("arguments") if isinstance(a.get("arguments"), dict) else {} for a in group
+    ]
+    for plural, singular in _CREW_POSITIONAL:
+        values = [_crew_scalar(m.get(singular)) for m in member_args]
+        if any(values):
+            merged_args[plural] = values
+    scopes = [m.get("scope") for m in member_args]
+    if any(s for s in scopes if s):
+        merged_args["scopes"] = scopes
+    if any(bool(m.get("abort_on_failure", False)) for m in member_args):
+        merged_args["abort_on_failure"] = True
+    if not bool(first_args.get("retryable", True)):
+        merged_args["retryable"] = False
+    for key in ("parent_id", "run_id", "parent_run_id"):
+        value = _crew_scalar(first_args.get(key))
+        if value:
+            merged_args[key] = value
+    merged = dict(group[0])
+    merged["arguments"] = merged_args
+    return merged
+
+
+def coalesce_crew_calls(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge consecutive sync `subagent` calls into one parallel crew dispatch.
+
+    Sibling workers are independent by construction (workers cannot nest, each
+    gets fresh context), so one crew of N beats N serial run_one round-trips
+    with identical semantics. Interrupt granularity coarsens from per-call to
+    per-crew — the crew still honors per-worker cancel/timeout.
+    """
+    if len(actions) < 2:
+        return list(actions)
+    merged: list[dict[str, Any]] = []
+    i = 0
+    while i < len(actions):
+        action = actions[i]
+        args = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
+        if str(action.get("tool") or "") == "subagent" and _crew_sync_eligible(args):
+            group = [action]
+            j = i + 1
+            while j < len(actions):
+                nxt = actions[j]
+                nargs = nxt.get("arguments") if isinstance(nxt.get("arguments"), dict) else {}
+                if (
+                    str(nxt.get("tool") or "") == "subagent"
+                    and _crew_sync_eligible(nargs)
+                    and _crew_compatible(args, nargs)
+                ):
+                    group.append(nxt)
+                    j += 1
+                else:
+                    break
+            if len(group) > 1:
+                merged.append(_merge_crew_calls(group))
+                i = j
+                continue
+        merged.append(action)
+        i += 1
+    return merged
+
+
 def plan_execution_batches(actions: list[dict[str, Any]], *, cwd: str) -> list[list[dict[str, Any]]]:
     """Partition model tool calls into sequential batches; each batch may run in parallel."""
+    actions = coalesce_crew_calls(actions)
     if len(actions) <= 1:
         return [list(actions)]
 
@@ -128,6 +242,7 @@ __all__ = [
     "action_parallel_eligible",
     "actions_conflict",
     "can_parallelize_batch",
+    "coalesce_crew_calls",
     "is_parallel_safe",
     "paths_overlap",
     "plan_execution_batches",

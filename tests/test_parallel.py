@@ -6,6 +6,7 @@ from kite.agent.parallel import (
     action_parallel_eligible,
     actions_conflict,
     can_parallelize_batch,
+    coalesce_crew_calls,
     paths_overlap,
     plan_execution_batches,
 )
@@ -69,3 +70,47 @@ def test_bash_splits_batches(tmp_path) -> None:
         [{"tool": "bash", "arguments": {"command": "pytest -q"}}],
         [{"tool": "read", "arguments": {"path": "b.py"}}],
     ]
+
+
+def _sub(prompt: str, **kwargs) -> dict:
+    return {"tool": "subagent", "arguments": {"prompt": prompt, **kwargs}}
+
+
+def test_coalesce_sibling_subagents_into_crew(tmp_path) -> None:
+    cwd = str(tmp_path)
+    actions = [
+        _sub("scan auth", label="auth", profile="scout"),
+        _sub("scan billing", label="billing"),
+        {"tool": "read", "arguments": {"path": "a.py"}},
+    ]
+    merged = coalesce_crew_calls(actions)
+    assert len(merged) == 2
+    crew = merged[0]
+    assert crew["tool"] == "subagent"
+    assert crew["arguments"]["prompts"] == ["scan auth", "scan billing"]
+    assert crew["arguments"]["labels"] == ["auth", "billing"]
+    assert crew["arguments"]["profiles"] == ["scout", ""]
+    # One serial batch (the crew parallelizes inside the orchestrator).
+    batches = plan_execution_batches(actions, cwd=cwd)
+    assert len(batches) == 2 and batches[0] == [crew]
+
+
+def test_coalesce_respects_async_collect_and_mismatch() -> None:
+    assert coalesce_crew_calls([_sub("a", background=True), _sub("b")]) == [
+        _sub("a", background=True),
+        _sub("b"),
+    ]
+    assert coalesce_crew_calls([_sub("a"), _sub("b", wait_for=["x"])]) == [
+        _sub("a"),
+        _sub("b", wait_for=["x"]),
+    ]
+    assert coalesce_crew_calls([_sub("a"), _sub("b", prompts=["x", "y"])]) == [
+        _sub("a"),
+        _sub("b", prompts=["x", "y"]),
+    ]
+    # Different parent scope: never merge.
+    no_merge = coalesce_crew_calls([_sub("a", parent_id="p1"), _sub("b", parent_id="p2")])
+    assert len(no_merge) == 2
+    # Non-adjacent subagents merge per run, not across other tools.
+    split = coalesce_crew_calls([_sub("a"), {"tool": "bash", "arguments": {"command": "x"}}, _sub("b")])
+    assert len(split) == 3

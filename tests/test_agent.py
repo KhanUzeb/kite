@@ -600,3 +600,29 @@ def test_cost_estimate_harness_build_and_recovery(kite_home, workspace: Path, mo
 
     args = build_parser().parse_args(["resume", "--last", "--retry", "abc12345"])
     assert args.retry is True and args.session == "abc12345"
+
+def test_after_tool_subagent_cost_and_worker_files() -> None:
+    from kite.agent.loop import DefaultAgent
+    from kite.env.local import LocalEnvironment
+    from kite.tools import ToolRegistry
+
+    agent = DefaultAgent(_StubModel(), LocalEnvironment(registry=ToolRegistry([])))
+    noted: list[str] = []
+
+    class _Checkpoints:
+        def record(self, path, label):  # noqa: ANN001
+            noted.append(path)
+            return None
+
+    agent.checkpoints = _Checkpoints()
+    agent._emit_commit = lambda *_a, **_k: None
+    out = {
+        "ok": True,
+        "output": "crew report",
+        "total_cost": 0.25,
+        "files_touched": ["w/a.py"],
+        "results": [{"files_touched": ["w/b.py"]}, {"ok": False}],
+    }
+    agent._after_tool("subagent", {}, {}, out, 5, [])
+    assert agent.cost == pytest.approx(0.25)
+    assert noted == ["w/a.py", "w/b.py"]

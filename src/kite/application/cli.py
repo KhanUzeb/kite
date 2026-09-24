@@ -102,4 +102,12 @@ def legacy_result_from_run(result: RunResult) -> dict[str, Any]:
         legacy["changed_paths"] = list(result.changed_paths)
     if result.verification_status:
         legacy["verification_status"] = result.verification_status
+    # Whole-tree accounting: worker cost/tokens must survive projection or
+    # the orchestrator's total_cost stays 0 and parent budgets ignore crews.
+    if result.cost and "cost" not in legacy:
+        legacy["cost"] = result.cost
+    usage = result.usage or {}
+    for key in ("tokens", "calls", "prompt_tokens", "completion_tokens"):
+        if usage.get(key) is not None and key not in legacy:
+            legacy[key] = usage[key]
     return legacy

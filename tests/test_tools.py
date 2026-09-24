@@ -426,3 +426,21 @@ def test_make_summarizer_forwards_session_overrides(monkeypatch) -> None:
     summarize = summ.make_summarizer(_summarize_cfg(), session_provider="groq", session_model="llama-x")
     assert summarize([{"role": "user", "content": "hi"}]) == "llm text"
     assert (seen["session_provider"], seen["session_model"]) == ("groq", "llama-x")
+
+def test_subagent_parent_plan_context_attached() -> None:
+    from kite.tools.coding import _with_parent_plan_context
+
+    class _Store:
+        def read(self):
+            return [
+                {"status": "pending", "content": "write tests"},
+                {"status": "in_progress", "content": "fix login bug"},
+            ]
+
+    out = _with_parent_plan_context({"prompt": "help out"}, _Store())
+    assert "fix login bug" in out["context"] and "write tests" in out["context"]
+    # In-progress sorts first; explicit context always wins.
+    assert out["context"].index("fix login bug") < out["context"].index("write tests")
+    explicit = _with_parent_plan_context({"prompt": "x", "context": "mine"}, _Store())
+    assert explicit["context"] == "mine"
+    assert _with_parent_plan_context({"prompt": "x"}, None)["prompt"] == "x"

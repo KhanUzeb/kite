@@ -53,6 +53,39 @@ def test_result_semantics_glyph_rubric_and_clamp() -> None:
     assert summarize_result("short") == "short"
 
 
+def test_handoff_usage_and_files_flow_to_parent() -> None:
+    """Worker cost/tokens/files must reach the payload (whole-tree accounting)."""
+
+    def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
+        return {
+            "exit_status": "Submitted",
+            "submission": "## Result\nok\n## Files touched\n- src/a.py\n## Tests\nnone",
+            "cost": 0.05,
+            "tokens": 1200,
+            "calls": 3,
+            "changed_paths": ["src/a.py", "src/b.py"],
+        }
+
+    orch = SubagentOrchestrator(runner=runner, timeout_seconds=0)
+    one = orch.run_one("do work", label="w1")
+    assert one["ok"] is True
+    assert one["cost"] == 0.05 and one["tokens"] == 1200 and one["calls"] == 3
+    assert one["files_touched"] == ["src/a.py", "src/b.py"]
+
+    crew = orch.run_parallel(["do a", "do b"], labels=["a", "b"])
+    assert crew["total_cost"] == 0.10
+    assert all(r["files_touched"] == ["src/a.py", "src/b.py"] for r in crew["results"])
+
+
+def test_legacy_cost_survives_projection() -> None:
+    from kite.application.cli import legacy_result_from_run
+    from kite.application.contracts import RunResult
+
+    result = RunResult(status="done", cost=0.07, usage={"tokens": 500, "calls": 2})
+    legacy = legacy_result_from_run(result)
+    assert legacy["cost"] == 0.07 and legacy["tokens"] == 500 and legacy["calls"] == 2
+
+
 def test_run_one_events_view_and_thread_labels() -> None:
     events: list[tuple[str, dict]] = []
 

@@ -1256,6 +1256,32 @@ class DefaultAgent:
                 )
         if out.get("ok") and tool in {"write", "edit"} and out.get("path"):
             self._note_edit(str(out["path"]))
+        if tool == "subagent":
+            # Whole-tree budget: worker spend counts against the parent limit.
+            worker_cost = out.get("total_cost") or out.get("cost")
+            try:
+                worker_cost = float(worker_cost or 0.0)
+            except (TypeError, ValueError):
+                worker_cost = 0.0
+            if worker_cost > 0:
+                self.cost += worker_cost
+                self._emit("cost", cost=self.cost, usage=getattr(self.model, "last_usage", None))
+            # Worker-touched files join parent checkpoint/compaction tracking.
+            touched = out.get("files_touched") or []
+            if isinstance(touched, str):
+                touched = [touched]
+            for path in list(touched)[:32]:
+                if isinstance(path, str) and path.strip():
+                    self._note_edit(path.strip())
+            collected = out.get("results") or []
+            if isinstance(collected, dict):
+                collected = list(collected.values())
+            for result in collected:
+                if not isinstance(result, dict):
+                    continue
+                for path in list(result.get("files_touched") or [])[:32]:
+                    if isinstance(path, str) and path.strip():
+                        self._note_edit(path.strip())
         loop = self._loop_guard.record(tool, args, out)
         if loop.hard_stop:
             self._emit("loop_hard_stop", message=loop.hard_stop, tool=tool)

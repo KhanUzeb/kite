@@ -565,12 +565,34 @@ class SubagentOrchestrator:
         task.quality = quality
         task.ok = ok
         task.status = "finished" if ok else "failed"
+        # Structured handoff: explicit worker paths beat regex parsing, and
+        # usage survives so run_parallel.total_cost and parent budgets are real.
+        files_touched = _extract_touched_paths(result)
+        changed = result.get("changed_paths")
+        if isinstance(changed, (list, tuple)) and changed:
+            seen = set(files_touched)
+            for path in changed:
+                text = str(path).strip()
+                if text and text not in seen:
+                    seen.add(text)
+                    files_touched.append(text)
+        usage_fields: dict[str, Any] = {"files_touched": files_touched}
+        for key in ("cost", "tokens", "calls", "prompt_tokens", "completion_tokens"):
+            try:
+                value = result.get(key)
+            except AttributeError:
+                value = None
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                usage_fields[key] = value
         return self._result_payload(
             task,
             ok=ok,
             output=task.summary,
             exit_status=status,
             quality=quality,
+            **usage_fields,
         )
 
     def _prune_finished_tasks(self) -> None:
@@ -921,6 +943,12 @@ class SubagentOrchestrator:
         header = f"collected · {len(collected)}/{len(ids)} ready"
         if pending:
             header += f" · timed out waiting for: {', '.join(sorted(pending))}"
+        total_cost = 0.0
+        for r in collected.values():
+            try:
+                total_cost += float(r.get("cost") or 0.0)
+            except (TypeError, ValueError):
+                pass
         return {
             "ok": ok,
             "output": _format_sections(header, rows),
@@ -928,6 +956,7 @@ class SubagentOrchestrator:
             "timed_out": sorted(pending),
             "results": collected,
             "dispatch": "collect",
+            "total_cost": total_cost,
         }
 
     def run_parallel(

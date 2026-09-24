@@ -219,6 +219,8 @@ kite subagents --init auditor --role debugger --label "Auditor"
 
 Dispatch at runtime: `subagent` tool with `profile=<id>` and `prompt=…`. Optional per-worker **`model=`** and **`provider=`** (or `models` / `providers` arrays for parallel crews). When you ask for crews or name profiles in plain language, the agent should dispatch `subagent` directly. User-authored profiles are wrapped as untrusted content.
 
+Crew execution notes: sibling sync `subagent` calls in one turn auto-merge into a single parallel crew (async/background and `wait_for` collects stay separate). Workers start with fresh context but receive the parent's open todos automatically (explicit `context=` wins). Handoffs carry `files_touched` + `cost`/`tokens`/`calls`: worker spend counts against the parent budget (`total_cost`), and worker-touched files join parent checkpoint tracking.
+
 `kite dashboard` is per-user: it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
 
 ---

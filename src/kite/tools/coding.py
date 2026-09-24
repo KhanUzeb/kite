@@ -79,6 +79,33 @@ def _io_fail(path: Path, exc: BaseException) -> dict[str, Any]:
     return {"ok": False, "error": msg, "path": str(path), "output": msg}
 
 
+def _with_parent_plan_context(args: dict[str, Any], store: Any) -> dict[str, Any]:
+    """Attach parent plan state to a worker dispatch when the caller gave none.
+
+    Workers start with zero parent transcript, so without this the parent's
+    open todos are invisible to them and crews duplicate or contradict the
+    plan. Bounded (~800 chars): in-progress first, then pending, max 8 items.
+    Explicit caller context always wins — this only fills the gap.
+    """
+    if args.get("context") or args.get("contexts") or args.get("wait_for") or args.get("job_ids"):
+        return args
+    try:
+        items = store.read() if store is not None else []
+    except Exception:
+        return args
+    if not isinstance(items, list) or not items:
+        return args
+    ranked = sorted(
+        (x for x in items if isinstance(x, dict) and str(x.get("content") or "").strip()),
+        key=lambda x: 0 if str(x.get("status") or "") == "in_progress" else 1,
+    )[:8]
+    if not ranked:
+        return args
+    lines = [f"- [{x.get('status', 'pending')}] {str(x.get('content') or '')[:160]}" for x in ranked]
+    plan = "Parent plan (open todos — align with these, do not duplicate):\n" + "\n".join(lines)
+    return {**args, "context": plan[:800]}
+
+
 def _todo_view(items: list[Any]) -> dict[str, Any]:
     lines = [f"{x['status']:12} {x['content']}" for x in items]
     return {"ok": True, "output": "\n".join(lines) or "(empty plan)", "items": items}
@@ -658,7 +685,7 @@ def make_coding_tools(
         if orchestrator is None:
             msg = "Subagent tool unavailable in this run. Use task for code search instead."
             return {"ok": False, "error": msg, "output": msg}
-        return orchestrator.dispatch(args)
+        return orchestrator.dispatch(_with_parent_plan_context(dict(args), store))
 
     def web_search(args: dict[str, Any]) -> dict[str, Any]:
         return websearch(
@@ -1102,6 +1129,7 @@ def make_coding_tools(
                     "• Custom role: role=architect|implementer|debugger\n"
                     "• One worker: prompt + optional label/profile/role\n"
                     "• Crew: prompts + labels/profiles/roles (sync by default)\n"
+                    "• Sibling subagent calls in one turn auto-merge into a parallel crew\n"
                     "• Async: background=true or wait=false; returns job_id immediately\n"
                     "• Collect: wait_for=[job_id, ...] (cannot combine with new prompts)\n"
                     "• Model override: model= + optional provider= (arrays for crews)\n"
