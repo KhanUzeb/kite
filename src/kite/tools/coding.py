@@ -242,7 +242,17 @@ def make_coding_tools(
         elif limit is None and len(chunk) > _READ_MAX_LINES:
             chunk = chunk[:_READ_MAX_LINES]
         if numbered:
-            body = "".join(f"{i + start:6}|{line}" for i, line in enumerate(chunk))
+            # Sparse line numbers: every 10th file line keeps citation anchors while
+            # cutting ~90% of numbering overhead (each number costs 3-5 tokens and
+            # agents read tens of thousands of lines per session).
+            parts: list[str] = []
+            for i, line in enumerate(chunk):
+                lineno = i + start
+                if lineno == start or lineno % 10 == 1:
+                    parts.append(f"{lineno:6}|{line}")
+                else:
+                    parts.append(line)
+            body = "".join(parts)
         else:
             body = "".join(chunk)
         truncated = file_truncated
@@ -720,7 +730,7 @@ def make_coding_tools(
                 description=(
                     "Bounded file read — fallback when a bash peek is not enough. "
                     "Prefer bash (rg, head, sed -n, wc -l) for search; "
-                    "set numbered=true only when you need line numbers. Large files auto-truncate."
+                    "set numbered=true only when you need line numbers (sparse: every 10th line). Large files auto-truncate."
                 ),
                 parameters={
                     "type": "object",
@@ -728,7 +738,7 @@ def make_coding_tools(
                         "path": {"type": "string"},
                         "offset": {"type": "integer", "description": "1-based start line"},
                         "limit": {"type": "integer", "description": "Max lines to return"},
-                        "numbered": {"type": "boolean", "description": "Prefix line numbers (costs tokens)"},
+                        "numbered": {"type": "boolean", "description": "Sparse line numbers every 10th line (costs tokens)"},
                     },
                     "required": ["path"],
                 },

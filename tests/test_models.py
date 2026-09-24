@@ -128,6 +128,44 @@ def test_api_messages_drop_unanswered_tool_calls() -> None:
     assert emptied == []
 
 
+def test_token_efficiency_reasoning_and_cache_breakpoints() -> None:
+    from kite.models.cache import apply_cache_breakpoints
+
+    model = object.__new__(LitellmModel)
+    # Reasoning continuity: prior thinking passes through even from legacy extra-only transcripts.
+    projected = model._api_messages(
+        [
+            {"role": "system", "content": "sys"},
+            {
+                "role": "assistant",
+                "content": "working",
+                "extra": {"reasoning": "plan: check auth then edit"},
+            },
+            {"role": "user", "content": "next"},
+        ]
+    )
+    assistant = next(m for m in projected if m["role"] == "assistant")
+    assert assistant.get("reasoning_content") == "plan: check auth then edit"
+
+    # Two-breakpoint layout: system + compaction summary both pin the stable prefix.
+    msgs = [
+        {"role": "system", "content": "stable instructions"},
+        {"role": "user", "content": "Previous conversation summary:\nfoo"},
+        {"role": "user", "content": "volatile follow-up"},
+    ]
+    out = apply_cache_breakpoints(msgs, provider="anthropic")
+    assert out[0]["content"][0].get("cache_control") == {"type": "ephemeral"}
+    assert out[1]["content"][0].get("cache_control") == {"type": "ephemeral"}
+    assert isinstance(out[2]["content"], str)
+
+    # Single summary without system still gets one breakpoint (backward compat).
+    solo = apply_cache_breakpoints(
+        [{"role": "user", "content": "Previous conversation summary:\nfoo"}],
+        provider="anthropic",
+    )
+    assert solo[0]["content"][0].get("cache_control") == {"type": "ephemeral"}
+
+
 def test_usage_tracking_and_litellm_serializer() -> None:
     import warnings
 

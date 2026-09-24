@@ -227,6 +227,12 @@ def estimate_message_tokens(message: dict[str, Any], *, image_token_cost: int = 
         tokens += estimate_text_tokens(json.dumps(message["tool_calls"]))
     if message.get("name"):
         tokens += estimate_text_tokens(str(message["name"]))
+    reasoning = message.get("reasoning_content")
+    if not reasoning:
+        extra = message.get("extra") if isinstance(message.get("extra"), dict) else {}
+        reasoning = extra.get("reasoning") if isinstance(extra, dict) else None
+    if reasoning:
+        tokens += estimate_text_tokens(str(reasoning))
     return tokens
 
 

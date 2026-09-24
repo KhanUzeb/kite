@@ -205,6 +205,29 @@ def test_submit_verification_background_jobs_and_orchestrator(tmp_path) -> None:
     assert SubagentOrchestrator(runner=MagicMock()).dispatch({})["ok"] is False
 
 
+def test_token_efficiency_registry_order_and_sparse_numbers(tmp_path) -> None:
+    from kite.tools import Tool, ToolRegistry
+
+    def _mk(name: str) -> Tool:
+        return Tool(name, name, {"type": "object", "properties": {}}, lambda _a: {"ok": True})
+
+    reg = ToolRegistry([_mk("write"), _mk("bash"), _mk("read")])
+    assert [t.name for t in reg.list()] == ["bash", "read", "write"]
+    assert [s["function"]["name"] for s in reg.tool_schemas()] == ["bash", "read", "write"]
+
+    target = tmp_path / "code.py"
+    target.write_text("".join(f"line {i}\n" for i in range(1, 31)))
+    read = next(t for t in make_coding_tools(cwd=str(tmp_path), enabled=["read"]) if t.name == "read")
+    out = read.run({"path": str(target), "numbered": True})
+    assert out["ok"] is True
+    body = str(out["output"])
+    # Sparse: first line + every 10th file line numbered, middle lines raw.
+    assert "     1|line 1" in body
+    assert "    11|line 11" in body
+    assert "    21|line 21" in body
+    assert "line 2\n" in body and "     2|line 2" not in body
+
+
 def test_observation_compaction_and_shell() -> None:
     raw = "x" * 20_000
     out = observation_content({"ok": True, "output": raw, "summary": "42 lines matched in src/app.py"}, max_chars=2_000)
