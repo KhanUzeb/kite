@@ -79,34 +79,62 @@ def _install_kind() -> str:
     return "source checkout"
 
 
-def _windows_update_script(uv: str, spec: str, log: str) -> str:
+def _managed_shim() -> str:
+    """Path to the managed `kite` entrypoint — never a dev-venv binary.
+
+    `shutil.which("kite")` can resolve a repo `.venv` when developers run
+    from a checkout; the updater must verify/launch the installed shim.
+    """
+    bin_dir = os.environ.get("UV_TOOL_BIN_DIR") or os.path.join(
+        os.path.expanduser("~"), ".local", "bin"
+    )
+    candidate = os.path.join(bin_dir, "kite.exe")
+    if os.path.isfile(candidate):
+        return candidate
+    return shutil.which("kite") or "kite"
+
+
+def _windows_helper_script(lines: list[str], log: str) -> str:
+    """Detached-helper body: marker lines bracket the real work for log forensics."""
+    body = [f'echo [kite] starting >> "{log}" 2>&1\r\n']
+    body += [line.rstrip("\r\n") + f' >> "{log}" 2>&1\r\n' for line in lines]
+    body += [f'echo [kite] done >> "{log}" 2>&1\r\n', 'del "%~f0"\r\n']
+    return "@echo off\r\n" + "".join(body)
+
+
+def _windows_update_script(uv: str, spec: str, log: str, *, shim: str = "") -> str:
     """Build the detached update helper for Windows (pure — tested offline).
 
     A running .exe cannot be replaced on Windows, so `kite update` can never
     upgrade its own environment in place (os error 32/5). The helper waits
     for this process to exit, then reinstalls from outside the locked env.
     """
-    shim = shutil.which("kite") or "kite"
-    return (
-        "@echo off\r\n"
-        "timeout /t 3 /nobreak >nul\r\n"
-        f'"{uv}" tool install --force "{spec}" >> "{log}" 2>&1\r\n'
-        f'"{shim}" --version >> "{log}" 2>&1\r\n'
-        'del "%~f0"\r\n'
+    shim = shim or _managed_shim()
+    return _windows_helper_script(
+        [
+            "timeout /t 3 /nobreak >nul",
+            f'"{uv}" tool install --force "{spec}"',
+            f'"{shim}" --version',
+        ],
+        log,
     )
 
 
-def _windows_detached_reinstall(uv: str, spec: str, console) -> int:  # noqa: ANN001
-    """Finish `kite update` in a detached helper after this process exits."""
+def _windows_uninstall_script(uv: str, log: str) -> str:
+    """Detached uninstall helper: `uv tool uninstall` tears down the running env."""
+    return _windows_helper_script([f'"{uv}" tool uninstall kite'], log)
+
+
+def _launch_detached_helper(name: str, script: str, log: str, console, *, noun: str) -> int:  # noqa: ANN001
+    """Write a helper .cmd and launch it detached so it outlives this process."""
     import tempfile
 
-    log = os.path.join(tempfile.gettempdir(), "kite-update.log")
-    helper = os.path.join(tempfile.gettempdir(), "kite-update-helper.cmd")
+    helper = os.path.join(tempfile.gettempdir(), name)
     try:
         with open(helper, "w", encoding="utf-8", newline="") as handle:
-            handle.write(_windows_update_script(uv, spec, log))
+            handle.write(script)
     except OSError as e:
-        console.print(f"[red]update failed[/]  [kite.muted]cannot write helper: {e}[/]")
+        console.print(f"[red]{noun} failed[/]  [kite.muted]cannot write helper: {e}[/]")
         return 1
     try:
         subprocess.Popen(  # noqa: S603
@@ -118,8 +146,21 @@ def _windows_detached_reinstall(uv: str, spec: str, console) -> int:  # noqa: AN
             close_fds=True,
         )
     except OSError as e:
-        console.print(f"[red]update failed[/]  [kite.muted]cannot start helper: {e}[/]")
+        console.print(f"[red]{noun} failed[/]  [kite.muted]cannot start helper: {e}[/]")
         return 1
+    return 0
+
+
+def _windows_detached_reinstall(uv: str, spec: str, console) -> int:  # noqa: ANN001
+    """Finish `kite update` in a detached helper after this process exits."""
+    import tempfile
+
+    log = os.path.join(tempfile.gettempdir(), "kite-update.log")
+    rc = _launch_detached_helper(
+        "kite-update-helper.cmd", _windows_update_script(uv, spec, log), log, console, noun="update"
+    )
+    if rc != 0:
+        return rc
     console.print("[kite.success]update handed off[/]  [kite.muted]it finishes in the background")
     console.print("[kite.muted]after this process exits (Windows locks the running install).[/]")
     console.print(f"[kite.muted]check a new terminal with[/] kite --version  [kite.muted](log: {log})[/]")
@@ -284,6 +325,43 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     if not uv:  # pragma: no cover - managed implies uv exists
         console.print("[red]uv not found[/]")
         return 1
+    if purge:
+        removed, leftover, error = _purge_home(home)
+        if removed:
+            console.print(f"[kite.muted]removed data dir[/]  {home}")
+        elif leftover:
+            # CLI is still installed here, so retry stays possible; the
+            # manual command covers the case where files stay locked.
+            console.print(
+                f"[yellow]kept {leftover} leftover file(s) in {home}: {error}[/]"
+            )
+            console.print("[kite.muted]close shells/editors using it, then retry, or:[/]")
+            console.print(f'[kite.muted]rmdir /s /q "{home}"[/]')
+            return 1
+        else:
+            console.print(f"[yellow]could not delete {home}: {error}[/]")
+            return 1
+    else:
+        console.print(f"[kite.muted]kept data at[/]  {home}  [kite.muted](sessions, keys)[/]")
+        console.print("[kite.muted]remove it later:[/]  kite uninstall --purge")
+    if _use_detached_handoff():
+        # Same lock as update: the running env cannot uninstall itself.
+        import tempfile
+
+        log = os.path.join(tempfile.gettempdir(), "kite-uninstall.log")
+        rc = _launch_detached_helper(
+            "kite-uninstall-helper.cmd",
+            _windows_uninstall_script(uv, log),
+            log,
+            console,
+            noun="uninstall",
+        )
+        if rc != 0:
+            return rc
+        console.print("[kite.success]uninstall handed off[/]  [kite.muted]it finishes in the background")
+        console.print("[kite.muted]after this process exits (Windows locks the running install).[/]")
+        console.print("[kite.muted]restart the shell so `kite` leaves PATH.[/]")
+        return 0
     try:
         proc = subprocess.run([uv, "tool", "uninstall", "kite"], timeout=300)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -292,21 +370,5 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     if proc.returncode != 0:
         console.print("[red]uninstall failed[/]  [kite.muted]try: uv tool uninstall kite[/]")
         return 1
-    if purge:
-        removed, leftover, error = _purge_home(home)
-        if removed:
-            console.print(f"[kite.muted]removed data dir[/]  {home}")
-        elif leftover:
-            console.print(
-                f"[yellow]CLI removed, but kept {leftover} leftover file(s) in {home}: {error}[/]"
-            )
-            console.print("[kite.muted]close shells/editors using it, then:[/]  kite uninstall --purge")
-            return 1
-        else:
-            console.print(f"[yellow]CLI removed, but could not delete {home}: {error}[/]")
-            return 1
-    else:
-        console.print(f"[kite.muted]kept data at[/]  {home}  [kite.muted](sessions, keys)[/]")
-        console.print("[kite.muted]remove it later:[/]  kite uninstall --purge")
     console.print("[kite.success]uninstalled[/]  [kite.muted]restart the shell so `kite` leaves PATH.[/]")
     return 0

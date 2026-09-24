@@ -221,6 +221,18 @@ function Install-GlobalCli {
             $rc = $LASTEXITCODE
         }
     }
+    if ($rc -ne 0) {
+        # Windows locks the install while any kite process runs (os error 32/5).
+        # Stop them once and retry before giving up with a clear message.
+        $running = @(Get-Process -Name "kite" -ErrorAction SilentlyContinue)
+        if ($running.Count -gt 0) {
+            Write-Host "Install blocked by running kite process(es) (Windows file lock) - stopping: $($running.Id -join ', ')..."
+            $running | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+            uv tool install --python $Python --force $spec
+            $rc = $LASTEXITCODE
+        }
+    }
     $ErrorActionPreference = $prevEap
     if ($rc -ne 0) {
         throw "uv tool install failed (exit $rc). Check git + network to GitHub."

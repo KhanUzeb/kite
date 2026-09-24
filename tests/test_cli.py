@@ -430,6 +430,10 @@ def test_windows_update_handoff_script(monkeypatch, tmp_path, capsys) -> None:
     script = self_manage._windows_update_script("C:\\uv\\uv.exe", spec, "C:\\Temp\\kite-update.log")
     assert "tool install --force" in script and spec in script
     assert "timeout /t 3" in script and 'del "%~f0"' in script
+    assert "[kite] starting" in script and "[kite] done" in script
+
+    uninstall_script = self_manage._windows_uninstall_script("C:\\uv\\uv.exe", "C:\\Temp\\kite-un.log")
+    assert "tool uninstall kite" in uninstall_script and "[kite] done" in uninstall_script
 
     monkeypatch.setattr(self_manage, "_use_detached_handoff", lambda: True)
     monkeypatch.setattr(self_manage, "_managed", lambda: True)
