@@ -97,7 +97,13 @@ def _managed_shim() -> str:
 def _windows_helper_script(lines: list[str], log: str) -> str:
     """Detached-helper body: marker lines bracket the real work for log forensics."""
     body = [f'echo [kite] starting >> "{log}" 2>&1\r\n']
-    body += [line.rstrip("\r\n") + f' >> "{log}" 2>&1\r\n' for line in lines]
+    for line in lines:
+        stripped = line.rstrip("\r\n")
+        if stripped.lower().startswith("timeout "):
+            body.append(stripped + "\r\n")
+            continue
+        body.append(stripped + f' >> "{log}" 2>&1\r\n')
+        body.append(f'echo [kite] exit=%ERRORLEVEL% >> "{log}" 2>&1\r\n')
     body += [f'echo [kite] done >> "{log}" 2>&1\r\n', 'del "%~f0"\r\n']
     return "@echo off\r\n" + "".join(body)
 
