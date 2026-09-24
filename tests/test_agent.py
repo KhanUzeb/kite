@@ -133,17 +133,28 @@ def test_query_limits_retry_fault_and_budget_guard() -> None:
 
 def test_stable_setup_messages_and_compaction_history(workspace: Path) -> None:
     from kite.memory.compaction_ops import run_compaction
+    from kite.tools.store import TodoStore
 
     model = _StubModel()
+    todos = TodoStore()
+    todos.write([
+        {"content": "pending chore", "status": "pending"},
+        {"content": "write failing test", "status": "in_progress"},
+    ])
     agent = DefaultAgent(
         model,
         LocalEnvironment(registry=ToolRegistry([])),
         system_prompt="stable instructions",
         project_context="## Workspace\n- cwd: /repo",
+        todos=todos,
     )
     assert agent._full_system() == "stable instructions"
     setup = agent._setup_message()
     assert setup is not None and setup["role"] == "user" and setup["extra"].get("setup") is True
+    facts = agent._compaction_extra_facts()
+    assert any("open todos" in f for f in facts)
+    first_todo = next(f for f in facts if "open todos" in f)
+    assert first_todo.index("in_progress") < first_todo.index("pending")
 
     msgs = [{"role": "system", "content": "s"}]
     msgs += [{"role": "user", "content": "word " * 4000}] * 6

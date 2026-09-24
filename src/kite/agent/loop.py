@@ -550,10 +550,27 @@ class DefaultAgent:
         return self._compactor
 
     def _compaction_extra_facts(self) -> list[str]:
+        facts: list[str] = []
         paths = sorted(self.verification.paths_touched)
-        if not paths:
-            return []
-        return [f"edited paths: {', '.join(paths[:24])}"]
+        if paths:
+            facts.append(f"edited paths: {', '.join(paths[:24])}")
+        try:
+            todos = self.todos.read() if self.todos is not None else []
+        except Exception:
+            todos = []
+        open_todos: list[str] = []
+        for item in todos or []:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "")
+            content = str(item.get("content") or "").strip().replace("\n", " ")
+            if status in {"in_progress", "pending"} and content:
+                open_todos.append(f"[{status}] {content[:80]}")
+        # In-progress first so plan state and remaining tasks survive the summary.
+        open_todos.sort(key=lambda line: (0 if line.startswith("[in_progress]") else 1, line))
+        if open_todos:
+            facts.append("open todos: " + "; ".join(open_todos[:8]))
+        return facts
 
     def add_messages(self, *messages: dict) -> list[dict]:
         self.messages.extend(messages)

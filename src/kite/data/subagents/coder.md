@@ -3,7 +3,7 @@ id: coder
 label: Coder
 role: implementer
 description: Implement a focused change — small diff, match repo style, verify.
-tools:
+tools: read, write, edit, bash, grep, glob, ls, todo_write, todo_read, task
 model_role: coder
 ---
 

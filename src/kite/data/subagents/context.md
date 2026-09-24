@@ -3,7 +3,7 @@ id: context
 label: Context
 role: architect
 description: Gather diff + file context for a decision — what changed and why it matters.
-tools:
+tools: read, grep, glob, ls, task
 model_role: smart
 ---
 

@@ -109,6 +109,14 @@ def _setup_parts(
         parts.append(memory.strip())
     if continuity and continuity.strip():
         parts.append(continuity.strip())
+    try:
+        from kite.memory.working_notes import notes_block
+
+        block = notes_block(cwd if cwd is not None else (project_context.root if project_context else None))
+        if block:
+            parts.append(block)
+    except Exception:
+        pass
     if config.skills.enabled and config.skills.auto_index_in_system_prompt and skills:
         parts.append(build_skill_index(skills))
     for section in extra_sections or []:

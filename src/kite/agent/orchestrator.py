@@ -21,7 +21,7 @@ _USEFUL_EXIT = frozenset({"LimitsExceeded", "Stalled"})
 _FAILURE_EXIT = frozenset({"Error", "ProviderFault", "Interrupted"})
 _WORKER_GLYPHS = ("◆", "●", "◇", "▲", "▶", "★")
 _MIN_USEFUL_CHARS = 40
-_SECTION_LIMIT = 2000
+_SECTION_LIMIT = 1500
 _MAX_FINISHED_TASKS = 64
 _MAX_CREW_SIZE = 12
 _MAX_SUBAGENT_DEPTH = 1  # Codex-style: workers cannot nest further by default
@@ -561,17 +561,26 @@ class SubagentOrchestrator:
             summary = scope_reason
         status = str(result.get("exit_status") or "done")
         task.exit_status = status
-        task.summary = summarize_result(summary, limit=4000) if summary else f"finished ({status})"
+        task.summary = summarize_result(summary) if summary else f"finished ({status})"
         task.quality = quality
         task.ok = ok
         task.status = "finished" if ok else "failed"
-        return self._result_payload(
-            task,
-            ok=ok,
-            output=task.summary,
-            exit_status=status,
-            quality=quality,
-        )
+        payload: dict[str, Any] = {
+            "ok": ok,
+            "output": task.summary,
+            "exit_status": status,
+            "quality": quality,
+        }
+        # Whole-tree accounting: worker cost/tokens ride along so the parent
+        # measures planner + workers, not the planner alone.
+        for key in ("cost", "tokens", "total_tokens", "api_calls", "n_calls"):
+            try:
+                value = result.get(key)
+            except AttributeError:
+                break
+            if isinstance(value, (int, float)) and value:
+                payload[key] = value
+        return self._result_payload(task, **payload)
 
     def _prune_finished_tasks(self) -> None:
         finished = [t for t in self.tasks if t.status not in {"running", "queued"}]

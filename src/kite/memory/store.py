@@ -144,6 +144,37 @@ class MemoryStore:
         except ValueError:
             return None
 
+    def render_relevant_for_prompt(self, task: str, *, max_chars: int = 4_000) -> str:
+        """Pins + task-relevant notes instead of the whole file.
+
+        Falls back to the newest notes when the task shares no tokens, so
+        recall never comes back empty while notes exist.
+        """
+        pins = self.semantic.pin_text()
+        notes = self.semantic.relevant_notes(task, limit=8)
+        if not notes:
+            notes = self.notes()[-8:]
+        parts: list[str] = []
+        if pins.strip():
+            parts.append(pins.strip()[: max_chars // 3])
+        if notes:
+            lines = ["### Notes (task-relevant)"]
+            lines.extend(f"- ({n.scope}/{n.id}) {n.text}" for n in notes)
+            parts.append("\n".join(lines))
+        episodes = self.episodic.render_for_prompt(limit=4, max_chars=700)
+        if episodes:
+            parts.append(episodes)
+        if not parts:
+            return ""
+        text = (
+            "# Memory\n"
+            "Honor durable notes below. Use the `memory` tool to list, recall, remember, or forget.\n\n"
+            + "\n\n".join(parts)
+        )
+        if len(text) > max_chars:
+            return text[: max_chars - 20] + "\n\n...[truncated]..."
+        return text
+
     def render_for_prompt(self, *, max_chars: int = 4_000) -> str:
         """Render durable memory inside a single prompt budget (default 4000 chars).
 
@@ -160,7 +191,7 @@ class MemoryStore:
             return ""
         text = (
             "# Memory\n"
-            "Honor durable notes below. Use the `memory` tool to list, remember, or forget.\n\n"
+            "Honor durable notes below. Use the `memory` tool to list, recall, remember, or forget.\n\n"
             + "\n\n".join(parts)
         )
         if len(text) > max_chars:

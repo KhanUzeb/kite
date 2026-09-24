@@ -253,6 +253,15 @@ def test_token_efficiency_spill_tiers_and_errors(tmp_path) -> None:
     assert ledger.error_rate("bash") == 1.0 and ledger.summary()["unexpected"] == {"bash": 1}
 
 
+def test_memory_recall_action(tmp_path) -> None:
+    mem_tool = next(t for t in make_coding_tools(cwd=str(tmp_path), enabled=["memory"]) if t.name == "memory")
+    assert mem_tool.run({"action": "remember", "text": "auth session cookie note", "scope": "project"})["ok"] is True
+    mem_tool.run({"action": "remember", "text": "friday deploy pipeline", "scope": "user"})
+    out = mem_tool.run({"action": "recall", "text": "auth cookie"})
+    assert out["ok"] is True and "cookie" in out["output"] and "friday" not in out["output"].lower()
+    assert mem_tool.run({"action": "recall", "text": ""})["ok"] is False
+
+
 def test_observation_compaction_and_shell() -> None:
     raw = "x" * 20_000
     out = observation_content({"ok": True, "output": raw, "summary": "42 lines matched in src/app.py"}, max_chars=2_000)

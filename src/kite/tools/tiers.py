@@ -31,7 +31,7 @@ OFFLOAD_BLURBS: dict[str, str] = {
     "webcrawl": "crawl a site from a seed URL",
     "subagent": "spawn nested worker(s) with bundled profiles",
     "task": "bounded code search (glob+grep summary)",
-    "memory": "list/remember/forget durable notes",
+    "memory": "list/recall/remember/forget durable notes",
     "skill": "load a named skill",
     "set_cwd": "move session working directory",
 }

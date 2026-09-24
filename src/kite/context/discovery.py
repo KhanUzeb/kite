@@ -51,32 +51,71 @@ class ProjectContext:
     verification_source: str = ""  # ci | manifest | empty
 
     def render_for_prompt(self, *, max_chars: int = 12_000) -> str:
+        """Priority-ordered sections under one budget (instructions > verification > repo map > git > tree).
+
+        Each section is capped to its share before joining, so a huge tree can
+        never squeeze out project instructions — the highest-signal section.
+        """
         from kite.context.project_init import agent_nudges_markdown
 
-        parts: list[str] = [
-            f"## Workspace\n- cwd: {self.cwd}\n- project_root: {self.root}",
-        ]
+        head = f"## Workspace\n- cwd: {self.cwd}\n- project_root: {self.root}"
         nudges = agent_nudges_markdown(self.root)
+        instruction_blocks = [
+            f"## Project instructions ({cf.path})\n{cf.content.strip()}" for cf in self.files
+        ]
+        budgets = _section_budgets(max_chars, has_instructions=bool(instruction_blocks))
+        sections: list[str] = [head]
         if nudges:
-            parts.append(nudges)
-        if self.repo_map:
-            parts.append(f"## Repo map (symbols)\n```\n{self.repo_map}\n```")
-        if self.tree_snippet:
-            parts.append(f"## Directory sketch\n```\n{self.tree_snippet}\n```")
-        if self.git_status:
-            parts.append(f"## Git status\n```\n{self.git_status}\n```")
+            sections.append(_cap(nudges, budgets["nudges"]))
+        sections.extend(_cap(b, budgets["instructions"]) for b in instruction_blocks)
         if self.verification_command:
             src = self.verification_source or "detected"
-            parts.append(
-                f"## Canonical verification ({src})\n"
-                f"Prefer this command before claiming done:\n`{self.verification_command}`"
+            sections.append(
+                _cap(
+                    f"## Canonical verification ({src})\n"
+                    f"Prefer this command before claiming done:\n`{self.verification_command}`",
+                    budgets["verification"],
+                )
             )
-        for cf in self.files:
-            parts.append(f"## Project instructions ({cf.path})\n{cf.content.strip()}")
-        text = "\n\n".join(parts)
+        if self.repo_map:
+            sections.append(_cap(f"## Repo map (symbols)\n```\n{self.repo_map}\n```", budgets["repo_map"]))
+        if self.git_status:
+            sections.append(_cap(f"## Git status\n```\n{self.git_status}\n```", budgets["git"]))
+        if self.tree_snippet:
+            sections.append(_cap(f"## Directory sketch\n```\n{self.tree_snippet}\n```", budgets["tree"]))
+        text = "\n\n".join(sections)
         if len(text) > max_chars:
             return text[: max_chars - 20] + "\n\n...[truncated]..."
         return text
+
+
+def _cap(text: str, budget: int) -> str:
+    if len(text) <= budget:
+        return text
+    return text[: max(0, budget - 24)] + "\n...[section truncated]..."
+
+
+def _section_budgets(max_chars: int, *, has_instructions: bool) -> dict[str, int]:
+    """Share one budget across sections; instructions always win."""
+    if max_chars <= 0:
+        return {"nudges": 0, "instructions": 0, "verification": 0, "repo_map": 0, "git": 0, "tree": 0}
+    if has_instructions:
+        return {
+            "nudges": max_chars // 20,
+            "instructions": max_chars // 2,
+            "verification": max_chars // 10,
+            "repo_map": max_chars // 5,
+            "git": max_chars // 10,
+            "tree": max_chars // 10,
+        }
+    return {
+        "nudges": max_chars // 20,
+        "instructions": 0,
+        "verification": max_chars // 8,
+        "repo_map": max_chars // 3,
+        "git": max_chars // 6,
+        "tree": max_chars // 6,
+    }
 
 
 def find_project_root(cwd: Path) -> Path:
@@ -214,12 +253,15 @@ def gather_project_context(
         if include_repo_map and build_repo_map is not None:
             repo_map = build_repo_map(root, max_chars=4_000)
         verify_cmd, verify_src = resolve_verification_command(root)
+        # The repo map already carries structure; a full tree on top of it is
+        # duplicate directory info on every request — shrink it when both exist.
+        tree_entries = tree_max_entries if not repo_map else min(tree_max_entries, 48)
         return ProjectContext(
             root=root,
             cwd=cwd_path,
             files=discover_agents_files(cwd_path),
             git_status=git_status_snippet(cwd_path) if include_git else "",
-            tree_snippet=tree_snippet(root, max_entries=tree_max_entries) if include_tree else "",
+            tree_snippet=tree_snippet(root, max_entries=tree_entries) if include_tree else "",
             repo_map=repo_map,
             verification_command=verify_cmd,
             verification_source=verify_src,

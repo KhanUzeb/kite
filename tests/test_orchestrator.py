@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock
 
+import pytest
+
 from kite.agent.cancel import CancelToken
 from kite.agent.orchestrator import (
     SubagentOrchestrator,
@@ -116,6 +118,21 @@ def test_run_parallel_orders_counts_and_input_order() -> None:
     assert outputs[0].startswith("out:slow first")
     assert outputs[1].startswith("out:fast second")
     assert ordered["output"].index("alpha") < ordered["output"].index("beta")
+
+
+def test_worker_cost_propagates_to_tree_total() -> None:
+    def paid_runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
+        return {"exit_status": "Submitted", "submission": f"done:{prompt}", "cost": 0.02}
+
+    orch = SubagentOrchestrator(runner=paid_runner, max_workers=2, timeout_seconds=0)
+    one = orch.run_one("solo task", label="solo")
+    assert one["ok"] is True and one["cost"] == 0.02
+    crew = orch.run_parallel(["a", "b"], labels=["w1", "w2"])
+    assert crew["total_cost"] == pytest.approx(0.04)
+    assert all(r.get("cost") == 0.02 for r in crew["results"])
+
+    long_text = "B" * 5000
+    assert "[truncated" in summarize_result(long_text) and len(summarize_result(long_text)) <= 1600
 
 
 def test_dispatch_validation_async_depth_and_combos() -> None:
@@ -363,8 +380,8 @@ def test_profiles_tiers_scopes_and_allowlist() -> None:
     assert get_profile("scout").tools == ("read", "grep", "glob", "ls")
     assert get_profile("reviewer").tools == ("read", "grep", "glob", "ls")
     assert get_profile("shell").tools == ("read", "bash", "grep", "glob", "ls")
-    assert get_profile("coder").tools == ()  # inherit parent registry
-    assert get_profile("context").tools == ()
+    assert get_profile("coder").tools == ("read", "write", "edit", "bash", "grep", "glob", "ls", "todo_write", "todo_read", "task")
+    assert get_profile("context").tools == ("read", "grep", "glob", "ls", "task")
 
     assert set(ROLE_MODEL_TIERS) == {"fast", "coder", "smart"}
     assert all(chain[0] == "parent" for chain in ROLE_MODEL_TIERS.values())
@@ -440,7 +457,9 @@ def test_dispatch_forwards_profile_allowlist() -> None:
 
     orch.run_one("build", label="b", profile="coder")
     assert seen[-1]["model_role"] == "coder"
-    assert seen[-1]["allowed_tools"] is None  # inherit parent registry
+    assert seen[-1]["allowed_tools"] == [
+        "read", "write", "edit", "bash", "grep", "glob", "ls", "todo_write", "todo_read", "task",
+    ]
 
     orch.run_one("jit", label="j")  # no profile at all
     assert seen[-1]["allowed_tools"] is None

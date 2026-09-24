@@ -731,6 +731,13 @@ def make_coding_tools(
             except ValueError as e:
                 return {"ok": False, "error": str(e), "output": str(e)}
             return {"ok": True, "output": f"remembered {note.scope}/{note.id}: {note.text}", "id": note.id}
+        if action == "recall":
+            query = str(args.get("text") or args.get("query") or "").strip()
+            if not query:
+                return {"ok": False, "error": "text required", "output": "text required"}
+            notes = mem.semantic.relevant_notes(query, limit=8)
+            lines = [f"{n.scope}/{n.id}  {n.text}" for n in notes]
+            return {"ok": True, "output": "\n".join(lines) or "(no relevant notes)", "count": len(notes)}
         if action == "forget":
             query = str(args.get("text") or args.get("query") or "").strip()
             if not query:
@@ -741,7 +748,7 @@ def make_coding_tools(
             lines = [f"forgot {n.scope}/{n.id}: {n.text}" for n in result.notes]
             lines.extend(f"forgot episode {e.id}: {e.summary}" for e in result.episodes)
             return {"ok": True, "output": "\n".join(lines), "count": result.total}
-        return {"ok": False, "error": "action must be list|remember|forget", "output": "action must be list|remember|forget"}
+        return {"ok": False, "error": "action must be list|remember|forget|recall", "output": "action must be list|remember|forget|recall"}
 
     reason_prop = {"reason": {"type": "string", "description": "One-line why, shown in the UI"}}
 
@@ -1092,16 +1099,11 @@ def make_coding_tools(
             Tool(
                 name="subagent",
                 description=(
-                    "Spawn nested LLM worker(s) for independent exploration.\n"
-                    "• Base personas: profile=scout|reviewer|shell|coder|context (+ prompt task)\n"
-                    "• Custom role: role=architect|implementer|debugger\n"
-                    "• One worker: prompt + optional label/profile/role\n"
-                    "• Crew: prompts + labels/profiles/roles (sync by default)\n"
-                    "• Async: background=true or wait=false; returns job_id immediately\n"
-                    "• Collect: wait_for=[job_id, ...] (cannot combine with new prompts)\n"
-                    "• Model override: model= + optional provider= (arrays for crews)\n"
-                    "Prefer bundled profiles over microscopic JIT workers.\n"
-                    "Monitor: /agents · /live agents · Stop: /kill"
+                    "Spawn nested LLM worker(s) when reasoning over code is needed (search-only: use task).\n"
+                    "• One worker: prompt + profile=scout|reviewer|shell|coder|context (+ role, label)\n"
+                    "• Crew: prompts + profiles/labels (sync); background=true for async, wait_for=[job_id] to collect\n"
+                    "• Model override: model= (+ provider=); omit to inherit. Workers return short handoffs.\n"
+                    "Monitor: /agents · Stop: /kill"
                 ),
                 parameters={
                     "type": "object",
@@ -1199,15 +1201,15 @@ def make_coding_tools(
             "memory",
             Tool(
                 name="memory",
-                description="List, add, or drop durable notes (user or project). Survives sessions. Not the chat log.",
+                description="List, recall, add, or drop durable notes (user or project). Survives sessions. Not the chat log.",
                 parameters={
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["list", "remember", "forget"],
+                            "enum": ["list", "remember", "forget", "recall"],
                         },
-                        "text": {"type": "string", "description": "Note text, or a substring/id to forget"},
+                        "text": {"type": "string", "description": "Note text, recall query, or a substring/id to forget"},
                         "scope": {"type": "string", "enum": ["user", "project"]},
                     },
                     "required": ["action"],

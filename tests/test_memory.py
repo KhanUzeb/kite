@@ -204,6 +204,27 @@ def test_continuity_budget_memory_render(workspace, kite_home) -> None:
     assert len(store.render_for_prompt(max_chars=1200)) <= 1200
 
 
+def test_relevant_recall_and_working_notes(workspace, kite_home) -> None:
+    from kite.memory.working_notes import load_notes, notes_block, save_notes
+
+    store = MemoryStore.open(workspace)
+    store.remember("auth uses session cookies with SameSite=lax", scope="project")
+    store.remember("prefer ruff for lint", scope="project")
+    store.remember("deploy pipeline runs on Fridays", scope="user")
+    hits = store.semantic.relevant_notes("auth session cookie bug", limit=2)
+    assert len(hits) == 1 and "cookie" in hits[0].text.lower()
+    relevant = store.render_relevant_for_prompt("auth session cookie bug", max_chars=2000)
+    assert "cookie" in relevant
+    # Relevant notes lead; unrelated notes trail only in the episodic tail.
+    assert relevant.index("cookie") < relevant.index("Fridays")
+
+    assert load_notes(workspace) == "" and notes_block(workspace) == ""
+    save_notes(workspace, "\n".join(f"line {i}" for i in range(60)))
+    loaded = load_notes(workspace)
+    assert len(loaded.splitlines()) == 40 and "line 0" in loaded
+    assert notes_block(workspace).startswith("## Working notes")
+
+
 def test_user_context_profiles_and_working_style(workspace, kite_home) -> None:
     assert user_path().name == "USER.md" and profile_path().name == "PROFILE.md"
     append_user_note("prefers pytest")

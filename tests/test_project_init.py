@@ -107,6 +107,39 @@ def test_memory_layers_prompt() -> None:
     assert "Memory layers" in assemble_system_prompt(config=load_runtime_config(), skills=[])
 
 
+def test_context_section_budgets_protect_instructions(tmp_path) -> None:
+    from kite.context.discovery import ProjectContext
+
+    ctx = ProjectContext(
+        root=tmp_path,
+        cwd=tmp_path,
+        files=(),
+        git_status="M a.py",
+        tree_snippet="root/\n" + "\n".join(f"├── f{i}.py" for i in range(200)),
+        repo_map="",
+        verification_command="pytest -q",
+        verification_source="manifest",
+    )
+    rendered = ctx.render_for_prompt(max_chars=2000)
+    assert len(rendered) <= 2000 and "Canonical verification" in rendered
+    assert "Git status" in rendered and "section truncated" in rendered
+
+    from kite.context.discovery import ContextFile
+
+    ctx2 = ProjectContext(
+        root=tmp_path,
+        cwd=tmp_path,
+        files=(ContextFile(path="AGENTS.md", content="ALWAYS OBEY THIS INSTRUCTION"),),
+        git_status="",
+        tree_snippet="x" * 9000,
+        repo_map="",
+        verification_command="",
+        verification_source="",
+    )
+    rendered2 = ctx2.render_for_prompt(max_chars=2000)
+    assert "ALWAYS OBEY THIS INSTRUCTION" in rendered2 and len(rendered2) <= 2000
+
+
 def test_stable_setup_split_keeps_prefix_cacheable(tmp_path) -> None:
     from kite.prompts import split_system_and_setup
 

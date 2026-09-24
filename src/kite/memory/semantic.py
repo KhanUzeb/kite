@@ -25,6 +25,15 @@ Durable facts and preferences. Edit this file, or use `/remember`.
 ## Notes
 """
 
+_STOPWORDS = frozenset(
+    {
+        "the", "and", "for", "with", "from", "that", "this", "have", "has",
+        "are", "was", "were", "will", "would", "should", "could", "about",
+        "into", "over", "under", "between", "what", "when", "where", "which",
+        "while", "after", "before", "task", "code", "file", "files", "test",
+    }
+)
+
 
 @dataclass(frozen=True)
 class Note:
@@ -127,6 +136,24 @@ class SemanticStore:
         if scope in (None, "project"):
             rows.extend(parse_notes(_read(self.project_path()), scope="project"))
         return rows
+
+    def relevant_notes(self, query: str, *, limit: int = 6, scope: MemoryScope | None = None) -> list[Note]:
+        """Keyword-overlap recall: top notes sharing significant tokens with the task.
+
+        No embeddings dependency — cheap, deterministic, and enough to stop
+        dumping the whole notes file into every prompt.
+        """
+        tokens = {t for t in re.findall(r"[a-z0-9]{3,}", query.lower()) if t not in _STOPWORDS}
+        if not tokens:
+            return self.notes(scope)[:limit]
+        scored: list[tuple[int, float, Note]] = []
+        for note in self.notes(scope):
+            words = set(re.findall(r"[a-z0-9]{3,}", note.text.lower()))
+            overlap = len(tokens & words)
+            if overlap:
+                scored.append((overlap, note.created, note))
+        scored.sort(key=lambda row: (row[0], row[1]), reverse=True)
+        return [note for _, _, note in scored[:limit]]
 
     def remember(self, text: str, *, scope: MemoryScope = "user") -> Note:
         from kite.memory.secure_io import clamp_memory_text
