@@ -94,16 +94,19 @@ def _managed_shim() -> str:
     return shutil.which("kite") or "kite"
 
 
-def _windows_helper_script(lines: list[str], log: str) -> str:
-    """Detached-helper body: marker lines bracket the real work for log forensics."""
+def _windows_helper_script(steps: list[tuple[str, str]], log: str, *, settle: bool = True) -> str:
+    """Detached-helper body: per-step exit labels bracket the work for log forensics.
+
+    Note: under a detached launch, some tools print nothing to the redirected
+    log (verified: exit codes propagate, output vanishes). Labels + exit codes
+    are therefore the source of truth; rerun the failing step manually for output.
+    """
     body = [f'echo [kite] starting >> "{log}" 2>&1\r\n']
-    for line in lines:
-        stripped = line.rstrip("\r\n")
-        if stripped.lower().startswith("timeout "):
-            body.append(stripped + "\r\n")
-            continue
-        body.append(stripped + f' >> "{log}" 2>&1\r\n')
-        body.append(f'echo [kite] exit=%ERRORLEVEL% >> "{log}" 2>&1\r\n')
+    if settle:
+        body.append("timeout /t 3 /nobreak >nul\r\n")
+    for label, cmd in steps:
+        body.append(cmd.rstrip("\r\n") + f' >> "{log}" 2>&1\r\n')
+        body.append(f'echo [kite] {label} exit=%ERRORLEVEL% >> "{log}" 2>&1\r\n')
     body += [f'echo [kite] done >> "{log}" 2>&1\r\n', 'del "%~f0"\r\n']
     return "@echo off\r\n" + "".join(body)
 
@@ -118,9 +121,8 @@ def _windows_update_script(uv: str, spec: str, log: str, *, shim: str = "") -> s
     shim = shim or _managed_shim()
     return _windows_helper_script(
         [
-            "timeout /t 3 /nobreak >nul",
-            f'"{uv}" tool install --force "{spec}"',
-            f'"{shim}" --version',
+            ("install", f'"{uv}" tool install --force "{spec}"'),
+            ("verify", f'"{shim}" --version'),
         ],
         log,
     )
@@ -128,7 +130,7 @@ def _windows_update_script(uv: str, spec: str, log: str, *, shim: str = "") -> s
 
 def _windows_uninstall_script(uv: str, log: str) -> str:
     """Detached uninstall helper: `uv tool uninstall` tears down the running env."""
-    return _windows_helper_script([f'"{uv}" tool uninstall kite'], log)
+    return _windows_helper_script([("uninstall", f'"{uv}" tool uninstall kite')], log, settle=False)
 
 
 def _launch_detached_helper(name: str, script: str, log: str, console, *, noun: str) -> int:  # noqa: ANN001
