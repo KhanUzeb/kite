@@ -216,7 +216,8 @@ def test_token_efficiency_registry_order_and_sparse_numbers(tmp_path) -> None:
     assert [s["function"]["name"] for s in reg.tool_schemas()] == ["bash", "read", "write"]
 
     target = tmp_path / "code.py"
-    target.write_text("".join(f"line {i}\n" for i in range(1, 31)))
+    # Pin LF bytes: Windows text-mode writes would translate \n to \r\n.
+    target.write_bytes("".join(f"line {i}\n" for i in range(1, 31)).encode("utf-8"))
     read = next(t for t in make_coding_tools(cwd=str(tmp_path), enabled=["read"]) if t.name == "read")
     out = read.run({"path": str(target), "numbered": True})
     assert out["ok"] is True
