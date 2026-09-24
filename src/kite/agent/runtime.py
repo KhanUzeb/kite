@@ -32,7 +32,7 @@ from kite.memory.audit import AuditLog
 from kite.memory.session import Session, create_session, load_session
 from kite.memory.store import MemoryStore
 from kite.models.cache import PromptCacheManager
-from kite.prompts import assemble_instance_prompt, assemble_system_prompt, load_prompt_template
+from kite.prompts import assemble_instance_prompt, load_prompt_template
 from kite.providers.resolve import ResolvedModel, missing_credentials, missing_model, resolve_model
 from kite.skills.loader import load_skills
 from kite.tools import ToolRegistry
@@ -98,6 +98,7 @@ class AgentRuntime:
     tool_executor_override: Any = None
     policy_engine_override: Any = None
     message_queue: RunMessageQueue | None = None
+    _last_setup: str = field(default="", init=False)
     _static_prepare_cache: tuple[Any, ...] | None = field(default=None, init=False)
 
     def invalidate_prepare_cache(self) -> None:
@@ -308,8 +309,11 @@ class AgentRuntime:
                 continuity=continuity_text,
                 cwd=cwd,
             )
+            self._last_setup = ""
         else:
-            system = assemble_system_prompt(
+            from kite.prompts import split_system_and_setup
+
+            stable, setup = split_system_and_setup(
                 config=rcfg,
                 project_context=project_ctx,
                 skills=skills,
@@ -320,6 +324,8 @@ class AgentRuntime:
                 continuity=continuity_text,
                 cwd=cwd,
             )
+            system = stable
+            self._last_setup = setup
         self.hooks.fire(
             "after_prepare",
             config=rcfg,
@@ -637,7 +643,13 @@ class AgentRuntime:
             out_path = ensure_home() / "trajectories" / f"{session.id}.json"
 
         instance = assemble_instance_prompt(config=rcfg, task="{task}")
-        system = system.rstrip() + "\n\n" + workspace.render_for_prompt() + "\n"
+        # Volatile workspace state rides in the setup user message after the
+        # cache breakpoint — never in the stable system prefix (§2 Move + §4).
+        setup = (getattr(self, "_last_setup", "") or "").rstrip()
+        workspace_block = workspace.render_for_prompt().strip()
+        if workspace_block:
+            setup = "\n\n".join(p for p in (setup, workspace_block) if p).strip()
+        project_setup = (setup + "\n") if setup else ""
 
         summarizer = self.slots.summarizer
         if summarizer is None and not self.options.no_compact:
@@ -671,7 +683,7 @@ class AgentRuntime:
             env,
             system_prompt=system,
             instance_prompt=instance,
-            project_context="",
+            project_context=project_setup,
             step_limit=step_limit,
             cost_limit=cost_limit,
             wall_time_limit_seconds=(

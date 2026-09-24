@@ -222,8 +222,17 @@ class LitellmModel:
             clean = {
                 k: v
                 for k, v in m.items()
-                if k in {"role", "content", "tool_calls", "tool_call_id", "name"} and v is not None
+                if k in {"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"}
+                and v is not None
             }
+            # Reasoning continuity: pass the model's prior thinking back on later
+            # turns instead of dropping it (dropping cost one reasoning model 30%
+            # on a coding benchmark as it reconstructed its plan each turn).
+            if m.get("role") == "assistant" and not clean.get("reasoning_content"):
+                extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
+                prior = str(extra.get("reasoning") or "").strip()
+                if prior:
+                    clean["reasoning_content"] = prior
             if clean.get("role") == "assistant" and clean.get("tool_calls"):
                 # Providers that validate function-call pairing reject an
                 # assistant tool_call whose output was never recorded, so
@@ -234,7 +243,12 @@ class LitellmModel:
                         clean["tool_calls"] = paired
                     else:
                         clean.pop("tool_calls", None)
-            if clean.get("role") == "assistant" and not clean.get("content") and not clean.get("tool_calls"):
+            if (
+                clean.get("role") == "assistant"
+                and not clean.get("content")
+                and not clean.get("tool_calls")
+                and not clean.get("reasoning_content")
+            ):
                 continue
             api_messages.append(clean)
         return api_messages
@@ -354,6 +368,9 @@ class LitellmModel:
                 "reasoning": reasoning,
             },
         }
+        if reasoning.strip():
+            # Top-level copy so _api_messages can pass thinking back verbatim.
+            out["reasoning_content"] = reasoning
         if tool_calls_out:
             out["tool_calls"] = tool_calls_out
         return out

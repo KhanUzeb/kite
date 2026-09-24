@@ -55,13 +55,16 @@ class ToolRegistry:
         return self._tools.get(name)
 
     def list(self) -> list[Tool]:
-        return list(self._tools.values())
+        # Sorted for a byte-identical cached prefix across turns (see §4 of the
+        # token-efficiency guide: deterministic tool order keeps prompt caching hot).
+        return [self._tools[name] for name in sorted(self._tools)]
 
     def tool_schemas(self) -> list[dict[str, Any]]:
         """Provider-neutral tool definitions (OpenAI function schema via LiteLLM)."""
         if self._schema_cache is None:
-            self._schema_cache = [t.schema() for t in self._tools.values()]
-        return self._schema_cache
+            self._schema_cache = [t.schema() for t in self.list()]
+        # Return a copy so callers can't mutate the cached prefix in place.
+        return [dict(s) for s in self._schema_cache]
 
     def openai_schemas(self) -> list[dict[str, Any]]:
         """Alias for tool_schemas — kept for callers expecting the legacy name."""

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json as _json
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path as _Path
 from typing import Any
 
 from kite.context.window import ContextUsage, compact_messages, estimate_usage, should_compact, trim_stale_tool_messages
@@ -125,6 +127,27 @@ def run_compaction(
     did = compacted != messages
     if did or working is not messages:
         usage = estimate_usage(system=system, messages=compacted, tool_schemas=tool_schemas, window=window)
+    if did and cwd.strip():
+        # §6: full pre-compaction history stays searchable in the workspace so
+        # the compact summary can stay ~1k tokens without losing recall.
+        try:
+            hist_dir = _Path(cwd).expanduser().resolve() / ".kite" / "history"
+            hist_dir.mkdir(parents=True, exist_ok=True)
+            stamp = (session_id or "session")[:12]
+            hist_path = hist_dir / f"precompact-{stamp}-{len(messages)}msgs.jsonl"
+            with hist_path.open("w", encoding="utf-8") as fh:
+                for m in working:
+                    fh.write(_json.dumps({"role": m.get("role"), "content": str(m.get("content") or "")[:4000]}) + "\n")
+            try:
+                rel = str(hist_path.relative_to(_Path(cwd).expanduser().resolve()))
+            except ValueError:
+                rel = str(hist_path)
+            for m in compacted:
+                if isinstance(m, dict) and m.get("role") == "user" and str(m.get("content") or "").startswith("Previous conversation summary:"):
+                    m["content"] = str(m["content"]) + f"\n\nFull history: {rel} (grep/read for dropped details)"
+                    break
+        except OSError:
+            pass
     return CompactionRunResult(
         messages=compacted,
         compacted=did,

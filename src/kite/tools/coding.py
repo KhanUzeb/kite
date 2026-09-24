@@ -46,8 +46,13 @@ def _read_text_bounded(path: Path, *, max_bytes: int = _READ_MAX_BYTES) -> tuple
         data = handle.read(max_bytes + 1)
     if len(data) > max_bytes:
         data = data[:max_bytes]
-        return data.decode("utf-8", errors="replace"), True
-    return data.decode("utf-8", errors="replace"), False
+        text = data.decode("utf-8", errors="replace")
+        return text.replace("\r\n", "\n").replace("\r", "\n"), True
+    text = data.decode("utf-8", errors="replace")
+    # Normalize line endings so read output is byte-identical across
+    # platforms (Windows text-mode writes would otherwise leak \r\n into
+    # every later request and break the stable cache prefix).
+    return text.replace("\r\n", "\n").replace("\r", "\n"), False
 
 
 def _safe_int(value: Any, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
@@ -242,7 +247,17 @@ def make_coding_tools(
         elif limit is None and len(chunk) > _READ_MAX_LINES:
             chunk = chunk[:_READ_MAX_LINES]
         if numbered:
-            body = "".join(f"{i + start:6}|{line}" for i, line in enumerate(chunk))
+            # Sparse line numbers: every 10th file line keeps citation anchors while
+            # cutting ~90% of numbering overhead (each number costs 3-5 tokens and
+            # agents read tens of thousands of lines per session).
+            parts: list[str] = []
+            for i, line in enumerate(chunk):
+                lineno = i + start
+                if lineno == start or lineno % 10 == 1:
+                    parts.append(f"{lineno:6}|{line}")
+                else:
+                    parts.append(line)
+            body = "".join(parts)
         else:
             body = "".join(chunk)
         truncated = file_truncated
@@ -473,6 +488,29 @@ def make_coding_tools(
                 and lines[0].strip() == "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
                 and rc == 0
             )
+            # §5: large outputs spill to a file (path/size/tail) instead of
+            # bloating every later request; the agent can tail/grep/read ranges.
+            if len(output) > 32_000 and not submitted:
+                try:
+                    from kite.context.spill import spill_text
+
+                    spilled = spill_text(output, cwd=workdir, prefix="bash")
+                    if spilled.get("spilled"):
+                        result_spill: dict[str, Any] = {
+                            "ok": rc == 0,
+                            "returncode": rc,
+                            "output": str(spilled["output"]),
+                            "submitted": False,
+                            "submission": "",
+                            "spilled": True,
+                            "spill_path": spilled.get("path"),
+                            "spill_size": spilled.get("size"),
+                        }
+                        if stream_redactions:
+                            result_spill["secrets_redacted"] = stream_redactions
+                        return result_spill
+                except Exception:
+                    pass
             result: dict[str, Any] = {
                 "ok": rc == 0,
                 "returncode": rc,
@@ -720,7 +758,7 @@ def make_coding_tools(
                 description=(
                     "Bounded file read — fallback when a bash peek is not enough. "
                     "Prefer bash (rg, head, sed -n, wc -l) for search; "
-                    "set numbered=true only when you need line numbers. Large files auto-truncate."
+                    "set numbered=true only when you need line numbers (sparse: every 10th line). Large files auto-truncate."
                 ),
                 parameters={
                     "type": "object",
@@ -728,7 +766,7 @@ def make_coding_tools(
                         "path": {"type": "string"},
                         "offset": {"type": "integer", "description": "1-based start line"},
                         "limit": {"type": "integer", "description": "Max lines to return"},
-                        "numbered": {"type": "boolean", "description": "Prefix line numbers (costs tokens)"},
+                        "numbered": {"type": "boolean", "description": "Sparse line numbers every 10th line (costs tokens)"},
                     },
                     "required": ["path"],
                 },

@@ -101,16 +101,23 @@ def _supports_breakpoints(provider: str) -> bool:
 
 
 def apply_cache_breakpoints(messages: list[dict], *, provider: str, enabled: bool = True) -> list[dict]:
-    """Add Anthropic-style cache_control on stable prefix messages."""
+    """Add Anthropic-style cache_control on stable prefix messages.
+
+    Layout follows the token-efficiency guide: ``tools → system → [break] →
+    setup/summary → [break] → conversation``. Up to two breakpoints: one on the
+    system prompt and one on the compaction summary (the stable setup block).
+    Volatile conversation turns never get a breakpoint.
+    """
     if not enabled or not _supports_breakpoints(provider):
         return messages
 
     out: list[dict] = []
-    breakpoint_set = False
+    breakpoints = 0
     for m in messages:
         msg = dict(m)
         role = msg.get("role")
-        if not breakpoint_set and role == "system":
+        extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
+        if breakpoints == 0 and role == "system":
             content = msg.get("content")
             if isinstance(content, str) and content.strip():
                 msg["content"] = [
@@ -120,8 +127,21 @@ def apply_cache_breakpoints(messages: list[dict], *, provider: str, enabled: boo
                         "cache_control": {"type": "ephemeral"},
                     }
                 ]
-                breakpoint_set = True
-        elif not breakpoint_set and role == "user" and isinstance(msg.get("content"), str):
+                breakpoints += 1
+        elif breakpoints >= 1 and breakpoints < 2 and role == "user" and isinstance(msg.get("content"), str):
+            text = str(msg["content"])
+            is_setup = bool(extra.get("setup")) or text.startswith("# Setup")
+            is_summary = text.startswith("Previous conversation summary:")
+            if is_setup or is_summary:
+                msg["content"] = [
+                    {
+                        "type": "text",
+                        "text": text,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+                breakpoints += 1
+        elif breakpoints == 0 and role == "user" and isinstance(msg.get("content"), str):
             text = str(msg["content"])
             if text.startswith("Previous conversation summary:"):
                 msg["content"] = [
@@ -131,7 +151,7 @@ def apply_cache_breakpoints(messages: list[dict], *, provider: str, enabled: boo
                         "cache_control": {"type": "ephemeral"},
                     }
                 ]
-                breakpoint_set = True
+                breakpoints += 1
         out.append(msg)
     return out
 

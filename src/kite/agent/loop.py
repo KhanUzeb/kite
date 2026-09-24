@@ -356,6 +356,13 @@ class DefaultAgent:
         self._phase_markers: set[int] = set()
         self.tool_call_count = 0
         self.tool_counts: dict[str, int] = {}
+        self.tool_errors: dict[str, int] = {}
+        try:
+            from kite.tools.errors import ToolErrorLedger
+
+            self.error_ledger = ToolErrorLedger()
+        except Exception:  # pragma: no cover
+            self.error_ledger = None  # type: ignore[assignment]
         self._tool_started_at: float | None = None
         self._turn_started_at: float | None = None
         self._turn_tool_names: list[str] = []
@@ -488,9 +495,26 @@ class DefaultAgent:
             self.on_event(Event(kind=kind, payload=payload))  # type: ignore[arg-type]
 
     def _full_system(self) -> str:
-        if not self.project_context:
-            return self.system_prompt
-        return f"{self.system_prompt}\n\n# Active project context\n{self.project_context}"
+        # Stable prefix only — volatile setup rides as a user message after the
+        # cache breakpoint (§2 Move + §4) so timestamps/repo state never
+        # invalidate the cached system block.
+        return self.system_prompt
+
+    def _setup_text(self) -> str:
+        return (self.project_context or "").strip()
+
+    def _setup_message(self) -> dict | None:
+        setup = self._setup_text()
+        if not setup:
+            return None
+        body = f"# Setup (reference — not the task)\n{setup}"
+        msg = self.model.format_message(role="user", content=body, extra={"setup": True})
+        # format_message stubs may drop `extra`; the "# Setup" prefix is the
+        # provider-visible marker, `extra.setup` is the harness-side flag.
+        extra = dict(msg.get("extra") or {})
+        extra.setdefault("setup", True)
+        msg["extra"] = extra
+        return msg
 
     def _user_turn_text(self, task: str, *, follow: str, kwargs: dict) -> str:
         """In chat, send what the user typed. One-shot `kite run` still formats through instance.md."""
@@ -622,10 +646,14 @@ class DefaultAgent:
             self.messages = []
             if not self.attachments:
                 content = prompt
-            self.add_messages(
+            starter = [
                 self.model.format_message(role="system", content=self._full_system()),
-                self.model.format_message(role="user", content=content),
-            )
+            ]
+            setup_msg = self._setup_message()
+            if setup_msg is not None:
+                starter.append(setup_msg)
+            starter.append(self.model.format_message(role="user", content=content))
+            self.add_messages(*starter)
 
         # SIGINT handlers may only be installed on the main thread. REPL turns
         # run on a worker (kite-turn); Esc/Ctrl+C/Ctrl+G cancel via composer.
@@ -1249,12 +1277,19 @@ class DefaultAgent:
             self._turn_tool_names.append(tool)
         if self._counts_as_tool_failure(tool, args, out):
             self._tool_fail_streak += 1
+            self.tool_errors[tool] = self.tool_errors.get(tool, 0) + 1
             if self._tool_fail_streak >= _TOOL_FAIL_STREAK_NUDGE_AFTER:
                 existing = str(out.get("output") or out.get("error") or "")
                 fail_nudge = _TOOL_FAIL_NUDGE.format(n=self._tool_fail_streak)
                 out = {**out, "output": f"{existing}\n\n{fail_nudge}".strip()}
         elif not out.get("blocked"):
             self._tool_fail_streak = 0
+        if self.error_ledger is not None:
+            try:
+                model_name = str(getattr(getattr(self.model, "resolved", None), "model", "") or "")
+                self.error_ledger.record(tool, out, model=model_name)
+            except Exception:
+                pass
         nudge = self.verification.post_edit_nudge()
         if nudge and out.get("ok") and tool in {"write", "edit"}:
             existing = str(out.get("output") or "")

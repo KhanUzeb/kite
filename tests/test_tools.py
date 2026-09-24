@@ -205,6 +205,55 @@ def test_submit_verification_background_jobs_and_orchestrator(tmp_path) -> None:
     assert SubagentOrchestrator(runner=MagicMock()).dispatch({})["ok"] is False
 
 
+def test_token_efficiency_registry_order_and_sparse_numbers(tmp_path) -> None:
+    from kite.tools import Tool, ToolRegistry
+
+    def _mk(name: str) -> Tool:
+        return Tool(name, name, {"type": "object", "properties": {}}, lambda _a: {"ok": True})
+
+    reg = ToolRegistry([_mk("write"), _mk("bash"), _mk("read")])
+    assert [t.name for t in reg.list()] == ["bash", "read", "write"]
+    assert [s["function"]["name"] for s in reg.tool_schemas()] == ["bash", "read", "write"]
+
+    target = tmp_path / "code.py"
+    # Pin LF bytes: Windows text-mode writes would translate \n to \r\n.
+    target.write_bytes("".join(f"line {i}\n" for i in range(1, 31)).encode("utf-8"))
+    read = next(t for t in make_coding_tools(cwd=str(tmp_path), enabled=["read"]) if t.name == "read")
+    out = read.run({"path": str(target), "numbered": True})
+    assert out["ok"] is True
+    body = str(out["output"])
+    # Sparse: first line + every 10th file line numbered, middle lines raw.
+    assert "     1|line 1" in body
+    assert "    11|line 11" in body
+    assert "    21|line 21" in body
+    assert "line 2\n" in body and "     2|line 2" not in body
+
+
+def test_token_efficiency_spill_tiers_and_errors(tmp_path) -> None:
+    from kite.context.spill import spill_text
+    from kite.tools.errors import ToolErrorLedger, classify_tool_error
+    from kite.tools.tiers import offload_manifest, partition_tools
+
+    small = spill_text("x" * 100, cwd=str(tmp_path))
+    assert small["spilled"] is False
+    big = spill_text("y\n" * 8000, cwd=str(tmp_path), prefix="bash")
+    assert big["spilled"] is True and "tail" not in str(big["path"])
+    assert "grep" in str(big["output"]) and (tmp_path / ".kite" / "spills").is_dir()
+
+    static, off = partition_tools(["read", "bash", "websearch", "memory"], enabled=False)
+    assert off == [] and len(static) == 4
+    static2, off2 = partition_tools(["read", "bash", "websearch", "memory"], enabled=True)
+    assert static2 == ["read", "bash"] and sorted(off2) == ["memory", "websearch"]
+    assert "web:" in offload_manifest(off2)
+
+    assert classify_tool_error("read", {}, {"ok": False, "error": "not found: /x"}) == "invalid_arguments"
+    assert classify_tool_error("bash", {}, {"ok": False, "error": "timeout after 5s"}) == "timeout"
+    assert classify_tool_error("bash", {}, {"ok": False, "error": "weird boom xyz"}) == "unknown"
+    ledger = ToolErrorLedger()
+    ledger.record("bash", {"ok": False, "error": "weird boom xyz"}, model="m1")
+    assert ledger.error_rate("bash") == 1.0 and ledger.summary()["unexpected"] == {"bash": 1}
+
+
 def test_observation_compaction_and_shell() -> None:
     raw = "x" * 20_000
     out = observation_content({"ok": True, "output": raw, "summary": "42 lines matched in src/app.py"}, max_chars=2_000)

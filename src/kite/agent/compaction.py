@@ -155,7 +155,8 @@ class LoopCompactor:
             summarizer=summarizer,
             force=force,
             enabled=self.config.enabled,
-            session_id=None,
+            session_id=self.session_id,
+            cwd=self.cwd,
             checkpoint_before=False,
             extra_facts=self.extra_facts,
         )

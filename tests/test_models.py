@@ -128,6 +128,76 @@ def test_api_messages_drop_unanswered_tool_calls() -> None:
     assert emptied == []
 
 
+def test_token_efficiency_reasoning_and_cache_breakpoints() -> None:
+    from kite.models.cache import apply_cache_breakpoints
+
+    model = object.__new__(LitellmModel)
+    # Reasoning continuity: prior thinking passes through even from legacy extra-only transcripts.
+    projected = model._api_messages(
+        [
+            {"role": "system", "content": "sys"},
+            {
+                "role": "assistant",
+                "content": "working",
+                "extra": {"reasoning": "plan: check auth then edit"},
+            },
+            {"role": "user", "content": "next"},
+        ]
+    )
+    assistant = next(m for m in projected if m["role"] == "assistant")
+    assert assistant.get("reasoning_content") == "plan: check auth then edit"
+
+    # Two-breakpoint layout: system + compaction summary both pin the stable prefix.
+    msgs = [
+        {"role": "system", "content": "stable instructions"},
+        {"role": "user", "content": "Previous conversation summary:\nfoo"},
+        {"role": "user", "content": "volatile follow-up"},
+    ]
+    out = apply_cache_breakpoints(msgs, provider="anthropic")
+    assert out[0]["content"][0].get("cache_control") == {"type": "ephemeral"}
+    assert out[1]["content"][0].get("cache_control") == {"type": "ephemeral"}
+    assert isinstance(out[2]["content"], str)
+
+    # Single summary without system still gets one breakpoint (backward compat).
+    solo = apply_cache_breakpoints(
+        [{"role": "user", "content": "Previous conversation summary:\nfoo"}],
+        provider="anthropic",
+    )
+    assert solo[0]["content"][0].get("cache_control") == {"type": "ephemeral"}
+
+    # Setup message after the system prefix gets the second breakpoint.
+    setup_msgs = [
+        {"role": "system", "content": "stable"},
+        {"role": "user", "content": "# Setup (reference — not the task)\n- cwd: /r", "extra": {"setup": True}},
+        {"role": "user", "content": "do work"},
+    ]
+    setup_out = apply_cache_breakpoints(setup_msgs, provider="anthropic")
+    assert setup_out[1]["content"][0].get("cache_control") == {"type": "ephemeral"}
+    assert isinstance(setup_out[2]["content"], str)
+
+
+def test_token_efficiency_report_and_routing() -> None:
+    from kite.context.token_report import breakdown_request, price_weighted_cost, rank_opportunities, summarize_run
+    from kite.models.routing import route_turn
+
+    msgs = [
+        {"role": "user", "content": "# Setup (reference — not the task)\nx"},
+        {"role": "assistant", "content": "hi", "tool_calls": [{"id": "1", "function": {"name": "read"}}]},
+        {"role": "user", "content": "next"},
+    ]
+    breakdown = breakdown_request(system="sys", tool_schemas=[{"function": {"name": "read"}}], messages=msgs)
+    assert breakdown.static_tokens > 0 and breakdown.total_tokens > breakdown.static_tokens
+    assert price_weighted_cost(prompt_tokens=100, completion_tokens=10, cache_read_tokens=90, model_name="unknown-xyz") > 0
+    ranked = rank_opportunities(breakdown)
+    assert [name for name, _ in ranked] and breakdown.shares["history"] >= 0
+    run = summarize_run(system="sys", messages=msgs, tool_counts={"read": 1}, tool_errors={}, total_runs=1)
+    assert run.turns_per_task == 1.0
+
+    assert route_turn("hi", enabled=False) == "frontier"
+    assert route_turn("hi?", enabled=True) == "cheap"
+    assert route_turn("implement auth fix", enabled=True) == "frontier"
+
+
 def test_usage_tracking_and_litellm_serializer() -> None:
     import warnings
 
