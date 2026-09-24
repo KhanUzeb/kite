@@ -511,17 +511,19 @@ def test_fold_long_paste_collapse_expand_and_bindings() -> None:
         for binding in bindings.get_bindings_for_keys((Keys.F9,))
         if binding.handler.__name__ == "_fold_toggle"
     )
-    expand = next(
+    # Regression: no <any> eager binding — it swallowed every keystroke
+    # (prompt_toolkit prefers eager matches), freezing the composer.
+    assert not [
         binding
         for binding in bindings.get_bindings_for_keys((Keys.Any,))
         if binding.handler.__name__ == "_fold_expand"
-    )
+    ]
     key_buf = SimpleNamespace(text="\n".join(f"line {i}" for i in range(12)), cursor_position=0)
     event = SimpleNamespace(current_buffer=key_buf)
     fold_toggle.handler(event)
     assert is_folded(key_buf)
     # Placeholder is never what gets submitted — expansion restores first.
-    expand.handler(event)
+    assert unfold_buffer(key_buf) is True
     assert not is_folded(key_buf)
     assert key_buf.text.split("\n") == [f"line {i}" for i in range(12)]
 

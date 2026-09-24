@@ -1136,13 +1136,10 @@ def make_repl_key_bindings(
         if not unfold_buffer(buf):
             fold_buffer(buf)
 
-    @bindings.add("<any>", eager=True)
-    def _fold_expand(event) -> None:  # noqa: ANN001
-        """Any interaction with a folded composer expands it first."""
-        try:
-            unfold_buffer(event.current_buffer)
-        except Exception:
-            pass
+    # NOTE: no <any> eager binding here — it swallows every keystroke
+    # (prompt_toolkit prefers eager matches, so normal typing never reached
+    # the default insert handler and the composer looked frozen). Submit
+    # paths already call unfold_buffer() explicitly.
 
     @bindings.add("escape", "enter", eager=True, filter=busy)
     def _busy_alt_enter(event) -> None:  # noqa: ANN001
