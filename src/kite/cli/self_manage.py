@@ -79,6 +79,58 @@ def _install_kind() -> str:
     return "source checkout"
 
 
+def _windows_update_script(uv: str, spec: str, log: str) -> str:
+    """Build the detached update helper for Windows (pure — tested offline).
+
+    A running .exe cannot be replaced on Windows, so `kite update` can never
+    upgrade its own environment in place (os error 32/5). The helper waits
+    for this process to exit, then reinstalls from outside the locked env.
+    """
+    shim = shutil.which("kite") or "kite"
+    return (
+        "@echo off\r\n"
+        "timeout /t 3 /nobreak >nul\r\n"
+        f'"{uv}" tool install --force "{spec}" >> "{log}" 2>&1\r\n'
+        f'"{shim}" --version >> "{log}" 2>&1\r\n'
+        'del "%~f0"\r\n'
+    )
+
+
+def _windows_detached_reinstall(uv: str, spec: str, console) -> int:  # noqa: ANN001
+    """Finish `kite update` in a detached helper after this process exits."""
+    import tempfile
+
+    log = os.path.join(tempfile.gettempdir(), "kite-update.log")
+    helper = os.path.join(tempfile.gettempdir(), "kite-update-helper.cmd")
+    try:
+        with open(helper, "w", encoding="utf-8", newline="") as handle:
+            handle.write(_windows_update_script(uv, spec, log))
+    except OSError as e:
+        console.print(f"[red]update failed[/]  [kite.muted]cannot write helper: {e}[/]")
+        return 1
+    try:
+        subprocess.Popen(  # noqa: S603
+            ["cmd", "/c", helper],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=0x00000008 | 0x00000200,  # DETACHED_PROCESS | NEW_PROCESS_GROUP
+            close_fds=True,
+        )
+    except OSError as e:
+        console.print(f"[red]update failed[/]  [kite.muted]cannot start helper: {e}[/]")
+        return 1
+    console.print("[kite.success]update handed off[/]  [kite.muted]it finishes in the background")
+    console.print("[kite.muted]after this process exits (Windows locks the running install).[/]")
+    console.print(f"[kite.muted]check a new terminal with[/] kite --version  [kite.muted](log: {log})[/]")
+    return 0
+
+
+def _use_detached_handoff() -> bool:
+    """Windows self-update must outlive the locked running env; unix upgrades in place."""
+    return os.name == "nt"
+
+
 def cmd_update(args: argparse.Namespace) -> int:
     """Upgrade the managed kite CLI in place (uv tool upgrade, git fallback)."""
     from kite import __version__
@@ -112,6 +164,16 @@ def cmd_update(args: argparse.Namespace) -> int:
     ref = (getattr(args, "ref", None) or os.environ.get("KITE_REPO_REF") or DEFAULT_REF).strip() or DEFAULT_REF
     repo = (getattr(args, "repo", None) or os.environ.get("KITE_REPO_URL") or DEFAULT_REPO).strip() or DEFAULT_REPO
     force_reinstall = bool(getattr(args, "force", False)) or bool(getattr(args, "ref", None))
+
+    def _spec() -> str:
+        # Strip a literal ".git" suffix only (never char-trim — "kite.git" must stay "kite").
+        base = repo[:-4] if repo.endswith(".git") else repo
+        return f"git+{base}.git@{ref}"
+
+    if _use_detached_handoff():
+        # In-place upgrade always fails on Windows (running env is file-locked);
+        # hand off to a detached helper instead of failing with os error 32/5.
+        return _windows_detached_reinstall(uv, _spec(), console)
 
     def _reinstall() -> int:
         # Strip a literal ".git" suffix only (never char-trim — "kite.git" must stay "kite").

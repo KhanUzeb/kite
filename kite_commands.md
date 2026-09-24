@@ -103,6 +103,8 @@ kite sessions --delete <id> [<id> ...]
 kite sessions --delete-all     # TTY confirms; else pass -y
 kite setup [-p provider]       # first-run wizard: credentials + model
 kite update [--check] [--ref REF] [--force]  # upgrade installed CLI via uv tool (fallback: git reinstall); bare `kite update` updates, it does NOT open chat
+                                # Windows: the update hands off to a background helper after this process exits
+                                # (the running install is file-locked) — check `kite --version` in a new terminal
 kite uninstall [-y] [--purge]  # remove CLI; keeps ~/.kite data unless --purge (--purge retries read-only files and reports leftovers)
 kite login [provider]          # pick provider if omitted → BYOK key or BYOS browser → pick model
                                 # BYOS (chatgpt/claude/grok/antigravity): opens your browser to the sign-in URL

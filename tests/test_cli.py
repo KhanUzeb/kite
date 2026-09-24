@@ -382,6 +382,8 @@ def test_update_uninstall_print_dispatch(monkeypatch, kite_home, capsys) -> None
     assert __version__ in capsys.readouterr().err
 
     # update on a managed install runs `uv tool upgrade kite` (mocked, headless-safe).
+    # (Windows instead hands off to a detached helper — see next test.)
+    monkeypatch.setattr("kite.cli.self_manage._use_detached_handoff", lambda: False)
     calls: list[list[str]] = []
 
     class _Proc:
@@ -416,6 +418,33 @@ def test_update_uninstall_print_dispatch(monkeypatch, kite_home, capsys) -> None
     monkeypatch.setattr("kite.cli.run.cmd_run", fake_run)
     assert cmd_print(argparse.Namespace(task=["hello", "world"])) == 0
     assert seen["task"] == "hello world"
+
+
+def test_windows_update_handoff_script(monkeypatch, tmp_path, capsys) -> None:
+    """Windows self-update must not touch the locked env: build + launch helper only."""
+    from unittest.mock import MagicMock
+
+    from kite.cli import self_manage
+
+    spec = "git+https://github.com/KhanUzeb/kite.git@main"
+    script = self_manage._windows_update_script("C:\\uv\\uv.exe", spec, "C:\\Temp\\kite-update.log")
+    assert "tool install --force" in script and spec in script
+    assert "timeout /t 3" in script and 'del "%~f0"' in script
+
+    monkeypatch.setattr(self_manage, "_use_detached_handoff", lambda: True)
+    monkeypatch.setattr(self_manage, "_managed", lambda: True)
+    monkeypatch.setattr("shutil.which", lambda name: f"C:\\bin\\{name}.exe")
+    launched: list[list[str]] = []
+    monkeypatch.setattr(
+        "kite.cli.self_manage.subprocess.Popen",
+        lambda cmd, **_k: launched.append(list(cmd)) or MagicMock(),
+    )
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+    import argparse
+
+    assert self_manage.cmd_update(argparse.Namespace(check=False, force=False, ref=None, repo=None)) == 0
+    assert launched and launched[0][:2] == ["cmd", "/c"]
+    assert (tmp_path / "kite-update-helper.cmd").is_file()
 
 
 def test_gh_cli_dispatch(monkeypatch, kite_home, capsys) -> None:
