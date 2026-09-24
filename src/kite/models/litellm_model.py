@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import threading
 import time
 import warnings
 from collections.abc import Callable
@@ -32,6 +34,39 @@ def _as_str(value: Any) -> str:
     if isinstance(value, str):
         return value
     return ""
+
+
+_prewarm_lock = threading.Lock()
+_prewarm_thread: threading.Thread | None = None
+
+
+def prewarm_litellm() -> None:
+    """Start a background import of litellm (~7s cold on first touch).
+
+    Call once from REPL/run startup while the user reads the banner or
+    context gathers — the first turn's `import litellm` then hits warmed
+    `sys.modules` (or waits briefly on the import lock if the turn wins
+    the race). Idempotent, daemon (never blocks exit), exception-safe.
+    """
+    global _prewarm_thread
+    if "litellm" in sys.modules:
+        return
+    with _prewarm_lock:
+        if "litellm" in sys.modules:
+            return
+        if _prewarm_thread is not None and _prewarm_thread.is_alive():
+            return
+
+        def _import() -> None:
+            try:
+                import litellm  # noqa: F401
+            except Exception:
+                pass
+
+        _prewarm_thread = threading.Thread(
+            target=_import, daemon=True, name="kite-litellm-prewarm"
+        )
+        _prewarm_thread.start()
 
 
 @contextmanager

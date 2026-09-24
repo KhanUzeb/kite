@@ -137,6 +137,11 @@ class ChatSession:
         self._slash_handler_map: dict[str, Callable[[str], None]] | None = None
         self._inbox = MessageInbox()
         self._composer_action: dict[str, str] = {"kind": "submit"}
+        # First model turn imports litellm (~7s cold) — warm it while the
+        # session/banner/composer spin up so the import overlaps user time.
+        from kite.models.litellm_model import prewarm_litellm
+
+        prewarm_litellm()
         self._busy = False
         self._quit_after_turn = False
         self._approval_coord = None

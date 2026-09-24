@@ -239,7 +239,9 @@ def _build_harness_from_args(
 
 def cmd_run(args: argparse.Namespace) -> int:
     from kite.config import ensure_home
+    from kite.models.litellm_model import prewarm_litellm
 
+    prewarm_litellm()  # ~7s cold import overlaps attachment/mode/context setup
     console = _console()
     print_only = bool(getattr(args, "print_mode", False))
     if print_only:

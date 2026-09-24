@@ -294,3 +294,19 @@ def test_thinking_level_clamp_and_apply(tmp_path, kite_home) -> None:
 
     session._apply_thinking_level("high")
     assert session.state.reasoning == "thinking:high"
+
+def test_prewarm_litellm_idempotent_and_daemon() -> None:
+    import sys
+
+    from kite.models import litellm_model
+
+    litellm_model.prewarm_litellm()
+    first = litellm_model._prewarm_thread
+    litellm_model.prewarm_litellm()
+    assert litellm_model._prewarm_thread is first
+    if first is None:
+        assert "litellm" in sys.modules  # already warm: no thread needed
+        return
+    assert first.daemon is True
+    first.join(timeout=90.0)
+    assert "litellm" in sys.modules
