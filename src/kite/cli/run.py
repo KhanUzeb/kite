@@ -1435,9 +1435,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     keys.set_defaults(func=_lazy_cmd("kite.cli.setup", "cmd_keys"))
 
-    from kite.cli.web_keys import add_web_keys_parser
-
-    add_web_keys_parser(sub)
+    # web-keys structure is defined inline (like every other subcommand) so
+    # --help/parse never imports the provider chain; the handler stays lazy.
+    web_keys_p = sub.add_parser(
+        "web-keys",
+        aliases=["web_keys"],
+        help="Show or set optional web tool API keys (Tavily / Exa / Firecrawl)",
+    )
+    _web_keys_cmd = _lazy_cmd("kite.cli.web_keys", "cmd_web_keys")
+    web_sub = web_keys_p.add_subparsers(dest="web_keys_cmd")
+    web_sub.add_parser("status", aliases=["list"], help="Show which web keys are set").set_defaults(
+        func=_web_keys_cmd
+    )
+    web_set = web_sub.add_parser("set", help="Paste and save a web tool key (hidden)")
+    web_set.add_argument("name", nargs="?", help="tavily | exa | firecrawl (omit to pick)")
+    web_set.set_defaults(func=_web_keys_cmd)
+    web_out = web_sub.add_parser(
+        "logout",
+        aliases=["unset", "remove"],
+        help="Remove a web tool key from ~/.kite/.env",
+    )
+    web_out.add_argument("name", nargs="?", help="tavily | exa | firecrawl (omit to pick)")
+    web_out.set_defaults(func=_web_keys_cmd)
+    web_keys_p.set_defaults(func=_web_keys_cmd, web_keys_cmd="status")
 
     maintainer = sub.add_parser("maintainer")
     maint_sub = maintainer.add_subparsers(dest="maintainer_cmd")
@@ -1562,10 +1582,20 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--json", action="store_true")
     dashboard.set_defaults(func=_lazy_cmd("kite.cli.dashboard", "cmd_dashboard"))
 
-    from kite.cli.subagents import add_subagents_parser
+    # subagents structure inline so --help/parse avoids the agent-profile chain.
+    subagents_p = sub.add_parser(
+        "subagents",
+        help="List, show, or scaffold subagent personas (bundled + ~/.kite/subagents/)",
+    )
+    subagents_p.add_argument("--show", metavar="ID", help="Show one persona by id")
+    subagents_p.add_argument("--init", metavar="ID", help="Write ~/.kite/subagents/<id>.md stub")
+    subagents_p.add_argument("--label", default="", help="With --init, display label in frontmatter")
+    subagents_p.add_argument("--role", default="auto", help="With --init, role hint (architect|implementer|debugger|auto)")
+    subagents_p.add_argument("--description", default="", help="With --init, one-line description")
+    subagents_p.add_argument("--force", action="store_true", help="Overwrite existing user profile")
+    subagents_p.set_defaults(func=_lazy_cmd("kite.cli.subagents", "cmd_subagents"))
     from kite.cli.tasks import add_tasks_parser
 
-    add_subagents_parser(sub)
     add_tasks_parser(sub)
 
     from kite.cli.gh import add_gh_parser
