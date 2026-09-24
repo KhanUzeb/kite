@@ -21,6 +21,14 @@ def test_harness_benchmarks_within_budget(workspace) -> None:
     assert not violations, "\n".join(violations)
 
 
+def test_token_efficiency_offline_report() -> None:
+    from kite.bench.token_efficiency import report
+
+    rep = report()
+    assert rep["tools_saved_tokens"] > 0 and rep["breakpoints"] == 2
+    assert rep["total_core"] < rep["total_full"] and rep["ranked_sources"]
+
+
 def test_report_roundtrip(workspace, tmp_path) -> None:
     report = run_suite(cwd=workspace)
     path = tmp_path / "bench.json"

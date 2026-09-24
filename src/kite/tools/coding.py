@@ -483,6 +483,29 @@ def make_coding_tools(
                 and lines[0].strip() == "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
                 and rc == 0
             )
+            # §5: large outputs spill to a file (path/size/tail) instead of
+            # bloating every later request; the agent can tail/grep/read ranges.
+            if len(output) > 32_000 and not submitted:
+                try:
+                    from kite.context.spill import spill_text
+
+                    spilled = spill_text(output, cwd=workdir, prefix="bash")
+                    if spilled.get("spilled"):
+                        result_spill: dict[str, Any] = {
+                            "ok": rc == 0,
+                            "returncode": rc,
+                            "output": str(spilled["output"]),
+                            "submitted": False,
+                            "submission": "",
+                            "spilled": True,
+                            "spill_path": spilled.get("path"),
+                            "spill_size": spilled.get("size"),
+                        }
+                        if stream_redactions:
+                            result_spill["secrets_redacted"] = stream_redactions
+                        return result_spill
+                except Exception:
+                    pass
             result: dict[str, Any] = {
                 "ok": rc == 0,
                 "returncode": rc,

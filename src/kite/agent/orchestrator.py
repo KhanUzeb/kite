@@ -1019,6 +1019,12 @@ class SubagentOrchestrator:
 
         succeeded = sum(1 for r in results.values() if r.get("ok"))
         ok = succeeded == len(prompts)
+        total_cost = 0.0
+        for r in results.values():
+            try:
+                total_cost += float(r.get("cost") or 0.0)
+            except (TypeError, ValueError):
+                pass
         rows = []
         for i in sorted(results):
             r = results[i]
@@ -1054,6 +1060,8 @@ class SubagentOrchestrator:
             "run_id": crew_run,
             "parent_id": parent_id,
             "manager": self.manager_view(),
+            # §6 model mix: measure the whole tree (planner + workers), not the planner alone.
+            "total_cost": total_cost,
         }
 
     def run_parallel_background(

@@ -131,6 +131,31 @@ def test_query_limits_retry_fault_and_budget_guard() -> None:
         assert "budget" in blob
 
 
+def test_stable_setup_messages_and_compaction_history(workspace: Path) -> None:
+    from kite.memory.compaction_ops import run_compaction
+
+    model = _StubModel()
+    agent = DefaultAgent(
+        model,
+        LocalEnvironment(registry=ToolRegistry([])),
+        system_prompt="stable instructions",
+        project_context="## Workspace\n- cwd: /repo",
+    )
+    assert agent._full_system() == "stable instructions"
+    setup = agent._setup_message()
+    assert setup is not None and setup["role"] == "user" and setup["extra"].get("setup") is True
+
+    msgs = [{"role": "system", "content": "s"}]
+    msgs += [{"role": "user", "content": "word " * 4000}] * 6
+    result = run_compaction(
+        msgs, window=8_000, reserve_tokens=1_000, keep_recent_tokens=200,
+        force=True, session_id="sess-1", cwd=str(workspace),
+    )
+    assert result.compacted
+    assert (workspace / ".kite" / "history").is_dir()
+    assert any("Full history:" in str(m.get("content") or "") for m in result.messages)
+
+
 def test_loop_guard_and_schema_repair(workspace: Path) -> None:
     # (merged from test_loop_guard_warns_and_hard_stops)
     guard = LoopGuard(repeat_threshold=3)

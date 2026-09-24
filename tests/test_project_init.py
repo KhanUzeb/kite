@@ -105,3 +105,12 @@ def test_ecosystem_ci_verify_and_context_block(tmp_path: Path) -> None:
 def test_memory_layers_prompt() -> None:
     assert "AGENTS.md" in load_prompt_template("memory_layers")
     assert "Memory layers" in assemble_system_prompt(config=load_runtime_config(), skills=[])
+
+
+def test_stable_setup_split_keeps_prefix_cacheable(tmp_path) -> None:
+    from kite.prompts import split_system_and_setup
+
+    config = load_runtime_config()
+    stable, setup = split_system_and_setup(config=config, skills=[])
+    assert "UTC:" not in stable and "UTC:" in setup
+    assert "Kite" in stable and len(stable) > 500

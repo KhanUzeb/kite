@@ -116,7 +116,8 @@ def apply_cache_breakpoints(messages: list[dict], *, provider: str, enabled: boo
     for m in messages:
         msg = dict(m)
         role = msg.get("role")
-        if breakpoints < 2 and role == "system" and breakpoints == 0:
+        extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
+        if breakpoints == 0 and role == "system":
             content = msg.get("content")
             if isinstance(content, str) and content.strip():
                 msg["content"] = [
@@ -127,9 +128,11 @@ def apply_cache_breakpoints(messages: list[dict], *, provider: str, enabled: boo
                     }
                 ]
                 breakpoints += 1
-        elif breakpoints >= 1 and role == "user" and isinstance(msg.get("content"), str):
+        elif breakpoints >= 1 and breakpoints < 2 and role == "user" and isinstance(msg.get("content"), str):
             text = str(msg["content"])
-            if text.startswith("Previous conversation summary:"):
+            is_setup = bool(extra.get("setup")) or text.startswith("# Setup")
+            is_summary = text.startswith("Previous conversation summary:")
+            if is_setup or is_summary:
                 msg["content"] = [
                     {
                         "type": "text",
