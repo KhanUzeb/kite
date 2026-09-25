@@ -90,7 +90,7 @@ Exit paths: **`submit`** tool or bash submit marker, step/cost/time limits, user
 | `agent/compaction.py` | Pre-query compaction gate (`LoopCompactor`) |
 | `agent/events.py` | Thin event types (`tool_start`, `stream_delta`, `compact`, …) |
 | `models/litellm_model.py` | LiteLLM adapter, streaming with blocking fallback, reasoning effort, prompt cache |
-| `providers/` | Catalog, resolve, credentials, live model listing, gateway key fallbacks |
+| `providers/` | Catalog, resolve, credentials, live model listing, gateway key fallbacks, strict NIM parallel-tool gating |
 | `tools/coding.py` | Built-in tools: read/write/edit/bash/grep/glob/ls/web/… |
 | `guardrails/` | Path sandbox, bash deny patterns, secret redaction |
 | `context/window.py` | Token estimate, `compact_messages`, deterministic summary |
