@@ -94,20 +94,37 @@ def _managed_shim() -> str:
     return shutil.which("kite") or "kite"
 
 
-def _windows_helper_script(steps: list[tuple[str, str]], log: str, *, settle: bool = True) -> str:
+def _windows_helper_script(
+    steps: list[tuple[str, str]], log: str, *, settle: bool = True, stream_console: bool = False
+) -> str:
     """Detached-helper body: per-step exit labels bracket the work for log forensics.
 
     Note: under a detached launch, some tools print nothing to the redirected
     log (verified: exit codes propagate, output vanishes). Labels + exit codes
     are therefore the source of truth; rerun the failing step manually for output.
+
+    ``stream_console`` is for helpers launched attached to the user's console
+    (``kite update``): step banners echo to the terminal so progress streams
+    where the user typed, while exit codes still land in the log. The parent
+    process has already exited by the time steps run (Windows file lock), so
+    the lines appear just under the next shell prompt.
     """
     body = [f'echo [kite] starting >> "{log}" 2>&1\r\n']
     if settle:
         body.append("timeout /t 3 /nobreak >nul\r\n")
     for label, cmd in steps:
-        body.append(cmd.rstrip("\r\n") + f' >> "{log}" 2>&1\r\n')
+        if stream_console:
+            # ASCII only: cmd.exe reads .cmd files in the system codepage,
+            # so non-ASCII banners (ellipsis, dashes) render as garbage.
+            body.append(f"echo [kite] {label}...\r\n")
+            body.append(cmd.rstrip("\r\n") + "\r\n")
+        else:
+            body.append(cmd.rstrip("\r\n") + f' >> "{log}" 2>&1\r\n')
         body.append(f'echo [kite] {label} exit=%ERRORLEVEL% >> "{log}" 2>&1\r\n')
-    body += [f'echo [kite] done >> "{log}" 2>&1\r\n', 'del "%~f0"\r\n']
+    body += [f'echo [kite] done >> "{log}" 2>&1\r\n']
+    if stream_console:
+        body += ['echo [kite] done - open a NEW terminal and run kite --version to confirm\r\n']
+    body += ['del "%~f0"\r\n']
     return "@echo off\r\n" + "".join(body)
 
 
@@ -125,6 +142,7 @@ def _windows_update_script(uv: str, spec: str, log: str, *, shim: str = "") -> s
             ("verify", f'"{shim}" --version'),
         ],
         log,
+        stream_console=True,
     )
 
 
@@ -159,19 +177,52 @@ def _launch_detached_helper(name: str, script: str, log: str, console, *, noun: 
     return 0
 
 
+def _launch_console_helper(name: str, script: str, log: str, console, *, noun: str) -> int:  # noqa: ANN001
+    """Write a helper .cmd and start it attached to this console.
+
+    Unlike the detached launcher, stdio is inherited so the helper's progress
+    streams in the terminal where the user typed (it appears just under the
+    next shell prompt — the parent must exit first, Windows locks the running
+    install). NEW_PROCESS_GROUP without DETACHED_PROCESS keeps it alive after
+    the parent exits while sharing the console window.
+    """
+    import tempfile
+
+    helper = os.path.join(tempfile.gettempdir(), name)
+    try:
+        with open(helper, "w", encoding="utf-8", newline="") as handle:
+            handle.write(script)
+    except OSError as e:
+        console.print(f"[red]{noun} failed[/]  [kite.muted]cannot write helper: {e}[/]")
+        return 1
+    try:
+        subprocess.Popen(  # noqa: S603
+            ["cmd", "/c", helper],
+            stdin=subprocess.DEVNULL,
+            stdout=None,
+            stderr=None,
+            creationflags=0x00000200,  # NEW_PROCESS_GROUP (no DETACHED_PROCESS)
+            close_fds=True,
+        )
+    except OSError as e:
+        console.print(f"[red]{noun} failed[/]  [kite.muted]cannot start helper: {e}[/]")
+        return 1
+    return 0
+
+
 def _windows_detached_reinstall(uv: str, spec: str, console) -> int:  # noqa: ANN001
-    """Finish `kite update` in a detached helper after this process exits."""
+    """Finish `kite update` in a console-attached helper after this process exits."""
     import tempfile
 
     log = os.path.join(tempfile.gettempdir(), "kite-update.log")
-    rc = _launch_detached_helper(
+    rc = _launch_console_helper(
         "kite-update-helper.cmd", _windows_update_script(uv, spec, log), log, console, noun="update"
     )
     if rc != 0:
         return rc
-    console.print("[kite.success]update handed off[/]  [kite.muted]it finishes in the background")
-    console.print("[kite.muted]after this process exits (Windows locks the running install).[/]")
-    console.print(f"[kite.muted]check a new terminal with[/] kite --version  [kite.muted](log: {log})[/]")
+    console.print("[kite.success]update running[/]  [kite.muted]progress streams below — the shell stays free[/]")
+    console.print("[kite.muted]it waits ~3s for this process to exit, then reinstalls (Windows locks the running install).[/]")
+    console.print(f"[kite.muted]exit codes → {log} · confirm in a NEW terminal with[/] kite --version")
     return 0
 
 

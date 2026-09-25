@@ -431,6 +431,10 @@ def test_windows_update_handoff_script(monkeypatch, tmp_path, capsys) -> None:
     assert "tool install --force" in script and spec in script
     assert "timeout /t 3" in script and 'del "%~f0"' in script
     assert "[kite] starting" in script and "[kite] done" in script
+    # Update streams in the terminal you typed in: step banners echo to the
+    # console and the install itself is NOT redirected to the log (only exit codes are).
+    assert "echo [kite] install" in script
+    assert f'"C:\\uv\\uv.exe" tool install --force "{spec}"\r\n' in script
 
     uninstall_script = self_manage._windows_uninstall_script("C:\\uv\\uv.exe", "C:\\Temp\\kite-un.log")
     assert "tool uninstall kite" in uninstall_script and "[kite] done" in uninstall_script
@@ -438,16 +442,21 @@ def test_windows_update_handoff_script(monkeypatch, tmp_path, capsys) -> None:
     monkeypatch.setattr(self_manage, "_use_detached_handoff", lambda: True)
     monkeypatch.setattr(self_manage, "_managed", lambda: True)
     monkeypatch.setattr("shutil.which", lambda name: f"C:\\bin\\{name}.exe")
-    launched: list[list[str]] = []
+    launched: list[tuple[list[str], dict]] = []
     monkeypatch.setattr(
         "kite.cli.self_manage.subprocess.Popen",
-        lambda cmd, **_k: launched.append(list(cmd)) or MagicMock(),
+        lambda cmd, **k: launched.append((list(cmd), k)) or MagicMock(),
     )
     monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
     import argparse
 
     assert self_manage.cmd_update(argparse.Namespace(check=False, force=False, ref=None, repo=None)) == 0
-    assert launched and launched[0][:2] == ["cmd", "/c"]
+    assert launched and launched[0][0][:2] == ["cmd", "/c"]
+    # Console-attached: stdio inherited (streams in the original terminal),
+    # no DETACHED_PROCESS flag so output isn't swallowed.
+    kwargs = launched[0][1]
+    assert kwargs.get("stdout") is None and kwargs.get("stderr") is None
+    assert not (int(kwargs.get("creationflags") or 0) & 0x00000008)
     assert (tmp_path / "kite-update-helper.cmd").is_file()
 
 
