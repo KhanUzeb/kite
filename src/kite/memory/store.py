@@ -144,6 +144,36 @@ class MemoryStore:
         except ValueError:
             return None
 
+    def retrieve_for_prompt(self, task: str, *, max_chars: int = 1_600) -> str:
+        terms = {word.lower() for word in task.replace("/", " ").replace("\\", " ").split() if len(word) > 2}
+        notes = self.notes()
+        ranked = sorted(
+            notes,
+            key=lambda note: (
+                note.scope == "project",
+                any(term in note.text.lower() for term in terms),
+                note.created,
+            ),
+            reverse=True,
+        )
+        selected: list[str] = []
+        for note in ranked:
+            if note.scope == "user" and not any(term in note.text.lower() for term in terms):
+                continue
+            selected.append(f"- {note.text}")
+            if sum(len(item) + 2 for item in selected) >= max_chars // 2:
+                break
+        episodes = [
+            episode
+            for episode in self.episodes(limit=12)
+            if episode.cwd and Path(episode.cwd).expanduser().resolve() == self.cwd
+        ][:3]
+        parts = selected + [f"- {episode.line()}" for episode in episodes]
+        if not parts:
+            return ""
+        text = "# Relevant memory\n" + "\n".join(parts)
+        return text[: max_chars - 20] + "\n...[truncated]" if len(text) > max_chars else text
+
     def render_for_prompt(self, *, max_chars: int = 4_000) -> str:
         """Render durable memory inside a single prompt budget (default 4000 chars).
 

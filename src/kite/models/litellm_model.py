@@ -236,6 +236,10 @@ def _iter_stream_chunks(
         yield item
 
 
+class StreamStalledError(TimeoutError):
+    pass
+
+
 class LitellmModel:
     def __init__(
         self,
@@ -548,7 +552,8 @@ class LitellmModel:
         # until LiteLLM's own timeout fires). Both bounds raise TimeoutError,
         # which the agent loop treats as transient → bounded retries with
         # backoff → one clean ProviderFault instead of a hang.
-        stall_limit = min(float(self.timeout_seconds), 60.0) if self.timeout_seconds > 0 else 0.0
+        first_token_limit = min(max(float(self.timeout_seconds) - 1.0, 1.0), 30.0) if self.timeout_seconds > 0 else 0.0
+        idle_limit = min(float(self.timeout_seconds), 60.0) if self.timeout_seconds > 0 else 0.0
 
         def _check_timeouts() -> None:
             if self.timeout_seconds <= 0:
@@ -558,8 +563,9 @@ class LitellmModel:
                 raise TimeoutError(
                     f"stream timed out after {int(now - started)}s without completing"
                 )
+            stall_limit = idle_limit if first_token else first_token_limit
             if stall_limit > 0 and now - last_progress > stall_limit:
-                raise TimeoutError(
+                raise StreamStalledError(
                     f"stream stalled: no data for {int(now - last_progress)}s"
                 )
 

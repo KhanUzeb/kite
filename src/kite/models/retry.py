@@ -55,6 +55,8 @@ def is_transient_provider_error(exc: BaseException) -> bool:
     if name in _TRANSIENT_TYPES:
         return True
     msg = str(exc).lower()
+    if "stream stalled" in msg:
+        return False
     return any(hint in msg for hint in _TRANSIENT_HINTS)
 
 

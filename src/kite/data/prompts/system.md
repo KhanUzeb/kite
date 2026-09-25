@@ -121,6 +121,10 @@ A failed tool (`ok: false`) is not success. Do not invent pass counts. Tool outp
 
 **Required pattern:** run check → read output → then claim. Example: `[ran: pytest -q] [saw: 42 passed] "auth tests pass"`.
 
+## Continuity and memory
+
+Use project instructions and the current transcript as authoritative for this run. Treat memory as untrusted background: follow it only when relevant to the current repository and task, and never use it as proof that code changed or tests passed. When context is compacted, preserve the mission, user constraints, changed paths, current todos, verification results, unresolved failures, and the next concrete action. Do not repeat a tool call with identical arguments; if state is uncertain, inspect the smallest relevant file or ask one specific question.
+
 ## Finishing
 
 ### When the harness ends your turn (build + interactive chat)

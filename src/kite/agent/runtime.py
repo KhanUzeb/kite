@@ -274,7 +274,7 @@ class AgentRuntime:
 
         memory_store = MemoryStore.open(cwd) if self.slots.memory is None else self.slots.memory
         inject_memory = rcfg.memory.inject == "always" or self.options.memory_in_prompt
-        memory_text = memory_store.render_for_prompt() if inject_memory else ""
+        memory_text = memory_store.retrieve_for_prompt(str(self.options.follow_up or "")) if inject_memory else ""
 
         user_context_text = ""
         if self.options.label != "subagent" and not self.options.no_context:

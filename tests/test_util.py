@@ -70,7 +70,8 @@ def test_discovery_venv_and_compaction(tmp_path) -> None:
     sub.mkdir()
     (sub / "AGENTS.md").write_text("nested agents", encoding="utf-8")
     files = discover_agents_files(sub)
-    assert [Path(f.path).name for f in files].count("AGENTS.md") == 1
+    assert [Path(f.path).name for f in files] == ["AGENTS.md", "AGENTS.md"]
+    assert [f.content for f in files] == ["root agents", "nested agents"]
     (root / "KITE.md").write_text("x" * (MAX_INSTRUCTION_FILE_CHARS + 500), encoding="utf-8")
     huge = discover_agents_files(root)
     kite = next(f for f in huge if Path(f.path).name == "KITE.md")

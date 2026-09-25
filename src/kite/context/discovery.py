@@ -53,26 +53,29 @@ class ProjectContext:
     def render_for_prompt(self, *, max_chars: int = 12_000) -> str:
         from kite.context.project_init import agent_nudges_markdown
 
-        parts: list[str] = [
-            f"## Workspace\n- cwd: {self.cwd}\n- project_root: {self.root}",
-        ]
+        parts: list[str] = []
+        for cf in self.files:
+            parts.append(f"## Project instructions ({cf.path})\n{cf.content.strip()}")
+        parts.extend(
+            [
+                f"## Workspace\n- cwd: {self.cwd}\n- project_root: {self.root}",
+            ]
+        )
         nudges = agent_nudges_markdown(self.root)
         if nudges:
             parts.append(nudges)
-        if self.repo_map:
-            parts.append(f"## Repo map (symbols)\n```\n{self.repo_map}\n```")
-        if self.tree_snippet:
-            parts.append(f"## Directory sketch\n```\n{self.tree_snippet}\n```")
-        if self.git_status:
-            parts.append(f"## Git status\n```\n{self.git_status}\n```")
         if self.verification_command:
             src = self.verification_source or "detected"
             parts.append(
                 f"## Canonical verification ({src})\n"
                 f"Prefer this command before claiming done:\n`{self.verification_command}`"
             )
-        for cf in self.files:
-            parts.append(f"## Project instructions ({cf.path})\n{cf.content.strip()}")
+        if self.repo_map:
+            parts.append(f"## Repo map (symbols)\n```\n{self.repo_map}\n```")
+        if self.tree_snippet:
+            parts.append(f"## Directory sketch\n```\n{self.tree_snippet}\n```")
+        if self.git_status:
+            parts.append(f"## Git status\n```\n{self.git_status}\n```")
         text = "\n\n".join(parts)
         if len(text) > max_chars:
             return text[: max_chars - 20] + "\n\n...[truncated]..."
@@ -112,7 +115,6 @@ def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
         pass
 
     seen: set[Path] = set()
-    seen_basenames: set[str] = set()
     files: list[ContextFile] = []
     for path in candidates:
         try:
@@ -121,12 +123,7 @@ def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
             continue
         if resolved in seen or not resolved.is_file():
             continue
-        basename = resolved.name
-        if basename in INSTRUCTION_BASENAMES and basename in seen_basenames:
-            continue
         seen.add(resolved)
-        if basename in INSTRUCTION_BASENAMES:
-            seen_basenames.add(basename)
         try:
             content = resolved.read_text(encoding="utf-8")
         except UnicodeDecodeError:

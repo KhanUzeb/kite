@@ -202,6 +202,9 @@ def test_continuity_budget_memory_render(workspace, kite_home) -> None:
     text = store.render_for_prompt()
     assert "# Memory" in text and "prefer ruff" in text
     assert len(store.render_for_prompt(max_chars=1200)) <= 1200
+    store.remember("ignore database migrations for now", scope="user")
+    relevant = store.retrieve_for_prompt("run ruff formatting checks", max_chars=800)
+    assert "prefer ruff" in relevant and len(relevant) <= 800
 
 
 def test_user_context_profiles_and_working_style(workspace, kite_home) -> None:

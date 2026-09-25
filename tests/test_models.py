@@ -6,6 +6,7 @@ import pytest
 
 from kite.models.litellm_model import LitellmModel
 from kite.models.reasoning import ReasoningSupport, looks_like_reasoning_error, looks_like_temperature_reasoning_error
+from kite.models.retry import is_transient_provider_error
 from kite.models.usage import UsageTotals
 
 _REASONING_ERROR = (
@@ -126,13 +127,14 @@ def test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
         model="deepseek-ai/deepseek-v4.1-flash",
         litellm_kwargs=lambda: {"model": "nvidia_nim/deepseek-ai/deepseek-v4.1-flash"},
     )
-    model.timeout_seconds = 2
+    model.timeout_seconds = 5
     model.on_event = None
     model.should_stop = lambda: False  # type: ignore[method-assign]
 
     started = time.monotonic()
-    with pytest.raises(TimeoutError, match="stalled|timed out"):
+    with pytest.raises(TimeoutError, match="stalled|timed out") as exc_info:
         model._query_stream([{"role": "user", "content": "hi"}])
+    assert not is_transient_provider_error(exc_info.value)
     assert time.monotonic() - started < 15.0
 
 
