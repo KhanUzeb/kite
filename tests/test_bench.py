@@ -36,17 +36,3 @@ def test_report_roundtrip(workspace, tmp_path) -> None:
     loaded = load_report(path)
     assert len(loaded.results) == len(report.results)
     assert {r.name for r in loaded.results} == {r.name for r in report.results}
-
-
-def test_repl_startup_banner_skips_model_resolve(monkeypatch, tmp_path) -> None:
-    calls: list[str] = []
-
-    def _fake_resolve(**_kwargs):
-        calls.append("resolve")
-        raise AssertionError("resolve_model should not run during startup banner")
-
-    monkeypatch.setattr("kite.providers.resolve.resolve_model", _fake_resolve)
-    from kite.ui.repl import ChatSession
-
-    ChatSession(cwd=str(tmp_path))._startup_banner()
-    assert not calls

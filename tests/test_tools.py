@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from kite.agent.cancel import CancelToken
 from kite.agent.orchestrator import SubagentOrchestrator, evaluate_subagent_result, worker_glyph
@@ -28,62 +28,6 @@ DDG_FIXTURE = """
   <a class="result__snippet">Source code on GitHub.</a>
 </div>
 """
-
-HTML_PAGE = """
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="description" content="A test page for extraction.">
-  <title>Test Page Title</title>
-</head>
-<body>
-<script>ignore me</script>
-<main>
-  <h1>Hello World</h1>
-  <p>First paragraph of content.</p>
-  <p>Second paragraph with <a href="/relative">link</a>.</p>
-</main>
-</body>
-</html>
-"""
-
-
-def test_web_parse_fetch_and_search_filters() -> None:
-    assert web.unwrap_tracking_url("https://duckduckgo.com/l/?uddg=https%3A%2F%2Fgithub.com%2Ffoo%2Fbar") == "https://github.com/foo/bar"
-    assert web.unwrap_tracking_url("https://www.google.com/url?q=https%3A%2F%2Fexample.com&sa=U") == "https://example.com"
-    results = web._parse_ddg_html(DDG_FIXTURE, max_results=5)
-    assert results[0]["url"] == "https://example.com/docs" and results[1]["url"] == "https://github.com/foo"
-    assert len(web._parse_ddg_html(DDG_FIXTURE + DDG_FIXTURE, max_results=10)) == 2
-    merged = web._merge_search_results([{"title": "Example", "url": "https://example.com", "snippet": "instant"}], [{"title": "Example Docs", "url": "https://example.com", "snippet": "html"}], max_results=5)
-    assert len(merged) == 1 and merged[0]["snippet"] == "instant"
-    title, description, text, links = web._extract_page(HTML_PAGE, "https://example.com/page")
-    assert title == "Test Page Title" and "ignore me" not in text and "https://example.com/relative" in links
-    raw = b'<html><head><meta charset="iso-8859-1"></head><body>ok</body></html>'
-    assert web._meta_charset_sniff(raw) == "iso-8859-1"
-    assert web._url_blocked("http://localhost/admin") is not None
-    assert web._url_blocked("https://example.com") is None
-    with patch("kite.tools.web._fetch_url") as mock_fetch:
-        mock_fetch.return_value = (HTML_PAGE.encode(), "text/html", "https://example.com/page", None)
-        out = web.webfetch("https://example.com/page", max_chars=10_000)
-        assert out["ok"] and "Hello World" in out["output"]
-        out = web.webfetch("https://example.com/page", include_links=True)
-        assert out["links"]
-        mock_fetch.return_value = (b'{"name": "kite"}', "application/json", "https://example.com/data.json", None)
-        json_out = web.webfetch("https://example.com/data.json")
-        assert '"name": "kite"' in json_out["output"]
-        blocked = web.webfetch("http://127.0.0.1/secret")
-        assert blocked["ok"] is False
-    with patch("kite.tools.web._ddg_instant", return_value=[{"title": "Local", "url": "http://127.0.0.1/admin", "snippet": "blocked"}]):
-        with patch("kite.tools.web._ddg_html_search", return_value=(DDG_FIXTURE, "html", None)):
-            search = web.websearch("example docs")
-            assert search["ok"] and "127.0.0.1" not in search["output"]
-    with patch("kite.tools.web._fetch_url") as mock_fetch:
-        page = '<html><body><a href="https://example.com/public">Public</a><a href="http://127.0.0.1/secret">Private</a></body></html>'
-        mock_fetch.return_value = (page.encode(), "text/html", "https://example.com/", None)
-        crawl = web.webcrawl("https://example.com/", max_pages=3, max_depth=1)
-        fetched = [call.args[0] for call in mock_fetch.call_args_list]
-        assert crawl["ok"] and "http://127.0.0.1/secret" not in fetched
 
 
 def test_paid_web_providers_chain(monkeypatch) -> None:

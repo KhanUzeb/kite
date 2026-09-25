@@ -14,7 +14,7 @@ Or: `uv pip install -e ".[dev]"` → `pytest`. No live LLM calls. `conftest.py` 
 
 `.github/workflows/tests.yml` runs pytest on Linux and Windows × Python 3.11 and 3.12, plus `ruff check src tests`, `sync_version.py --check`, and `kite bench --check`. Env: `KITE_HOME`, `KITE_SKIP_SETUP=1`, `KITE_TYPED_PICK=1`. Locally: `./scripts/ci_check.sh` or `.\scripts\ci_check.ps1`.
 
-## Layout (~210 collected tests)
+## Layout (~237 collected tests)
 
 Prefer one module per domain. Combine related asserts in a single test (or a loop) instead of one-assert functions. Do not use `@pytest.mark.parametrize` just to inflate the collect count.
 
@@ -25,8 +25,7 @@ Prefer one module per domain. Combine related asserts in a single test (or a loo
 | `test_approval.py` | supervised/auto/yolo, mandatory high-risk, non-interactive deny |
 | `test_agent.py` | loop limits/retry/guard, modes, completion, cancel, dispatch, submit gate |
 | `test_application.py` | RunSpec, PolicyEngine, ToolExecutor, verification, nested policy |
-| `test_providers.py` | BYOS OAuth, select, reasoning, Codex LiteLLM flatten |
-| `test_credentials.py` | `~/.kite/.env` keys, web-tool keys, Claude usable vs linked |
+| `test_providers.py` | credentials, OAuth, model selection, capabilities, reasoning, web-tool keys |
 | `test_cli.py` | apply/diff, slash help, chat/resume flags, numbered pickers |
 | `test_headless_tasks.py` | JSONL tasks, Submitted-only success, non-interactive approval |
 | `test_ui.py` | render, theme, REPL slash/jobs, attach, preview |

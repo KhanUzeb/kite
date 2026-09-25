@@ -68,8 +68,8 @@ Deeper references: [kite_commands.md](kite_commands.md) (CLI/REPL) · [CONTEXT.m
 3. **Prompt** — System prompt from `data/prompts/system.md` + project overlay (`AGENTS.md`, `KITE.md`, git status, tree). Instance prompt wraps the user task.
 4. **Loop** — Each turn in `DefaultAgent`:
    - `_maybe_compact()` — shrink transcript if near context limit
-   - `model.query(messages)` — streaming assistant + tool calls
-   - `execute_actions()` — `PolicyEngine.authorize` → approval gate → **`ToolExecutor`** → `env.execute()` → observations appended; **`verification_status`** events on state change
+   - `model.query(messages)` — streaming assistant + tool calls; provider history is normalized so every tool call has exactly one adjacent result
+   - `execute_actions()` — `PolicyEngine.authorize` → approval gate → **`ToolExecutor`** → `env.execute()` → observations appended; malformed result envelopes fail closed; **`verification_status`** events on state change
 5. **Persist** — Messages append to `~/.kite/sessions/<id>.jsonl`; optional trajectory JSON; audit log entries.
 6. **Render** — `RunDisplay` in `ui/render.py` maps events to chips, diffs, spinner, footer meter.
 
@@ -174,7 +174,7 @@ Single slash registry: `ui/commands.py` (`BUILTINS` / `ALIASES` / `LEGACY_ALIASE
 
 ## Event-driven UI
 
-The agent emits events; the UI never polls internal state.
+The agent emits events; the UI never polls internal state. Event sequencing and in-memory sinks are synchronized, and observer failures are isolated from the control loop. High-frequency stream text is coalesced by the UI; the canonical final submission replaces provisional output to prevent duplicate or contradictory answers.
 
 | Event | UI effect |
 |-------|-----------|

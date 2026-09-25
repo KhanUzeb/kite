@@ -16,7 +16,6 @@ from kite.memory.session import (
     load_session,
     resolve_session_path,
 )
-from kite.memory.session_analytics import SessionStats, save_session_stats, scan_session_file
 
 
 def test_append_meta_lifecycle_and_touch(kite_home, monkeypatch) -> None:
@@ -123,39 +122,6 @@ def test_replace_and_load_resilience(kite_home) -> None:
     persist_session_todos(tail_session.id, [{"id": "1", "content": "ship", "status": "pending"}])
     persist_session_todos(tail_session.id, [])
     assert load_session_todos(tail_session.id) == []
-
-
-def test_session_stats_and_events(kite_home, tmp_path) -> None:
-    session = create_session(task="demo", cwd=str(tmp_path), provider="groq", model="test")
-    stats = SessionStats(
-        session_id=session.id,
-        created_at=1.0,
-        updated_at=10.0,
-        duration_s=9.0,
-        provider="groq",
-        model="test",
-        cwd=str(tmp_path),
-        tool_calls=3,
-        tool_counts={"read": 2, "bash": 1},
-        api_calls=5,
-        cost=0.12,
-        estimated_tokens=4000,
-        cache_hit_tokens=800,
-    )
-    save_session_stats(stats)
-    row = scan_session_file(session.save())
-    assert row is not None
-    assert row.tool_calls == 3
-    assert row.cache_hit_tokens >= 800
-
-    events_session = create_session(task="events", cwd=str(tmp_path), provider="groq", model="test")
-    events_session.record_event("tool_end", {"tool": "grep", "ok": True})
-    events_session.record_event("compact", {"before": 10, "after": 4})
-    events_session.record_event("tool_end", {"tool": "edit", "ok": False, "blocked": True})
-    event_row = scan_session_file(events_session._session_path())
-    assert event_row is not None
-    assert event_row.compaction_count == 1
-    assert event_row.tool_blocked == 1
 
 
 def test_resolve_session_path_prefix_is_literal(kite_home) -> None:

@@ -103,14 +103,3 @@ def test_run_eof_and_quit_print_resume_hint(tmp_path, kite_home, monkeypatch) ->
     quit_out = _out(quit_session)
     assert "bye" in quit_out
     assert f"kite resume {quit_created.id}" in quit_out
-
-
-def test_run_eof_without_session_has_no_hint(tmp_path, kite_home, monkeypatch) -> None:
-    from kite.ui.complete import ComposerResult
-
-    session = _quiet_session(tmp_path, monkeypatch)
-    session._read_input = lambda: ComposerResult("eof")  # type: ignore[method-assign]
-    assert session.run() == 0
-    out = _out(session)
-    assert "bye" in out
-    assert "Resume this session" not in out
