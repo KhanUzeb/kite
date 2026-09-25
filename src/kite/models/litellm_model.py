@@ -187,6 +187,55 @@ def _parts_to_channels(parts: list[Any], reasoning: str, content: str) -> tuple[
     return reasoning, content
 
 
+def _iter_stream_chunks(
+    stream: Any,
+    *,
+    should_stop: Callable[[], bool],
+    poll: Callable[[], None] | None = None,
+) -> Any:
+    """Yield stream chunks while staying responsive to stop/timeout checks.
+
+    The provider generator blocks on network I/O inside ``__next__`` — the
+    consumer's stall/overall timeout checks only run when a chunk arrives, so
+    a held-open stream would hang the turn (and swallow Esc) until the HTTP
+    client's own read timeout fires. Pumping through a daemon thread keeps the
+    consumer polling: ``poll`` runs ~1/s even mid-stall, so stop requests and
+    timeouts land promptly.
+    """
+    import queue as _queue
+
+    _SENTINEL: Any = object()
+    box: _queue.Queue = _queue.Queue()
+
+    def _pump() -> None:
+        try:
+            for chunk in stream:
+                box.put(chunk)
+        except BaseException as exc:  # noqa: BLE001 — re-raised on the consumer side
+            box.put(exc)
+        finally:
+            box.put(_SENTINEL)
+
+    worker = threading.Thread(target=_pump, daemon=True, name="kite-stream-pump")
+    worker.start()
+    while True:
+        try:
+            item = box.get(timeout=1.0)
+        except _queue.Empty:
+            if poll is not None:
+                poll()
+            if should_stop():
+                return
+            continue
+        if item is _SENTINEL:
+            return
+        if isinstance(item, BaseException):
+            raise item
+        if should_stop():
+            return
+        yield item
+
+
 class LitellmModel:
     def __init__(
         self,
@@ -245,13 +294,15 @@ class LitellmModel:
         return msg
 
     def _api_messages(self, messages: list[dict]) -> list[dict]:
-        answered = {
-            str(m.get("tool_call_id"))
-            for m in messages
-            if m.get("role") == "tool" and m.get("tool_call_id")
-        }
-        api_messages = []
+        results: dict[str, dict] = {}
         for m in messages:
+            if m.get("role") == "tool" and m.get("tool_call_id"):
+                results.setdefault(str(m["tool_call_id"]), m)
+
+        api_messages: list[dict] = []
+        for m in messages:
+            if m.get("role") == "tool":
+                continue
             if m.get("role") == "exit":
                 continue
             clean = {
@@ -260,24 +311,41 @@ class LitellmModel:
                 if k in {"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"}
                 and v is not None
             }
-            # Reasoning continuity: pass the model's prior thinking back on later
-            # turns instead of dropping it (dropping cost one reasoning model 30%
-            # on a coding benchmark as it reconstructed its plan each turn).
             if m.get("role") == "assistant" and not clean.get("reasoning_content"):
                 extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
                 prior = str(extra.get("reasoning") or "").strip()
                 if prior:
                     clean["reasoning_content"] = prior
+            paired_results: list[dict] = []
             if clean.get("role") == "assistant" and clean.get("tool_calls"):
-                # Providers that validate function-call pairing reject an
-                # assistant tool_call whose output was never recorded, so
-                # transcripts written before that pairing was fixed stay usable.
-                paired = [tc for tc in clean["tool_calls"] if str(tc.get("id")) in answered]
-                if len(paired) != len(clean["tool_calls"]):
-                    if paired:
-                        clean["tool_calls"] = paired
-                    else:
-                        clean.pop("tool_calls", None)
+                tool_calls = []
+                for tc in clean["tool_calls"]:
+                    if not isinstance(tc, dict):
+                        continue
+                    call_id = str(tc.get("id") or "")
+                    if call_id:
+                        tool_calls.append(tc)
+                        result = results.get(call_id)
+                        paired_results.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "name": str(
+                                    result.get("name")
+                                    if result
+                                    else (tc.get("function") or {}).get("name") or "tool"
+                                ),
+                                "content": (
+                                    result.get("content", "")
+                                    if result
+                                    else "Tool call was interrupted before producing a result."
+                                ),
+                            }
+                        )
+                if tool_calls:
+                    clean["tool_calls"] = tool_calls
+                else:
+                    clean.pop("tool_calls", None)
             if (
                 clean.get("role") == "assistant"
                 and not clean.get("content")
@@ -286,6 +354,7 @@ class LitellmModel:
             ):
                 continue
             api_messages.append(clean)
+            api_messages.extend(paired_results)
         return api_messages
 
     def _completion_kwargs(
@@ -306,7 +375,12 @@ class LitellmModel:
         kwargs: dict[str, Any] = {
             **self.resolved.litellm_kwargs(),
             "messages": api_messages,
-            "num_retries": self.max_retries,
+            # Single attempt — the agent loop owns retries (provider_max_retries
+            # with backoff + provider_retry events). Letting LiteLLM retry
+            # internally stacks the two loops (3 x 4 attempts), multiplies
+            # user-visible delay, and prints one raw error line per attempt
+            # that bypasses Kite's formatted error display.
+            "num_retries": 0,
             "stream": stream,
         }
         if temperature is not None:
@@ -466,17 +540,38 @@ class LitellmModel:
         tool_calls_acc: dict[int, dict[str, Any]] = {}
         cost = 0.0
         started = time.monotonic()
+        last_progress = started
         first_token = False
+        # Fail fast on stalls: some gateways hold a stream open with no data,
+        # and `for chunk in stream` would otherwise block forever (the UI then
+        # shows "thinking … running" for tens of minutes and Esc can't land
+        # until LiteLLM's own timeout fires). Both bounds raise TimeoutError,
+        # which the agent loop treats as transient → bounded retries with
+        # backoff → one clean ProviderFault instead of a hang.
+        stall_limit = min(float(self.timeout_seconds), 60.0) if self.timeout_seconds > 0 else 0.0
+
+        def _check_timeouts() -> None:
+            if self.timeout_seconds <= 0:
+                return
+            now = time.monotonic()
+            if now - started > float(self.timeout_seconds):
+                raise TimeoutError(
+                    f"stream timed out after {int(now - started)}s without completing"
+                )
+            if stall_limit > 0 and now - last_progress > stall_limit:
+                raise TimeoutError(
+                    f"stream stalled: no data for {int(now - last_progress)}s"
+                )
 
         try:
             with _quiet_litellm_usage_serialization():
                 stream = litellm.completion(**self._completion_kwargs(messages, stream=True, overrides=overrides))
-                for chunk in stream:
-                    if self.should_stop():
-                        self._emit("interrupt")
-                        break
+                chunks = _iter_stream_chunks(stream, should_stop=self.should_stop, poll=_check_timeouts)
+                for chunk in chunks:
+                    _check_timeouts()
                     usage = getattr(chunk, "usage", None)
                     if usage is not None:
+                        last_progress = time.monotonic()
                         hidden_chunk = getattr(chunk, "_hidden_params", None) or {}
                         self._record_usage(usage, hidden_chunk if isinstance(hidden_chunk, dict) else {})
                         self._emit("stream_usage", **self.last_usage)
@@ -490,6 +585,8 @@ class LitellmModel:
                     delta = choices[0].delta
                     think_piece, answer_piece = extract_reasoning_and_content(delta)
                     tool_deltas = list(getattr(delta, "tool_calls", None) or [])
+                    if think_piece or answer_piece or tool_deltas:
+                        last_progress = time.monotonic()
                     if think_piece:
                         first_token = self._emit_first_token(
                             started=started, channel="reasoning", seen=first_token
@@ -537,6 +634,9 @@ class LitellmModel:
         except Exception:
             self._emit("stream_end", ok=False)
             raise
+
+        if self.should_stop():
+            self._emit("interrupt")
 
         if cost <= 0:
             usage = self.last_usage if isinstance(self.last_usage, dict) else {}
@@ -633,6 +733,17 @@ class LitellmModel:
             ensure_oauth_env(self.resolved.spec)
 
         litellm.suppress_debug_info = True
+        # LiteLLM logs every failed attempt straight to stderr ("Provider
+        # List: …"), bypassing Kite's transcript — on retries the same raw
+        # line appears N times with no context. Kite owns error display (one
+        # formatted error via RunDisplay), so keep dependency chatter off it.
+        import logging as _logging
+
+        for _logger_name in ("litellm", "LiteLLM"):
+            try:
+                _logging.getLogger(_logger_name).setLevel(_logging.ERROR)
+            except Exception:
+                pass
         if self.stream:
             return self._query_stream_with_fallback(messages)
         return self._query_blocking(messages)

@@ -114,11 +114,19 @@ def model_supports_tools(
     model: str = "",
     litellm_model: str = "",
     raw: dict[str, Any] | None = None,
+    local_only: bool = False,
 ) -> bool | None:
-    """Best-effort tool-calling support. None = unknown (do not warn)."""
+    """Best-effort tool-calling support. None = unknown (do not warn).
+
+    ``local_only`` skips LiteLLM entirely (name hints + live payload only) —
+    for startup/resolve paths where importing LiteLLM (~seconds cold) would
+    block the composer. Unknown models report None, never a warning.
+    """
     from_meta = _tools_from_raw(raw)
     if from_meta is not None:
         return from_meta
+    if local_only:
+        return None
     from_litellm = _tools_from_litellm(provider, model, litellm_model)
     if from_litellm is not None:
         return from_litellm
@@ -131,6 +139,7 @@ def agent_model_warning(
     raw: dict[str, Any] | None = None,
     provider: str = "",
     litellm_model: str = "",
+    local_only: bool = False,
 ) -> str | None:
     """Return a user-visible warning when a model is likely unsuitable for tool-calling agents."""
     name = (model or "").strip()
@@ -142,7 +151,9 @@ def agent_model_warning(
             f"Model '{name}' may not support tool calling. "
             "Pick a chat/agent model with function or tool support."
         )
-    supports = model_supports_tools(provider=provider, model=name, litellm_model=litellm_model, raw=raw)
+    supports = model_supports_tools(
+        provider=provider, model=name, litellm_model=litellm_model, raw=raw, local_only=local_only
+    )
     if supports is False:
         return f"Model '{name}' reports no tool support in provider metadata."
     # Unknown or supported — no name-based allowlist; any provider/model may work.

@@ -503,6 +503,16 @@ def _unsupported(key: tuple[str, str]) -> ReasoningSupport:
     return support
 
 
+def peek_reasoning(provider: str, model: str) -> ReasoningSupport | None:
+    """Cached support only — no network, safe for completion/UI threads.
+
+    Returns None on a miss; callers kick off a background ``detect_reasoning``
+    warm and fall back to defaults so typing never blocks on the models API.
+    """
+    key = ((provider or "").strip().lower(), (model or "").strip())
+    return _cache.get(key)
+
+
 def detect_reasoning(
     provider: str,
     model: str,

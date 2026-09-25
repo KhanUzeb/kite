@@ -176,7 +176,7 @@ def resolve_model(
 
     # Name-only warning — do not fetch live catalogs or import LiteLLM here.
     # Those belong in the model picker / first model call, not every `kite` launch.
-    warning = agent_model_warning(model_name or "")
+    warning = agent_model_warning(model_name or "", local_only=True)
     remote_raw: dict[str, Any] | None = None
 
     return ResolvedModel(

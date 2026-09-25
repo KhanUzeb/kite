@@ -92,7 +92,64 @@ def test_temperature_and_reasoning_error_fallbacks() -> None:
     assert fast._drop_reasoning is False
 
 
-def test_api_messages_drop_unanswered_tool_calls() -> None:
+def test_completion_kwargs_single_attempt_agent_loop_owns_retries() -> None:
+    """LiteLLM must not retry internally — the agent loop owns provider retries.
+
+    Stacking both loops (3 LiteLLM attempts x 4 agent attempts) multiplies
+    user-visible delay and prints one raw error line per attempt.
+    """
+    request = _model()._completion_kwargs([], stream=True)
+    assert request["num_retries"] == 0
+    assert _model()._completion_kwargs([], stream=False)["num_retries"] == 0
+
+
+def test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A held-open stream must raise TimeoutError quickly, not hang the turn."""
+    import sys
+    import time
+
+    def _hanging():
+        time.sleep(20)
+        yield SimpleNamespace(choices=[])
+
+    class FakeLiteLLM:
+        suppress_debug_info = False
+
+        @staticmethod
+        def completion(**_kwargs):
+            return _hanging()
+
+    monkeypatch.setitem(sys.modules, "litellm", FakeLiteLLM)
+    model = _model()
+    model.resolved = SimpleNamespace(
+        provider="nvidia",
+        model="deepseek-ai/deepseek-v4.1-flash",
+        litellm_kwargs=lambda: {"model": "nvidia_nim/deepseek-ai/deepseek-v4.1-flash"},
+    )
+    model.timeout_seconds = 2
+    model.on_event = None
+    model.should_stop = lambda: False  # type: ignore[method-assign]
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="stalled|timed out"):
+        model._query_stream([{"role": "user", "content": "hi"}])
+    assert time.monotonic() - started < 15.0
+
+
+def test_peek_reasoning_cache_only() -> None:
+    from kite.models import reasoning
+
+    key = ("peek-provider-xyz", "peek-model-xyz")
+    assert reasoning.peek_reasoning(*key) is None
+    support = ReasoningSupport(False, False, False, False)
+    reasoning._cache[key] = support
+    try:
+        assert reasoning.peek_reasoning("  peek-provider-xyz ", "peek-model-xyz") is support
+    finally:
+        reasoning._cache.pop(key, None)
+
+
+def test_api_messages_repair_unanswered_tool_calls() -> None:
     model = object.__new__(LitellmModel)
     projected = model._api_messages(
         [
@@ -111,10 +168,12 @@ def test_api_messages_drop_unanswered_tool_calls() -> None:
     )
 
     assistant = next(m for m in projected if m["role"] == "assistant")
-    assert [tc["id"] for tc in assistant["tool_calls"]] == ["answered"]
-    assert [m["role"] for m in projected] == ["user", "assistant", "tool", "user"]
+    assert [tc["id"] for tc in assistant["tool_calls"]] == ["answered", "dangling"]
+    assert [m["role"] for m in projected] == ["user", "assistant", "tool", "tool", "user"]
+    assert projected[2]["content"] == "ok"
+    assert "interrupted" in projected[3]["content"]
 
-    emptied = model._api_messages(
+    repaired = model._api_messages(
         [
             {
                 "role": "assistant",
@@ -125,7 +184,8 @@ def test_api_messages_drop_unanswered_tool_calls() -> None:
             }
         ]
     )
-    assert emptied == []
+    assert [m["role"] for m in repaired] == ["assistant", "tool"]
+    assert repaired[1]["tool_call_id"] == "dangling"
 
 
 def test_token_efficiency_reasoning_and_cache_breakpoints() -> None:

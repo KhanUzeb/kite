@@ -9,6 +9,22 @@ from dataclasses import dataclass
 from typing import Any
 
 BASH_REPEAT_THRESHOLD = 3
+_UNEXPECTED_STOP_PHRASES = (
+    "i'll ",
+    "i will ",
+    "let me ",
+    "next i",
+    "going to ",
+    "doing that now",
+    "working on it",
+)
+
+
+def is_unexpected_stop(content: str) -> bool:
+    text = (content or "").strip().lower()
+    if not text or text.endswith("?"):
+        return False
+    return any(phrase in text for phrase in _UNEXPECTED_STOP_PHRASES)
 READ_ONLY_REPEAT_THRESHOLD = 6
 DEFAULT_HARD_THRESHOLD = 7
 

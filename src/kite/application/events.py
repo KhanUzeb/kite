@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Any, Protocol
 
 from kite.agent.events import Event, EventKind
@@ -50,13 +51,16 @@ class InMemoryEventSink:
     def __init__(self) -> None:
         self._events: list[EventEnvelope] = []
         self._by_run: dict[str, list[EventEnvelope]] = {}
+        self._lock = RLock()
 
     def append(self, envelope: EventEnvelope) -> None:
-        self._events.append(envelope)
-        self._by_run.setdefault(envelope.run_id, []).append(envelope)
+        with self._lock:
+            self._events.append(envelope)
+            self._by_run.setdefault(envelope.run_id, []).append(envelope)
 
     def load_run(self, run_id: str) -> list[EventEnvelope]:
-        return list(self._by_run.get(run_id, []))
+        with self._lock:
+            return list(self._by_run.get(run_id, []))
 
     def all(self) -> list[EventEnvelope]:
         return list(self._events)
@@ -65,23 +69,26 @@ class InMemoryEventSink:
 class EventSequencer:
     """Assign monotonic sequence numbers and event IDs."""
 
-    __slots__ = ("_run_id", "_next")
+    __slots__ = ("_run_id", "_next", "_lock")
 
     def __init__(self, run_id: str) -> None:
         self._run_id = run_id
         self._next = 0
+        self._lock = RLock()
 
     @property
     def run_id(self) -> str:
         return self._run_id
 
     def emit(self, kind: EventKind, payload: dict[str, Any] | None = None) -> EventEnvelope:
-        self._next += 1
+        with self._lock:
+            self._next += 1
+            sequence = self._next
         return EventEnvelope(
             event_id=str(uuid.uuid4()),
             run_id=self._run_id,
             parent_event_id=None,
-            sequence=self._next,
+            sequence=sequence,
             timestamp=datetime.now(UTC).isoformat(),
             kind=kind,
             payload=dict(payload or {}),
@@ -117,6 +124,9 @@ class LegacyEventBridge:
             envelope = self._sequencer.emit(event.kind, event.payload)
             self.sink.append(envelope)
             if legacy_listener is not None:
-                legacy_listener(event)
+                try:
+                    legacy_listener(event)
+                except Exception:
+                    pass
 
         return _listener

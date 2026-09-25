@@ -98,6 +98,15 @@ class ToolExecutor:
                 duration=time.monotonic() - start,
                 policy_decision=decision,
             )
+        if not isinstance(raw, dict):
+            return ToolResult(
+                call_id=call.call_id,
+                status="error",
+                ok=False,
+                error="tool returned an invalid result envelope",
+                duration=time.monotonic() - start,
+                policy_decision=decision,
+            )
         output = str(raw.get("output", ""))
         if self.redactor:
             output = self.redactor(output)

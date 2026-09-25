@@ -146,6 +146,10 @@ def test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path)
         ToolCall(call_id="b1", name="bash", arguments={"command": "pytest -q"}), skip_approval=True
     )
     assert failed.metadata.get("returncode") == 2
+    invalid = ToolExecutor(policy=engine, runner=lambda c: []).execute(
+        ToolCall(call_id="b2", name="bash", arguments={"command": "echo hi"}), skip_approval=True
+    )
+    assert invalid.status == "error" and "invalid result envelope" in invalid.error
     app = workspace / "src" / "app.py"
     original = app.read_text(encoding="utf-8")
     journal = ChangeJournal(workspace)

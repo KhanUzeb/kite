@@ -220,7 +220,10 @@ class AgentRuntime:
 
     def _on_event(self, event: Event) -> None:
         for listener in list(self._listeners):
-            listener(event)
+            try:
+                listener(event)
+            except Exception:
+                continue
 
     def _persist_session_stats(self, session: Session, result: dict, *, agent: DefaultAgent | None) -> None:
         from kite.memory.session_analytics import SessionStats, save_session_stats

@@ -414,7 +414,28 @@ def test_oauth_status_cache_and_materialize_idempotence(
     assert dest.stat().st_mtime_ns == mtime  # identical content: no rewrite
 
 
+def test_resolve_stays_litellm_free(kite_home, monkeypatch) -> None:
+    """Startup/completer resolve must never import LiteLLM (cold import blocks the composer)."""
+    from kite.providers import capabilities
+    from kite.providers.resolve import resolve_model as _resolve_model
+
+    def _boom(model: str, provider: str):
+        raise AssertionError("resolve must not consult LiteLLM")
+
+    monkeypatch.setattr(capabilities, "_litellm_openai_params", _boom)
+    assert agent_model_warning("my-custom-agent-model", local_only=True) is None
+    assert agent_model_warning("text-embedding-3-small", local_only=True) is not None
+    assert (
+        agent_model_warning("custom-model", raw={"capabilities": {"tools": False}}, local_only=True)
+        is not None
+    )
+    resolved = _resolve_model(provider="groq", model="llama-3.3-70b-versatile")
+    assert (resolved.provider, resolved.model) == ("groq", "llama-3.3-70b-versatile")
+
+
 def test_model_capabilities_and_default_resolution_combined(kite_home) -> None:
+    # (merged from test_model_tool_support_is_metadata_driven)
+    assert agent_model_warning("") == "No model selected — agent mode requires a tool-capable chat model."
     # (merged from test_model_tool_support_is_metadata_driven)
     assert agent_model_warning("") == "No model selected — agent mode requires a tool-capable chat model."
     assert agent_model_warning("text-embedding-3-small") is not None

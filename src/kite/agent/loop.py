@@ -21,7 +21,7 @@ from kite.agent.exceptions import (
     Submitted,
     TimeExceeded,
 )
-from kite.agent.loop_guard import LoopGuard
+from kite.agent.loop_guard import LoopGuard, is_unexpected_stop
 from kite.agent.mode import MUTATING_TOOLS, AgentMode, ApprovalMode
 from kite.agent.parallel import plan_execution_batches
 from kite.agent.queue import RunMessageQueue
@@ -921,6 +921,17 @@ class DefaultAgent:
             raise Submitted(_exit_msg("Submitted", content=content, submission=content))
         if self._awaiting_approval:
             return self.add_messages({"role": "user", "content": _IDLE_NUDGE})
+        if self.mode is AgentMode.BUILD and is_unexpected_stop(content):
+            return self.add_messages(
+                {
+                    "role": "user",
+                    "content": (
+                        "You described a next action but stopped before taking it. "
+                        "Either perform the action with a tool, or clearly state that you are blocked "
+                        "and ask the user what to do next."
+                    ),
+                }
+            )
         if (
             self.mode is AgentMode.BUILD
             and self.verification.status() == "changed_unverified"

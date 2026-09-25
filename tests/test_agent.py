@@ -13,7 +13,7 @@ from kite.agent.dispatch_mode import dispatch_hint, resolve_dispatch_mode
 from kite.agent.exceptions import LimitsExceeded, ProviderFault, Submitted
 from kite.agent.harness_build import build_harness_config
 from kite.agent.loop import _MAX_IDLE_TURNS, DefaultAgent, _allow_text_submit, _is_casual_user_turn
-from kite.agent.loop_guard import LoopGuard
+from kite.agent.loop_guard import LoopGuard, is_unexpected_stop
 from kite.agent.mode import (
     MUTATING_TOOLS,
     PARALLEL_SAFE_TOOLS,
@@ -156,7 +156,6 @@ def test_stable_setup_messages_and_compaction_history(workspace: Path) -> None:
     assert any("Full history:" in str(m.get("content") or "") for m in result.messages)
 
 
-def test_loop_guard_and_schema_repair(workspace: Path) -> None:
     # (merged from test_loop_guard_warns_and_hard_stops)
     guard = LoopGuard(repeat_threshold=3)
     mutating = {"command": "make build"}
@@ -188,6 +187,13 @@ def test_loop_guard_and_schema_repair(workspace: Path) -> None:
     outputs: list[dict] = []
     repair_agent._after_tool(tool, args, action, {"ok": False, "error": "boom", "output": "boom"}, 1, outputs)
     assert "Schema repair" in outputs[0]["output"] and "path" in outputs[0]["output"]
+
+
+def test_unexpected_stop_classifier() -> None:
+    assert is_unexpected_stop("I'll inspect the failing test next.")
+    assert is_unexpected_stop("Let me fix the import now.")
+    assert not is_unexpected_stop("The task is complete.")
+    assert not is_unexpected_stop("Should I continue?")
 
 
 def test_informational_completion_idle_and_error(monkeypatch) -> None:
