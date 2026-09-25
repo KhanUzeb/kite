@@ -20,6 +20,20 @@ _NON_AGENT_HINTS = (
 
 _TOOL_PARAM_NAMES = frozenset({"tools", "tool_choice", "functions", "parallel_tool_calls"})
 _TOOL_CAP_KEYS = frozenset({"tools", "function_calling", "tool_use", "tool_calls", "functions"})
+_STRICT_PARALLEL_PROVIDERS = frozenset({"nvidia"})
+
+
+def _parallel_from_raw(raw: dict[str, Any] | None) -> bool | None:
+    if not raw:
+        return None
+    try:
+        from kite.providers.list_models import RemoteModel
+
+        if "parallel_tool_calls" in RemoteModel(id=str(raw.get("id") or ""), raw=raw).parameter_names():
+            return True
+    except Exception:
+        return None
+    return None
 
 
 def _tools_from_raw(raw: dict[str, Any] | None) -> bool | None:
@@ -94,6 +108,8 @@ def model_supports_parallel_tool_calls(
 ) -> bool:
     """True when the provider API accepts parallel tool calls in one completion."""
     from_meta = _tools_from_raw(raw)
+    if _parallel_from_raw(raw) is True:
+        return True
     if from_meta is False:
         return False
     mid = (litellm_model or model or "").strip()
@@ -103,7 +119,7 @@ def model_supports_parallel_tool_calls(
     if norm is not None and "parallel_tool_calls" in norm:
         return True
     if norm is None:
-        return True
+        return (provider or "").strip().lower() not in _STRICT_PARALLEL_PROVIDERS
     # Optimistic default — most chat/agent APIs accept multiple tool calls per turn.
     return model_supports_tools(provider=provider, model=model, litellm_model=litellm_model, raw=raw) is not False
 

@@ -471,3 +471,35 @@ def test_custom_gateway_api_key_fallbacks(monkeypatch) -> None:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "gateway-key")
     assert api_key_for(catalog.get("openai-compatible")) == "gateway-key"
+
+
+def test_nvidia_nim_request_compatibility(monkeypatch, kite_home) -> None:
+    from kite.config.user import UserConfig
+    from kite.providers import capabilities
+    from kite.providers.resolve import resolve_model as _resolve_model
+
+    monkeypatch.setattr(capabilities, "_litellm_openai_params", lambda *_args, **_kwargs: None)
+    assert (
+        model_supports_parallel_tool_calls(
+            provider="nvidia",
+            model="meta/llama-3.1-70b-instruct",
+            litellm_model="nvidia_nim/meta/llama-3.1-70b-instruct",
+        )
+        is False
+    )
+    assert (
+        model_supports_parallel_tool_calls(
+            provider="nvidia",
+            model="meta/llama-3.1-70b-instruct",
+            raw={"supported_parameters": ["parallel_tool_calls", "tools"]},
+        )
+        is True
+    )
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test-key")
+    cfg = UserConfig.load()
+    cfg.provider_defaults = {}
+    resolved = _resolve_model(provider="nvidia", model="meta/llama-3.1-70b-instruct", config=cfg)
+    assert resolved.provider == "nvidia"
+    assert resolved.litellm_model == "nvidia_nim/meta/llama-3.1-70b-instruct"
+    assert resolved.api_base is None
+    assert resolved.api_key == "nvapi-test-key"
