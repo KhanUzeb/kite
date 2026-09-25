@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 1.0.1
+# kite-release-version: 1.0.2
 # Install Kite as a global CLI (default) or editable checkout (--dev).
 # Global install uses `uv tool install git+https://github.com/...` only (not PyPI).
 #

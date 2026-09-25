@@ -12,7 +12,7 @@
     <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License">
   </a>
   <a href="CHANGELOG.md">
-    <img src="https://img.shields.io/badge/version-1.0.1-cyan.svg" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.0.2-cyan.svg" alt="Version">
   </a>
   <a href="https://www.python.org">
     <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
@@ -23,7 +23,7 @@
   Plan, build, review, and automate work across local repositories.
 </p>
 
-**Version:** 1.0.1
+**Version:** 1.0.2
 
 **Keywords:** coding agent, AI code assistant, terminal coding assistant, agent CLI, SWE-agent style loop, repository automation, code review automation
 

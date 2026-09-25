@@ -1,4 +1,4 @@
-# kite-release-version: 1.0.1
+# kite-release-version: 1.0.2
 # Windows bootstrap - fetch install.ps1 (raw) or fall back to shallow git clone.
 #
 #   irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/download.ps1 | iex

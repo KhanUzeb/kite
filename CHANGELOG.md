@@ -4,6 +4,25 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-25
+
+### Added
+- Eric Zakariasson token efficiency pass: telemetry, prompt split, spill management, tiering, error handling, history compaction, and routing.
+- Antigravity auth verification via official `agy` flow; cached OAuth status probes.
+- Crew coalescing, whole-tree cost aggregation, and richer worker context (`feat(agents)`).
+
+### Changed
+- Background prewarming of LiteLLM imports during startup and inlined CLI subagents parser structure.
+- Detached background handoff for Windows self-update, shim-aware helpers, install lock retries, and clean uninstall flows.
+- Documented NVIDIA compatibility coverage and provider fallback/test coverage.
+
+### Fixed
+- Gated parallel tools on explicit support for NVIDIA.
+- Normalized CRLF on read across platforms so output is byte-identical.
+- Hardened provider history, event flow, and streaming/model discovery responsiveness.
+- Removed `<any>` eager binding that swallowed composer keystrokes.
+- Preserved instructions and bound memory; fell back stalled streams and loaded gateway keys.
+
 ## [1.0.1] - 2026-09-22
 
 ### Added
