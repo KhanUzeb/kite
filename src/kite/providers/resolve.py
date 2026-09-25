@@ -36,6 +36,11 @@ class ResolvedModel:
             kwargs["api_key"] = self.api_key
         if self.api_base:
             kwargs["api_base"] = self.api_base
+        if self.provider == "openrouter":
+            kwargs["extra_headers"] = {
+                "HTTP-Referer": "https://github.com/KhanUzeb/kite",
+                "X-Title": "Kite",
+            }
         if is_oauth_provider(self.spec):
             kwargs.update(oauth_litellm_extras(self.spec))
             if (self.spec.oauth_provider or self.spec.name) == "xai" and not self.api_key:
@@ -93,7 +98,9 @@ def resolve_model(
 ) -> ResolvedModel:
     cfg = config or UserConfig.load()
     cat = catalog or load_catalog()
+    from kite.providers.credentials import load_kite_env
 
+    load_kite_env()
     explicit = bool((provider or "").strip())
     requested = (provider or cfg.default_provider or "").strip()
     rows = None

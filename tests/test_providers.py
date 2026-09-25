@@ -39,6 +39,7 @@ from kite.providers.credentials import (
     web_tool_api_key,
     write_api_key,
 )
+from kite.providers.keys import api_key_for
 from kite.providers.resolve import missing_credentials, resolve_model
 from kite.providers.select import _can_use_radiolist, _numbered_pick, select_model_interactive
 
@@ -462,3 +463,11 @@ def test_model_capabilities_and_default_resolution_combined(kite_home) -> None:
     assert groq.model == "llama-3.3-70b-versatile"
     assert openai.provider == "openai"
     assert openai.model != "llama-3.3-70b-versatile"
+
+
+def test_custom_gateway_api_key_fallbacks(monkeypatch) -> None:
+    catalog = load_catalog()
+    for name in ("OPENAI_API_KEY", "OPENAI_COMPATIBLE_API_KEY", "CUSTOM_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "gateway-key")
+    assert api_key_for(catalog.get("openai-compatible")) == "gateway-key"

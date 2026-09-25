@@ -9,8 +9,9 @@ from kite.providers.catalog import ProviderSpec
 # Extra env vars checked after spec.api_key_env (first hit wins).
 _FALLBACKS: dict[str, tuple[str, ...]] = {
     "nvidia": ("NVIDIA_NIM_API_KEY", "NGC_API_KEY"),
+    "openai-compatible": ("OPENAI_COMPATIBLE_API_KEY", "CUSTOM_API_KEY"),
     "opencode-zen": ("OPENCODE_ZEN_API_KEY",),
-    "opencode-go": ("OPENCODE_GO_API_KEY",),
+    "opencode-go": ("OPENCODE_GO_API_KEY", "OPENCODE_ZEN_API_KEY"),
     "claude": ("ANTHROPIC_API_KEY",),
 }
 

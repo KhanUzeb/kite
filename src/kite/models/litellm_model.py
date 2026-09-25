@@ -546,12 +546,9 @@ class LitellmModel:
         started = time.monotonic()
         last_progress = started
         first_token = False
-        # Fail fast on stalls: some gateways hold a stream open with no data,
-        # and `for chunk in stream` would otherwise block forever (the UI then
-        # shows "thinking … running" for tens of minutes and Esc can't land
-        # until LiteLLM's own timeout fires). Both bounds raise TimeoutError,
-        # which the agent loop treats as transient → bounded retries with
-        # backoff → one clean ProviderFault instead of a hang.
+        # Fail fast on stalls: some gateways hold a stream open with no data.
+        # A stalled stream falls back once to a blocking request instead of
+        # retrying the same dead stream.
         first_token_limit = min(max(float(self.timeout_seconds) - 1.0, 1.0), 30.0) if self.timeout_seconds > 0 else 0.0
         idle_limit = min(float(self.timeout_seconds), 60.0) if self.timeout_seconds > 0 else 0.0
 
@@ -718,6 +715,8 @@ class LitellmModel:
             return self._query_stream(messages)
         except FormatError:
             raise
+        except StreamStalledError:
+            return self._query_blocking(messages)
         except Exception as e:
             if looks_like_temperature_reasoning_error(e) and self.temperature is not None:
                 no_temp = {"temperature": None}

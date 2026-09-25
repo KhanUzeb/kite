@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from kite.models.litellm_model import LitellmModel
+from kite.models.litellm_model import LitellmModel, StreamStalledError
 from kite.models.reasoning import ReasoningSupport, looks_like_reasoning_error, looks_like_temperature_reasoning_error
 from kite.models.retry import is_transient_provider_error
 from kite.models.usage import UsageTotals
@@ -91,6 +91,24 @@ def test_temperature_and_reasoning_error_fallbacks() -> None:
     assert fallback_attempts == [("fast", None, False), ("fast", None, False)]
     assert fast.reasoning_mode == "fast"
     assert fast._drop_reasoning is False
+
+
+def test_stream_stall_falls_back_to_blocking() -> None:
+    model = _model()
+    calls: list[str] = []
+
+    def stalled_stream(_messages: list[dict], *, overrides=None) -> dict:
+        calls.append("stream")
+        raise StreamStalledError("stream stalled: no data for 30s")
+
+    def blocking(_messages: list[dict], *, overrides=None) -> dict:
+        calls.append("blocking")
+        return {"role": "assistant", "content": "done"}
+
+    model._query_stream = stalled_stream  # type: ignore[method-assign]
+    model._query_blocking = blocking  # type: ignore[method-assign]
+    assert model._query_stream_with_fallback([]) == {"role": "assistant", "content": "done"}
+    assert calls == ["stream", "blocking"]
 
 
 def test_completion_kwargs_single_attempt_agent_loop_owns_retries() -> None:

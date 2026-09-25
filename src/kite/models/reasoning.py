@@ -535,22 +535,6 @@ def detect_reasoning(
     mandatory = False
     sources: list[str] = []
 
-    if remote is None and provider and model:
-        try:
-            from kite.providers.list_models import find_remote_model
-
-            remote = find_remote_model(provider, model, config=config)
-        except Exception:
-            remote = None
-
-    if remote is not None:
-        raw = getattr(remote, "raw", None) or {}
-        if isinstance(raw, dict):
-            rp, efforts, mandatory = _params_from_remote(raw)
-            params |= rp
-            if rp:
-                sources.append("live")
-
     llm_id = litellm_model
     if not llm_id:
         try:
@@ -566,6 +550,22 @@ def detect_reasoning(
     if llm_params:
         params |= llm_params
         sources.append("litellm")
+
+    if remote is None and provider and model and not (params & _REASONING_PARAMS):
+        try:
+            from kite.providers.list_models import find_remote_model
+
+            remote = find_remote_model(provider, model, config=config)
+        except Exception:
+            remote = None
+
+    if remote is not None:
+        raw = getattr(remote, "raw", None) or {}
+        if isinstance(raw, dict):
+            rp, efforts, mandatory = _params_from_remote(raw)
+            params |= rp
+            if rp:
+                sources.append("live")
 
     if provider in _NO_INCLUDE_REASONING:
         params.discard("include_reasoning")
