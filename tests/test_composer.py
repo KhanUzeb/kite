@@ -578,11 +578,45 @@ def test_reasoning_support_redetects_on_model_switch(tmp_path, monkeypatch) -> N
     chat = ChatSession(cwd=str(tmp_path))
     chat._model_resolved = True
     chat.provider, chat.model = "groq", "model-a"
-    assert chat._reasoning_info().model == "model-a"
+    assert chat._reasoning_info_sync().model == "model-a"
     # Switch models with no explicit invalidation — levels must still refresh.
     chat.provider, chat.model = "groq", "model-b"
-    assert chat._reasoning_info().model == "model-b"
+    assert chat._reasoning_info_sync().model == "model-b"
     assert [model for _, model in calls] == ["model-a", "model-b"]
+
+
+def test_composer_data_paths_never_block_typing(tmp_path, monkeypatch) -> None:
+    """Model lists and reasoning info must serve cache instantly (slow network warms in bg)."""
+    import time
+
+    import kite.models.reasoning as reasoning
+    from kite.ui.repl import ChatSession
+
+    def _slow_detect(provider: str, model: str, **_kwargs):
+        time.sleep(5)
+        return MagicMock(supported=False, model=model)
+
+    def _slow_list(provider, **_kwargs):
+        time.sleep(5)
+        return MagicMock(ok=False, models=())
+
+    monkeypatch.setattr(reasoning, "detect_reasoning", _slow_detect)
+    # NOTE: `kite.providers.list_models` is shadowed by a same-named function
+    # on the package, so patch the real submodule via sys.modules.
+    import importlib
+    import sys
+
+    list_models_mod = importlib.import_module("kite.providers.list_models")
+    assert list_models_mod is sys.modules["kite.providers.list_models"]
+    monkeypatch.setattr(list_models_mod, "list_models_for_provider", _slow_list)
+    chat = ChatSession(cwd=str(tmp_path))
+    chat._model_resolved = True
+    chat.provider, chat.model = "groq", "model-a"
+
+    started = time.monotonic()
+    assert chat._reasoning_info() is None
+    assert chat._model_ids("groq") == []
+    assert time.monotonic() - started < 2.0
 
 
 def test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path, monkeypatch) -> None:

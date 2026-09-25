@@ -1322,16 +1322,13 @@ class RunDisplay:
             return
         submission = str(payload.get("submission") or payload.get("content") or "").strip()
         streamed = "".join(self._deferred_answer_parts).strip()
-        if submission and streamed and str(payload.get("exit_status") or "Submitted") == "Submitted":
-            if submission in streamed or streamed in submission:
-                answer = max(submission, streamed, key=len)
+        if str(payload.get("exit_status") or "Submitted") == "Submitted":
+            vsum = payload.get("verification") if isinstance(payload.get("verification"), dict) else {}
+            had_work = bool(vsum.get("artifact_count") or vsum.get("diff_count"))
+            if submission and streamed and _looks_like_turn_report(submission):
+                answer = streamed if not had_work else f"{streamed}\n\n{submission}"
             else:
-                vsum = payload.get("verification") if isinstance(payload.get("verification"), dict) else {}
-                had_work = bool(vsum.get("artifact_count") or vsum.get("diff_count"))
-                if _looks_like_turn_report(submission) and not had_work:
-                    answer = streamed
-                else:
-                    answer = f"{streamed}\n\n{submission}"
+                answer = submission or streamed
         else:
             answer = submission or streamed
         if answer and str(payload.get("exit_status") or "Submitted") == "Submitted":
@@ -1366,9 +1363,9 @@ class RunDisplay:
         msg = str(p.get("error") or "error")
         self.state.last_error = msg
         self.state.last_trace = str(p.get("traceback") or "")
-        self._print(
-            render_error(msg, traceback_text=self.state.last_trace, show_trace_hint=not self.state.last_trace)
-        )
+        # Record-only: the terminal agent_end render prints the failure once.
+        # Printing here too shows the same error twice (mid-turn event, then
+        # the final Error/ProviderFault status line).
 
     def _on_cost(self, p: dict[str, Any]) -> None:
         try:

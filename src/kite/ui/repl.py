@@ -649,19 +649,52 @@ class ChatSession:
             return []
         if self._model_cache and getattr(self, "_model_cache_provider", None) == provider:
             return self._model_cache
-        try:
-            from kite.providers.list_models import list_models_for_provider
+        # Never block the composer on the network: serve cache (or nothing)
+        # now and fill it in the background. The completer calls this on every
+        # keystroke — a 30s models-API fetch here freezes typing.
+        self._warm_model_cache(provider)
+        if getattr(self, "_model_cache_provider", None) == provider:
+            return list(self._model_cache)
+        return []
 
-            result = list_models_for_provider(provider)
-            if result.ok:
-                self._model_cache = [m.id for m in result.models]
-                self._model_cache_provider = provider
-        except Exception:
-            return []
-        return self._model_cache
+    def _warm_model_cache(self, provider: str) -> None:
+        """Fetch the live model list off the UI thread (completion-safe)."""
+        import threading
+        import time
+
+        provider = (provider or "").strip()
+        if not provider:
+            return
+        now = time.monotonic()
+        pending = getattr(self, "_model_warm_pending", None)
+        if isinstance(pending, tuple) and pending[0] == provider and now - pending[1] < 60.0:
+            return
+        self._model_warm_pending = (provider, now)
+
+        def _work() -> None:
+            try:
+                from kite.providers.list_models import list_models_for_provider
+
+                result = list_models_for_provider(provider)
+                if result.ok:
+                    self._model_cache = [m.id for m in result.models]
+                    self._model_cache_provider = provider
+                else:
+                    self._model_warm_pending = None
+            except Exception:
+                self._model_warm_pending = None
+
+        threading.Thread(target=_work, daemon=True, name="kite-model-list-warm").start()
 
     def _reasoning_info(self):
-        from kite.models.reasoning import detect_reasoning
+        """Cached reasoning support — never blocks (completion/UI safe).
+
+        The completer calls this on every keystroke; a live models-API fetch
+        here (up to 30s) freezes typing. Serve the cache, warm it in the
+        background on a miss, and let explicit commands use
+        :meth:`_reasoning_info_sync` when they need authoritative data.
+        """
+        from kite.models.reasoning import peek_reasoning
 
         self._ensure_model_resolved()
         provider, model = self._effective_model_pair()
@@ -677,6 +710,53 @@ class ChatSession:
             return self._reasoning_support
         if not provider or not model:
             return None
+        hit = peek_reasoning(provider, model)
+        if hit is not None:
+            self._reasoning_support = hit
+            self._reasoning_support_key = key
+            return hit
+        self._warm_reasoning(provider, model)
+        return None
+
+    def _warm_reasoning(self, provider: str, model: str) -> None:
+        """Detect reasoning support off the UI thread (completion-safe)."""
+        import threading
+        import time
+
+        now = time.monotonic()
+        pending = getattr(self, "_reasoning_warm_pending", None)
+        key = ((provider or "").strip(), (model or "").strip())
+        if isinstance(pending, tuple) and pending[0] == key and now - pending[1] < 60.0:
+            return
+        self._reasoning_warm_pending = (key, now)
+
+        def _work() -> None:
+            try:
+                info = self._reasoning_info_sync()
+                if info is None:
+                    self._reasoning_warm_pending = None
+            except Exception:
+                self._reasoning_warm_pending = None
+
+        threading.Thread(target=_work, daemon=True, name="kite-reasoning-warm").start()
+
+    def _reasoning_info_sync(self):
+        """Authoritative reasoning support — may hit the network.
+
+        For explicit user commands (/thinking, /reasoning, model switches)
+        where correctness beats immediacy. Never call from completion paths.
+        """
+        from kite.models.reasoning import detect_reasoning
+
+        self._ensure_model_resolved()
+        provider, model = self._effective_model_pair()
+        key = (provider or "", model or "")
+        if self._reasoning_support is not None and (
+            self._reasoning_support_key is None or self._reasoning_support_key == key
+        ):
+            return self._reasoning_support
+        if not provider or not model:
+            return None
         try:
             self._reasoning_support = detect_reasoning(provider, model)
             self._reasoning_support_key = key
@@ -689,7 +769,7 @@ class ChatSession:
         from kite.models.reasoning import encode_reasoning, fallback_thinking_level, reasoning_badge, split_reasoning
 
         self._ensure_model_resolved()
-        info = self._reasoning_info()
+        info = self._reasoning_info_sync()
         if command in {"thinking", "fast"}:
             if info is None or not info.can_both:
                 self.console.print("[kite.muted]this API does not advertise both thinking and fast[/]")
@@ -740,7 +820,7 @@ class ChatSession:
         self._invalidate_harness()
         self.state.touch()
         if not badge:
-            info = self._reasoning_info()
+            info = self._reasoning_info_sync()
             if info is not None and info.supported:
                 from kite.models.reasoning import thinking_level_badge
 
@@ -1409,7 +1489,7 @@ class ChatSession:
             except Exception:
                 pass
             try:
-                self._reasoning_info()
+                self._reasoning_info_sync()
             except Exception:
                 pass
 
@@ -1906,7 +1986,7 @@ class ChatSession:
         )
 
         self._ensure_model_resolved()
-        info = self._reasoning_info()
+        info = self._reasoning_info_sync()
         token = raw.strip()
         if not token:
             if info is None or not info.supported:
@@ -1957,7 +2037,7 @@ class ChatSession:
         from kite.ui.commands import ARG_CHOICES
 
         choices = list(ARG_CHOICES["reasoning"])
-        info = self._reasoning_info()
+        info = self._reasoning_info_sync()
         if info is not None and not info.can_disable:
             choices = [(key, label) for key, label in choices if key != "off"]
         return choices

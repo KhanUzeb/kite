@@ -124,7 +124,15 @@ def format_partial_args(partial: str, limit: int = 72) -> str:
         try:
             data = json.loads(raw)
             if isinstance(data, dict):
-                parts = [f"{k}={data[k]!r}" for k in list(data.keys())[:3]]
+                preferred = ("path", "command", "content", "input", "query", "url")
+                keys = [key for key in preferred if key in data]
+                keys.extend(key for key in data if key not in keys)
+                parts = []
+                for key in keys[:3]:
+                    value = data[key]
+                    if isinstance(value, str) and key in {"content", "input"}:
+                        value = value.replace("\n", " ")
+                    parts.append(f"{key}={value!r}")
                 return truncate_preview(" ".join(parts), limit)
         except json.JSONDecodeError:
             pass
