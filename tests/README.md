@@ -14,7 +14,7 @@ Or: `uv pip install -e ".[dev]"` → `pytest`. No live LLM calls. `conftest.py` 
 
 `.github/workflows/tests.yml` runs pytest on Linux and Windows × Python 3.11 and 3.12, plus `ruff check src tests`, `sync_version.py --check`, and `kite bench --check`. Env: `KITE_HOME`, `KITE_SKIP_SETUP=1`, `KITE_TYPED_PICK=1`. Locally: `./scripts/ci_check.sh` or `.\scripts\ci_check.ps1`.
 
-## Layout (~237 collected tests)
+## Layout (~239 collected tests)
 
 Prefer one module per domain. Combine related asserts in a single test (or a loop) instead of one-assert functions. Do not use `@pytest.mark.parametrize` just to inflate the collect count.
 
