@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 from kite.models.litellm_model import extract_reasoning_and_content
 from kite.ui.streaming import (
     ANSWER_PROFILE,
@@ -33,7 +31,7 @@ def test_extract_reasoning_splits_channels() -> None:
     assert answer == "hi"
 
 
-def test_coalescer_answer_thinking_and_latency() -> None:
+def test_coalescer_answer_thinking_and_latency(monkeypatch) -> None:
     answer = StreamCoalescer(profiles={"answer": ANSWER_PROFILE})
     assert answer.push("answer", "Hel") is None
     flushed = answer.push("answer", "lo.")
@@ -44,9 +42,15 @@ def test_coalescer_answer_thinking_and_latency() -> None:
     big = "x" * 200
     assert thinking.push("thinking", big) == "short" + big
 
+    # Deterministic clock: a real sleep(0.03) vs the 0.018s threshold is
+    # within Windows' ~15.6ms monotonic granularity, so wall-clock timing
+    # flakes under load. Advance a fake clock instead.
+    import kite.ui.streaming as streaming_mod
+
     latency = StreamCoalescer(profiles={"answer": ANSWER_PROFILE})
     assert latency.push("answer", "ab") is None
-    time.sleep(0.03)
+    base = streaming_mod.time.monotonic()
+    monkeypatch.setattr(streaming_mod.time, "monotonic", lambda: base + 0.03)
     assert latency.push("answer", "c") == "abc"
 
 

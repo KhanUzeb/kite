@@ -10,16 +10,28 @@ from pathlib import Path
 KITE_MARK = "kite:"
 
 
+def _failed(message: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=message)
+
+
 def _run(cwd: str | Path, *args: str, timeout: int = 20) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        list(args),
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-    )
+    """Never raises: missing git binary / hung git degrades to returncode 1."""
+    try:
+        return subprocess.run(
+            list(args),
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return _failed("git executable not found")
+    except subprocess.TimeoutExpired:
+        return _failed(f"git timed out after {timeout}s")
+    except OSError as e:
+        return _failed(str(e))
 
 
 _BRANCH_TTL = 4.0
@@ -44,9 +56,21 @@ def git_branch(cwd: str | Path) -> str:
     return branch
 
 
+_REPO_TTL = 30.0
+_repo_cache: dict[str, tuple[float, bool]] = {}
+
+
 def is_repo(cwd: str | Path) -> bool:
+    """TTL-cached work-tree check — called on hot paths, must not spawn git every time."""
+    key = str(cwd)
+    hit = _repo_cache.get(key)
+    now = time.monotonic()
+    if hit is not None and now - hit[0] < _REPO_TTL:
+        return hit[1]
     proc = _run(cwd, "git", "rev-parse", "--is-inside-work-tree")
-    return proc.returncode == 0 and (proc.stdout or "").strip() == "true"
+    result = proc.returncode == 0 and (proc.stdout or "").strip() == "true"
+    _repo_cache[key] = (now, result)
+    return result
 
 
 _STATUS_TTL = 4.0

@@ -9,12 +9,12 @@ composer (idle)
   Tab             cycle / and @file completions
   ↑↓ / number / drag  CLI pickers — click or drag the mouse to highlight, release to select
   KITE_MOUSE=1        slash-menu wheel (off by default so the welcome banner stays readable)
-  Ctrl+V          paste OS clipboard into composer
-  F8 / Esc v      attach clipboard to next turn (/clip)
-  Drag-select     copy transcript text (mouse stays with the terminal)
-  Ctrl+Insert     copy composer selection to clipboard
-  Shift+Insert    paste OS clipboard
-  Ctrl+C          clear line (does not quit)
+   Ctrl+V          paste text · screenshot on clipboard attaches it
+   F8 / Esc v      attach clipboard to next turn (/clip)
+   Drag-select     copy transcript text (mouse stays with the terminal)
+   Ctrl+C          copy composer selection (no selection: clear line, never quits)
+   Ctrl+Insert     copy composer selection to clipboard
+   Shift+Insert    paste text · screenshot attaches (same as Ctrl+V)
   Ctrl+D          quit REPL
   Ctrl+L          clear screen
   Ctrl+O / F6     toggle expanded tool output

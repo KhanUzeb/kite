@@ -280,6 +280,7 @@ class LitellmModel:
             raw=resolved.raw,
         )
         self._drop_reasoning = False
+        self._thinking_warned = False
         self.cost = 0.0
         self.last_usage: dict[str, Any] = {}
         self.prompt_cache = prompt_cache
@@ -543,6 +544,7 @@ class LitellmModel:
         reasoning = ""
         tool_calls_acc: dict[int, dict[str, Any]] = {}
         cost = 0.0
+        self._thinking_warned = False
         started = time.monotonic()
         last_progress = started
         first_token = False
@@ -596,6 +598,28 @@ class LitellmModel:
                         )
                         reasoning += think_piece
                         self._emit("stream_reasoning", text=think_piece)
+                        # Long-thinking watchdog: reasoning tokens reset the
+                        # stall timer, so an unbounded NIM thinker would look
+                        # "infinite". Surface progress (Esc still stops) once
+                        # per turn instead of hanging silently.
+                        try:
+                            from kite.providers.profiles import get_profile
+
+                            watchdog = get_profile(self.resolved.provider).thinking_watchdog_chars
+                            if (
+                                len(reasoning) >= watchdog
+                                and not content
+                                and not tool_calls_acc
+                                and not getattr(self, "_thinking_warned", False)
+                            ):
+                                self._thinking_warned = True
+                                self._emit(
+                                    "stream_thinking_long",
+                                    reasoning_chars=len(reasoning),
+                                    hint="extended thinking — Esc stops, /thinking low shortens",
+                                )
+                        except Exception:
+                            pass
                     if answer_piece:
                         first_token = self._emit_first_token(
                             started=started, channel="answer", seen=first_token

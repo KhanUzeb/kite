@@ -116,7 +116,7 @@ def login_web_tool_key(
     *,
     console: Console | None = None,
 ) -> tuple[int, str, str | None]:
-    """Prompt and save a web-tool API key (tavily / exa / firecrawl)."""
+    """Prompt and save a web-tool API key (tavily / exa / tinyfish / firecrawl)."""
     from kite.tools.web_providers import WEB_TOOL_ENVS, resolve_web_tool_env
 
     key_name = (name or "").strip().lower()

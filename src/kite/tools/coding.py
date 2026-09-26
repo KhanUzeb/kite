@@ -1070,9 +1070,10 @@ def make_coding_tools(
             Tool(
                 name="websearch",
                 description=(
-                    "Search the web (Tavily/Exa/Firecrawl when keyed, else DuckDuckGo). "
+                    "Search the web (Tavily/Exa/TinyFish/Firecrawl when keyed, else DuckDuckGo; "
+                    "short paid results are topped up from DuckDuckGo, Tavily answers surfaced). "
                     "Token-efficient: urls_only or compact=true before webfetch. "
-                    "Batch multiple queries in one turn. engine=auto|tavily|exa|firecrawl|duckduckgo."
+                    "Batch multiple queries in one turn. engine=auto|tavily|exa|tinyfish|firecrawl|duckduckgo."
                 ),
                 parameters={
                     "type": "object",

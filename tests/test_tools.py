@@ -46,8 +46,15 @@ def test_paid_web_providers_chain(monkeypatch) -> None:
         return 200, {"results": [{"title": "Tavily Hit", "url": "https://example.com/a", "content": "Snippet from Tavily"}]}
 
     monkeypatch.setattr("kite.tools.web_providers._http_json", fake_json_post)
+    monkeypatch.setattr(web, "_ddg_instant", lambda q: [])
+    monkeypatch.setattr(web, "_ddg_html_search", lambda q: ("", "", "offline"))
     out = web.websearch("hello world", max_results=5)
     assert out["engine"] == "tavily" and out["results"][0]["title"] == "Tavily Hit"
+    # Short paid results top up from DuckDuckGo, paid ranking kept first.
+    monkeypatch.setattr(web, "_ddg_html_search", lambda q: (DDG_FIXTURE, "html", None))
+    topped = web.websearch("hello world", max_results=5)
+    assert topped["engine"] == "tavily+duckduckgo" and topped["topped_up"] is True
+    assert topped["results"][0]["title"] == "Tavily Hit" and topped["count"] > 1
     monkeypatch.setattr("kite.tools.web_providers.tavily_api_key", lambda: "tvly-bad")
     monkeypatch.setattr("kite.tools.web_providers._http_json", lambda *_a, **_k: (401, {"error": "unauthorized"}))
     monkeypatch.setattr(web, "_ddg_instant", lambda q: [])

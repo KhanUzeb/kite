@@ -70,3 +70,17 @@ def test_classify_and_load_user_skills(kite_home: Path, workspace: Path, tmp_pat
     skill = next(s for s in load_skills(workspace) if s.name == "orca-cli")
     assert skill.source == "user"
     assert classify_skill_dir(tmp_path / ".agents" / "skills", workspace) == "user"
+
+
+def test_frontmatter_lists_and_bom() -> None:
+    from kite.skills.loader import _parse_frontmatter
+
+    meta, body = _parse_frontmatter(
+        "---\nname: s\ndescription: does a: b things\nallowed-tools:\n  - read\n  - bash\n---\n# body\n"
+    )
+    assert meta["description"] == "does a: b things"
+    assert meta["allowed-tools"] == "read, bash"
+    assert body.strip() == "# body"
+
+    meta2, body2 = _parse_frontmatter("\ufeff---\nname: bom\n---\ncontent\n")
+    assert meta2["name"] == "bom" and "---" not in body2

@@ -69,14 +69,25 @@ def origin_for_skill_dir(directory: Path, cwd: Path) -> str:
 
 
 def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
-    match = FRONTMATTER_RE.match(raw)
+    text = raw.lstrip("\ufeff")
+    match = FRONTMATTER_RE.match(text)
     if not match:
-        return {}, raw
+        return {}, text
     meta: dict[str, str] = {}
+    current_key = ""
     for line in match.group(1).splitlines():
+        # YAML-ish list continuation (`allowed-tools:\n  - read\n  - bash`).
+        stripped = line.strip()
+        if current_key and stripped.startswith(("- ", "* ")):
+            item = stripped[2:].strip().strip("\"'")
+            meta[current_key] = f"{meta[current_key]}, {item}" if meta[current_key] else item
+            continue
         if ":" in line:
             k, v = line.split(":", 1)
-            meta[k.strip()] = v.strip().strip("\"'")
+            current_key = k.strip()
+            meta[current_key] = v.strip().strip("\"'")
+        else:
+            current_key = ""
     return meta, match.group(2)
 
 
@@ -90,7 +101,7 @@ def _derive_description(content: str) -> str:
 
 
 def _load_skill(name: str, path: Path, *, source: str, origin: str) -> Skill:
-    raw = path.read_text(encoding="utf-8")
+    raw = path.read_text(encoding="utf-8-sig")
     meta, body = _parse_frontmatter(raw)
     trust = skill_trust(source, origin)
     return Skill(
@@ -269,7 +280,7 @@ def _load_skills_uncached(
             for child in bundled.iterdir():
                 skill_file = child.joinpath("SKILL.md")
                 if skill_file.is_file():
-                    raw = skill_file.read_bytes().decode("utf-8")
+                    raw = skill_file.read_bytes().decode("utf-8-sig")
                     meta, body = _parse_frontmatter(raw)
                     name = meta.get("name") or child.name
                     existing = by_name.get(name)

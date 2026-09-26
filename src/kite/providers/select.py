@@ -116,13 +116,28 @@ def select_model_interactive(
             console.print("[red]No models available[/]")
             return 1, None, None
 
+        from kite.models.reasoning import peek_reasoning
+        from kite.providers.capabilities import model_supports_tools
+
         current = _current_model(cfg, provider)
         values: list[tuple[str, str]] = []
         for m in result.models:
             mark = " *" if current and m.id == current else ""
             ctx = f"ctx {m.context_window}" if m.context_window else ""
             owner = m.owned_by or ""
-            meta = " · ".join(p for p in (ctx, owner) if p)
+            # Cache-only badges — never hit the network from the picker.
+            # Pi/OpenCode parity: show thinking levels + tool support inline
+            # so NIM reasoners are distinguishable before selection.
+            think = ""
+            try:
+                cached = peek_reasoning(provider, m.id)
+                if cached is not None and cached.supported:
+                    think = cached.label or "thinking"
+            except Exception:
+                think = ""
+            tools = model_supports_tools(raw=m.raw, local_only=True)
+            tool_mark = "tools" if tools else ("no-tools" if tools is False else "")
+            meta = " · ".join(p for p in (ctx, owner, think, tool_mark) if p)
             label = f"{m.id}{mark}" + (f"  ({meta})" if meta else "")
             values.append((m.id, label))
 

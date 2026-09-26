@@ -435,12 +435,13 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 | `write` / `edit` | Edits preserve the file's on-disk line endings (no LF↔CRLF churn); new files default to CRLF on Windows / LF elsewhere unless `.gitattributes`/`editorconfig` say otherwise |
 | `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. Runs with the project `.venv` first on PATH when one exists (system toolchains otherwise). Dynamic `gh` lives here too (no hardcoded tools needed): read-only `gh issue/pr view\|list` runs free in build AND plan mode; publishing commands (`create`/`comment`/`merge`/`close`) prompt for approval in auto mode |
 | `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |
-| `websearch` | Auto: Tavily → Exa → Firecrawl when keys set; else DuckDuckGo. Returns titles/URLs/snippets |
-| `webfetch` | Firecrawl scrape when `FIRECRAWL_API_KEY` set; else stdlib HTML extract |
+| `websearch` | Auto: Tavily → Exa → TinyFish → Firecrawl when keys set; else DuckDuckGo. Short paid results are topped up from DuckDuckGo; Tavily answers surfaced. Returns titles/URLs/snippets |
+| `webfetch` | Firecrawl scrape when `FIRECRAWL_API_KEY` set; else stdlib HTML extract (nav/footer chrome stripped) |
 | `webcrawl` | Firecrawl crawl when keyed; else same-origin stdlib crawl |
+| `gh_auth` | Read-only GitHub auth probe — call when `gh_*` tools report auth errors (hint points at `kite gh auth login` / `GH_TOKEN`) |
 
 Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `websearch` → pick URL → `webfetch`.
-Keys: `kite web-keys set tavily|exa|firecrawl` or `kite keys --set …` → `~/.kite/.env` (owner-only).
+Keys: `kite web-keys set tavily|exa|tinyfish|firecrawl` or `kite keys --set …` → `~/.kite/.env` (owner-only).
 
 `KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable facts; `/user` + `/profile` + `/working` are global identity context. See [CONTEXT.md](CONTEXT.md) (Memory & persistence).
 

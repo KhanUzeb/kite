@@ -23,9 +23,10 @@ from kite.ui.attach import (
     clipboard_install_hint,
     load_clipboard,
     parse_inline_mentions,
+    read_clipboard_text,
     user_content_with_attachments,
 )
-from kite.ui.complete import read_repl_line
+from kite.ui.complete import make_repl_key_bindings, read_repl_line
 from kite.ui.diff import count_diff_lines, make_unified_diff, preview_mutating_diff, preview_patch_diff, render_diff
 from kite.ui.empty import render_empty
 from kite.ui.render import RunDisplay
@@ -383,6 +384,63 @@ def test_attach_clipboard_and_diff_helpers(tmp_path, kite_home, monkeypatch) -> 
     assert preview_card is not None
     assert "lib/x.py" in preview_card.plain
     assert "foo" in preview_card.plain and "bar" in preview_card.plain
+
+
+def _bindings_by_handler(bindings, name: str):  # noqa: ANN001, ANN202
+    return [b for b in bindings.bindings if getattr(b.handler, "__name__", "") == name]
+
+
+def _fake_composer_event():  # noqa: ANN202
+    from types import SimpleNamespace
+
+    return SimpleNamespace(current_buffer=MagicMock(), app=MagicMock())
+
+
+def test_ctrl_v_pastes_text_or_attaches_screenshot(monkeypatch) -> None:
+    slot: dict = {}
+    attached: list[str] = []
+    bindings = make_repl_key_bindings(
+        on_attach_clipboard=lambda: attached.append("clip") or "attached clip.png (image)",
+        action_slot=slot,
+    )
+    (paste_binding,) = [b for b in _bindings_by_handler(bindings, "_paste") if "ControlV" in str(b.keys)]
+
+    event = _fake_composer_event()
+    with patch("kite.ui.attach.read_clipboard_text", return_value="hello\r\nworld"):
+        paste_binding.handler(event)
+    event.current_buffer.insert_text.assert_called_once_with("hello\nworld")
+    assert attached == []
+
+    event = _fake_composer_event()
+    with patch("kite.ui.attach.read_clipboard_text", return_value=""):
+        paste_binding.handler(event)
+    assert attached == ["clip"]
+    assert slot.get("kind") == "note"
+    event.app.invalidate.assert_called()
+
+
+def test_ctrl_c_copies_selection_without_stopping(monkeypatch) -> None:
+    bindings = make_repl_key_bindings()
+    matches = _bindings_by_handler(bindings, "_copy_selected")
+    assert len(matches) == 1
+    event = _fake_composer_event()
+    event.current_buffer.copy_selection.return_value = MagicMock(text="selected")
+    with patch("kite.ui.attach.write_os_clipboard") as writer:
+        matches[0].handler(event)
+    writer.assert_called_once_with("selected")
+
+
+def test_read_clipboard_text_falls_back_when_powershell_empty(monkeypatch) -> None:
+    monkeypatch.setattr("kite.ui.attach.os.name", "nt")
+    proc = MagicMock(stdout="", returncode=0)
+    monkeypatch.setattr("kite.ui.attach.subprocess.run", lambda *a, **k: proc)
+    with patch("kite.ui.attach.read_os_clipboard", return_value="fallback"):
+        assert read_clipboard_text() == "fallback"
+    proc = MagicMock(stdout="ps text", returncode=0)
+    monkeypatch.setattr("kite.ui.attach.subprocess.run", lambda *a, **k: proc)
+    with patch("kite.ui.attach.read_os_clipboard", return_value="fallback") as low:
+        assert read_clipboard_text() == "ps text"
+        low.assert_not_called()
 
 
 def test_stream_answer_styles_boundaries_and_coalescing() -> None:
@@ -786,3 +844,25 @@ def test_git_dirty_tracking_and_branch_marker(tmp_path, kite_home, monkeypatch) 
     chat.state.git_dirty = 0
     assert "main" in status_context_parts(chat.state)
     assert "main*" not in status_context_parts(chat.state)
+
+
+def test_git_helpers_survive_missing_binary_and_cache_repo(tmp_path, monkeypatch) -> None:
+    from kite.ui import git as git_ui
+
+    calls: list[int] = []
+
+    def _boom(*args, **kwargs):  # noqa: ANN001, ANN202
+        calls.append(1)
+        raise FileNotFoundError("no git")
+
+    monkeypatch.setattr(git_ui.subprocess, "run", _boom)
+    git_ui._repo_cache.clear()
+    assert git_ui.is_repo(tmp_path) is False
+    assert git_ui.git_dirty_count(tmp_path) == -1
+    assert git_ui.git_branch(tmp_path) == ""
+    assert git_ui.GitCheckpoints.open(tmp_path).undo() == (False, "not a git repo — nothing to undo")
+    calls.clear()
+    git_ui._repo_cache.clear()
+    assert git_ui.is_repo(tmp_path) is False
+    assert git_ui.is_repo(tmp_path) is False
+    assert len(calls) == 1

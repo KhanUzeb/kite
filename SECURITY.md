@@ -122,12 +122,13 @@ HTTP tools resolve hostnames, validate every resolved address against private/lo
 
 API keys live in `~/.kite/.env` (or the repo `.env`, which is gitignored). Never commit keys. If a key is leaked, rotate it immediately.
 
-**Optional web-tool keys** (same `.env` file; stripped from child process env like other secrets). Set with `kite web-keys set tavily|exa|firecrawl` or `kite keys --set …` — hidden prompt, owner-only file perms:
+**Optional web-tool keys** (same `.env` file; stripped from child process env like other secrets). Set with `kite web-keys set tavily|exa|tinyfish|firecrawl` or `kite keys --set …` — hidden prompt, owner-only file perms:
 
 | Key | Used by |
 |-----|---------|
 | `TAVILY_API_KEY` | `websearch` (first in auto order) |
 | `EXA_API_KEY` | `websearch` |
+| `TINYFISH_API_KEY` | `websearch` |
 | `FIRECRAWL_API_KEY` | `websearch`, `webfetch` (scrape), `webcrawl` |
 | `CONTEXT7_API_KEY` | Context7 docs tools (rate limits) |
 

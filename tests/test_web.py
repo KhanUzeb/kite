@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from kite.tools import web
 
@@ -208,3 +208,150 @@ def test_webcrawl_fails_when_every_fetch_fails(mock_fetch):
     out = web.webcrawl("https://example.com/", max_pages=2, max_depth=1)
     assert out["ok"] is False
     assert out["pages"] and out["pages"][0]["error"] == "connection failed"
+
+
+def test_extract_drops_boilerplate_text_but_keeps_links():
+    html = """<html><head><title>Page</title></head><body>
+    <header><h1>Site Name</h1></header>
+    <nav>Menu <a href="/docs">Docs</a> <a href="/api">API</a></nav>
+    <main><p>Real article body.</p></main>
+    <footer>Copyright 2026</footer></body></html>"""
+    title, _, text, links = web._extract_page(html, "https://example.com/")
+    assert title == "Page"
+    assert "Real article body" in text
+    assert "Menu" not in text and "Copyright" not in text and "Site Name" not in text
+    assert "https://example.com/docs" in links
+    assert "https://example.com/api" in links
+
+
+@patch("kite.tools.web_providers._http_json")
+def test_tavily_answer_surfaced(mock_http):
+    from kite.tools.web_providers import search_tavily
+
+    mock_http.return_value = (
+        200,
+        {
+            "results": [{"title": "T", "url": "https://example.com/", "content": "snip"}],
+            "answer": "42 is the answer",
+        },
+    )
+    hit = search_tavily("ultimate question", max_results=5, api_key="k")
+    assert hit is not None
+    assert hit["answer"] == "42 is the answer"
+    assert "answer: 42 is the answer" in hit["output"]
+
+
+@patch("kite.tools.web_providers.paid_websearch")
+@patch("kite.tools.web._ddg_instant")
+@patch("kite.tools.web._ddg_html_search")
+def test_websearch_tops_up_short_paid_results_and_notes_engine(mock_search, mock_instant, mock_paid):
+    mock_paid.return_value = {
+        "ok": True,
+        "output": "paid",
+        "summary": "s",
+        "results": [{"title": "Paid", "url": "https://paid.example/", "snippet": "p"}],
+        "count": 1,
+        "engine": "tavily",
+        "query": "q",
+        "source": "api",
+    }
+    mock_instant.return_value = []
+    mock_search.return_value = (DDG_FIXTURE, "html", None)
+    out = web.websearch("q", max_results=5)
+    assert out["engine"] == "tavily+duckduckgo"
+    assert out["topped_up"] is True
+    assert out["count"] > 1
+    assert out["results"][0]["url"] == "https://paid.example/"
+    assert "Example Docs" in out["output"]
+
+    mock_paid.return_value = None
+    with patch("kite.tools.web_providers.tavily_api_key", return_value=None):
+        noted = web.websearch("example docs", engine="tavily", max_results=5)
+    assert noted["engine"] == "duckduckgo"
+    assert "tavily" in (noted.get("note") or "")
+    assert "note:" in noted["output"]
+
+    odd = web.websearch("example docs", engine="bogus", max_results=5)
+    assert "unknown engine" in (odd.get("note") or "")
+
+
+@patch("kite.tools.web_providers._http_json")
+def test_tinyfish_search_parsing_and_auth_failures(mock_http):
+    from kite.tools.web_providers import resolve_search_engines, search_tinyfish
+
+    seen: dict[str, object] = {}
+
+    def fake(url: str, *, headers=None, body=None, timeout=45):  # noqa: ANN001
+        seen["url"] = url
+        seen["headers"] = headers
+        return 200, {
+            "query": "q",
+            "results": [
+                {"position": 1, "site_name": "ex.com", "title": "Fish Hit", "snippet": "s", "url": "https://ex.com/fish"},
+            ],
+            "total_results": 1,
+            "page": 0,
+        }
+
+    mock_http.side_effect = fake
+    hit = search_tinyfish("q", max_results=5, api_key="tf-k")
+    assert hit is not None and hit["engine"] == "tinyfish"
+    assert hit["results"][0]["url"] == "https://ex.com/fish"
+    assert str(seen["url"]).startswith("https://api.search.tinyfish.ai?query=")
+    assert (seen["headers"] or {}).get("X-API-Key") == "tf-k"
+
+    mock_http.side_effect = None
+    mock_http.return_value = (401, {"error": "unauthorized"})
+    assert search_tinyfish("q", max_results=5, api_key="bad") is None
+    mock_http.return_value = (429, {"error": "rate limited"})
+    assert search_tinyfish("q", max_results=5, api_key="k") is None
+
+    with (
+        patch("kite.tools.web_providers.tavily_api_key", return_value=None),
+        patch("kite.tools.web_providers.exa_api_key", return_value="ex"),
+        patch("kite.tools.web_providers.tinyfish_api_key", return_value="tf"),
+        patch("kite.tools.web_providers.firecrawl_api_key", return_value=None),
+    ):
+        assert resolve_search_engines("auto") == ["exa", "tinyfish", "duckduckgo"]
+        assert resolve_search_engines("tinyfish") == ["tinyfish", "duckduckgo"]
+
+
+@patch("kite.tools.web._ddg_instant", return_value=[])
+@patch("kite.tools.web._ddg_html_search", return_value=("", "", "offline"))
+@patch("kite.tools.web_providers._http_json")
+def test_websearch_tinyfish_preference(mock_http, _mock_search, _mock_instant):
+    mock_http.return_value = (
+        200,
+        {"query": "q", "results": [{"title": "Fish", "url": "https://fish.example/", "snippet": "s"}]},
+    )
+    with (
+        patch("kite.tools.web_providers.tavily_api_key", return_value=None),
+        patch("kite.tools.web_providers.exa_api_key", return_value=None),
+        patch("kite.tools.web_providers.tinyfish_api_key", return_value="tf-k"),
+        patch("kite.tools.web_providers.firecrawl_api_key", return_value=None),
+    ):
+        out = web.websearch("q", max_results=5, engine="tinyfish")
+    assert out["engine"] == "tinyfish"
+    assert out["results"][0]["url"] == "https://fish.example/"
+
+    with patch("kite.tools.web_providers.tinyfish_api_key", return_value=None):
+        noted = web.websearch("q", max_results=5, engine="tinyfish")
+    assert "TINYFISH_API_KEY" in (noted.get("note") or "")
+
+
+@patch("kite.tools.web.time.sleep")
+@patch("kite.tools.web._safe_opener")
+def test_fetch_retries_transients_with_backoff(mock_opener_fn, mock_sleep):
+    from urllib.error import URLError
+
+    good = MagicMock()
+    good.headers = {"Content-Type": "text/plain"}
+    good.url = "https://example.com/"
+    good.read.return_value = b"hello"
+    good.__enter__.return_value = good
+    opener = MagicMock()
+    opener.open.side_effect = [URLError(OSError(104, "reset")), good]
+    mock_opener_fn.return_value = opener
+    raw, _ctype, final, err = web._fetch_url("https://example.com/", retries=1)
+    assert err is None and raw == b"hello" and final == "https://example.com/"
+    mock_sleep.assert_called_once()

@@ -12,6 +12,29 @@ from kite.tools import Tool
 # an exported GH_TOKEN/GITHUB_TOKEN works impromptu (no kite-side setup).
 
 
+_AUTH_FAILURE_MARKERS = (
+    "not logged in",
+    "authentication required",
+    "bad credentials",
+    "http 401",
+    "http 403",
+    "resource not accessible",
+    "gh auth login",
+)
+
+_AUTH_HINT = (
+    "hint: GitHub auth missing — run `kite gh auth login` (browser/device/PAT) "
+    "or export GH_TOKEN for this shell, then retry"
+)
+
+
+def _auth_hint(output: str) -> str | None:
+    lowered = (output or "").lower()
+    if any(marker in lowered for marker in _AUTH_FAILURE_MARKERS):
+        return _AUTH_HINT
+    return None
+
+
 def _gh_available() -> bool:
     return shutil.which("gh") is not None
 
@@ -41,10 +64,15 @@ def _run_gh(args: list[str], *, timeout: int = 30) -> dict[str, Any]:
             env=_gh_env(),
         )
         output = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
+        text = output.strip() or "(empty)"
+        if proc.returncode != 0:
+            hint = _auth_hint(text)
+            if hint:
+                text = f"{text}\n{hint}"
         return {
             "ok": proc.returncode == 0,
             "returncode": proc.returncode,
-            "output": output.strip() or "(empty)",
+            "output": text,
         }
     except subprocess.TimeoutExpired:
         return {"ok": False, "returncode": -1, "output": "", "error": f"timeout after {timeout}s"}
@@ -102,7 +130,24 @@ def make_github_tools(*, enabled: bool = True) -> list[Tool]:
             cmd.extend(["--repo", str(repo)])
         return _run_gh(cmd)
 
+    def auth_status(args: dict[str, Any]) -> dict[str, Any]:
+        """Read-only auth probe — call before gh_* tools when auth is uncertain."""
+        result = _run_gh(["auth", "status"])
+        if result.get("ok"):
+            users = str(result.get("output") or "").strip()
+            return {"ok": True, "output": f"GitHub auth ok\n{users}".strip()}
+        return result
+
     return [
+        Tool(
+            name="gh_auth",
+            description="Check GitHub auth status via gh CLI (read-only). Call when gh_* tools report auth errors.",
+            parameters={
+                "type": "object",
+                "properties": {},
+            },
+            execute_fn=auth_status,
+        ),
         Tool(
             name="gh_issue",
             description="View a GitHub issue via gh CLI (requires gh auth). Returns JSON fields.",

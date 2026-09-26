@@ -140,6 +140,32 @@ def read_os_clipboard() -> str:
     return ""
 
 
+def read_clipboard_text() -> str:
+    """Best-effort clipboard text for paste paths (composer Ctrl+V, /clip).
+
+    ``read_os_clipboard`` alone is not enough on Windows: ctypes
+    ``OpenClipboard`` fails when another app holds the clipboard lock, which
+    made Ctrl+V silently do nothing. PowerShell ``Get-Clipboard`` goes
+    through the managed clipboard API and succeeds in those cases.
+    """
+    if os.name == "nt":
+        try:
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=8,
+            )
+            text = (proc.stdout or "").strip()
+            if text:
+                return text
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return read_os_clipboard()
+
+
 def write_os_clipboard(text: str) -> None:
     """Write plain text to the OS clipboard."""
     try:
@@ -188,19 +214,7 @@ def clipboard_install_hint() -> str:
 
 
 def _clipboard_text() -> str:
-    if os.name == "nt":
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=8,
-        )
-        text = (proc.stdout or "").strip()
-        if text:
-            return text
-    return read_os_clipboard()
+    return read_clipboard_text()
 
 
 def _save_clipboard_image(data: bytes, dest: Path) -> Path | None:

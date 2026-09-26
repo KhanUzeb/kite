@@ -1,7 +1,7 @@
-"""CLI for optional paid web-tool API keys (Tavily / Exa / Firecrawl).
+"""CLI for optional paid web-tool API keys (Tavily / Exa / TinyFish / Firecrawl).
 
 Keys are stored in ~/.kite/.env with the same owner-only permissions as BYOK
-provider keys. Also available via: kite keys --set tavily|exa|firecrawl
+provider keys. Also available via: kite keys --set tavily|exa|tinyfish|firecrawl
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def print_web_keys_status(console) -> None:
     order = " → ".join(SEARCH_AUTO_ORDER)
     console.print(f"[dim]websearch auto order:[/] {order}")
     console.print(
-        "[dim]Add:[/] [cyan]kite web-keys set tavily|exa|firecrawl[/]  ·  "
+        "[dim]Add:[/] [cyan]kite web-keys set tavily|exa|tinyfish|firecrawl[/]  ·  "
         "[cyan]kite keys --set tavily[/]  ·  "
         "[cyan]kite web-keys logout <name>[/]"
     )
@@ -109,7 +109,7 @@ def add_web_keys_parser(sub) -> None:
     p = sub.add_parser(
         "web-keys",
         aliases=["web_keys"],
-        help="Show or set optional web tool API keys (Tavily / Exa / Firecrawl)",
+        help="Show or set optional web tool API keys (Tavily / Exa / TinyFish / Firecrawl)",
     )
     web_sub = p.add_subparsers(dest="web_keys_cmd")
 
@@ -120,7 +120,7 @@ def add_web_keys_parser(sub) -> None:
     set_p.add_argument(
         "name",
         nargs="?",
-        help="tavily | exa | firecrawl (omit to pick)",
+        help="tavily | exa | tinyfish | firecrawl (omit to pick)",
     )
     set_p.set_defaults(func=cmd_web_keys)
 
@@ -132,7 +132,7 @@ def add_web_keys_parser(sub) -> None:
     out.add_argument(
         "name",
         nargs="?",
-        help="tavily | exa | firecrawl (omit to pick)",
+        help="tavily | exa | tinyfish | firecrawl (omit to pick)",
     )
     out.set_defaults(func=cmd_web_keys)
 

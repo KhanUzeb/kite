@@ -129,6 +129,7 @@ def _fetch_url(
         except (URLError, OSError, TimeoutError, ValueError) as e:
             last_err = str(e)
             if attempt + 1 < attempts and _is_transient_fetch_error(e):
+                time.sleep(min(2.0, 0.5 * (attempt + 1)))
                 continue
             return b"", "", url, last_err
     return b"", "", url, last_err
@@ -171,6 +172,12 @@ def _meta_charset_sniff(raw: bytes) -> str | None:
     return None
 
 
+# Boilerplate containers: nav/footer chrome drowns article text on docs sites.
+# Text inside is dropped, but outbound links are still collected (crawl needs
+# them). The <title> tag is always kept, so the page heading survives.
+_BOILERPLATE_TAGS = frozenset({"nav", "footer", "header", "aside", "form", "menu", "dialog"})
+
+
 class _LinkExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -181,12 +188,15 @@ class _LinkExtractor(HTMLParser):
         self._in_title = False
         self.text_parts: list[str] = []
         self._skip_tags = 0
+        self._boilerplate = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr = {k: (v or "") for k, v in attrs}
         if tag in {"script", "style", "noscript"}:
             self._skip_tags += 1
             return
+        if tag in _BOILERPLATE_TAGS:
+            self._boilerplate += 1
         if tag == "title":
             self._in_title = True
         if tag == "meta":
@@ -207,6 +217,8 @@ class _LinkExtractor(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag in {"script", "style", "noscript"} and self._skip_tags:
             self._skip_tags -= 1
+        if tag in _BOILERPLATE_TAGS and self._boilerplate:
+            self._boilerplate -= 1
         if tag == "title":
             self._in_title = False
         if tag in {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "pre", "article", "main"}:
@@ -217,7 +229,7 @@ class _LinkExtractor(HTMLParser):
             return
         if self._in_title:
             self.title += data
-        else:
+        elif not self._boilerplate:
             self.text_parts.append(data)
 
 
@@ -370,6 +382,10 @@ def webfetch(
                     scraped["chars"] = len(md)
                     if not include_links:
                         scraped["links"] = []
+                    else:
+                        links = scraped.get("links")
+                        if isinstance(links, list):
+                            scraped["links"] = links[: max(1, min(int(max_links), 30))]
                     return scraped
         except Exception as exc:  # noqa: BLE001
             import logging
@@ -692,6 +708,27 @@ def _ddg_html_search(query: str) -> tuple[str | None, str, str | None]:
         return None, "", str(e)
 
 
+def _ddg_results(query: str, max_results: int) -> tuple[list[dict[str, str]], str, str | None]:
+    """DuckDuckGo instant + HTML search. Returns (results, source, error)."""
+    instant_hits = _ddg_instant(query)
+    body, source, err = _ddg_html_search(query)
+    if err and not instant_hits:
+        return [], source, err
+    html_hits = _parse_ddg_html(body or "", max_results) if body else []
+    safe_instant = [hit for hit in instant_hits if not hit.get("url") or _url_allowed(hit["url"])]
+    safe_html = [hit for hit in html_hits if not hit.get("url") or _url_allowed(hit["url"])]
+    merged = _merge_search_results(safe_instant, safe_html, max_results=max_results)
+    src = source or ("instant" if instant_hits and not html_hits else "mixed")
+    return merged, src, None
+
+
+def _with_engine_note(result: dict[str, Any], note: str | None) -> dict[str, Any]:
+    if note:
+        result["note"] = note
+        result["output"] = f"{result.get('output') or ''}\nnote: {note}"
+    return result
+
+
 def websearch(
     query: str,
     *,
@@ -701,7 +738,12 @@ def websearch(
     max_snippet_chars: int = 220,
     engine: str = "auto",
 ) -> dict[str, Any]:
-    """Search the web — paid providers when keyed, else DuckDuckGo."""
+    """Search the web — paid providers when keyed, else DuckDuckGo.
+
+    A paid hit with fewer than max_results is topped up from DuckDuckGo
+    (paid ranking kept first, duplicates dropped) so recall never drops
+    below the free baseline.
+    """
     from kite.tools.web_format import format_search_output, search_summary
 
     query = query.strip()
@@ -711,9 +753,11 @@ def websearch(
     max_results = max(1, min(int(max_results), 15))
     max_snippet_chars = max(40, min(int(max_snippet_chars), 800))
 
+    note: str | None = None
     try:
-        from kite.tools.web_providers import paid_websearch
+        from kite.tools.web_providers import engine_availability_note, paid_websearch
 
+        note = engine_availability_note(engine or "auto")
         paid = paid_websearch(
             query,
             max_results=max_results,
@@ -723,56 +767,87 @@ def websearch(
             max_snippet_chars=max_snippet_chars,
         )
         if paid:
-            return paid
+            results = list(paid.get("results") or [])
+            if len(results) < max_results:
+                topup, _, _ = _ddg_results(query, max_results)
+                if topup:
+                    merged = _merge_search_results(results, topup, max_results=max_results)
+                    if len(merged) > len(results):
+                        label = f"{paid.get('engine') or 'paid'}+duckduckgo"
+                        topped = dict(paid)
+                        topped.update(
+                            {
+                                "output": format_search_output(
+                                    query,
+                                    merged,
+                                    engine=label,
+                                    source="mixed",
+                                    urls_only=urls_only,
+                                    compact=compact,
+                                    max_snippet_chars=max_snippet_chars,
+                                    answer=str(paid.get("answer") or ""),
+                                ),
+                                "summary": search_summary(merged, engine=label),
+                                "results": merged,
+                                "count": len(merged),
+                                "engine": label,
+                                "source": "mixed",
+                                "topped_up": True,
+                            }
+                        )
+                        paid = topped
+            return _with_engine_note(paid, note)
     except Exception as exc:  # noqa: BLE001 — never block free search
         import logging
 
         logging.getLogger("kite.tools.web").debug("paid websearch failed: %s", exc)
 
-    instant_hits = _ddg_instant(query)
-    body, source, err = _ddg_html_search(query)
-    if err and not instant_hits:
-        return {"ok": False, "error": err, "output": err, "engine": "duckduckgo"}
-
-    html_hits = _parse_ddg_html(body or "", max_results) if body else []
-    safe_instant = [hit for hit in instant_hits if not hit.get("url") or _url_allowed(hit["url"])]
-    safe_html = [hit for hit in html_hits if not hit.get("url") or _url_allowed(hit["url"])]
-    results = _merge_search_results(safe_instant, safe_html, max_results=max_results)
+    results, source, err = _ddg_results(query, max_results)
+    if err:
+        return _with_engine_note(
+            {"ok": False, "error": err, "output": err, "engine": "duckduckgo"}, note
+        )
 
     if not results:
         hint = (
             "No results found. Try rephrasing the query, adding more specific keywords, "
             "or fetch a known URL directly with webfetch."
         )
-        return {
-            "ok": True,
-            "output": f"query: {query}\nresults: 0\n\n{hint}",
-            "results": [],
-            "count": 0,
-            "engine": "duckduckgo",
-            "query": query,
-            "source": source or "instant",
-        }
+        return _with_engine_note(
+            {
+                "ok": True,
+                "output": f"query: {query}\nresults: 0\n\n{hint}",
+                "results": [],
+                "count": 0,
+                "engine": "duckduckgo",
+                "query": query,
+                "source": source or "instant",
+            },
+            note,
+        )
 
     output = format_search_output(
         query,
         results,
         engine="duckduckgo",
-        source=source or ("instant" if instant_hits and not html_hits else "mixed"),
+        source=source,
         urls_only=urls_only,
         compact=compact,
         max_snippet_chars=max_snippet_chars,
     )
-    return {
-        "ok": True,
-        "output": output,
-        "summary": search_summary(results, engine="duckduckgo"),
-        "results": results,
-        "count": len(results),
-        "engine": "duckduckgo",
-        "query": query,
-        "source": source or ("instant" if instant_hits and not html_hits else "mixed"),
-    }
+    return _with_engine_note(
+        {
+            "ok": True,
+            "output": output,
+            "summary": search_summary(results, engine="duckduckgo"),
+            "results": results,
+            "count": len(results),
+            "engine": "duckduckgo",
+            "query": query,
+            "source": source,
+        },
+        note,
+    )
 
 
 def webcrawl(
@@ -823,6 +898,7 @@ def webcrawl(
         if key in visited:
             continue
         if not _url_allowed(current):
+            visited.add(key)
             pages.append({"url": current, "error": "private network URLs blocked", "depth": depth})
             continue
         visited.add(key)

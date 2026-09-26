@@ -19,10 +19,13 @@ def format_search_output(
     urls_only: bool = False,
     compact: bool = False,
     max_snippet_chars: int = 220,
+    answer: str = "",
 ) -> str:
     lines = [f"query: {query}", f"results: {len(results)}", f"engine: {engine}"]
     if source:
         lines.append(f"source: {source}")
+    if answer and answer.strip():
+        lines.append(f"answer: {answer.strip()[:800]}")
     lines.append("")
 
     for i, hit in enumerate(results, 1):
@@ -77,6 +80,7 @@ def reformat_search_hit(
         urls_only=urls_only,
         compact=compact,
         max_snippet_chars=max_snippet_chars,
+        answer=str(hit.get("answer") or ""),
     )
     hit["summary"] = search_summary(results, engine=engine)
     return hit

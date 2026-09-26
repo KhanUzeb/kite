@@ -20,7 +20,7 @@ _NON_AGENT_HINTS = (
 
 _TOOL_PARAM_NAMES = frozenset({"tools", "tool_choice", "functions", "parallel_tool_calls"})
 _TOOL_CAP_KEYS = frozenset({"tools", "function_calling", "tool_use", "tool_calls", "functions"})
-_STRICT_PARALLEL_PROVIDERS = frozenset({"nvidia"})
+_STRICT_PARALLEL_PROVIDERS = frozenset({"nvidia", "nvidia_nim"})
 
 
 def _parallel_from_raw(raw: dict[str, Any] | None) -> bool | None:
@@ -112,6 +112,8 @@ def model_supports_parallel_tool_calls(
         return True
     if from_meta is False:
         return False
+    from kite.providers.profiles import get_profile
+
     mid = (litellm_model or model or "").strip()
     if not mid:
         return True
@@ -119,7 +121,10 @@ def model_supports_parallel_tool_calls(
     if norm is not None and "parallel_tool_calls" in norm:
         return True
     if norm is None:
-        return (provider or "").strip().lower() not in _STRICT_PARALLEL_PROVIDERS
+        key = (provider or "").strip().lower()
+        if key in _STRICT_PARALLEL_PROVIDERS or not get_profile(key).allow_parallel_tools:
+            return False
+        return True
     # Optimistic default — most chat/agent APIs accept multiple tool calls per turn.
     return model_supports_tools(provider=provider, model=model, litellm_model=litellm_model, raw=raw) is not False
 

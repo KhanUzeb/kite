@@ -1,7 +1,8 @@
 """Optional paid web backends for websearch / webfetch / webcrawl.
 
-Auto search order when keys are set: Tavily → Exa → Firecrawl → DuckDuckGo.
+Auto search order when keys are set: Tavily → Exa → TinyFish → Firecrawl → DuckDuckGo.
 Firecrawl also upgrades webfetch (scrape) and webcrawl when FIRECRAWL_API_KEY is set.
+TinyFish is a keyed LLM-search API (TINYFISH_API_KEY, X-API-Key header).
 """
 
 from __future__ import annotations
@@ -21,10 +22,11 @@ _TIMEOUT = 45
 WEB_TOOL_ENVS: dict[str, str] = {
     "tavily": "TAVILY_API_KEY",
     "exa": "EXA_API_KEY",
+    "tinyfish": "TINYFISH_API_KEY",
     "firecrawl": "FIRECRAWL_API_KEY",
 }
 
-SEARCH_AUTO_ORDER = ("tavily", "exa", "firecrawl", "duckduckgo")
+SEARCH_AUTO_ORDER = ("tavily", "exa", "tinyfish", "firecrawl", "duckduckgo")
 
 
 def resolve_web_tool_env(name: str) -> str | None:
@@ -56,14 +58,45 @@ def firecrawl_api_key() -> str | None:
     return _env_key("firecrawl")
 
 
+def tinyfish_api_key() -> str | None:
+    return _env_key("tinyfish")
+
+
+def engine_availability_note(preference: str = "auto") -> str | None:
+    """Explain when an explicit engine preference can't be honoured.
+
+    Returns None for auto/available preferences. Surfaces missing keys and
+    unknown engine names so the agent knows why it got DuckDuckGo.
+    """
+    pref = (preference or "auto").strip().lower()
+    if pref in {"auto", "", "duckduckgo", "ddg"}:
+        return None
+    if pref == "tavily" and not tavily_api_key():
+        return "preferred engine 'tavily' is not keyed (TAVILY_API_KEY); using auto order"
+    if pref == "exa" and not exa_api_key():
+        return "preferred engine 'exa' is not keyed (EXA_API_KEY); using auto order"
+    if pref == "firecrawl" and not firecrawl_api_key():
+        return "preferred engine 'firecrawl' is not keyed (FIRECRAWL_API_KEY); using auto order"
+    if pref == "tinyfish" and not tinyfish_api_key():
+        return "preferred engine 'tinyfish' is not keyed (TINYFISH_API_KEY); using auto order"
+    if pref not in {"tavily", "exa", "tinyfish", "firecrawl"}:
+        return f"unknown engine '{pref}'; using auto order (tavily|exa|tinyfish|firecrawl|duckduckgo)"
+    return None
+
+
 def resolve_search_engines(preference: str = "auto") -> list[str]:
     pref = (preference or "auto").strip().lower()
-    if pref in {"tavily", "exa", "firecrawl", "duckduckgo", "ddg"}:
+    if pref in {"tavily", "exa", "tinyfish", "firecrawl", "duckduckgo", "ddg"}:
         if pref == "ddg":
             pref = "duckduckgo"
         if pref == "duckduckgo":
             return ["duckduckgo"]
-        key_fn = {"tavily": tavily_api_key, "exa": exa_api_key, "firecrawl": firecrawl_api_key}[pref]
+        key_fn = {
+            "tavily": tavily_api_key,
+            "exa": exa_api_key,
+            "tinyfish": tinyfish_api_key,
+            "firecrawl": firecrawl_api_key,
+        }[pref]
         return [pref, "duckduckgo"] if key_fn() else ["duckduckgo"]
 
     engines: list[str] = []
@@ -71,6 +104,8 @@ def resolve_search_engines(preference: str = "auto") -> list[str]:
         engines.append("tavily")
     if exa_api_key():
         engines.append("exa")
+    if tinyfish_api_key():
+        engines.append("tinyfish")
     if firecrawl_api_key():
         engines.append("firecrawl")
     engines.append("duckduckgo")
@@ -151,6 +186,7 @@ def _format_search_output(
     urls_only: bool = False,
     compact: bool = False,
     max_snippet_chars: int = 220,
+    answer: str = "",
 ) -> str:
     from kite.tools.web_format import format_search_output
 
@@ -162,6 +198,7 @@ def _format_search_output(
         urls_only=urls_only,
         compact=compact,
         max_snippet_chars=max_snippet_chars,
+        answer=answer,
     )
 
 
@@ -187,7 +224,7 @@ def search_tavily(query: str, *, max_results: int, api_key: str) -> dict[str, An
     status, data = _http_json(
         "https://api.tavily.com/search",
         headers={"Authorization": f"Bearer {api_key}"},
-        body={"query": query, "max_results": max_results, "include_answer": False},
+        body={"query": query, "max_results": max_results, "include_answer": True},
     )
     if status < 200 or status >= 300 or not isinstance(data, dict):
         _log.debug("tavily search failed status=%s", status)
@@ -197,16 +234,18 @@ def search_tavily(query: str, *, max_results: int, api_key: str) -> dict[str, An
         [{"title": r.get("title"), "url": r.get("url"), "snippet": r.get("content")} for r in rows if isinstance(r, dict)],
         max_results=max_results,
     )
-    if not results:
+    answer = str(data.get("answer") or "").strip()
+    if not results and not answer:
         return None
     return {
         "ok": True,
-        "output": _format_search_output(query, results, engine="tavily"),
+        "output": _format_search_output(query, results, engine="tavily", answer=answer),
         "results": results,
         "count": len(results),
         "engine": "tavily",
         "query": query,
         "source": "api",
+        "answer": answer,
     }
 
 
@@ -245,6 +284,50 @@ def search_exa(query: str, *, max_results: int, api_key: str) -> dict[str, Any] 
         "results": results,
         "count": len(results),
         "engine": "exa",
+        "query": query,
+        "source": "api",
+    }
+
+
+def search_tinyfish(query: str, *, max_results: int, api_key: str) -> dict[str, Any] | None:
+    """TinyFish Search API — GET with query params, X-API-Key header.
+
+    Response: {"query": ..., "results": [{position, site_name, title,
+    snippet, url, ...}], "total_results": N, "page": 0}.
+    """
+    from urllib.parse import urlencode
+
+    params = urlencode({"query": query, "page": 0})
+    status, data = _http_json(
+        f"https://api.search.tinyfish.ai?{params}",
+        headers={"X-API-Key": api_key},
+    )
+    if status == 401:
+        _log.debug("tinyfish search: invalid API key")
+        return None
+    if status == 429:
+        _log.debug("tinyfish search: rate limited")
+        return None
+    if status < 200 or status >= 300 or not isinstance(data, dict):
+        _log.debug("tinyfish search failed status=%s", status)
+        return None
+    rows = data.get("results") if isinstance(data.get("results"), list) else []
+    results = _normalize_hits(
+        [
+            {"title": r.get("title"), "url": r.get("url"), "snippet": r.get("snippet")}
+            for r in rows
+            if isinstance(r, dict)
+        ],
+        max_results=max_results,
+    )
+    if not results:
+        return None
+    return {
+        "ok": True,
+        "output": _format_search_output(query, results, engine="tinyfish"),
+        "results": results,
+        "count": len(results),
+        "engine": "tinyfish",
         "query": query,
         "source": "api",
     }
@@ -315,6 +398,12 @@ def paid_websearch(
             key = exa_api_key()
             if key:
                 hit = search_exa(query, max_results=max_results, api_key=key)
+                if hit:
+                    return _reformat_search(hit, urls_only=urls_only, compact=compact, max_snippet_chars=max_snippet_chars)
+        elif engine == "tinyfish":
+            key = tinyfish_api_key()
+            if key:
+                hit = search_tinyfish(query, max_results=max_results, api_key=key)
                 if hit:
                     return _reformat_search(hit, urls_only=urls_only, compact=compact, max_snippet_chars=max_snippet_chars)
         elif engine == "firecrawl":

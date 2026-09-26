@@ -49,6 +49,7 @@ DEFAULT_TOOL_METADATA: dict[str, ToolMetadata] = {
     "webfetch": _meta(read_only=True, network=True, expensive=True, concurrency_safe=True),
     "websearch": _meta(read_only=True, network=True, expensive=True, concurrency_safe=True),
     "webcrawl": _meta(read_only=True, network=True, expensive=True, concurrency_safe=True),
+    "gh_auth": _meta(read_only=True, network=True, concurrency_safe=True),
     "gh_issue": _meta(read_only=True, network=True, concurrency_safe=True),
     "gh_pr": _meta(read_only=True, network=True, concurrency_safe=True),
     "gh_prs": _meta(read_only=True, network=True, concurrency_safe=True),

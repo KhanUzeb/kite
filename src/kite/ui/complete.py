@@ -365,7 +365,7 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             yield from _path_completions(prefix, start)
             return
         elif cmd == "detach":
-            choices.append(("all", "drop pending attachments")]
+            choices.append(("all", "drop pending attachments"))
         elif cmd in {"session", "sessions", "resume"}:
             bits = rest.split()
             first = bits[0].lower() if bits else ""
@@ -1070,7 +1070,7 @@ def make_repl_key_bindings(
     """
     if not _PT:
         return None
-    from prompt_toolkit.filters import Condition
+    from prompt_toolkit.filters import Condition, has_selection
     from prompt_toolkit.key_binding import KeyBindings
 
     bindings = KeyBindings()
@@ -1275,16 +1275,28 @@ def make_repl_key_bindings(
         event.app.invalidate()
 
     def _paste_system_clipboard(event) -> None:  # noqa: ANN001
-        """Ctrl+V / Shift+Insert — paste OS clipboard into the composer."""
-        from kite.ui.attach import read_os_clipboard
+        """Ctrl+V / Shift+Insert — paste text, or attach the screenshot.
 
-        text = read_os_clipboard()
-        if not text:
+        Text on the clipboard inserts at the cursor (as before). A
+        screenshot holds no text, so the old code silently did nothing —
+        now it falls through to the F8 attach path (image → next-turn
+        attachment, empty → "clipboard is empty" flash) so Ctrl+V never
+        drops a screenshot without feedback.
+        """
+        from kite.ui.attach import read_clipboard_text
+
+        text = read_clipboard_text()
+        if text:
+            buf = event.current_buffer
+            unfold_buffer(buf)
+            buf.cut_selection()
+            buf.insert_text(text.replace("\r\n", "\n").replace("\r", "\n"))
             return
-        buf = event.current_buffer
-        unfold_buffer(buf)
-        buf.cut_selection()
-        buf.insert_text(text.replace("\r\n", "\n").replace("\r", "\n"))
+        if on_attach_clipboard is not None:
+            note = on_attach_clipboard()
+            if note:
+                slot["kind"] = "note"
+        event.app.invalidate()
 
     def _copy_selection(event) -> None:  # noqa: ANN001
         """Ctrl+Insert — copy composer selection to OS clipboard."""
@@ -1315,6 +1327,15 @@ def make_repl_key_bindings(
 
     @bindings.add("c-insert", eager=True)
     def _copy(event) -> None:  # noqa: ANN001
+        _copy_selection(event)
+
+    @bindings.add("c-c", eager=True, filter=has_selection & Condition(lambda: not _busy()))
+    def _copy_selected(event) -> None:  # noqa: ANN001
+        """Ctrl+C with a composer selection copies it (native OS expectation).
+
+        Without a selection the binding stays inactive, so Ctrl+C keeps its
+        existing meaning: idle no-op/clear-line, busy stop-the-turn.
+        """
         _copy_selection(event)
 
     # Wheel / trackpad through the slash and @file menu (KITE_MOUSE=0 disables).

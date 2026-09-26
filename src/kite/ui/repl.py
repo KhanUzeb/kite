@@ -403,6 +403,13 @@ class ChatSession:
         # even for sessions constructed before the attribute existed.
         if getattr(self, "_approval_panel_id", None) == req.request_id:
             return
+        # While the pinned composer owns the screen, the toolbar + placeholder
+        # already carry the approval keys — printing a second panel through
+        # patch_stdout tears the composer box and leaves a shadow. Only print
+        # when no prompt app is actively redrawing.
+        if self._prompt_app_running():
+            self._approval_panel_id = req.request_id
+            return
         from kite.ui.approval import render_approval_panel
 
         self.console.print(
@@ -433,9 +440,10 @@ class ChatSession:
         mapped = decision if decision in {"allow", "session", "always", "deny", "stop"} else "deny"
         self._approval_coordinator.resolve(mapped, request_id=req.request_id)
         self._approval_panel_id = None
+        self._approval_wake_sent = False
         self.state.awaiting_approval = ""
         self.state.awaiting_approval_mandatory = False
-        self.state.touch()
+        self.state.touch(force=True)
 
     def _handle_slash_while_busy(self, raw: str) -> None:
         """Busy-turn slash gate — classification owned by ui.complete (single BUSY_SAFE set)."""
@@ -490,14 +498,49 @@ class ChatSession:
             if self.state.awaiting_approval:
                 self.state.awaiting_approval = ""
                 self.state.awaiting_approval_mandatory = False
-                self.state.touch()
+                self.state.touch(force=True)
             return
-        self.state.awaiting_approval = req.tool
-        self.state.awaiting_approval_mandatory = bool(getattr(req, "mandatory", False))
-        self.state.touch()
+        # Idempotent: long runs poll every 250ms — only invalidate + wake on
+        # a real transition, otherwise the composer redraws forever (shadow).
+        want_tool = req.tool
+        want_mandatory = bool(getattr(req, "mandatory", False))
+        changed = (
+            self.state.awaiting_approval != want_tool
+            or self.state.awaiting_approval_mandatory != want_mandatory
+        )
+        self.state.awaiting_approval = want_tool
+        self.state.awaiting_approval_mandatory = want_mandatory
+        if changed:
+            self.state.touch()
         if self._prompt_app_running() and not self._approval_wake_sent:
             self._wake_composer()
             self._approval_wake_sent = True
+
+    def _toolbar_poll(self) -> None:
+        """Render-path poll — state-only, never prints or wakes.
+
+        ``_prompt_once`` calls this from the bottom-toolbar renderer every
+        250ms while busy. Printing or waking there re-enters prompt_toolkit
+        mid-render and glitches the composer, so this only mirrors the
+        pending request into ``state.awaiting_approval`` for the toolbar.
+        """
+        try:
+            req = self._approval_coordinator.pending
+        except Exception:
+            return
+        if req is None:
+            if self.state.awaiting_approval:
+                self.state.awaiting_approval = ""
+                self.state.awaiting_approval_mandatory = False
+            return
+        want_tool = req.tool
+        want_mandatory = bool(getattr(req, "mandatory", False))
+        if (
+            self.state.awaiting_approval != want_tool
+            or self.state.awaiting_approval_mandatory != want_mandatory
+        ):
+            self.state.awaiting_approval = want_tool
+            self.state.awaiting_approval_mandatory = want_mandatory
 
     def _resolve_pending_approval(self) -> None:
         """Main-thread approval — composer keys when prompt_toolkit is active."""
@@ -528,9 +571,10 @@ class ChatSession:
         finally:
             self._approval_resolving = False
             self._approval_panel_id = None
+            self._approval_wake_sent = False
             self.state.awaiting_approval = ""
             self.state.awaiting_approval_mandatory = False
-            self.state.touch()
+            self.state.touch(force=True)
 
     def _harness_cache_key(self) -> tuple:
         return (
@@ -771,8 +815,17 @@ class ChatSession:
         self._ensure_model_resolved()
         info = self._reasoning_info_sync()
         if command in {"thinking", "fast"}:
-            if info is None or not info.can_both:
-                self.console.print("[kite.muted]this API does not advertise both thinking and fast[/]")
+            # Single-capability models (e.g. NIM reasoners with only
+            # reasoning_effort) must still accept their own mode — the old
+            # can_both gate dead-ended every NIM thinking request.
+            if info is None or not info.supported:
+                self.console.print("[kite.muted]this model does not advertise thinking/fast[/]")
+                return
+            if command == "thinking" and not info.can_thinking:
+                self.console.print("[kite.muted]no extended thinking on this model[/]")
+                return
+            if command == "fast" and not info.can_fast:
+                self.console.print("[kite.muted]no fast/low-effort on this model[/]")
                 return
             token = raw.strip().lower()
             if token == command:
@@ -1411,6 +1464,20 @@ class ChatSession:
         self._model_resolved = True
         self._invalidate_harness()
         self._invalidate_reasoning_support()
+        # Stale effort (e.g. thinking:high from the previous model) must not
+        # leak into the new provider — NIM reasoners would then think far
+        # longer than asked. Clamp to the new model's menu, else auto.
+        try:
+            from kite.models.reasoning import coerce_reasoning_for_model, peek_reasoning
+
+            info = peek_reasoning(provider, model)
+            if info is not None and (self.state.reasoning or "auto") != "auto":
+                coerced = coerce_reasoning_for_model(self.state.reasoning, info)
+                if coerced != self.state.reasoning:
+                    self.state.reasoning = coerced
+                    self._invalidate_harness()
+        except Exception:
+            pass
 
     def _connect_flow(self, provider: str | None = None, *, force_login: bool = False) -> None:
         from kite.providers.select import connect_interactive
@@ -2025,6 +2092,14 @@ class ChatSession:
             hint = "|".join(pi for pi, _ in menu) or "off|low|medium|high"
             self.console.print(f"[kite.muted]/thinking {hint}[/]")
             return
+        # Bare mode tokens keep legacy behavior: /reasoning fast →
+        # fast:low, /reasoning thinking → thinking:high.
+        if encoded in {"fast", "thinking"} and info is not None and info.supported:
+            default = info.default_effort(encoded)
+            if default:
+                from kite.models.reasoning import encode_reasoning
+
+                encoded = encode_reasoning(encoded, default)
         self._commit_reasoning(encoded)
 
     def _slash_thinking(self, arg: str) -> None:
@@ -2043,22 +2118,25 @@ class ChatSession:
         return choices
 
     def _slash_reasoning(self, arg: str) -> None:
+        # Pi parity: /reasoning, /effort, /thinking and /fast share one Pi
+        # level menu (off/minimal/low/medium/high/xhigh/max). Legacy
+        # fast/thinking tokens still resolve via the same path.
         if not arg:
             picked = self._pick(
-                self._reasoning_picker_choices(),
-                title="Effort",
-                current=self.state.reasoning.split(":", 1)[0],
-                noun="effort",
+                self._thinking_picker_choices(),
+                title="Thinking level",
+                current=self.state.reasoning,
+                noun="level",
             )
             if not picked:
                 from kite.models.reasoning import reasoning_badge
 
                 badge = reasoning_badge(self.state.reasoning) or self.state.reasoning
-                self.console.print(f"[kite.muted]effort[/]  {badge}")
+                self.console.print(f"[kite.muted]thinking[/]  {badge}")
                 return
-            self._set_reasoning(picked)
+            self._apply_thinking_level(picked)
             return
-        self._set_reasoning(arg)
+        self._apply_thinking_level(arg)
 
     def _slash_memory(self, arg: str) -> None:
         which = arg.strip().lower()
@@ -3192,7 +3270,7 @@ class ChatSession:
                     on_empty=_composer_empty,
                     on_dequeue=self._dequeue_to_composer,
                     on_tick=self._busy_tick,
-                    on_poll=self._busy_tick,
+                    on_poll=self._toolbar_poll,
                 )
             else:
                 handlers = BusyComposerHandlers(

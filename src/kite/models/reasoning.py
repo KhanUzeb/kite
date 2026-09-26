@@ -303,6 +303,32 @@ def thinking_level_badge(raw: str | None, info: ReasoningSupport) -> str:
     return level
 
 
+def coerce_reasoning_for_model(current: str | None, info: ReasoningSupport | None) -> str:
+    """Clamp a stale reasoning value when the provider/model changes.
+
+    Returns ``"auto"`` when the new model offers no thinking levels, the
+    current value when it is still supported, else the nearest menu level.
+    Prevents carrying ``thinking:high`` into a fresh NIM session that would
+    then think far longer than the user asked for.
+    """
+    raw = (current or "auto").strip() or "auto"
+    if info is None or not info.supported:
+        return "auto"
+    menu = thinking_level_menu(info)
+    encodings = {enc for _, enc in menu}
+    if raw in encodings or raw in {"auto", "off"} and (
+        raw == "auto" or "off" in {pi for pi, _ in menu}
+    ):
+        return raw
+    level = reasoning_to_thinking_level(raw, info)
+    if level not in {"", "auto"}:
+        clamped = clamp_thinking_level(level, info)
+        if clamped is not None:
+            return clamped[0]
+    fallback = menu[0][1] if menu else "auto"
+    return fallback
+
+
 def _norm_params(values: Any) -> set[str]:
     out: set[str] = set()
     if isinstance(values, dict):
@@ -416,13 +442,25 @@ def _kwargs_from_params(
     off: dict[str, Any] = {}
     can_t = can_f = can_off = False
 
-    high, low = _pick_efforts(efforts) if efforts else ("high", "low")
+    from kite.providers.profiles import get_profile, normalize_effort
+
+    profile = get_profile(provider)
+    if efforts:
+        picked_high, picked_low = _pick_efforts(efforts)
+        high = normalize_effort(provider, picked_high or "high") or "high"
+        low = normalize_effort(provider, picked_low or "low") or "low"
+    else:
+        high, low = profile.default_effort, "low"
+        if provider.strip().lower() in {"nvidia", "nvidia_nim", "nim"}:
+            high, low = "high", "low"
 
     if "reasoning_effort" in params:
+        # NIM cloud only honours top-level reasoning_effort; extra_body
+        # variants are rejected, so never emit them for this family.
         thinking["reasoning_effort"] = high or "high"
         fast["reasoning_effort"] = low or "low"
         if not mandatory:
-            off["reasoning_effort"] = "none"
+            off["reasoning_effort"] = profile.disable_effort or "none"
         can_t = can_f = True
         can_off = not mandatory
 
@@ -477,13 +515,21 @@ _REASONING_MODEL_HINTS = (
 
 def _infer_reasoning(provider: str, model: str) -> ReasoningSupport | None:
     """Fallback when live/LiteLLM metadata is empty but the model id is a known reasoner."""
+    from kite.providers.profiles import get_profile
+
     low = (model or "").lower()
     if not any(h in low for h in _REASONING_MODEL_HINTS):
         return None
+    profile = get_profile(provider)
+    # NIM reasoners gate thinking on top-level reasoning_effort only —
+    # default to medium (not max) so a fresh session never starts in an
+    # unbounded "infinite thinking" state.
     high, low_eff = "high", "low"
+    if profile.name == "nvidia":
+        high, low_eff = "medium", "low"
     thinking = {"reasoning_effort": high}
     fast = {"reasoning_effort": low_eff}
-    off: dict[str, Any] = {"reasoning_effort": "none"}
+    off: dict[str, Any] = {"reasoning_effort": profile.disable_effort or "none"}
     return ReasoningSupport(
         supported=True,
         can_fast=True,
@@ -493,7 +539,7 @@ def _infer_reasoning(provider: str, model: str) -> ReasoningSupport | None:
         fast_kwargs=fast,
         off_kwargs=off,
         source="heuristic",
-        efforts=("none", low_eff, "medium", high),
+        efforts=(profile.disable_effort or "none", low_eff, "medium", high),
     )
 
 
