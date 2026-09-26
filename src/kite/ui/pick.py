@@ -233,6 +233,7 @@ def _raw_pick(
             ev = reader()
             if ev is None:
                 continue
+            _pick_debug(f"loop ev={ev!r} filter={state['filter']!r}")
             if isinstance(ev, str) and ev.startswith(("goto:", "pick:")):
                 try:
                     vis = int(ev.split(":", 1)[1])
@@ -322,12 +323,95 @@ def _stderr_cursor_y() -> int | None:
     return None
 
 
+def _pick_debug(msg: str) -> None:
+    """Append picker diagnostics when KITE_PICK_DEBUG is set.
+
+    Log file: %TEMP%/kite-pick-debug.log (or $TMPDIR on POSIX).
+    Used to identify which raw reader a terminal ends up on.
+    """
+    import os
+
+    if not os.environ.get("KITE_PICK_DEBUG"):
+        return
+    try:
+        import tempfile
+
+        path = os.path.join(tempfile.gettempdir(), "kite-pick-debug.log")
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(msg + "\n")
+    except Exception:
+        pass
+
+
+def _consume_event(buf: str, drawn: dict) -> tuple[str | None, str, bool]:
+    """Parse one event from the front of ``buf``.
+
+    Returns ``(event, rest, need_more)``. ``need_more`` means the buffer
+    ends mid-escape-sequence — the caller must wait for more bytes
+    instead of emitting ``[`` / ``B`` fragments into the filter.
+    Shared by the POSIX and msvcrt readers so split ANSI delivery
+    (pipes, conpty chunking) can never pollute type-to-filter.
+    """
+    if not buf:
+        return None, buf, False
+    if buf[0] != "\x1b":
+        ch = buf[0]
+        rest = buf[1:]
+        if ch in "\r\n":
+            return "enter", rest, False
+        if ch == "\x03":
+            return "ctrl-c", rest, False
+        if ch in "\x7f\x08":
+            return "backspace", rest, False
+        if ch == "\x12":
+            return "refresh", rest, False
+        return (ch if ch.isprintable() else None), rest, False
+    # Buffer starts with ESC — need at least one more byte to decide.
+    if len(buf) == 1:
+        return None, buf, True
+    second = buf[1]
+    if second not in {"[", "O"}:
+        # Lone ESC (or Alt+key) — report cancel, keep the rest.
+        return "esc", buf[1:], False
+    if second == "O":
+        if len(buf) < 3:
+            return None, buf, True
+        return _posix_key(buf[:3]), buf[3:], False
+    # CSI: ESC [ params... final
+    import re
+
+    m = re.match(r"^\x1b\[<[0-9;]*[Mm]", buf)
+    if m:
+        seq = m.group(0)
+        return _posix_mouse(seq, drawn), buf[len(seq):], False
+    if re.match(r"^\x1b\[<[0-9;]*$", buf):
+        return None, buf, True  # incomplete SGR mouse — wait for M/m
+    if re.match(r"^\x1b\[M...?$", buf, re.DOTALL):
+        # Legacy X10 mouse — swallow (picker uses SGR anyway).
+        if len(buf) >= 6:
+            return None, buf[6:], False
+        return None, buf, True
+    m = re.match(r"^\x1b\[[0-9;:<=>\?]*[@-~]", buf)
+    if m:
+        seq = m.group(0)
+        return _posix_key(seq), buf[len(seq):], False
+    # ESC [ without a final byte yet — wait for it.
+    if re.match(r"^\x1b\[[0-9;:<=>\?]*$", buf):
+        return None, buf, True
+    # Unknown ESC lead-in — swallow it, never leak into filter.
+    return None, buf[2:], False
+
+
 def _event_reader(drawn: dict):
     if sys.platform == "win32":
         try:
-            return _WinEvents(drawn)
-        except OSError:
+            reader = _WinEvents(drawn)
+        except OSError as exc:
+            _pick_debug(f"reader=_WinKeyOnly fallback ({exc!r})")
             return _WinKeyOnly(drawn)
+        _pick_debug("reader=_WinEvents")
+        return reader
+    _pick_debug("reader=_PosixEvents")
     return _PosixEvents(drawn)
 
 
@@ -353,69 +437,82 @@ def _ensure_vt_output() -> None:
 class _WinKeyOnly:
     """msvcrt fallback when console mouse mode cannot be enabled.
 
-    Also handles ANSI escape sequences (mintty / VT input) so stray
-    ``[B`` / ``[<35;..M`` fragments never leak into the type-to-filter
-    buffer as ``[[B[B[`` junk.
+    Reads stdin as an ANSI byte stream (pipes, mintty, VT input) with a
+    persistent buffer: split escape sequences are coalesced across calls,
+    so ``[B`` / ``[<35;..M`` fragments never leak into the type-to-filter
+    buffer as ``[[B[B[`` junk. A lone ESC still cancels, but only after a
+    short settle wait proves no continuation is coming.
     """
+
+    _SETTLE_ROUNDS = 6
+    _SETTLE_SLEEP = 0.015
 
     def __init__(self, drawn: dict | None = None) -> None:
         import msvcrt
 
         self._msvcrt = msvcrt
         self._drawn = drawn or {}
+        self._buf = ""
 
-    def _drain_ansi(self) -> str | None:
-        """Consume one ANSI sequence after a leading ESC, if present."""
-        msvcrt = self._msvcrt
-        if not msvcrt.kbhit():
-            return "esc"
-        nxt = msvcrt.getwch()
-        if nxt not in {"[", "O"}:
-            # Lone ESC (or Alt+key) — cancel, keep it simple.
-            return "esc"
-        seq = "\x1b" + nxt
-        # Collect until a final byte; stop if input stalls.
-        while True:
-            if not msvcrt.kbhit():
+    def _settle(self) -> bool:
+        """Poll briefly for continuation bytes of a split sequence.
+
+        Returns True when the buffer grew. A lone ESC is only reported
+        as cancel when a full settle passes with zero new bytes.
+        """
+        import time
+
+        grew = False
+        for _ in range(self._SETTLE_ROUNDS):
+            _, _, need_more = _consume_event(self._buf, self._drawn)
+            if not need_more:
                 break
-            c = msvcrt.getwch()
-            seq += c
-            if c.isalpha() or c in "~Mm":
-                break
-            if len(seq) > 32:
-                break
-        hit = _posix_key(seq)
-        if hit is not None:
-            return hit
-        mouse = _posix_mouse(seq, self._drawn)
-        if mouse is not None:
-            return mouse
-        # Unknown / split sequence (e.g. mouse motion) — swallow it.
-        return None
+            time.sleep(self._SETTLE_SLEEP)
+            while self._msvcrt.kbhit():
+                self._buf += self._msvcrt.getwch()
+                grew = True
+        return grew
 
     def __call__(self) -> str | None:
-        ch = self._msvcrt.getwch()
-        if ch in {"\x00", "\xe0"}:
-            code = self._msvcrt.getwch()
-            return {
-                "H": "up",
-                "P": "down",
-                "I": "pageup",
-                "Q": "pagedown",
-                "G": "home",
-                "O": "end",
-            }.get(code)
-        if ch == "\x1b":
-            return self._drain_ansi()
-        if ch in {"\r", "\n"}:
-            return "enter"
-        if ch in {"\x1b", "\x03"}:
-            return "esc" if ch == "\x1b" else "ctrl-c"
-        if ch == "\x08":
-            return "backspace"
-        if ch == "\x12":
-            return "refresh"
-        return ch if ch.isprintable() else None
+        msvcrt = self._msvcrt
+        new_data = False
+        if not self._buf:
+            ch = msvcrt.getwch()  # blocking: wait for the next key
+            if ch in {"\x00", "\xe0"}:
+                code = msvcrt.getwch()
+                return {
+                    "H": "up",
+                    "P": "down",
+                    "I": "pageup",
+                    "Q": "pagedown",
+                    "G": "home",
+                    "O": "end",
+                }.get(code)
+            self._buf += ch
+            new_data = True
+        else:
+            before = len(self._buf)
+            while msvcrt.kbhit():
+                self._buf += msvcrt.getwch()
+            new_data = len(self._buf) > before
+        new_data |= self._settle()
+        while self._buf:
+            ev, rest, need_more = _consume_event(self._buf, self._drawn)
+            if need_more:
+                # Still split after settling. Lone ESC with zero new bytes
+                # → cancel; otherwise hold the partial for the next call.
+                if self._buf == "\x1b" and not new_data:
+                    self._buf = ""
+                    _pick_debug("ev='esc' (lone)")
+                    return "esc"
+                _pick_debug(f"hold partial buf={self._buf!r}")
+                return None
+            self._buf = rest
+            if ev is None and rest:
+                continue  # swallowed junk, more input queued — keep parsing
+            _pick_debug(f"ev={ev!r}")
+            return ev
+        return None
 
     def close(self) -> None:
         return None
@@ -556,67 +653,17 @@ class _PosixEvents:
         Returns False when more bytes are needed for an incomplete ESC
         sequence (caller waits instead of leaking ``[B`` fragments).
         """
-        buf = self._buf
-        if not buf:
-            return None
-        if buf[0] != "\x1b":
-            ch = buf[0]
-            self._buf = buf[1:]
-            if ch in "\r\n":
-                return "enter"
-            if ch == "\x03":
-                return "ctrl-c"
-            if ch in "\x7f\x08":
-                return "backspace"
-            if ch == "\x12":
-                return "refresh"
-            return ch if ch.isprintable() else None
-        # Buffer starts with ESC — need at least one more byte to decide.
-        if len(buf) == 1:
+        ev, rest, need_more = _consume_event(self._buf, self._drawn)
+        if need_more:
             return False
-        second = buf[1]
-        if second not in {"[", "O"}:
-            # Lone ESC (or Alt+key) — report cancel, keep the rest.
-            self._buf = buf[1:]
-            return "esc"
-        if second == "O":
-            if len(buf) < 3:
-                return False
-            seq = buf[:3]
-            self._buf = buf[3:]
-            return _posix_key(seq)
-        # CSI: ESC [ params... final
-        import re
-
-        m = re.match(r"^\x1b\[<[0-9;]*[Mm]", buf)
-        if m:
-            seq = m.group(0)
-            self._buf = buf[len(seq):]
-            return _posix_mouse(seq, self._drawn)
-        if re.match(r"^\x1b\[<[0-9;]*$", buf):
-            return False  # incomplete SGR mouse — wait for M/m
-        if re.match(r"^\x1b\[M...?$", buf, re.DOTALL):
-            # Legacy X10 mouse — swallow (picker uses SGR anyway).
-            if len(buf) >= 6:
-                self._buf = buf[6:]
-                return None
-            return False
-        m = re.match(r"^\x1b\[[0-9;:<=>\?]*[@-~]", buf)
-        if m:
-            seq = m.group(0)
-            self._buf = buf[len(seq):]
-            return _posix_key(seq)
-        # ESC [ without a final byte yet — wait for it.
-        if re.match(r"^\x1b\[[0-9;:<=>\?]*$", buf):
-            return False
-        # Unknown ESC lead-in — swallow it, never leak into filter.
-        self._buf = buf[2:]
-        return None
+        self._buf = rest
+        return ev
 
     def __call__(self) -> str | None:
         import os
         import select
 
+        new_data = False
         if not self._buf:
             ready, _, _ = select.select([self._fd], [], [], 0.5)
             if not ready:
@@ -628,8 +675,11 @@ class _PosixEvents:
             if not chunk:
                 return "esc"
             self._buf += chunk.decode("utf-8", errors="replace")
+            new_data = True
         else:
+            before = len(self._buf)
             self._drain()
+            new_data = len(self._buf) > before
         # Coalesce split escape sequences: keep draining briefly while the
         # buffer ends mid-sequence instead of emitting ``[`` / ``B`` pieces.
         for _ in range(5):
@@ -645,10 +695,19 @@ class _PosixEvents:
             _time.sleep(0.02)
             before = len(self._buf)
             self._drain()
-            if len(self._buf) == before:
+            if len(self._buf) > before:
+                new_data = True
+            else:
                 break
         ev = self._extract()
-        return None if ev is False else ev
+        if ev is False:
+            # Lone ESC with zero new bytes after settling → cancel.
+            # Anything else partial is held for the next call, never leaked.
+            if self._buf == "\x1b" and not new_data:
+                self._buf = ""
+                return "esc"
+            return None
+        return ev
 
     def close(self) -> None:
         if self._closed:
