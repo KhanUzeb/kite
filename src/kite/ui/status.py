@@ -220,6 +220,10 @@ def status_segments(state: SessionUiState) -> list[tuple[str, str]]:
                 "kite.muted",
             )
         )
+    if state.active_jobs:
+        parts.append((f"{state.active_jobs} job{'s' if state.active_jobs != 1 else ''}", "kite.highlight"))
+    if state.active_subagents:
+        parts.append((f"{state.active_subagents} agent{'s' if state.active_subagents != 1 else ''}", "kite.highlight"))
     if not state.busy and state.last_error.strip():
         parts.append((f"err {_short_error(state.last_error)}", "kite.error"))
     return parts

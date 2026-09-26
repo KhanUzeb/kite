@@ -24,8 +24,8 @@ class ChannelProfile:
     flush_on_boundary: bool = True
 
 
-ANSWER_PROFILE = ChannelProfile(min_chars=1, flush_chars=48, max_latency_s=0.022, flush_on_boundary=True)
-THINKING_PROFILE = ChannelProfile(min_chars=8, flush_chars=128, max_latency_s=0.06, flush_on_boundary=False)
+ANSWER_PROFILE = ChannelProfile(min_chars=1, flush_chars=32, max_latency_s=0.018, flush_on_boundary=True)
+THINKING_PROFILE = ChannelProfile(min_chars=8, flush_chars=96, max_latency_s=0.05, flush_on_boundary=False)
 DEFAULT_PROFILE = ChannelProfile()
 
 _CHANNEL_PROFILES: dict[str, ChannelProfile] = {

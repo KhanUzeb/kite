@@ -40,7 +40,7 @@ def render_task_row(item: TodoItem, *, tick: int = 0) -> Text:
         text_style = "kite.task.pending"
 
     badge, badge_style = _status_badge(item.status)
-    content = item.content[:56]
+    content = item.content[:52]
 
     line = Text()
     line.append(f"{GUTTER}{mark} ", style=mark_style)

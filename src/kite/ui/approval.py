@@ -44,7 +44,7 @@ APPROVAL_KEYS: dict[str, Decision] = {
 #: Footer rendering per decision: (label, key style).
 _APPROVAL_KEY_META: dict[str, tuple[str, str]] = {
     "allow": ("once", "kite.muted"),
-    "session": ("family", "kite.success"),
+    "session": ("session", "kite.success"),
     "always": ("always", "kite.success"),
     "deny": ("deny", "kite.pending"),
     "stop": ("stop", "kite.error"),
@@ -720,14 +720,16 @@ def render_approval_panel(
     body.append(f"{GUTTER}{APPROVAL_BAR}\n", style="kite.muted")
     body.append(f"{GUTTER}{APPROVAL_BAR}", style="kite.muted")
     body.append("[Enter]", style="kite.success")
-    for _key, _decision in APPROVAL_KEYS.items():
-        if mandatory and _decision in {"session", "always"}:
-            continue
-        _label, _style = _APPROVAL_KEY_META[_decision]
-        _lead = " / " if _key == "a" else ""
-        _end = "\n" if _key == "q" else "  "
-        body.append(f"{_lead}[{_key}]", style=_style)
-        body.append(f" {_label}{_end}", style="kite.muted")
+    body.append(" once  ", style="kite.muted")
+    body.append("[s]", style="kite.success")
+    body.append(" session  ", style="kite.muted")
+    if not mandatory:
+        body.append("[p]", style="kite.success")
+        body.append(" always  ", style="kite.muted")
+    body.append("[n]", style="kite.pending")
+    body.append(" deny  ", style="kite.muted")
+    body.append("[q]", style="kite.error")
+    body.append(" stop\n", style="kite.muted")
     return body
 
 

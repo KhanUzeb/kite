@@ -331,7 +331,7 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             for name, display, env in loginable_providers():
                 choices.append((name, f"{env}  {display[:40]}"))
         elif cmd == "working":
-            choices = [("add", "append a soft rhythm signal")]
+            choices = [("add", "add a working reminder or note")]
         elif cmd in {"skills", "skill"}:
             bits = rest.split()
             first = bits[0].lower() if bits else ""
@@ -365,7 +365,7 @@ class SlashCompleter(Completer):  # type: ignore[misc]
             yield from _path_completions(prefix, start)
             return
         elif cmd == "detach":
-            choices = [("all", "drop pending attachments")]
+            choices.append(("all", "drop pending attachments")]
         elif cmd in {"session", "sessions", "resume"}:
             bits = rest.split()
             first = bits[0].lower() if bits else ""
@@ -404,6 +404,28 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         parts = rest.split()
         trailing = bool(rest) and rest.endswith(" ")
         prefix = parts[-1] if parts and not trailing else ""
+        # OpenCode parity: provider/model#variant — complete thinking levels
+        # after "#" from the live Pi menu (off/low/medium/high/…).
+        if "#" in prefix:
+            base, _, needle = prefix.partition("#")
+            start = -(len(needle) + 1) if prefix else 0
+            try:
+                info = self._support()
+                from kite.models.reasoning import thinking_level_menu
+
+                menu = thinking_level_menu(info)
+                for pi, _enc in menu:
+                    if needle and needle.lower() not in pi.lower():
+                        continue
+                    yield Completion(
+                        f"{base}#{pi}",
+                        start_position=start,
+                        display=pi,
+                        display_meta="thinking level",
+                    )
+            except Exception:
+                pass
+            return
         start = -len(prefix) if prefix else 0
         choices: list[tuple[str, str]] = []
 

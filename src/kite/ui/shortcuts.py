@@ -23,6 +23,9 @@ composer (idle)
   Ctrl+T / F7     toggle thinking trace
   F2              flash status footer
   F5              refresh models, then pick
+  Ctrl+K          clear composer text
+  Ctrl+R          search message history
+  Ctrl+Y          cycle through history
   @path           attach file inline (e.g. fix @src/foo.py)
   !command        run a shell command and send output to the model (Pi)
   !!command       run a shell command without adding it to context
@@ -35,6 +38,7 @@ while a turn is running
   Esc / Ctrl+C    stop the turn (session stays open)
   Ctrl+G          steer (same as Enter)
   Ctrl+U          dequeue queued messages into composer
+  Ctrl+K          clear composer text
   F8 / Esc v      attach clipboard to next queued turn
   /tasks          running work + queue
   /live           stream bash output

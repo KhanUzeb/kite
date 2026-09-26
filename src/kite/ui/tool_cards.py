@@ -188,7 +188,7 @@ def render_tool_card_start(card: ToolCard, *, running: bool = True) -> Text:
         line.append(card.detail, style="kite.muted")
     if running:
         line.append(f" {glyph('sep')} ", style="kite.muted")
-        line.append("running", style="kite.pending italic")
+        line.append("executing", style="kite.pending italic")
     line.append("\n")
     return line
 

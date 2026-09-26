@@ -192,10 +192,12 @@ def render_compact_boundary(
     t.append("\n")
     return t
 
-def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: str = "") -> Text:
+def render_error(message: str, *, show_trace_hint: bool = True, traceback_text: str = "", error_type: str = "") -> Text:
     t = Text()
     t.append(f"{SYMBOL_FAIL} ", style="kite.error")
     t.append(message.strip() or "error", style="kite.error")
+    if error_type:
+        t.append(f" ({error_type})", style="kite.error italic")
     if traceback_text.strip():
         t.append("\n")
         lines = traceback_text.strip().splitlines()
