@@ -55,7 +55,9 @@ def is_transient_provider_error(exc: BaseException) -> bool:
     if name in _TRANSIENT_TYPES:
         return True
     msg = str(exc).lower()
-    if "stream stalled" in msg:
+    if "stream stalled" in msg or "stream timed out after" in msg:
+        # Kite-internal bounded timeouts (stall fallback already attempted) —
+        # retrying would just hang the turn again instead of failing fast.
         return False
     return any(hint in msg for hint in _TRANSIENT_HINTS)
 

@@ -156,6 +156,20 @@ def test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     assert time.monotonic() - started < 15.0
 
 
+def test_kite_internal_timeouts_never_retry() -> None:
+    """Deterministic classification: Kite's own bounded timeouts fail fast.
+
+    The stall test above races the 4s stall against the 5s overall timeout —
+    either may win on a loaded runner, so both messages must classify the
+    same way. Provider-side timeouts stay retryable.
+    """
+    assert not is_transient_provider_error(TimeoutError("stream timed out after 5s without completing"))
+    assert not is_transient_provider_error(StreamStalledError("stream stalled: no data for 30s"))
+    assert is_transient_provider_error(TimeoutError("connection timed out"))
+    assert is_transient_provider_error(TimeoutError("Read timed out."))
+    assert not is_transient_provider_error(RuntimeError("provider unavailable"))
+
+
 def test_peek_reasoning_cache_only() -> None:
     from kite.models import reasoning
 
