@@ -500,6 +500,14 @@ def test_nvidia_nim_request_compatibility(monkeypatch, kite_home) -> None:
         )
         is True
     )
+    assert (
+        model_supports_parallel_tool_calls(
+            provider="test",
+            model="m",
+            raw={"capabilities": {"tools": True, "parallel_tool_calls": True}},
+        )
+        is True
+    )
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test-key")
     cfg = UserConfig.load()
     cfg.provider_defaults = {}

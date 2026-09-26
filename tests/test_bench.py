@@ -6,17 +6,13 @@ from kite.bench.budgets import BUDGETS_MS, check_report
 from kite.bench.suite import load_report, run_suite, save_report
 
 
-def test_run_suite_includes_all_budgeted_benchmarks(workspace) -> None:
+def test_run_suite_budgets_and_violations(workspace) -> None:
     report = run_suite(cwd=workspace)
     names = {r.name for r in report.results}
     assert names == set(BUDGETS_MS)
     assert all(r.seconds >= 0 for r in report.results)
     for category in ("startup", "context", "tools"):
         assert [r for r in report.results if r.category == category], category
-
-
-def test_harness_benchmarks_within_budget(workspace) -> None:
-    report = run_suite(cwd=workspace)
     violations = check_report(report)
     assert not violations, "\n".join(violations)
 

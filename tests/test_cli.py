@@ -259,7 +259,7 @@ def test_chat_resume_flags_transcript_and_context(monkeypatch, tmp_path: Path, k
 
 def test_headless_tasks_status_approval_and_parsing(monkeypatch, workspace, kite_home, capsys) -> None:
     task = parse_task_line("fix the tests", default_cwd="/tmp/ws")
-    assert task and task.task == "fix the tests"
+    assert task and task.task == "fix the tests" and task.cwd == "/tmp/ws"
     json_task = parse_task_line('{"task": "scout auth", "label": "auth", "profile": "scout", "mode": "plan"}')
     assert json_task and json_task.label == "auth"
     tasks = load_tasks_text("# header\n\nrun tests\n\n{\"task\": \"lint\", \"label\": \"lint\"}\n", default_cwd=".")

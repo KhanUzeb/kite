@@ -66,17 +66,14 @@ def test_no_prompt_after_connection_marker_or_byos(kite_home, monkeypatch) -> No
     assert should_auto_prompt_setup() is False
 
 
-def test_write_api_key_sets_marker(kite_home) -> None:
+def test_key_write_and_wizard_mark_complete(kite_home, monkeypatch) -> None:
+    from kite.cli.setup import run_setup_wizard
     from kite.providers.credentials import write_api_key
 
     assert not onboarding_marker_path().is_file()
     write_api_key("GROQ_API_KEY", "gsk-test-not-a-real-key")
     assert onboarding_marker_path().is_file()
     assert should_auto_prompt_setup() is False
-
-
-def test_manual_setup_wizard_marks_complete(kite_home, monkeypatch) -> None:
-    from kite.cli.setup import run_setup_wizard
 
     monkeypatch.setenv("GROQ_API_KEY", "gsk-test-not-a-real-key")
     monkeypatch.setattr(
@@ -87,7 +84,5 @@ def test_manual_setup_wizard_marks_complete(kite_home, monkeypatch) -> None:
         "kite.cli.setup.connect_interactive",
         lambda *_a, **_k: (0, "groq", "llama-3.3-70b-versatile"),
     )
-    console = MagicMock()
-    code = run_setup_wizard(console)
-    assert code == 0
+    assert run_setup_wizard(MagicMock()) == 0
     assert onboarding_marker_path().is_file()

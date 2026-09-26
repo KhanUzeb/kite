@@ -47,7 +47,7 @@ def _offline_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(urllib.request, "urlopen", _raise)
 
 
-def test_flatten_grok_auth_shapes() -> None:
+def test_grok_auth_record_shapes_and_expiry() -> None:
     flat = flatten_grok_auth_record(_nested_payload())
     assert flat["access_token"] == "ACC"
     assert flat["refresh_token"] == "REF"
@@ -64,9 +64,8 @@ def test_flatten_grok_auth_shapes() -> None:
     assert flatten_grok_auth_record({}) == {}
     assert flatten_grok_auth_record({_NESTED_KEY: {"refresh_token": "REF"}}) == {}
     assert flatten_grok_auth_record({_NESTED_KEY: "not-a-dict"}) == {}
-
-
-def test_epoch_conversion_iso_numeric_and_garbage() -> None:
+    # Expiry coercion: ISO, numeric, numeric-string pass through as float;
+    # garbage and missing expiry are dropped.
     iso = flatten_grok_auth_record({"access_token": "A", "expires_at": _ISO_EXPIRY})
     assert isinstance(iso["expires_at"], float)
     numeric = flatten_grok_auth_record({"access_token": "A", "expires_at": 1700000000})

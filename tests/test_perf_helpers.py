@@ -6,8 +6,7 @@ from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.runtime import AgentRuntime, RuntimeOptions
 from kite.context.window import estimate_tool_schema_tokens, estimate_usage
 from kite.models.cache import PromptCacheManager
-from kite.providers.capabilities import _litellm_openai_params, model_supports_parallel_tool_calls
-from kite.providers.resolve import ResolvedModel
+from kite.providers.capabilities import _litellm_openai_params
 
 
 def test_estimate_usage_and_compactor_measure() -> None:
@@ -79,7 +78,4 @@ def test_runtime_prepare_static_and_litellm_cache() -> None:
     assert info.hits + info.misses >= 1
 
 
-def test_parallel_tool_calls_and_resolved_model() -> None:
-    raw = {"capabilities": {"tools": True, "parallel_tool_calls": True}}
-    assert model_supports_parallel_tool_calls(provider="test", model="m", raw=raw) is True
-    assert "raw" in ResolvedModel.__dataclass_fields__
+

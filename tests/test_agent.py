@@ -189,14 +189,12 @@ def test_stable_setup_messages_and_compaction_history(workspace: Path) -> None:
     assert "Schema repair" in outputs[0]["output"] and "path" in outputs[0]["output"]
 
 
-def test_unexpected_stop_classifier() -> None:
+def test_informational_completion_idle_and_error(monkeypatch) -> None:
+    # (merged from test_unexpected_stop_classifier)
     assert is_unexpected_stop("I'll inspect the failing test next.")
     assert is_unexpected_stop("Let me fix the import now.")
     assert not is_unexpected_stop("The task is complete.")
     assert not is_unexpected_stop("Should I continue?")
-
-
-def test_informational_completion_idle_and_error(monkeypatch) -> None:
     # (merged from test_informational_turn_returns_answer_not_report)
     # Issue #81: `tell main features of kite` ends with the answer text, not a turn report.
     assert _is_casual_user_turn("tell main features of kite")
