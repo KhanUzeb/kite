@@ -153,6 +153,7 @@ def _raw_pick(
     refreshable: bool,
 ) -> str | None:
     """In-place list driven by raw keys (and Windows mouse wheel)."""
+    _ensure_vt_output()
     pool = list(items)
     state = {"filter": "", "cursor": 0, "offset": 0}
     ids = [item_id for item_id, _ in pool]
@@ -326,17 +327,71 @@ def _event_reader(drawn: dict):
         try:
             return _WinEvents(drawn)
         except OSError:
-            return _WinKeyOnly()
+            return _WinKeyOnly(drawn)
     return _PosixEvents(drawn)
 
 
-class _WinKeyOnly:
-    """msvcrt fallback when console mouse mode cannot be enabled."""
+def _ensure_vt_output() -> None:
+    """Best-effort: enable VT processing so in-place repaint codes work."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
 
-    def __init__(self) -> None:
+        k32 = ctypes.windll.kernel32
+        h = k32.GetStdHandle(-12)  # STD_ERROR_HANDLE
+        mode = wintypes.DWORD()
+        if not k32.GetConsoleMode(h, ctypes.byref(mode)):
+            return
+        if not mode.value & 0x0004:
+            k32.SetConsoleMode(h, mode.value | 0x0004)
+    except Exception:
+        return
+
+
+class _WinKeyOnly:
+    """msvcrt fallback when console mouse mode cannot be enabled.
+
+    Also handles ANSI escape sequences (mintty / VT input) so stray
+    ``[B`` / ``[<35;..M`` fragments never leak into the type-to-filter
+    buffer as ``[[B[B[`` junk.
+    """
+
+    def __init__(self, drawn: dict | None = None) -> None:
         import msvcrt
 
         self._msvcrt = msvcrt
+        self._drawn = drawn or {}
+
+    def _drain_ansi(self) -> str | None:
+        """Consume one ANSI sequence after a leading ESC, if present."""
+        msvcrt = self._msvcrt
+        if not msvcrt.kbhit():
+            return "esc"
+        nxt = msvcrt.getwch()
+        if nxt not in {"[", "O"}:
+            # Lone ESC (or Alt+key) — cancel, keep it simple.
+            return "esc"
+        seq = "\x1b" + nxt
+        # Collect until a final byte; stop if input stalls.
+        while True:
+            if not msvcrt.kbhit():
+                break
+            c = msvcrt.getwch()
+            seq += c
+            if c.isalpha() or c in "~Mm":
+                break
+            if len(seq) > 32:
+                break
+        hit = _posix_key(seq)
+        if hit is not None:
+            return hit
+        mouse = _posix_mouse(seq, self._drawn)
+        if mouse is not None:
+            return mouse
+        # Unknown / split sequence (e.g. mouse motion) — swallow it.
+        return None
 
     def __call__(self) -> str | None:
         ch = self._msvcrt.getwch()
@@ -350,6 +405,8 @@ class _WinKeyOnly:
                 "G": "home",
                 "O": "end",
             }.get(code)
+        if ch == "\x1b":
+            return self._drain_ansi()
         if ch in {"\r", "\n"}:
             return "enter"
         if ch in {"\x1b", "\x03"}:
@@ -475,38 +532,124 @@ class _PosixEvents:
         self._closed = False
         self._buf = ""
 
+    def _drain(self) -> None:
+        """Append every immediately-available byte (bulk, not 1-byte)."""
+        import os
+        import select
+
+        for _ in range(32):
+            if not select.select([self._fd], [], [], 0)[0]:
+                break
+            try:
+                chunk = os.read(self._fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            self._buf += chunk.decode("utf-8", errors="replace")
+            if len(chunk) < 4096:
+                break
+
+    def _extract(self) -> str | None | bool:
+        """Parse one event from the front of the buffer.
+
+        Returns False when more bytes are needed for an incomplete ESC
+        sequence (caller waits instead of leaking ``[B`` fragments).
+        """
+        buf = self._buf
+        if not buf:
+            return None
+        if buf[0] != "\x1b":
+            ch = buf[0]
+            self._buf = buf[1:]
+            if ch in "\r\n":
+                return "enter"
+            if ch == "\x03":
+                return "ctrl-c"
+            if ch in "\x7f\x08":
+                return "backspace"
+            if ch == "\x12":
+                return "refresh"
+            return ch if ch.isprintable() else None
+        # Buffer starts with ESC — need at least one more byte to decide.
+        if len(buf) == 1:
+            return False
+        second = buf[1]
+        if second not in {"[", "O"}:
+            # Lone ESC (or Alt+key) — report cancel, keep the rest.
+            self._buf = buf[1:]
+            return "esc"
+        if second == "O":
+            if len(buf) < 3:
+                return False
+            seq = buf[:3]
+            self._buf = buf[3:]
+            return _posix_key(seq)
+        # CSI: ESC [ params... final
+        import re
+
+        m = re.match(r"^\x1b\[<[0-9;]*[Mm]", buf)
+        if m:
+            seq = m.group(0)
+            self._buf = buf[len(seq):]
+            return _posix_mouse(seq, self._drawn)
+        if re.match(r"^\x1b\[<[0-9;]*$", buf):
+            return False  # incomplete SGR mouse — wait for M/m
+        if re.match(r"^\x1b\[M...?$", buf, re.DOTALL):
+            # Legacy X10 mouse — swallow (picker uses SGR anyway).
+            if len(buf) >= 6:
+                self._buf = buf[6:]
+                return None
+            return False
+        m = re.match(r"^\x1b\[[0-9;:<=>\?]*[@-~]", buf)
+        if m:
+            seq = m.group(0)
+            self._buf = buf[len(seq):]
+            return _posix_key(seq)
+        # ESC [ without a final byte yet — wait for it.
+        if re.match(r"^\x1b\[[0-9;:<=>\?]*$", buf):
+            return False
+        # Unknown ESC lead-in — swallow it, never leak into filter.
+        self._buf = buf[2:]
+        return None
+
     def __call__(self) -> str | None:
         import os
         import select
 
-        ready, _, _ = select.select([self._fd], [], [], 0.5)
-        if not ready:
-            return None
-        chunk = os.read(self._fd, 1).decode("utf-8", errors="replace")
-        if not chunk:
-            return "esc"
-        if chunk == "\x1b":
-            rest = ""
-            if select.select([self._fd], [], [], 0.02)[0]:
-                rest = os.read(self._fd, 1).decode("utf-8", errors="replace")
-                if rest in {"[", "O"} and select.select([self._fd], [], [], 0.02)[0]:
-                    rest += os.read(self._fd, 1).decode("utf-8", errors="replace")
-                    if rest.startswith("["):
-                        while rest[-1].isdigit() or rest[-1] in ";<":
-                            if not select.select([self._fd], [], [], 0.02)[0]:
-                                break
-                            rest += os.read(self._fd, 1).decode("utf-8", errors="replace")
-            seq = chunk + rest
-            return _posix_key(seq) or _posix_mouse(seq, self._drawn)
-        if chunk in "\r\n":
-            return "enter"
-        if chunk == "\x03":
-            return "ctrl-c"
-        if chunk in "\x7f\x08":
-            return "backspace"
-        if chunk == "\x12":
-            return "refresh"
-        return chunk if chunk.isprintable() else None
+        if not self._buf:
+            ready, _, _ = select.select([self._fd], [], [], 0.5)
+            if not ready:
+                return None
+            try:
+                chunk = os.read(self._fd, 4096)
+            except OSError:
+                return None
+            if not chunk:
+                return "esc"
+            self._buf += chunk.decode("utf-8", errors="replace")
+        else:
+            self._drain()
+        # Coalesce split escape sequences: keep draining briefly while the
+        # buffer ends mid-sequence instead of emitting ``[`` / ``B`` pieces.
+        for _ in range(5):
+            ev = self._extract()
+            if ev is not False:
+                if ev is None and self._buf:
+                    # Swallowed an unknown sequence but more input is queued
+                    # (e.g. mouse motion + click) — keep parsing, don't idle.
+                    continue
+                return ev
+            import select as _select
+            import time as _time
+
+            _time.sleep(0.02)
+            before = len(self._buf)
+            self._drain()
+            if len(self._buf) == before:
+                break
+        ev = self._extract()
+        return None if ev is False else ev
 
     def close(self) -> None:
         if self._closed:
