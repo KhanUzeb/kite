@@ -640,7 +640,6 @@ class _PosixEvents:
                     # (e.g. mouse motion + click) — keep parsing, don't idle.
                     continue
                 return ev
-            import select as _select
             import time as _time
 
             _time.sleep(0.02)
