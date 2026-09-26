@@ -12,7 +12,7 @@ A profile answers three questions without live network calls:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
