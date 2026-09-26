@@ -101,6 +101,7 @@ kite sessions -q text          # same as positional filter
 kite sessions [--limit N] [--show id] [--tail N] [--no-pick]
 kite sessions --delete <id> [<id> ...]
 kite sessions --delete-all     # TTY confirms; else pass -y
+kite sessions --prune 20 -y    # keep newest 20, delete the rest
 kite setup [-p provider]       # first-run wizard: credentials + model
 kite update [--check] [--ref REF] [--force]  # upgrade installed CLI via uv tool (fallback: git reinstall); bare `kite update` updates, it does NOT open chat
                                 # Windows: the running install is file-locked, so the update runs in a helper
@@ -254,7 +255,8 @@ These never go to the model.
 | `/login [provider]` | Always (re)link credentials, then pick a model. BYOS opens a browser to the live sign-in URL (ChatGPT OAuth/device, Grok `--oauth` / device code, Antigravity via `agy`); already-linked sessions skip the browser |
 | `/logout [provider]` | Unlink; omit provider to pick |
 | `/sessions` `/session list` | Numbered picker: open / show / delete |
-| `/session open [id]` `/resume [id]` | Continue that chat (prints full transcript); omit id to pick a card — prompt on top, project · age · size · status beneath; current folder first |
+| `/session open [id]` `/resume [id]` | Continue that chat (prints last 30 of the transcript — full history still loads for the turn); omit id to pick a card — prompt on top, project · age · size · status beneath; current folder first |
+| `/session prune [N]` | Delete all but the newest N sessions (default 20, confirms first) |
 | `/keys` | Credential status with type (BYOK/BYOS), masked key fingerprint, OAuth link state |
 | `/reasoning` `/effort` | Legacy effort modes (`auto\|off\|fast\|thinking`) — prefer `/thinking` |
 | `/fast` | Legacy shortcut → `/thinking low` |

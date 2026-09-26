@@ -375,8 +375,46 @@ def test_make_summarizer_forwards_session_overrides(monkeypatch) -> None:
 
     monkeypatch.setattr(summ, "llm_summarize", fake_llm)
     summarize = summ.make_summarizer(_summarize_cfg(), session_provider="groq", session_model="llama-x")
-    assert summarize([{"role": "user", "content": "hi"}]) == "llm text"
+    # Realistic dropped history (compaction never runs on one tiny message —
+    # the skip threshold applies to the deterministic transcript, ~140 chars
+    # per segment, so several turns are needed to reach it).
+    big = [{"role": "user", "content": f"task context {i} " * 30} for i in range(12)]
+    assert summarize(big) == "llm text"
     assert (seen["session_provider"], seen["session_model"]) == ("groq", "llama-x")
+    # Tiny transcripts skip the LLM entirely — deterministic is enough.
+    seen.clear()
+    small = summarize([{"role": "user", "content": "hi"}])
+    assert "Compacted 1 message" in small
+    assert seen == {}
+
+def test_compaction_keeps_tail_failures_and_error_lines() -> None:
+    from kite.context.window import deterministic_summary, extract_compaction_facts
+
+    tail = "\n".join([f"setup line {i}" for i in range(30)] + ["3 failed, 12 passed in 4.2s"])
+    msgs = [
+        {"role": "user", "content": "fix the bug"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "bash"}}]},
+        {"role": "tool", "tool_call_id": "1", "content": "running tests\n" + tail},
+    ]
+    facts = extract_compaction_facts(msgs)
+    assert any("3 failed" in f for f in facts)
+    err_msgs = [
+        {"role": "user", "content": "fix it"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "bash"}}]},
+        {"role": "tool", "tool_call_id": "1", "content": "running\nTraceback (most recent call last):\nValueError: bad\nmore output"},
+    ]
+    summary = deterministic_summary(err_msgs)
+    assert "Traceback" in summary and "ValueError" in summary
+
+
+def test_compact_boundary_renders_elapsed_and_engine() -> None:
+    from kite.ui.render import render_compact_boundary
+
+    plain = render_compact_boundary(42, 6, context_pct=0.375, elapsed_s=12.34, engine="openrouter summary").plain
+    assert "42 → 6" in plain and "38%" in plain and "12.3s" in plain and "openrouter summary" in plain
+    bare = render_compact_boundary(4, 4).plain
+    assert "4 → 4" in bare and "ctx" not in bare
+
 
 def test_subagent_parent_plan_context_attached() -> None:
     from kite.tools.coding import _with_parent_plan_context

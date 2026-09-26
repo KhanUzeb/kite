@@ -145,6 +145,13 @@ def llm_summarize(
         return None
 
 
+# Below this deterministic transcript size the LLM adds nothing over the
+# offline summary — skip the live model listing + up to 4 summary calls
+# (each up to 40s). Hits forced compactions of small histories (/compact on
+# a fresh session) hardest.
+_SKIP_LLM_MIN_CHARS = 1_200
+
+
 def make_summarizer(
     config: UserConfig | None = None,
     *,
@@ -154,6 +161,9 @@ def make_summarizer(
     cfg = config or UserConfig.load()
 
     def summarize(dropped: list[dict]) -> str:
+        offline = deterministic_summary(dropped)
+        if len(offline) < _SKIP_LLM_MIN_CHARS:
+            return offline
         text = llm_summarize(
             dropped,
             config=cfg,
@@ -162,6 +172,6 @@ def make_summarizer(
         )
         if text:
             return text
-        return deterministic_summary(dropped)
+        return offline
 
     return summarize

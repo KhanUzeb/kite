@@ -183,12 +183,18 @@ def render_compact_boundary(
     after: int | str,
     *,
     context_pct: float | None = None,
+    elapsed_s: float | None = None,
+    engine: str = "",
 ) -> Text:
     t = Text()
     t.append(f"{GUTTER}{SYMBOL_COMPACT}  ", style="kite.muted")
     t.append(f"{before} → {after}", style="kite.muted")
     if context_pct is not None:
         t.append(f"  · ctx {context_pct:.0%}", style="kite.muted")
+    if elapsed_s is not None and elapsed_s >= 0:
+        t.append(f"  · {elapsed_s:.1f}s", style="kite.muted")
+    if engine.strip():
+        t.append(f"  · {engine.strip()}", style="kite.muted")
     t.append("\n")
     return t
 
@@ -228,12 +234,16 @@ def render_user_cell(task: str) -> Padding:
     return Padding(body, (1, 1), style=pad_style, expand=True)
 
 
-def render_session_transcript(console: Any, session: Any, *, tail: int | None = None) -> None:
+def render_session_transcript(
+    console: Any, session: Any, *, tail: int | None = None, total: int | None = None
+) -> None:
     """Print the complete chronological transcript for resume/show paths.
 
     Renders every persisted message (user, assistant, tool calls/results, system, exit/submit)
     with full multi-line bodies — terminal scrollback keeps long messages readable instead of
     silently truncating them. ``tail`` windows the oldest entries only (None = all).
+    ``total`` is the full message count when ``session.messages`` holds a tail
+    window (see load_session_tail) so the skipped note stays exact.
     """
     from kite.memory.session_format import format_session_resume_hint, transcript_entries
 
@@ -247,7 +257,12 @@ def render_session_transcript(console: Any, session: Any, *, tail: int | None = 
     if not shown:
         console.print("[kite.muted](empty transcript)[/]")
         return
-    skipped = len(entries) - len(shown)
+    if total is None:
+        total = getattr(session, "total_messages", None)
+    if isinstance(total, int):
+        skipped = max(0, total - len(shown))
+    else:
+        skipped = len(entries) - len(shown)
     if skipped > 0:
         console.print(f"[kite.muted]  … {skipped} earlier messages  ·  use --tail 0 for full[/]")
     from kite.ui.output_view import format_viewable_output

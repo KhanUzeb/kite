@@ -142,6 +142,10 @@ class ChatSession:
         from kite.models.litellm_model import prewarm_litellm
 
         prewarm_litellm()
+        # Authoritative OAuth probes (CLI/SDK, seconds) fill the byos verdict
+        # cache off the critical path, so the first turn's credential check
+        # and /select don't stall on them. Daemon, idempotent, exception-safe.
+        self._warm_auth_probes()
         self._busy = False
         self._quit_after_turn = False
         self._approval_coord = None
@@ -682,6 +686,29 @@ class ChatSession:
                 "  ·  /undo to revert[/]"
             )
 
+    def _warm_auth_probes(self) -> None:
+        """Fill the OAuth verdict cache off the UI thread (startup-safe)."""
+        import threading
+        import time
+
+        now = time.monotonic()
+        pending = getattr(self, "_auth_warm_pending", None)
+        if isinstance(pending, float) and now - pending < 60.0:
+            return
+        self._auth_warm_pending = now
+
+        def _work() -> None:
+            try:
+                from kite.providers.credentials import configured_providers
+
+                configured_providers()
+            except Exception:
+                pass
+            finally:
+                self._auth_warm_pending = None
+
+        threading.Thread(target=_work, daemon=True, name="kite-auth-warm").start()
+
     def _provider_names(self) -> list[str]:
         from kite.providers.catalog import load_catalog
 
@@ -1018,7 +1045,11 @@ class ChatSession:
         resolved = resolve_model(provider=self.provider, model=self.model, config=cfg)
         before = len(session.messages)
         summarizer = make_summarizer(cfg, session_provider=self.provider, session_model=self.model) if cfg.compaction_use_llm else None
-        self.console.print("[kite.muted]compacting…[/]")
+        engine = "offline" if summarizer is None else f"{cfg.compaction_provider or 'openrouter'} summary"
+        self.console.print(f"[kite.muted]compacting… ({engine})[/]")
+        import time as _time
+
+        started = _time.monotonic()
         result = run_compaction(
             session.messages,
             keep_recent_tokens=cfg.compaction_keep_recent_tokens,
@@ -1031,6 +1062,7 @@ class ChatSession:
             todos=self.todos.read(),
             meta=session.meta.to_dict(),
         )
+        elapsed = _time.monotonic() - started
         self.state.set_context_usage(
             total_tokens=result.usage.total_tokens,
             window=result.usage.window,
@@ -1043,7 +1075,7 @@ class ChatSession:
             session.record_context_checkpoint(result.checkpoint.id, label=result.checkpoint.label, reason="pre_compact")
             self.console.print(f"[kite.muted]◇ saved {result.checkpoint.id}[/]")
         pct = self.state.context_pct
-        boundary = render_compact_boundary(before, result.after, context_pct=pct)
+        boundary = render_compact_boundary(before, result.after, context_pct=pct, elapsed_s=elapsed, engine=engine)
         self.console.print(boundary)
 
     def _checkpoint_cmd(self, raw: str) -> None:
@@ -2646,11 +2678,14 @@ class ChatSession:
         render_session_transcript(self.console, session, tail=tail)
 
     def _open_session(self, session_id: str) -> None:
-        from kite.memory.session import load_session
+        from kite.memory.session import load_session_tail
         from kite.memory.session_format import format_session_resume_hint, suggest_sessions
 
         try:
-            session = load_session(session_id)
+            # Tail window for display only — the next turn loads full history
+            # from disk (runtime resume path), so opening stays fast on huge
+            # transcripts without losing any context.
+            session = load_session_tail(session_id, 60)
         except FileNotFoundError:
             hints = suggest_sessions(session_id, limit=5)
             self.console.print(f"[kite.error]no session matching[/] {session_id!r}")
@@ -2678,7 +2713,9 @@ class ChatSession:
         if session.meta.model:
             self.model = session.meta.model
             self.state.model = session.meta.model
-        self._print_session(session, tail=None)
+        if session.meta.reasoning and session.meta.reasoning != "auto":
+            self.state.reasoning = session.meta.reasoning
+        self._print_session(session, tail=30)
         self.console.print(
             f"[kite.success]opened[/] {session.id}  — type to continue  "
             f"[kite.muted]· kite resume {session.id}[/]"
@@ -2778,6 +2815,25 @@ class ChatSession:
                 self._reset_chat()
             extra = " + trajectory" if gone.trajectory else ""
             self.console.print(f"[kite.success]removed[/] {gone.id}{extra}")
+            return
+        if verb == "prune":
+            from kite.memory.session import prune_sessions
+            from kite.ui.pick import confirm
+
+            try:
+                keep = max(1, int((rest or "20").split()[0]))
+            except ValueError:
+                self.console.print("[kite.error]usage[/]  /session prune [keep-N, default 20]")
+                return
+            if not confirm(self.console, f"Delete all but the newest {keep} sessions?", default=False):
+                self.console.print("[kite.muted]cancelled[/]")
+                return
+            gone = prune_sessions(keep)
+            if self._session_id and any(g.id == self._session_id for g in gone):
+                self._reset_chat()
+            self.console.print(
+                f"[kite.success]pruned[/] {len(gone)} session{'s' if len(gone) != 1 else ''}  ·  kept newest {keep}"
+            )
             return
         self._open_session(raw)
 
@@ -3165,6 +3221,12 @@ class ChatSession:
     def _bind_session(self, harness) -> None:
         if harness.last_session:
             self._session_id = harness.last_session.id
+            try:
+                harness.last_session.note_runtime(
+                    self.provider, self.model, self.state.reasoning or "auto"
+                )
+            except Exception:
+                pass
             self._sync_goal_to_session()
 
     def _begin_turn_state(self, preview: str) -> None:

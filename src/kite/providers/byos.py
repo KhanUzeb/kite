@@ -18,10 +18,10 @@ if TYPE_CHECKING:
 _OAUTH_MODEL_TTL = 300.0
 _oauth_model_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
 
-# OAuth status probes are slow (Codex SDK ~1.4s, `claude auth status` ~0.8s,
-# `agy models` ~5s) and `configured_providers()` fans out to every one of
-# them — ~1.2s per call with zero caching. Cache verdicts briefly; login and
-# logout invalidate explicitly so transitions stay exact.
+# OAuth status probes are slow (Codex SDK ~1.4s, `claude auth status` up to
+# ~25s on hangs) — `configured_providers()` runs them concurrently, caches
+# verdicts briefly, and offers marker-only fast verdicts for startup paths.
+# Login and logout invalidate explicitly so transitions stay exact.
 _AUTH_STATUS_TTL = 120.0
 _auth_status_cache: dict[tuple[str, str], tuple[float, Any]] = {}
 
@@ -115,6 +115,94 @@ def has_oauth_session(provider: str) -> bool:
     status = auth.status()
     _auth_status_cache[_status_cache_key(key)] = (time.monotonic(), status)
     return status.authenticated
+
+
+def _nontrivial(path: Any) -> bool:
+    """A credential file that exists and is not an empty placeholder."""
+    try:
+        return bool(path.is_file()) and path.stat().st_size > 2
+    except (OSError, TypeError, AttributeError):
+        return False
+
+
+def oauth_session_marker_present(provider: str) -> bool:
+    """No-spawn linked-session hint for startup/completion fast paths.
+
+    Checks only credential marker files — no CLI/SDK subprocesses, no
+    network. A stale-true (expired tokens on disk) only affects startup
+    hints; login flows and turn-time ``missing_credentials`` still run the
+    authoritative ``status()`` probe.
+    """
+    from pathlib import Path
+
+    key = (provider or "").strip().lower()
+    # A probe verdict from this process (login/logout just ran) beats markers.
+    try:
+        auth = _auth(provider)
+        resolved = getattr(auth, "provider_key", key) if auth is not None else key
+        if isinstance(resolved, str) and resolved.strip():
+            key = resolved.strip().lower()
+    except Exception:
+        pass
+    # Accept catalog names and login aliases, not just oauth ids.
+    # (Intentionally not resolve_login_provider: its "xai"→"grok" login
+    # shorthand points the wrong way for oauth ids.)
+    key = {
+        "chatgpt": "chatgpt",
+        "codex": "chatgpt",
+        "chatgpt-sub": "chatgpt",
+        "anthropic": "anthropic",
+        "claude": "anthropic",
+        "claude-sub": "anthropic",
+        "xai": "xai",
+        "grok": "xai",
+        "grok-sub": "xai",
+        "antigravity": "antigravity",
+        "antigravity-sub": "antigravity",
+    }.get(key, key)
+    try:
+        cached = _cached_status(key)
+        if cached is not None:
+            return bool(cached.authenticated)
+    except Exception:
+        pass
+    try:
+        home = Path.home()
+    except Exception:
+        return False
+    try:
+        if key == "chatgpt":
+            from kite.config.user import kite_home
+
+            return _nontrivial(home / ".codex" / "auth.json") or _nontrivial(
+                kite_home() / "oauth" / "chatgpt" / "auth.json"
+            )
+        if key == "xai":
+            override = os.environ.get("GROK_HOME")
+            grok_home = Path(override).expanduser() if override else home / ".grok"
+            from kite.config.user import kite_home
+
+            return _nontrivial(grok_home / "auth.json") or _nontrivial(
+                kite_home() / "oauth" / "xai" / "auth.json"
+            )
+        if key == "anthropic":
+            return _nontrivial(home / ".claude.json")
+        if key == "antigravity":
+            from kite.config.user import kite_home
+
+            marker = kite_home() / "oauth" / "antigravity" / "status.json"
+            if not _nontrivial(marker):
+                return False
+            try:
+                import json
+
+                data = json.loads(marker.read_text(encoding="utf-8"))
+                return bool(isinstance(data, dict) and data.get("linked"))
+            except (OSError, ValueError):
+                return False
+    except Exception:
+        return False
+    return False
 
 
 def oauth_session(spec: ProviderSpec) -> OAuthSession | None:

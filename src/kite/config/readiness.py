@@ -32,14 +32,14 @@ def has_config_file() -> bool:
     return (kite_home() / "config.toml").is_file()
 
 
-def configured_provider_names() -> tuple[str, ...]:
+def configured_provider_names(*, fast: bool = False) -> tuple[str, ...]:
     from kite.providers.credentials import configured_providers
 
-    return tuple(name for name, ok, _ in configured_providers() if ok)
+    return tuple(name for name, ok, _ in configured_providers(fast=fast) if ok)
 
 
-def has_any_api_key() -> bool:
-    return any(name != "ollama" for name in configured_provider_names())
+def has_any_api_key(*, fast: bool = False) -> bool:
+    return any(name != "ollama" for name in configured_provider_names(fast=fast))
 
 
 def is_fresh_install() -> bool:
@@ -132,9 +132,13 @@ def assess_setup_status_fast(
     model: str | None = None,
     config: UserConfig | None = None,
 ) -> SetupStatus:
-    """Lightweight readiness — no catalog/model resolution (REPL cold start)."""
+    """Lightweight readiness — no catalog/model resolution (REPL cold start).
+
+    OAuth specs are judged by credential marker files, never CLI/SDK probes,
+    so a fresh process never blocks seconds on subscription checks.
+    """
     cfg = config or UserConfig.load()
-    ready_names = configured_provider_names()
+    ready_names = configured_provider_names(fast=True)
     usable = [n for n in ready_names if n != "ollama"]
     explicit = bool((provider or "").strip())
     prov = (provider or cfg.default_provider or "").strip()
@@ -170,7 +174,7 @@ def assess_setup_status_fast(
         return SetupStatus(
             ready=True,
             has_config_file=has_config_file(),
-            has_any_api_key=has_any_api_key(),
+            has_any_api_key=has_any_api_key(fast=True),
             configured_providers=ready_names,
             default_provider=prov,
             default_model=mod,
@@ -193,7 +197,7 @@ def assess_setup_status_fast(
     return SetupStatus(
         ready=False,
         has_config_file=has_config_file(),
-        has_any_api_key=has_any_api_key(),
+        has_any_api_key=has_any_api_key(fast=True),
         configured_providers=ready_names,
         default_provider=prov,
         default_model=mod,

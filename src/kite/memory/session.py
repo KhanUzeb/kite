@@ -27,6 +27,7 @@ def format_meta_line(meta: SessionMeta) -> str:
     provider = prepare_persisted_value(meta.provider)
     model = prepare_persisted_value(meta.model)
     exit_status = prepare_persisted_value(meta.exit_status)
+    reasoning = prepare_persisted_value(meta.reasoning)
     return (
         '{"type":"meta"'
         f',"id":{json.dumps(meta.id)}'
@@ -38,6 +39,7 @@ def format_meta_line(meta: SessionMeta) -> str:
         f',"task":{json.dumps(task)}'
         f',"label":{json.dumps(label)}'
         f',"exit_status":{json.dumps(exit_status)}'
+        f',"reasoning":{json.dumps(reasoning)}'
         "}"
     )
 
@@ -67,7 +69,7 @@ def _read_session_meta(path: Path) -> SessionMeta | None:
             return None
         meta = SessionMeta.from_dict(row)
         meta.updated_at = _session_updated_at(path, meta)
-        return meta
+        return _apply_runtime_overlay(meta, path)
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
 
@@ -82,6 +84,71 @@ def _session_updated_at(path: Path, meta: SessionMeta) -> float:
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             pass
     return meta.updated_at
+
+
+def session_runtime_overlay(path: Path) -> dict[str, Any]:
+    """Runtime identity stamped by note_runtime: provider/model/reasoning/count.
+
+    Empty dict when no sidecar (old sessions) — callers fall back to file meta.
+    """
+    sidecar = _meta_sidecar(path)
+    try:
+        row = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    if not isinstance(row, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key in ("provider", "model", "reasoning"):
+        value = row.get(key)
+        if isinstance(value, str) and value:
+            out[key] = value
+    count = row.get("messages")
+    if isinstance(count, int) and count >= 0:
+        out["messages"] = count
+    return out
+
+
+def _apply_runtime_overlay(meta: SessionMeta, path: Path) -> SessionMeta:
+    overlay = session_runtime_overlay(path)
+    for key in ("provider", "model", "reasoning"):
+        if key in overlay:
+            setattr(meta, key, overlay[key])
+    return meta
+
+
+def _iter_rows_reverse(path: Path) -> Iterator[dict[str, Any]]:
+    """Yield parsed JSONL rows newest-first without reading the whole file.
+
+    Binary reverse-chunk scan: bounded memory even for hundred-MB transcripts.
+    Skips blank/corrupt lines like the forward loader.
+    """
+    with path.open("rb") as f:
+        f.seek(0, 2)
+        pos = f.tell()
+        carry = b""
+        while pos > 0:
+            step = min(65536, pos)
+            pos -= step
+            f.seek(pos)
+            lines = (f.read(step) + carry).split(b"\n")
+            carry = lines[0]
+            for raw in reversed(lines[1:]):
+                if not raw.strip():
+                    continue
+                try:
+                    row = json.loads(raw.decode("utf-8"))
+                except ValueError:
+                    continue
+                if isinstance(row, dict):
+                    yield row
+        if carry.strip():
+            try:
+                row = json.loads(carry.decode("utf-8"))
+            except ValueError:
+                return
+            if isinstance(row, dict):
+                yield row
 
 
 def sessions_dir() -> Path:
@@ -124,6 +191,7 @@ class SessionMeta:
     task: str
     label: str = ""
     exit_status: str = ""
+    reasoning: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -136,6 +204,7 @@ class SessionMeta:
             "task": self.task,
             "label": self.label,
             "exit_status": self.exit_status,
+            "reasoning": self.reasoning,
         }
 
     @classmethod
@@ -150,6 +219,7 @@ class SessionMeta:
             task=str(data.get("task") or ""),
             label=str(data.get("label") or ""),
             exit_status=str(data.get("exit_status") or ""),
+            reasoning=str(data.get("reasoning") or ""),
         )
 
 
@@ -158,10 +228,32 @@ class Session:
     meta: SessionMeta
     messages: list[dict] = field(default_factory=list)
     path: Path | None = None
+    # Full message count when messages holds a tail window (load_session_tail);
+    # None means messages is complete.
+    total_messages: int | None = None
 
     @property
     def id(self) -> str:
         return self.meta.id
+
+    def note_runtime(self, provider: str = "", model: str = "", reasoning: str = "") -> None:
+        """Stamp runtime identity for resume — sidecar only, no transcript rewrite.
+
+        Called at turn end so a later resume restores the last-used
+        provider/model/thinking level instead of the creation-time values.
+        """
+        if provider:
+            self.meta.provider = provider
+        if model:
+            self.meta.model = model
+        if reasoning:
+            self.meta.reasoning = reasoning
+        self.meta.updated_at = time.time()
+        if persistence_enabled():
+            try:
+                self._write_meta_sidecar(self._session_path(), count=len(self.messages))
+            except OSError:
+                pass
 
     def append(self, *messages: dict) -> None:
         self.messages.extend(messages)
@@ -195,7 +287,7 @@ class Session:
                 row = {"type": "message", "message": prepare_persisted_value(m)}
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
         secure_session_file(path)
-        self._write_meta_sidecar(path)
+        self._write_meta_sidecar(path, count=len(self.messages))
 
     def _persist_tail(self, messages: tuple[dict, ...] | list[dict]) -> None:
         path = self._session_path()
@@ -208,7 +300,7 @@ class Session:
                 row = {"type": "message", "message": prepare_persisted_value(m)}
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
         secure_session_file(path)
-        self._touch_meta_timestamp(path)
+        self._touch_meta_timestamp(path, count=len(self.messages))
 
     def _persist_compact_snapshot(self, messages: list[dict]) -> None:
         """Rewrite session file to current messages — avoids unbounded JSONL growth."""
@@ -236,7 +328,7 @@ class Session:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         secure_session_file(path)
         self.meta.updated_at = time.time()
-        self._touch_meta_timestamp(path)
+        self._touch_meta_timestamp(path, count=len(self.messages))
 
     def record_event(self, kind: str, payload: dict[str, Any] | None = None) -> None:
         """Append a durable rollout event — survives crashes between model turns."""
@@ -258,19 +350,23 @@ class Session:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         secure_session_file(path)
         self.meta.updated_at = time.time()
-        self._touch_meta_timestamp(path)
+        self._touch_meta_timestamp(path, count=len(self.messages))
 
-    def _write_meta_sidecar(self, path: Path) -> None:
+    def _write_meta_sidecar(self, path: Path, *, count: int | None = None) -> None:
         side = _meta_sidecar(path)
-        side.write_text(
-            json.dumps({"updated_at": self.meta.updated_at}, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        data: dict[str, Any] = {"updated_at": self.meta.updated_at}
+        if count is not None:
+            data["messages"] = count
+        for key in ("provider", "model", "reasoning"):
+            value = getattr(self.meta, key, "")
+            if value:
+                data[key] = value
+        side.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
         secure_session_file(side)
 
-    def _touch_meta_timestamp(self, path: Path) -> None:
+    def _touch_meta_timestamp(self, path: Path, *, count: int | None = None) -> None:
         """Patch updated_at on line 1 — reads only the meta row, not the full transcript."""
-        self._write_meta_sidecar(path)
+        self._write_meta_sidecar(path, count=count)
         try:
             line_len, old_line = _read_first_line_bytes(path)
             if not old_line.strip():
@@ -379,35 +475,72 @@ def load_session(session_id: str, *, unique: bool = False) -> Session:
             if row.get("type") == "meta":
                 meta = SessionMeta.from_dict(row)
                 meta.updated_at = _session_updated_at(path, meta)
+                meta = _apply_runtime_overlay(meta, path)
             else:
                 messages = _apply_session_row(row, messages)
     if meta is None:
         raise ValueError(f"Session file missing meta: {path}")
-    return Session(meta=meta, messages=messages, path=path)
+    return Session(meta=meta, messages=messages, path=path, total_messages=len(messages))
+
+
+def load_session_tail(session_id: str, n: int) -> Session:
+    """Meta + last N messages without parsing the whole transcript.
+
+    For resume/show display paths on large sessions. A legacy
+    ``compact_snapshot`` row inside the window replaces older history, same
+    as the forward loader. ``total_messages`` carries the sidecar count when
+    known so renderers can note omitted history.
+    """
+    path = resolve_session_path(session_id)
+    _, first_line = _read_first_line_bytes(path)
+    row = json.loads(first_line) if first_line.strip() else {}
+    if not isinstance(row, dict) or row.get("type") != "meta":
+        raise ValueError(f"Session file missing meta: {path}")
+    meta = _apply_runtime_overlay(SessionMeta.from_dict(row), path)
+    meta.updated_at = _session_updated_at(path, meta)
+    total = session_runtime_overlay(path).get("messages")
+    want = max(0, int(n))
+    collected: list[dict] = []
+    if want > 0:
+        try:
+            for entry in _iter_rows_reverse(path):
+                kind = entry.get("type")
+                if kind == "compact_snapshot":
+                    collected = list(entry.get("messages") or []) + collected
+                    break
+                if kind == "message":
+                    collected.append(entry["message"])
+                    if len(collected) >= want:
+                        break
+        except OSError:
+            pass
+    collected.reverse()
+    return Session(
+        meta=meta,
+        messages=collected,
+        path=path,
+        total_messages=int(total) if isinstance(total, int) else None,
+    )
 
 
 def load_session_todos(session_id: str) -> list[dict[str, Any]]:
-    """Latest todo snapshot from durable session events."""
-    path = resolve_session_path(session_id)
-    latest: list[dict[str, Any]] = []
+    """Latest todo snapshot from durable session events (newest-first scan)."""
     try:
-        with path.open(encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if row.get("type") != "event" or row.get("kind") != "todo":
-                    continue
-                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-                items = payload.get("items")
-                if isinstance(items, list):
-                    latest = [x for x in items if isinstance(x, dict)]
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        path = resolve_session_path(session_id)
+    except (OSError, ValueError, FileNotFoundError):
         return []
-    return latest
+    try:
+        for row in _iter_rows_reverse(path):
+            if row.get("type") != "event" or row.get("kind") != "todo":
+                continue
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            items = payload.get("items")
+            if isinstance(items, list):
+                return [x for x in items if isinstance(x, dict)]
+            continue  # corrupt snapshot — an older one may still be valid
+    except OSError:
+        return []
+    return []
 
 
 def persist_session_todos(session_id: str, items: list[dict[str, Any]]) -> None:
@@ -501,6 +634,25 @@ def delete_all_sessions() -> list[DeletedSession]:
                 pass
         deleted.append(DeletedSession(id=sid, session=True, trajectory=traj_ok))
     return deleted
+
+
+def prune_sessions(keep: int = 20) -> list[DeletedSession]:
+    """Delete oldest sessions, keeping the newest ``keep`` (storage hygiene).
+
+    Never deletes when ``keep`` covers everything. Returns the deleted rows,
+    newest-first among the removed.
+    """
+    keep = max(1, int(keep))
+    rows = list_sessions(limit=10_000)
+    if len(rows) <= keep:
+        return []
+    removed: list[DeletedSession] = []
+    for meta in rows[keep:]:
+        try:
+            removed.append(delete_session(meta.id))
+        except (OSError, ValueError):
+            continue
+    return removed
 
 
 def iter_session_messages(session_id: str) -> Iterator[dict]:

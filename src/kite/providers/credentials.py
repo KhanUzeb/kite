@@ -461,16 +461,51 @@ def read_secret(prompt: str) -> str | None:
         return None
 
 
-def configured_providers() -> list[tuple[str, bool, str]]:
+def _probe_oauth_usable(spec) -> tuple[str, bool]:  # noqa: ANN001, ANN202
+    """Authoritative OAuth verdict for one spec — thread-safe, never raises."""
+    try:
+        return spec.name, bool(inspect_provider_credentials(spec).usable)
+    except Exception:
+        return spec.name, False
+
+
+def configured_providers(*, fast: bool = False) -> list[tuple[str, bool, str]]:
+    """(name, usable?, method) rows for every catalog provider.
+
+    ``fast=True`` skips CLI/SDK subscription probes and judges OAuth specs by
+    credential marker files only — for startup banners and completion paths.
+    Login flows and turn-time checks must use the default full probes.
+    """
+    from kite.providers.byos import oauth_session_marker_present
+
     catalog = load_catalog()
+    specs = catalog.list()
+    oauth_specs = [s for s in specs if s.name != "ollama" and is_oauth_provider(s)]
+    if fast:
+        usable = {
+            s.name: bool(oauth_session_marker_present(s.oauth_provider or s.name))
+            for s in oauth_specs
+        }
+    elif oauth_specs:
+        # Subscription probes shell out (Codex SDK, claude/agy CLIs) — run
+        # them concurrently; sequential was 3–18s per fresh process.
+        from concurrent.futures import ThreadPoolExecutor
+
+        usable = {}
+        with ThreadPoolExecutor(
+            max_workers=min(4, len(oauth_specs)), thread_name_prefix="kite-oauth-probe"
+        ) as pool:
+            for name, ok in pool.map(_probe_oauth_usable, oauth_specs):
+                usable[name] = ok
+    else:
+        usable = {}
     rows: list[tuple[str, bool, str]] = []
-    for spec in catalog.list():
+    for spec in specs:
         if spec.name == "ollama":
             rows.append((spec.name, True, "local"))
             continue
         if is_oauth_provider(spec):
-            status = inspect_provider_credentials(spec)
-            rows.append((spec.name, status.usable, "oauth"))
+            rows.append((spec.name, usable.get(spec.name, False), "oauth"))
             continue
         envs = api_key_env_names(spec)
         if not envs:

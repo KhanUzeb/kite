@@ -51,10 +51,16 @@ def extract_compaction_facts(messages: list[dict]) -> list[str]:
                 except (TypeError, ValueError, _json.JSONDecodeError):
                     pass
         if role == "tool" and content:
-            for line in content.splitlines()[:8]:
+            # Test runners print verdicts at the tail (pytest summary), so
+            # scan the head and the tail — the middle is trimmed noise.
+            lines = content.splitlines()
+            probe = lines[:8] + lines[-8:] if len(lines) > 16 else lines
+            for line in probe:
                 low = line.lower()
                 if " passed" in low or " failed" in low or "error" in low:
-                    failures.append(line.strip()[:200])
+                    cut = line.strip()[:200]
+                    if cut not in failures:
+                        failures.append(cut)
                     break
             for token in content.replace("\\", "/").split():
                 if "/" in token and "." in token and len(token) < 120:
@@ -323,8 +329,22 @@ def deterministic_summary(messages: list[dict], *, max_chars: int = 4_800) -> st
                 names = ", ".join(tc.get("function", {}).get("name", "?") for tc in m["tool_calls"])
                 preview_parts.append(f"{role} [tools: {names}]")
             elif role == "tool":
-                first = content.splitlines()[0] if content else ""
-                preview_parts.append(f"tool: {first[:120]}" if first else "tool: (empty)")
+                # First line plus error lines: failures usually surface below
+                # the head (tracebacks, pytest tails). Bounded — 3 lines max.
+                # The same text feeds llm_summarize's transcript, so this also
+                # lifts LLM summary fidelity for free.
+                preview_lines = [ln for ln in content.splitlines() if ln.strip()]
+                kept = preview_lines[:1]
+                for ln in preview_lines[1:]:
+                    low = ln.lower()
+                    if len(kept) >= 3:
+                        break
+                    if "error" in low or "fail" in low or "traceback" in low or "exception" in low:
+                        kept.append(ln.strip()[:160])
+                if kept:
+                    preview_parts.append("tool: " + " / ".join(p[:120] for p in kept))
+                else:
+                    preview_parts.append("tool: (empty)")
             elif content.strip():
                 text = " ".join(content.split())
                 preview_parts.append(f"{role}: {text[:140]}")

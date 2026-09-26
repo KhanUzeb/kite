@@ -578,6 +578,23 @@ def cmd_sessions(args: argparse.Namespace) -> int:
             extra = " + trajectory" if gone.trajectory else ""
             console.print(f"deleted {gone.id}{extra}")
         return 1 if failed else 0
+    if getattr(args, "prune", 0):
+        from kite.memory.session import prune_sessions
+
+        keep = max(1, int(args.prune))
+        if not args.yes:
+            if can_prompt():
+                if not confirm(console, f"Delete all but the newest {keep} sessions?", default=False):
+                    console.print("[yellow]Cancelled[/]")
+                    return 130
+            else:
+                console.print(f"[red]prune to {keep} sessions? pass -y to confirm[/]")
+                return 1
+        pruned = prune_sessions(keep)
+        console.print(
+            f"pruned {len(pruned)} session{'s' if len(pruned) != 1 else ''}  ·  kept newest {keep}"
+        )
+        return 0
     if args.show:
         try:
             session = load_session(args.show)
@@ -1375,7 +1392,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Delete session id(s) (prefix ok if unique)",
     )
     sessions.add_argument("--delete-all", action="store_true", help="Delete every saved session")
-    sessions.add_argument("-y", "--yes", action="store_true", help="Confirm --delete-all")
+    sessions.add_argument(
+        "--prune",
+        type=int,
+        default=0,
+        metavar="KEEP",
+        help="Delete all but the newest KEEP sessions",
+    )
+    sessions.add_argument("-y", "--yes", action="store_true", help="Confirm --delete-all / --prune")
     sessions.set_defaults(func=cmd_sessions)
 
     providers = sub.add_parser("providers", help="List providers + credential status")

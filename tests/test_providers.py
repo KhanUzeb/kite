@@ -153,10 +153,15 @@ def test_claude_link_and_login_combined(monkeypatch, kite_home) -> None:
     assert "kite keys --set anthropic" in result.message
 
 
-def test_fast_setup_ready_with_key_but_no_saved_model(monkeypatch, kite_home) -> None:
+def test_fast_setup_ready_with_key_but_no_saved_model(monkeypatch, kite_home, tmp_path) -> None:
+    from pathlib import Path
+
     from kite.config.readiness import assess_setup_status_fast, format_setup_banner
     from kite.config.user import UserConfig
 
+    # Hermetic home: marker verdicts must not leak the developer's real
+    # ~/.claude.json / ~/.codex into the stub world.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setenv("GROQ_API_KEY", "gsk-test-not-a-real-key")
     cfg = UserConfig()
     status = assess_setup_status_fast(config=cfg)
@@ -503,3 +508,68 @@ def test_nvidia_nim_request_compatibility(monkeypatch, kite_home) -> None:
     assert resolved.litellm_model == "nvidia_nim/meta/llama-3.1-70b-instruct"
     assert resolved.api_base is None
     assert resolved.api_key == "nvapi-test-key"
+
+
+def test_oauth_markers_fast_without_spawns(tmp_path, kite_home, monkeypatch) -> None:
+    from pathlib import Path
+
+    from kite.providers import byos
+    from kite.providers.credentials import configured_providers
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    codex = tmp_path / ".codex"
+    codex.mkdir()
+    (codex / "auth.json").write_text('{"tokens": {"access_token": "x"}}', encoding="utf-8")
+    assert byos.oauth_session_marker_present("chatgpt") is True
+    assert byos.oauth_session_marker_present("codex") is True
+    assert byos.oauth_session_marker_present("bogus") is False
+    assert byos.oauth_session_marker_present("anthropic") is False
+    (tmp_path / ".claude.json").write_text('{"oauth": {}}', encoding="utf-8")
+    assert byos.oauth_session_marker_present("claude") is True
+
+    bridge = kite_home / "oauth" / "xai"
+    bridge.mkdir(parents=True)
+    (bridge / "auth.json").write_text('{"access_token": "y"}', encoding="utf-8")
+    assert byos.oauth_session_marker_present("grok") is True
+
+    agy = kite_home / "oauth" / "antigravity"
+    agy.mkdir(parents=True)
+    (agy / "status.json").write_text('{"linked": true}', encoding="utf-8")
+    assert byos.oauth_session_marker_present("antigravity") is True
+
+    # Fast rows never touch probes: hard-fail if they try.
+    monkeypatch.setattr(
+        "kite.providers.credentials.inspect_provider_credentials",
+        lambda _spec: (_ for _ in ()).throw(AssertionError("fast path must not probe")),
+    )
+    rows = {name: ok for name, ok, _ in configured_providers(fast=True)}
+    assert rows["chatgpt"] is True
+    assert rows["claude"] is True
+    assert rows["grok"] is True
+    assert rows["antigravity"] is True
+
+
+def test_configured_providers_parallel_full_probes(kite_home, monkeypatch) -> None:
+    from kite.providers.credentials import configured_providers
+
+    seen: list[str] = []
+
+    def _slow_probe(spec):
+        import time as _time
+
+        seen.append(spec.name)
+        _time.sleep(0.05)
+        from kite.providers.credentials import ProviderCredentialStatus
+
+        return ProviderCredentialStatus(
+            provider=spec.name, linked=False, usable=False, method="oauth", detail="t"
+        )
+
+    monkeypatch.setattr("kite.providers.credentials.inspect_provider_credentials", _slow_probe)
+    import time
+
+    start = time.monotonic()
+    rows = {name: ok for name, ok, _ in configured_providers()}
+    elapsed = time.monotonic() - start
+    assert seen and all(v is False for k, v in rows.items() if k in seen)
+    assert elapsed < len(seen) * 0.05
