@@ -3,11 +3,14 @@
 The agy session lives in the OS keyring (no file tokens to materialize like
 Codex/Grok), so subscription turns are delegated to the binary itself::
 
-    agy --model <id> --mode plan -p <prompt> --output-format json
+    echo <prompt> | agy --model <id> --mode plan --output-format json
 
-``--mode plan`` keeps agy read-only: Kite owns tools/edits, agy only answers.
-Replies are text-only (agy cannot return Kite tool calls), so casual chat
-works on subscription while tool-driven agent runs still need GEMINI_API_KEY.
+The prompt travels on stdin, never argv: Windows caps the command line at
+~32K chars (WinError 206) and Kite turns carry a full system prompt plus
+history. ``--mode plan`` keeps agy read-only: Kite owns tools/edits, agy
+only answers. Replies are text-only (agy cannot return Kite tool calls),
+so casual chat works on subscription while tool-driven agent runs still
+need GEMINI_API_KEY.
 
 `agy -p --output-format json` prints one JSON object::
 
@@ -25,8 +28,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 _AGY_BIN = "agy"
-# Windows CreateProcess caps the command line at 32767 chars — stay well
-# under it; the flattener trims oldest history first to fit.
+# Bound the flattened prompt: agy context is finite and smaller turns are
+# cheaper/faster. stdin has no OS length cap (unlike argv — WinError 206).
 _MAX_PROMPT_CHARS = 24_000
 
 
@@ -107,12 +110,13 @@ def flatten_prompt(messages: list[dict]) -> str:
     return head or body
 
 
-def build_agy_argv(*, model: str, prompt: str, with_model: bool = True) -> list[str]:
+def build_agy_argv(*, model: str, with_model: bool = True) -> list[str]:
+    """Short argv only — the prompt itself travels on stdin (no length cap)."""
     exe = agy_executable() or _AGY_BIN
     argv = [exe]
     if with_model and (model or "").strip():
         argv += ["--model", model.strip()]
-    return argv + ["--mode", "plan", "-p", prompt, "--output-format", "json"]
+    return argv + ["--mode", "plan", "--output-format", "json"]
 
 
 def _extract_json(text: str) -> dict:
@@ -172,7 +176,7 @@ def run_agy_turn(
     should_stop: Callable[[], bool] | None = None,
     cwd: str | None = None,
 ) -> AgyTurn:
-    """Execute one subscription turn via `agy -p`; return text + usage."""
+    """Execute one subscription turn via the agy CLI; return text + usage."""
     if agy_executable() is None:
         raise AntigravityExecError(
             "agy CLI not found. Install it from "
@@ -190,7 +194,8 @@ def run_agy_turn(
             raise InterruptedError("interrupted")
         try:
             out = _run_agy_process(
-                build_agy_argv(model=model, prompt=prompt, with_model=with_model),
+                build_agy_argv(model=model, with_model=with_model),
+                input_text=prompt,
                 timeout=timeout,
                 should_stop=should_stop,
                 cwd=cwd,
@@ -214,13 +219,16 @@ def run_agy_turn(
 def _run_agy_process(
     argv: list[str],
     *,
+    input_text: str,
     timeout: float,
     should_stop: Callable[[], bool] | None,
     cwd: str | None,
 ) -> str:
+    """Run agy with the prompt on stdin (argv stays short — no WinError 206)."""
     try:
         proc = subprocess.Popen(
             argv,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -230,13 +238,12 @@ def _run_agy_process(
         )
     except OSError as exc:
         raise AntigravityExecError(f"could not start agy: {exc}") from None
-    assert proc.stdout is not None
     box: dict[str, object] = {}
 
     def _pump() -> None:
         try:
-            assert proc.stdout is not None
-            box["out"] = proc.stdout.read()
+            out, _ = proc.communicate(input=input_text)
+            box["out"] = out
         except Exception as exc:  # noqa: BLE001 — surfaced below
             box["error"] = exc
         finally:

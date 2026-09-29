@@ -246,10 +246,11 @@ def test_agy_exec_argv_prompt_and_payload() -> None:
         parse_agy_payload,
     )
 
-    argv = build_agy_argv(model="gemini-3.7-flash-medium", prompt="hi")
+    argv = build_agy_argv(model="gemini-3.7-flash-medium")
     assert argv[:3] == [argv[0], "--model", "gemini-3.7-flash-medium"]
     assert "--mode" in argv and "plan" in argv and "--output-format" in argv
-    bare = build_agy_argv(model="gemini-2.5-pro", prompt="hi", with_model=False)
+    assert "-p" not in argv  # prompt travels on stdin (WinError 206)
+    bare = build_agy_argv(model="gemini-2.5-pro", with_model=False)
     assert "--model" not in bare
 
     prompt = flatten_prompt(
@@ -294,10 +295,10 @@ def test_agy_turn_retries_without_model_on_unknown_model(monkeypatch: pytest.Mon
     from kite.providers.auth import antigravity_exec as exec_mod
 
     monkeypatch.setattr(exec_mod, "agy_executable", lambda: "agy")
-    seen: list[list[str]] = []
+    seen: list[tuple[list[str], str]] = []
 
     def _fake_run(argv: list[str], **_k: object) -> str:
-        seen.append(argv)
+        seen.append((argv, str(_k.get("input_text") or "")))
         import json as _json
 
         if "--model" in argv:
@@ -307,4 +308,5 @@ def test_agy_turn_retries_without_model_on_unknown_model(monkeypatch: pytest.Mon
     monkeypatch.setattr(exec_mod, "_run_agy_process", _fake_run)
     turn = exec_mod.run_agy_turn(model="gemini-2.5-pro", messages=[{"role": "user", "content": "hi"}])
     assert turn.text == "hi"
-    assert len(seen) == 2 and "--model" not in seen[1]
+    assert len(seen) == 2 and "--model" not in seen[1][0]
+    assert all("User: hi" in stdin for _, stdin in seen)  # prompt via stdin
