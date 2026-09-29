@@ -152,7 +152,7 @@ def _raw_pick(
     show: int,
     refreshable: bool,
 ) -> str | None:
-    """In-place list driven by raw keys (and Windows mouse wheel)."""
+    """In-place list driven by raw keys, wheel, and click (press highlights, release selects)."""
     _ensure_vt_output()
     pool = list(items)
     state = {"filter": "", "cursor": 0, "offset": 0}
@@ -600,7 +600,7 @@ class _WinEvents:
         if self._down:
             self._down = False
             if vis is not None:
-                return f"goto:{vis}"
+                return f"pick:{vis}"
             return "enter"
         return None
 

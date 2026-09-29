@@ -990,6 +990,8 @@ def _normalize_theme(raw: str) -> str | None:
 
 def _normalize_font(raw: str) -> str | None:
     token = raw.strip().lower()
+    if token in FONT_NAMES:
+        return token
     aliases = {"plain": "ascii", "compat": "ascii", "default": "unicode", "utf8": "unicode", "utf-8": "unicode"}
     return aliases.get(token)
 
