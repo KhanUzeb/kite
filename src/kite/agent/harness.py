@@ -105,6 +105,7 @@ class Harness:
     _runtime: AgentRuntime | None = field(default=None, init=False)
     last_session: Session | None = field(default=None, init=False)
     approver: object | None = None
+    ask_user: object | None = None
     checkpoints: object | None = None
     todos: TodoStore | None = None
     job_registry: JobRegistry | None = None
@@ -153,6 +154,8 @@ class Harness:
         runtime.cancel_token = cancel
         if self.approver is not None:
             runtime.approver = self.approver  # type: ignore[assignment]
+        if self.ask_user is not None:
+            runtime.ask_user = self.ask_user  # type: ignore[assignment]
         if self.checkpoints is not None:
             runtime.checkpoints = self.checkpoints
         if self.todos is not None:

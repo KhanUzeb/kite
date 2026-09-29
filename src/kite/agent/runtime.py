@@ -85,6 +85,7 @@ class AgentRuntime:
     runtime_config: AgentRuntimeConfig | None = field(default=None, init=False)
     _prepared_skills: list[Any] = field(default_factory=list, init=False)
     approver: Callable | None = None
+    ask_user: Callable | None = None
     checkpoints: Any = None
     todos: TodoStore = field(default_factory=TodoStore)
     slots: HarnessSlots = field(default_factory=HarnessSlots)
@@ -548,6 +549,7 @@ class AgentRuntime:
                 jobs=self.job_registry,
                 on_event=self._on_event,
                 auto_venv=rcfg.auto_venv,
+                ask_user=self.ask_user,
             )
         extras = list(self.extra_tools)
         if rcfg.github_tools:

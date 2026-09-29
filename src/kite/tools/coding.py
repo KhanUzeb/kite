@@ -176,7 +176,16 @@ def make_coding_tools(
     auto_venv: bool = True,
     verification=None,
     verify_before_submit: bool = True,
+    ask_user=None,
 ) -> list[Tool]:
+    """Assemble the coding tool catalog.
+
+    ``ask_user`` answers opencode-style clarifying questions: a callable
+    taking normalized ``[{question, header, multiple, options}]`` and
+    returning ``[{answer, options}]`` (or None when skipped). None means
+    non-interactive — the question tool then tells the model to proceed
+    on assumptions instead of blocking forever.
+    """
     def _root() -> str:
         if execution is not None:
             return str(execution.execution_cwd)
@@ -226,6 +235,7 @@ def make_coding_tools(
             "subagent",
             "memory",
             "submit",
+            "question",
         ]
     )
     skill_by_name = {s.name: s for s in (skills or [])}
@@ -775,6 +785,65 @@ def make_coding_tools(
             return {"ok": True, "output": "\n".join(lines), "count": result.total}
         return {"ok": False, "error": "action must be list|remember|forget", "output": "action must be list|remember|forget"}
 
+    def ask_clarifying(args: dict[str, Any]) -> dict[str, Any]:
+        """Opencode-style clarifying questions — answered live or skipped."""
+        raw = args.get("questions")
+        if not isinstance(raw, list) or not raw:
+            msg = "questions: non-empty array required"
+            return {"ok": False, "error": msg, "output": msg}
+        normalized: list[dict[str, Any]] = []
+        for entry in raw[:4]:
+            if not isinstance(entry, dict):
+                continue
+            text = str(entry.get("question") or "").strip()
+            options: list[dict[str, str]] = []
+            for opt in (entry.get("options") or [])[:4]:
+                if not isinstance(opt, dict):
+                    continue
+                label = str(opt.get("label") or "").strip()
+                if not label:
+                    continue
+                options.append(
+                    {"label": label, "description": str(opt.get("description") or "").strip()}
+                )
+            if not text or not options:
+                continue
+            normalized.append(
+                {
+                    "question": text,
+                    "header": str(entry.get("header") or "")[:40],
+                    "multiple": bool(entry.get("multiple")),
+                    "options": options,
+                }
+            )
+        if not normalized:
+            msg = "each question needs text and at least one labeled option"
+            return {"ok": False, "error": msg, "output": msg}
+        if ask_user is None:
+            return {
+                "ok": True,
+                "answers": [],
+                "output": (
+                    "Non-interactive session — no one to ask. "
+                    "Proceed with your best assumption and note it."
+                ),
+            }
+        try:
+            replies = ask_user(normalized) or []
+        except EOFError:
+            replies = []
+        lines: list[str] = []
+        answers: list[dict[str, Any]] = []
+        for idx, item in enumerate(normalized):
+            reply = replies[idx] if idx < len(replies) and isinstance(replies[idx], dict) else {}
+            answer = str(reply.get("answer") or "").strip()
+            picked = [str(o) for o in (reply.get("options") or []) if str(o).strip()]
+            answers.append({"question": item["question"], "answer": answer, "options": picked})
+            head = f"Q{idx + 1} ({item['header']})" if item["header"] else f"Q{idx + 1}"
+            detail = answer or "skipped — use your best assumption"
+            lines.append(f"{head}: {item['question']}\n→ {detail}")
+        return {"ok": True, "answers": answers, "output": "\n".join(lines)}
+
     reason_prop = {"reason": {"type": "string", "description": "One-line why, shown in the UI"}}
 
     catalog: list[tuple[str, Tool]] = [
@@ -1247,6 +1316,61 @@ def make_coding_tools(
                     "required": ["action"],
                 },
                 execute_fn=lambda a: gated("memory", a, memory_op),
+            ),
+        ),
+        (
+            "question",
+            Tool(
+                name="question",
+                description=(
+                    "Ask the user clarifying questions when blocked on genuine ambiguity "
+                    "(never for anything you can decide or discover with tools). "
+                    "Use sparingly — max 4 questions per call, each with 2-4 labeled options; "
+                    "the user may also answer in free text or skip. "
+                    "In non-interactive runs there is no one to ask: you get an empty "
+                    "answer set and must proceed on your best assumption."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "questions": {
+                            "type": "array",
+                            "maxItems": 4,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "question": {
+                                        "type": "string",
+                                        "description": "The ambiguity, as one direct question",
+                                    },
+                                    "header": {
+                                        "type": "string",
+                                        "description": "Short label shown above the question",
+                                    },
+                                    "multiple": {
+                                        "type": "boolean",
+                                        "description": "Allow selecting more than one option",
+                                    },
+                                    "options": {
+                                        "type": "array",
+                                        "maxItems": 4,
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "label": {"type": "string"},
+                                                "description": {"type": "string"},
+                                            },
+                                            "required": ["label"],
+                                        },
+                                    },
+                                },
+                                "required": ["question", "options"],
+                            },
+                        },
+                    },
+                    "required": ["questions"],
+                },
+                execute_fn=lambda a: gated("question", a, ask_clarifying),
             ),
         ),
     ]

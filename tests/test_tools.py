@@ -433,3 +433,94 @@ def test_subagent_parent_plan_context_attached() -> None:
     explicit = _with_parent_plan_context({"prompt": "x", "context": "mine"}, _Store())
     assert explicit["context"] == "mine"
     assert _with_parent_plan_context({"prompt": "x"}, None)["prompt"] == "x"
+
+
+def _question_tool(tmp_path, **kwargs):
+    from kite.tools.coding import make_coding_tools
+
+    return next(t for t in make_coding_tools(cwd=str(tmp_path), enabled=["question"], **kwargs) if t.name == "question")
+
+
+def test_question_tool_validation_and_headless(tmp_path) -> None:
+    tool = _question_tool(tmp_path)
+    assert tool.run({})["ok"] is False
+    assert tool.run({"questions": []})["ok"] is False
+    assert tool.run({"questions": [{"question": "x?", "options": []}]})["ok"] is False
+    # No ask_user handler (headless/CI): answers empty, model proceeds on assumptions.
+    res = tool.run(
+        {"questions": [{"question": "Deploy?", "header": "ship", "options": [{"label": "yes"}, {"label": "no"}]}]}
+    )
+    assert res["ok"] is True and res["answers"] == []
+    assert "assumption" in res["output"]
+
+
+def test_question_tool_live_answers(tmp_path) -> None:
+    seen: list = []
+
+    def _handler(questions):
+        seen.extend(questions)
+        return [{"answer": "blue", "options": ["blue"]}]
+
+    tool = _question_tool(tmp_path, ask_user=_handler)
+    res = tool.run(
+        {
+            "questions": [
+                {
+                    "question": "Color?",
+                    "header": "pick",
+                    "multiple": False,
+                    "options": [{"label": "red"}, {"label": "blue", "description": "calm"}],
+                }
+            ]
+        }
+    )
+    assert res["ok"] is True
+    assert res["answers"] == [{"question": "Color?", "answer": "blue", "options": ["blue"]}]
+    assert "blue" in res["output"]
+    assert seen[0]["header"] == "pick" and len(seen[0]["options"]) == 2
+
+    def _skipped(questions):
+        return None
+
+    skipped = _question_tool(tmp_path, ask_user=_skipped).run(
+        {"questions": [{"question": "Q?", "options": [{"label": "a"}]}]}
+    )
+    assert skipped["ok"] is True and skipped["answers"][0]["answer"] == ""
+
+
+def test_question_console_handler_numbers_text_and_skip() -> None:
+    from unittest.mock import MagicMock
+
+    from kite.ui.question import _interpret_answer, ask_user_questions
+
+    opts = [{"label": "red"}, {"label": "blue"}]
+    assert _interpret_answer("2", opts, multiple=False) == ("blue", ["blue"])
+    assert _interpret_answer("2,1", opts, multiple=True) == ("blue, red", ["blue", "red"])
+    assert _interpret_answer("2,1", opts, multiple=False) == ("blue", ["blue"])
+    assert _interpret_answer("teal", opts, multiple=False) == ("teal", [])
+    assert _interpret_answer("", opts, multiple=False) == ("", [])
+
+    console = MagicMock()
+    console.input.side_effect = ["1", "custom answer", ""]
+    out = ask_user_questions(
+        console,
+        [
+            {"question": "A?", "header": "h", "multiple": False, "options": opts},
+            {"question": "B?", "header": "", "multiple": False, "options": opts},
+            {"question": "C?", "header": "", "multiple": False, "options": opts},
+        ],
+    )
+    assert out is not None
+    assert [a["answer"] for a in out] == ["red", "custom answer", ""]
+    assert out[0]["options"] == ["red"] and out[1]["options"] == []
+
+
+def test_question_offered_in_modes_and_serial() -> None:
+    from kite.agent.mode import BUILD_TOOLS, PLAN_TOOLS
+    from kite.agent.parallel import _SERIAL_ONLY
+    from kite.tools.metadata import metadata_for
+
+    assert "question" in BUILD_TOOLS and "question" in PLAN_TOOLS
+    assert "question" in _SERIAL_ONLY
+    assert metadata_for("question").read_only is True
+    assert metadata_for("question").concurrency_safe is False

@@ -88,9 +88,9 @@ MUTATING_TOOLS = frozenset({"write", "edit", "bash"})
 
 # Plan schema: read-only tools + checklist + bash (inspection only at runtime).
 # Never include write/edit — keep this set aligned with mode_plan.md.
-PLAN_TOOLS = frozenset({*READONLY_TOOLS, "todo_write", "bash"})
+PLAN_TOOLS = frozenset({*READONLY_TOOLS, "todo_write", "bash", "question"})
 
-BUILD_TOOLS = frozenset({*READONLY_TOOLS, *MUTATING_TOOLS, "todo_write", "todo_read", "task", "submit"})
+BUILD_TOOLS = frozenset({*READONLY_TOOLS, *MUTATING_TOOLS, "todo_write", "todo_read", "task", "submit", "question"})
 
 
 def default_approval(mode: AgentMode) -> ApprovalMode:

@@ -8,7 +8,7 @@ from typing import Any
 from kite.tools.metadata import is_concurrency_safe
 
 # Never run alongside other tools in one thread pool.
-_SERIAL_ONLY = frozenset({"bash", "todo_write", "task", "subagent", "submit", "memory", "set_cwd", "skill"})
+_SERIAL_ONLY = frozenset({"bash", "todo_write", "task", "subagent", "submit", "memory", "set_cwd", "skill", "question"})
 
 _PATH_ARG_TOOLS = frozenset({"read", "write", "edit", "grep", "glob", "ls"})
 _WRITE_TOOLS = frozenset({"write", "edit"})
