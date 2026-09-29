@@ -348,7 +348,8 @@ def test_select_model_and_reasoning_combined(kite_home, monkeypatch) -> None:
     names = {s.name for s in _visible_specs(index, support=ReasoningSupport(True, False, True, True))}
     assert "thinking" in names and "reasoning" not in names and "fast" not in names
     names_off = {s.name for s in _visible_specs(index, support=ReasoningSupport(False, False, False, False))}
-    assert "thinking" not in names_off
+    # /thinking stays visible before detection warms — only levels are gated.
+    assert "thinking" in names_off
 
 
 def test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

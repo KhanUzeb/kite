@@ -653,6 +653,12 @@ def _path_completions(prefix: str, start: int):
 
 
 def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[SlashSpec]:
+    """Specs shown in the bare-slash menu.
+
+    `/thinking` and `/variants` are always visible — `support` only gates
+    which *levels* are offered (menu rows / `#variant` suffixes), never the
+    commands themselves, so the UI appears before live detection warms.
+    """
     from kite.ui.commands import LEGACY_ALIASES
 
     rows: list[SlashSpec] = []
@@ -663,8 +669,6 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
         if spec.name in LEGACY_ALIASES:
             continue
         if ":" in spec.name:
-            continue
-        if spec.name in {"thinking", "variants"} and not support.supported:
             continue
         if spec.name in {"reasoning", "effort", "fast"}:
             continue

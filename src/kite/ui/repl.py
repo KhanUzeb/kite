@@ -41,6 +41,12 @@ from kite.ui.tables import kite_table
 
 _GENERIC_LAUNCHERS = ("__main__", "pytest", "python", "uv", "_pytest", "-c")
 
+# Bounded live detection for thinking-variant support: detect_reasoning() hits
+# the models API (and, off the happy path, OAuth probes that can prompt), so
+# explicit commands run it on a daemon thread and fall back to the unknown
+# path instead of hanging the REPL.
+_REASONING_DETECT_TIMEOUT_S = 20.0
+
 
 def _resume_exe() -> str:
     """Executable name for copy-pasteable resume hints — prefers installed `kite`, else argv[0] basename."""
@@ -812,7 +818,7 @@ class ChatSession:
 
         def _work() -> None:
             try:
-                info = self._reasoning_info_sync()
+                info = self._reasoning_info_sync(announce=False)
                 if info is None:
                     self._reasoning_warm_pending = None
             except Exception:
@@ -820,13 +826,41 @@ class ChatSession:
 
         threading.Thread(target=_work, daemon=True, name="kite-reasoning-warm").start()
 
-    def _reasoning_info_sync(self):
-        """Authoritative reasoning support — may hit the network.
+    def _detect_reasoning_bounded(self, provider: str, model: str, *, timeout: float) -> Any | None:
+        """Run detect_reasoning off-thread; None on timeout/error (unknown support).
 
-        For explicit user commands (/thinking, /reasoning, model switches)
-        where correctness beats immediacy. Never call from completion paths.
+        Daemon thread so a wedged models-API fetch — or an interactive OAuth
+        probe fired from a non-interactive context — can never hang the UI.
+        The join bounds the wait; the caller falls back to the unknown path.
         """
         from kite.models.reasoning import detect_reasoning
+
+        slot: dict[str, Any] = {}
+
+        def _work() -> None:
+            try:
+                slot["info"] = detect_reasoning(provider, model)
+            except Exception as exc:  # noqa: BLE001 — unknown path, never fatal
+                slot["error"] = exc
+
+        worker = threading.Thread(target=_work, daemon=True, name="kite-reasoning-detect")
+        worker.start()
+        worker.join(timeout)
+        if worker.is_alive() or "info" not in slot:
+            return None
+        return slot["info"]
+
+    def _reasoning_info_sync(
+        self, *, timeout: float = _REASONING_DETECT_TIMEOUT_S, announce: bool = True
+    ):
+        """Authoritative reasoning support — bounded, never hangs the UI.
+
+        Session/global cache hits return instantly with no notice. A live
+        miss prints a brief "detecting…" line, waits at most `timeout`
+        seconds, then falls back to None (unknown support). Never call from
+        completion paths — use :meth:`_reasoning_info` there.
+        """
+        from kite.models.reasoning import peek_reasoning
 
         self._ensure_model_resolved()
         provider, model = self._effective_model_pair()
@@ -837,13 +871,17 @@ class ChatSession:
             return self._reasoning_support
         if not provider or not model:
             return None
-        try:
-            self._reasoning_support = detect_reasoning(provider, model)
-            self._reasoning_support_key = key
-        except Exception:
-            self._reasoning_support = None
-            self._reasoning_support_key = None
-        return self._reasoning_support
+        if peek_reasoning(provider, model) is None and announce:
+            try:
+                self.console.print("[kite.muted]detecting thinking support…[/]")
+            except Exception:
+                pass
+        info = self._detect_reasoning_bounded(provider, model, timeout=timeout)
+        if info is None:
+            return None
+        self._reasoning_support = info
+        self._reasoning_support_key = key
+        return info
 
     def _set_reasoning(self, raw: str, *, command: str = "") -> None:
         from kite.models.reasoning import encode_reasoning, fallback_thinking_level, reasoning_badge, split_reasoning
@@ -909,7 +947,7 @@ class ChatSession:
         self._invalidate_harness()
         self.state.touch()
         if not badge:
-            info = self._reasoning_info_sync()
+            info = self._reasoning_info_sync(announce=False)
             if info is not None and info.supported:
                 from kite.models.reasoning import thinking_level_badge
 
@@ -2161,6 +2199,14 @@ class ChatSession:
 
         self._ensure_model_resolved()
         info = self._reasoning_info_sync()
+        if info is None:
+            # Support unknown (detection timed out / errored): still offer
+            # the generic Pi list, but validate strictly before applying.
+            self._slash_variants_unknown(arg)
+            return
+        if not info.supported:
+            self.console.print("[kite.muted]this model does not advertise thinking variants[/]")
+            return
         menu = thinking_level_menu(info) if info is not None and info.supported else ()
         if not menu:
             self.console.print("[kite.muted]this model does not advertise thinking variants[/]")
@@ -2191,6 +2237,55 @@ class ChatSession:
         self.console.print(
             f"[kite.muted]{arg} is not offered by {self.model} — pick: {'|'.join(ids)}[/]"
         )
+
+    def _slash_variants_unknown(self, arg: str) -> None:
+        """Unknown-support path: generic Pi levels, strict commit-time check.
+
+        The menu stays offered so /variants is discoverable before live
+        detection warms — but nothing is applied unless a bounded re-detect
+        proves the picked level is in the model's supported menu. Known-absent
+        support keeps the "does not advertise" message instead.
+        """
+        from kite.models.reasoning import thinking_level_menu
+        from kite.ui.commands import ARG_CHOICES
+
+        generic = list(ARG_CHOICES.get("thinking", ()))
+        if not generic:
+            self.console.print("[kite.muted]could not confirm thinking support — try again[/]")
+            return
+        token = (arg or "").strip().lower()
+        if not token:
+            from kite.ui.pick import _typed_pick
+
+            picked = _typed_pick(
+                self.console,
+                generic,
+                current=None,
+                title=f"Thinking variant — {self.model}",
+                noun="variant",
+            )
+            if not picked:
+                self.console.print(f"[kite.muted]variant[/]  {self.state.reasoning or 'auto'}  ·  {self.model}")
+                return
+            token = picked.strip().lower()
+        if token in {"list", "ls"}:
+            self.console.print(f"[kite.muted]{'|'.join(pi for pi, _ in generic)}[/]")
+            return
+        info = self._reasoning_info_sync(announce=False)
+        if info is not None and info.supported:
+            menu = thinking_level_menu(info)
+            for pi, enc in menu:
+                if token == pi:
+                    self._commit_reasoning(enc, label="variant")
+                    self._save_reasoning_default(enc)
+                    return
+            ids = "|".join(pi for pi, _ in menu) or "—"
+            self.console.print(f"[kite.muted]{token} is not offered by {self.model} — pick: {ids}[/]")
+            return
+        if info is not None:
+            self.console.print("[kite.muted]this model does not advertise thinking variants[/]")
+            return
+        self.console.print("[kite.muted]could not confirm thinking support — try again[/]")
 
     def _save_reasoning_default(self, encoded: str) -> None:
         """Persist the variant as the default for fresh sessions."""

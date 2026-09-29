@@ -27,7 +27,15 @@ from kite.ui.attach import (
     user_content_with_attachments,
 )
 from kite.ui.complete import make_repl_key_bindings, read_repl_line
-from kite.ui.diff import count_diff_lines, make_unified_diff, preview_mutating_diff, preview_patch_diff, render_diff
+from kite.ui.diff import (
+    PREVIEW_NOT_APPLIED,
+    count_diff_lines,
+    make_unified_diff,
+    preview_mutating_diff,
+    preview_patch_diff,
+    preview_write_diff,
+    render_diff,
+)
 from kite.ui.empty import render_empty
 from kite.ui.render import RunDisplay
 from kite.ui.repl import ChatSession
@@ -384,6 +392,42 @@ def test_attach_clipboard_and_diff_helpers(tmp_path, kite_home, monkeypatch) -> 
     assert preview_card is not None
     assert "lib/x.py" in preview_card.plain
     assert "foo" in preview_card.plain and "bar" in preview_card.plain
+
+
+def test_preview_builders_carry_not_applied_banner(tmp_path) -> None:
+    assert PREVIEW_NOT_APPLIED == "Staged as a proposal — files NOT modified yet."
+    patch = preview_patch_diff("src/foo.py", "old line\n", "new line\n")
+    assert patch.startswith(PREVIEW_NOT_APPLIED)
+    assert "-old line" in patch and "+new line" in patch
+    write = preview_write_diff("src/new.py", "hello\n", existing_bytes=None)
+    assert write.startswith(PREVIEW_NOT_APPLIED)
+    target = tmp_path / "code.py"
+    target.write_text("alpha\nbeta\n", encoding="utf-8")
+    shown = preview_mutating_diff(
+        "edit", target, {"path": str(target), "old": "beta", "new": "BETA"}, cwd=tmp_path
+    )
+    assert shown.startswith(PREVIEW_NOT_APPLIED)
+    assert shown.count(PREVIEW_NOT_APPLIED) == 1
+    assert "-beta" in shown and "+BETA" in shown
+    # Banner line is not a +/- row: numstat-style counts are unchanged.
+    assert count_diff_lines(shown) == (1, 1)
+    rendered = render_diff(shown).plain
+    assert PREVIEW_NOT_APPLIED in rendered
+
+
+def test_render_diff_word_highlights_mixed_indent() -> None:
+    diff = make_unified_diff("x.py", "\tfoo bar\n", "  foo BAZ\n")
+    body = render_diff(diff)
+    plain = body.plain
+    assert "→" in plain and "·" in plain
+    assert "BAZ" in plain and "foo" in plain
+    changed = [s.style for s in body.spans if "BAZ" in plain[s.start : s.end]]
+    assert changed and all("reverse" in str(s) for s in changed)
+    calm = [s.style for s in body.spans if "foo" in plain[s.start : s.end]]
+    assert calm and all("reverse" not in str(s) for s in calm)
+    # Line-level behavior otherwise identical: unpaired/context lines still render.
+    ctx = render_diff(make_unified_diff("x.py", "keep\nold\n", "keep\nnew\n")).plain
+    assert "keep" in ctx and "old" in ctx and "new" in ctx
 
 
 def _bindings_by_handler(bindings, name: str):  # noqa: ANN001, ANN202
@@ -788,6 +832,86 @@ def test_variants_strict_menu_persist_and_label(tmp_path, kite_home) -> None:
     fresh = ChatSession(cwd=str(tmp_path))
     assert fresh.state.reasoning == "fast:low"
     assert format_model_label(SessionUiState(model="m", provider="p")) == "p/m"
+
+
+def test_variants_unknown_support_strict_reject_and_known_absent(tmp_path, kite_home) -> None:
+    """Unknown detection applies nothing; known-absent keeps its message."""
+    from kite.models.reasoning import ReasoningSupport
+
+    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
+    session.console = Console(file=StringIO(), force_terminal=False, width=120)
+    session._model_resolved = True
+    before = session.state.reasoning
+
+    # Unknown: bounded detection fails → strict reject, state untouched.
+    session._reasoning_info_sync = lambda **_k: None
+    session._slash_variants("high")
+    assert session.state.reasoning == before
+    assert "could not confirm" in strip_ansi(session.console.file.getvalue())
+
+    # Known-absent: the current message is preserved.
+    session._reasoning_info_sync = lambda **_k: ReasoningSupport(False, False, False, False, source="live")
+    session._slash_variants("high")
+    assert session.state.reasoning == before
+    assert "does not advertise" in strip_ansi(session.console.file.getvalue())
+
+
+def test_variants_unknown_then_supported_applies_strict_menu(tmp_path, kite_home) -> None:
+    """Unknown path offers the generic list but only applies supported levels."""
+    from unittest.mock import MagicMock
+
+    from kite.models.reasoning import ReasoningSupport
+
+    def _support() -> ReasoningSupport:
+        return ReasoningSupport(
+            supported=True,
+            can_fast=True,
+            can_thinking=True,
+            can_disable=True,
+            thinking_kwargs={"reasoning_effort": "high"},
+            fast_kwargs={"reasoning_effort": "low"},
+            efforts=("none", "low", "medium", "high"),
+        )
+
+    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
+    session.console = Console(file=StringIO(), force_terminal=False, width=120)
+    session._model_resolved = True
+    session._harness = MagicMock()
+    calls = {"n": 0}
+
+    def _flaky(**_k):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else _support()
+
+    session._reasoning_info_sync = _flaky
+    session._slash_variants("high")  # re-detect proves support → applies
+    assert session.state.reasoning == "thinking:high"
+
+    session._reasoning_info_sync = lambda **_k: _support()
+    before = session.state.reasoning
+    session._slash_variants("max")  # generic offer, not in menu → strict reject
+    assert session.state.reasoning == before
+    assert "max is not offered" in strip_ansi(session.console.file.getvalue())
+
+
+def test_reasoning_info_sync_bounded_never_hangs(tmp_path, kite_home, monkeypatch) -> None:
+    """A wedged models API must not hang explicit commands (bounded wait)."""
+    import time
+
+    import kite.models.reasoning as reasoning
+
+    def _slow(provider: str, model: str, **_k):
+        time.sleep(30)
+        return MagicMock(supported=True)
+
+    monkeypatch.setattr(reasoning, "detect_reasoning", _slow)
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_a, **_k: None)
+    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
+    session.console = Console(file=StringIO(), force_terminal=False, width=120)
+    session._model_resolved = True
+    started = time.monotonic()
+    assert session._reasoning_info_sync(timeout=0.5, announce=False) is None
+    assert time.monotonic() - started < 5.0
 
 
 def test_pending_approval_panel_plan_git_footer(tmp_path, kite_home) -> None:

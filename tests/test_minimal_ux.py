@@ -138,6 +138,39 @@ def test_completion_skills_cues_bare_slash_and_mouse() -> None:
             os.environ["KITE_MOUSE"] = prev
 
 
+def test_variants_and_thinking_always_visible_before_detection() -> None:
+    """Regression: /variants + /thinking show before live detection warms.
+
+    Support gates only the *levels* (menu rows / #variant suffixes fall back
+    to the generic Pi list) — never the commands themselves.
+    """
+    from kite.models.reasoning import ReasoningSupport
+
+    index = CommandIndex.load(".")
+    unknown = ReasoningSupport(False, False, False, False, source="none")
+    names = {spec.name for spec in _visible_specs(index, support=unknown)}
+    assert "variants" in names and "thinking" in names
+
+    completer = SlashCompleter(lambda: index)
+    top = {
+        c.text
+        for c in completer.get_completions(
+            type("D", (), {"text_before_cursor": "/"})(),
+            None,
+        )
+    }
+    assert "variants" in top and "thinking" in top
+
+    args = {
+        c.text
+        for c in completer.get_completions(
+            type("D", (), {"text_before_cursor": "/variants "})(),
+            None,
+        )
+    }
+    assert {"off", "low", "medium", "high"} <= args
+
+
 def test_builtin_tool_catalog_cues() -> None:
     from kite.tools.cues import format_tool_catalog, tool_cue
     from kite.ui.tool_cards import ToolCard, render_tool_card_done, render_tool_card_start

@@ -167,6 +167,44 @@ def test_theme_typed_picker_wiring(kite_home, monkeypatch) -> None:
     reset_prefs(theme="auto", font="unicode")
 
 
+def test_variants_list_bounded_and_unknown(kite_home, monkeypatch) -> None:
+    """`kite variants --list` never hangs: slow detection → exit 1, fast."""
+    import time
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import kite.models.reasoning as reasoning
+    from kite.cli.run import _detect_variants_support, cmd_variants
+
+    monkeypatch.setattr("kite.cli.run._VARIANTS_DETECT_TIMEOUT_S", 0.5)
+
+    monkeypatch.setattr(
+        "kite.providers.resolve.resolve_model",
+        lambda **_: SimpleNamespace(provider="groq", model="m", litellm_model="groq/m"),
+    )
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_a, **_k: None)
+
+    def _slow(provider: str, model: str, **_k):
+        time.sleep(30)
+        return MagicMock(supported=True)
+
+    monkeypatch.setattr(reasoning, "detect_reasoning", _slow)
+    started = time.monotonic()
+    assert (
+        cmd_variants(argparse.Namespace(provider=None, model=None, level=None, list=True)) == 1
+    )
+    assert time.monotonic() - started < 10.0
+
+    resolved = SimpleNamespace(provider="groq", model="m", litellm_model="groq/m")
+    assert _detect_variants_support(MagicMock(), resolved) is None
+
+    monkeypatch.setattr(
+        reasoning, "detect_reasoning", lambda *a, **_k: MagicMock(supported=False)
+    )
+    info = _detect_variants_support(MagicMock(), resolved)
+    assert info is not None and info.supported is False
+
+
 def test_slash_help_and_legacy_routing() -> None:
     assert parse_slash("/select groq").command == "select"
     assert parse_slash("/thinking").command == "thinking"

@@ -889,6 +889,43 @@ def cmd_font(args: argparse.Namespace) -> int:
     return 0
 
 
+_VARIANTS_DETECT_TIMEOUT_S = 20.0
+
+
+def _detect_variants_support(console, resolved):
+    """Bounded detect_reasoning for `kite variants` — None when unknown.
+
+    detect_reasoning() has no timeout of its own (live models API + OAuth
+    probes), so run it on a daemon thread: the CLI never hangs, and unknown
+    support stays distinct from known-absent (which keeps the
+    "does not advertise" message in cmd_variants).
+    """
+    import threading
+
+    from kite.models.reasoning import detect_reasoning, peek_reasoning
+
+    hit = peek_reasoning(resolved.provider, resolved.model)
+    if hit is not None:
+        return hit
+    console.print("[kite.muted]detecting thinking support…[/]")
+    slot: dict = {}
+
+    def _work() -> None:
+        try:
+            slot["info"] = detect_reasoning(
+                resolved.provider, resolved.model, litellm_model=resolved.litellm_model
+            )
+        except Exception as exc:  # noqa: BLE001 — unknown path, never fatal
+            slot["error"] = exc
+
+    worker = threading.Thread(target=_work, daemon=True, name="kite-variants-detect")
+    worker.start()
+    worker.join(_VARIANTS_DETECT_TIMEOUT_S)
+    if worker.is_alive():
+        return None
+    return slot.get("info")
+
+
 def cmd_variants(args: argparse.Namespace) -> int:
     """Show or set the thinking variant — `kite variants`, same source as /variants.
 
@@ -897,11 +934,7 @@ def cmd_variants(args: argparse.Namespace) -> int:
     The pick persists to ~/.kite/config.toml as the default for fresh sessions.
     """
     from kite.config import UserConfig
-    from kite.models.reasoning import (
-        detect_reasoning,
-        reasoning_to_thinking_level,
-        thinking_level_menu,
-    )
+    from kite.models.reasoning import reasoning_to_thinking_level, thinking_level_menu
     from kite.providers.resolve import resolve_model
 
     console = _console()
@@ -913,7 +946,10 @@ def cmd_variants(args: argparse.Namespace) -> int:
     if level in {"list", "ls"}:
         level = ""
     resolved = resolve_model(provider=provider, model=model, config=cfg)
-    info = detect_reasoning(resolved.provider, resolved.model, litellm_model=resolved.litellm_model)
+    info = _detect_variants_support(console, resolved)
+    if info is None:
+        console.print("[kite.muted]could not determine thinking variants (detection timed out) — try again[/]")
+        return 1
     menu = thinking_level_menu(info) if info.supported else ()
     ids = [pi for pi, _ in menu]
     tag = f"{resolved.provider}/{resolved.model}"
