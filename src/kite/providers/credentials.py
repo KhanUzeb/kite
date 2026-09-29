@@ -195,6 +195,23 @@ def inspect_provider_credentials(spec) -> ProviderCredentialStatus:
             if spec.oauth_provider == "antigravity":
                 byok_spec = load_catalog().get("gemini")
             key_ready = bool(api_key_for(byok_spec))
+            if spec.oauth_provider == "antigravity":
+                # Subscription turns run through the signed-in agy CLI; the
+                # BYOK key only upgrades to direct calls with tool support.
+                usable = linked
+                if linked and key_ready:
+                    detail = "CLI linked · API key set"
+                elif linked:
+                    detail = "CLI linked · answers via agy"
+                else:
+                    detail = "login required"
+                return ProviderCredentialStatus(
+                    provider=spec.name,
+                    linked=linked,
+                    usable=usable,
+                    method="oauth",
+                    detail=detail,
+                )
             usable = linked and key_ready
             if linked and not key_ready:
                 detail = "CLI linked · API key required for Kite"

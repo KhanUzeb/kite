@@ -404,3 +404,56 @@ def test_prewarm_litellm_idempotent_and_daemon() -> None:
     assert first.daemon is True
     first.join(timeout=90.0)
     assert "litellm" in sys.modules
+
+
+def test_agy_subscription_turn_is_text_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from kite.agent.exceptions import ProviderFault
+    from kite.models import litellm_model as lm
+    from kite.providers.auth.antigravity_exec import AgyTurn, AntigravityQuotaError
+
+    model = object.__new__(LitellmModel)
+    model.resolved = SimpleNamespace(
+        provider="antigravity",
+        model="gemini-3.7-flash-medium",
+        api_key=None,
+        spec=SimpleNamespace(auth_kind="oauth", oauth_provider="antigravity", name="antigravity"),
+    )
+    events: list[str] = []
+    model.on_event = lambda e: events.append(e.kind)
+    model.should_stop = lambda: False
+    model.timeout_seconds = 0
+    model.cost = 0.0
+    model.last_usage = {}
+    assert lm._is_agy_subscription(model.resolved) is True
+    assert lm._is_agy_subscription(SimpleNamespace(provider="antigravity", api_key="k")) is False
+
+    monkeypatch.setattr(
+        "kite.providers.auth.antigravity_exec.run_agy_turn",
+        lambda **_k: AgyTurn(text="hello", input_tokens=3, output_tokens=2),
+    )
+    msg = model._query_agy([{"role": "user", "content": "hi"}])
+    assert msg["content"] == "hello" and msg["extra"]["actions"] == []
+    assert "tool_calls" not in msg and msg["extra"]["cost"] == 0.0
+    assert msg["extra"]["usage"]["total_tokens"] == 5
+    assert "stream_start" in events and "stream_end" in events
+
+    def _quota(**_k: object) -> AgyTurn:
+        raise AntigravityQuotaError("Antigravity subscription quota reached. Resets in 1h")
+
+    monkeypatch.setattr("kite.providers.auth.antigravity_exec.run_agy_turn", _quota)
+    try:
+        model._query_agy([{"role": "user", "content": "hi"}])
+    except ProviderFault as exc:
+        assert "quota" in exc.error.lower()
+    else:
+        raise AssertionError("quota must surface as ProviderFault")
+
+    # query() routes subscription turns to agy before touching LiteLLM.
+    monkeypatch.setitem(sys.modules, "litellm", SimpleNamespace())
+    routed: list[list[dict]] = []
+    model._query_agy = lambda messages: routed.append(messages) or {"routed": True}  # type: ignore[method-assign]
+    assert model.query([{"role": "user", "content": "hi"}]) == {"routed": True}
+    assert routed and routed[0][0]["content"] == "hi"

@@ -581,3 +581,35 @@ def test_configured_providers_parallel_full_probes(kite_home, monkeypatch) -> No
     elapsed = time.monotonic() - start
     assert seen and all(v is False for k, v in rows.items() if k in seen)
     assert elapsed < len(seen) * 0.05
+
+
+def test_antigravity_rides_on_gemini_key(kite_home, monkeypatch) -> None:
+    """`kite login antigravity` + GEMINI_API_KEY must yield usable gemini access."""
+    from kite.providers.byos import invalidate_auth_status_cache
+    from kite.providers.catalog import load_catalog
+    from kite.providers.keys import api_key_for
+    from kite.providers.resolve import missing_credentials, resolve_model
+
+    cat = load_catalog()
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    # conftest stubs every OAuth provider as unlinked — resolve reads the
+    # stubbed verdict, so force the linked session at the resolve boundary.
+    monkeypatch.setattr("kite.providers.resolve.has_oauth_session", lambda _p: True)
+    try:
+        assert api_key_for(cat.get("antigravity")) == "test-gemini-key"
+        marker = kite_home / "oauth" / "antigravity"
+        marker.mkdir(parents=True)
+        (marker / "status.json").write_text(json.dumps({"linked": True}), encoding="utf-8")
+        invalidate_auth_status_cache("antigravity")
+        resolved = resolve_model(provider="antigravity", catalog=cat)
+        assert resolved.api_key == "test-gemini-key"
+        assert missing_credentials(resolved) is None
+    finally:
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        invalidate_auth_status_cache("antigravity")
+    assert api_key_for(cat.get("antigravity")) is None
+    # Linked without a key: subscription turns run via the agy CLI, so the
+    # run is not blocked on credentials.
+    resolved = resolve_model(provider="antigravity", catalog=cat)
+    assert resolved.api_key is None
+    assert missing_credentials(resolved) is None

@@ -125,7 +125,7 @@ def test_login_headless_verifies_probe(
     assert marker.is_file()
     payload = json.loads(marker.read_text(encoding="utf-8"))
     assert payload["linked"] is True and payload["verified_via"] == "agy models"
-    assert "GEMINI_API_KEY" in result.message
+    assert "signed-in agy CLI" in result.message and "gemini" in result.message
 
     # Short-circuit when freshly verified: must not spawn agy again.
     def _fail(*_a: object, **_k: object) -> object:
@@ -199,12 +199,16 @@ def test_registry_session_and_credentials(
     assert spec.oauth_provider == "antigravity"
     fresh_marker = _marker(kite_home)
     fresh_marker.unlink()
+    # Direct file removal (production logout invalidates the verdict cache).
+    invalidate_auth_status_cache("antigravity")
     assert inspect_provider_credentials(spec).usable is False
 
     _fresh_marker(kite_home)
+    invalidate_auth_status_cache("antigravity")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     linked_only = inspect_provider_credentials(spec)
-    assert linked_only.linked is True and linked_only.usable is False
+    assert linked_only.linked is True and linked_only.usable is True
+    assert "agy" in linked_only.detail
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     ready = inspect_provider_credentials(spec)
@@ -231,3 +235,76 @@ def test_fetch_model_ids_probe_and_fallback(kite_home: Path, monkeypatch: pytest
     )
     assert AntigravityAuthProvider().litellm_env() == {}
     assert AntigravityAuthProvider().litellm_extras() == {}
+
+
+def test_agy_exec_argv_prompt_and_payload() -> None:
+    from kite.providers.auth.antigravity_exec import (
+        AntigravityExecError,
+        AntigravityQuotaError,
+        build_agy_argv,
+        flatten_prompt,
+        parse_agy_payload,
+    )
+
+    argv = build_agy_argv(model="gemini-3.7-flash-medium", prompt="hi")
+    assert argv[:3] == [argv[0], "--model", "gemini-3.7-flash-medium"]
+    assert "--mode" in argv and "plan" in argv and "--output-format" in argv
+    bare = build_agy_argv(model="gemini-2.5-pro", prompt="hi", with_model=False)
+    assert "--model" not in bare
+
+    prompt = flatten_prompt(
+        [
+            {"role": "system", "content": "be brief"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi", "tool_calls": [{"function": {"name": "read"}}]},
+            {"role": "tool", "tool_call_id": "1", "content": "x"},
+        ]
+    )
+    assert "<system>\nbe brief" in prompt and "User: hello" in prompt
+    assert "tool calls requested" in prompt and "tool_call_id" not in prompt
+
+    ok = parse_agy_payload(
+        {"status": "OK", "response": "done", "usage": {"input_tokens": 10, "output_tokens": 4}}
+    )
+    assert (ok.text, ok.input_tokens, ok.output_tokens) == ("done", 10, 4)
+    # Real quota-exhausted shape: retrying cannot help → dedicated error.
+    try:
+        parse_agy_payload(
+            {
+                "status": "ERROR",
+                "response": "",
+                "error": "Individual quota reached. Please upgrade your subscription "
+                "to increase your limits. Resets in 66h44m32s.",
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+        )
+    except AntigravityQuotaError as exc:
+        assert "quota" in str(exc).lower()
+    else:
+        raise AssertionError("quota error must raise AntigravityQuotaError")
+    try:
+        parse_agy_payload({"status": "ERROR", "response": "", "error": "boom"})
+    except AntigravityExecError:
+        pass
+    else:
+        raise AssertionError("plain agy error must raise AntigravityExecError")
+
+
+def test_agy_turn_retries_without_model_on_unknown_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    from kite.providers.auth import antigravity_exec as exec_mod
+
+    monkeypatch.setattr(exec_mod, "agy_executable", lambda: "agy")
+    seen: list[list[str]] = []
+
+    def _fake_run(argv: list[str], **_k: object) -> str:
+        seen.append(argv)
+        import json as _json
+
+        if "--model" in argv:
+            return _json.dumps({"status": "ERROR", "response": "", "error": "unknown model 'x'"})
+        return _json.dumps({"status": "OK", "response": "hi", "usage": {}})
+
+    monkeypatch.setattr(exec_mod, "_run_agy_process", _fake_run)
+    turn = exec_mod.run_agy_turn(model="gemini-2.5-pro", messages=[{"role": "user", "content": "hi"}])
+    assert turn.text == "hi"
+    assert len(seen) == 2 and "--model" not in seen[1]

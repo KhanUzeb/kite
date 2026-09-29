@@ -319,7 +319,7 @@ def login_oauth(
         elif spec.oauth_provider == "anthropic":
             msg += "  ·  API key required for Kite — kite keys --set anthropic"
         elif spec.oauth_provider == "antigravity":
-            msg += "  ·  API key required for Kite — kite keys --set gemini"
+            msg += "  ·  chat runs on your subscription via agy (GEMINI_API_KEY via `kite keys --set gemini` adds tool-driven agent runs)"
 
     return 0, msg, spec.name
 

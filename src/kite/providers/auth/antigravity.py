@@ -10,8 +10,10 @@ Official method only (https://antigravity.google/docs/cli/install/):
   with the documented read-only `agy models` probe instead of trusting
   process exit codes (quitting the agy TUI exits 0 without signing in).
 
-Kite never holds Google tokens — only a linkage marker. Kite model calls
-still need GEMINI_API_KEY (`kite keys --set gemini`).
+Kite never holds Google tokens — only a linkage marker. Subscription turns
+run through the signed-in `agy` CLI (`agy -p --mode plan`, text-only);
+GEMINI_API_KEY (`kite keys --set gemini`) upgrades to direct LiteLLM calls
+with tool support for agent runs.
 """
 
 from __future__ import annotations
@@ -283,7 +285,8 @@ class AntigravityAuthProvider:
         return LoginResult(
             0,
             f"Antigravity subscription linked ({len(models)} models available). "
-            "Kite model calls still need GEMINI_API_KEY (`kite keys --set gemini`).",
+            "Chat runs through your signed-in agy CLI; `kite keys --set gemini` "
+            "adds tool-driven agent runs.",
         )
 
     def logout(self) -> bool:

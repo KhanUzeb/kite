@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from kite.agent.events import Event
-from kite.agent.exceptions import FormatError
+from kite.agent.exceptions import FormatError, ProviderFault
 from kite.context.observation import observation_content
 from kite.models.cache import PromptCacheManager, parse_cache_usage
 from kite.models.reasoning import (
@@ -34,6 +34,11 @@ def _as_str(value: Any) -> str:
     if isinstance(value, str):
         return value
     return ""
+
+
+def _is_agy_subscription(resolved: ResolvedModel) -> bool:
+    """Linked Antigravity subscription without a BYOK key → run via agy CLI."""
+    return resolved.provider == "antigravity" and not resolved.api_key
 
 
 _prewarm_lock = threading.Lock()
@@ -755,11 +760,65 @@ class LitellmModel:
                 return self._query_stream(messages, overrides=no_reasoning)
             except Exception:
                 return self._query_blocking(messages, overrides=no_reasoning)
+
+    def _query_agy(self, messages: list[dict]) -> dict:
+        """One turn through the signed-in agy CLI (subscription, text-only)."""
+        from kite.providers.auth.antigravity_exec import (
+            AntigravityExecError,
+            AntigravityQuotaError,
+            run_agy_turn,
+        )
+
+        self._emit(
+            "stream_start",
+            provider=self.resolved.provider,
+            model=self.resolved.model,
+        )
+        try:
+            turn = run_agy_turn(
+                model=self.resolved.model or "",
+                messages=messages,
+                timeout_seconds=float(self.timeout_seconds or 0),
+                should_stop=self.should_stop,
+            )
+        except AntigravityQuotaError as exc:
+            self._emit("stream_end", ok=False)
+            raise ProviderFault(str(exc)) from exc
+        except (AntigravityExecError, TimeoutError, InterruptedError):
+            self._emit("stream_end", ok=False)
+            raise
+        except Exception:
+            self._emit("stream_end", ok=False)
+            raise
+        self.last_usage = {
+            "prompt_tokens": turn.input_tokens,
+            "completion_tokens": turn.output_tokens,
+            "total_tokens": turn.input_tokens + turn.output_tokens,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cached_tokens": 0,
+        }
+        self._emit("stream_delta", text=turn.text)
+        self._emit("stream_usage", **self.last_usage)
+        self.cost += 0.0  # subscription — no per-token billing
+        return self._finalize_response(
+            content=turn.text,
+            tool_calls_acc={},
+            cost=0.0,
+            reasoning="",
+        )
+
     def query(self, messages: list[dict]) -> dict:
         import litellm
 
         if is_oauth_provider(self.resolved.spec):
             ensure_oauth_env(self.resolved.spec)
+
+        if _is_agy_subscription(self.resolved):
+            # Linked subscription, no API key: the turn runs through the
+            # signed-in agy CLI (text-only — agy cannot return Kite tool
+            # calls). Tool-driven agent runs still need GEMINI_API_KEY.
+            return self._query_agy(messages)
 
         litellm.suppress_debug_info = True
         # LiteLLM logs every failed attempt straight to stderr ("Provider

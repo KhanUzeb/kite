@@ -13,6 +13,10 @@ _FALLBACKS: dict[str, tuple[str, ...]] = {
     "opencode-zen": ("OPENCODE_ZEN_API_KEY",),
     "opencode-go": ("OPENCODE_GO_API_KEY", "OPENCODE_ZEN_API_KEY"),
     "claude": ("ANTHROPIC_API_KEY",),
+    # Antigravity subscription auth is CLI-owned (agy keyring); Kite model
+    # calls through the antigravity provider ride on the Gemini API key —
+    # same pattern as the claude → ANTHROPIC_API_KEY fallback above.
+    "antigravity": ("GEMINI_API_KEY",),
 }
 
 

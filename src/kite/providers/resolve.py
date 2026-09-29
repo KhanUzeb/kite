@@ -213,10 +213,10 @@ def missing_credentials(resolved: ResolvedModel) -> str | None:
                 "Run `kite keys --set anthropic`."
             )
         if resolved.spec.oauth_provider == "antigravity" and not resolved.api_key:
-            return (
-                "Antigravity is linked, but Kite model calls need GEMINI_API_KEY. "
-                "Run `kite keys --set gemini`."
-            )
+            # Linked here (unlinked returns the login hint above): turns run
+            # through the signed-in agy CLI. A key only upgrades the path to
+            # direct LiteLLM calls with tool support.
+            return None
         if oauth_id == "chatgpt":
             try:
                 from kite.providers.auth.codex_litellm import materialize_litellm_chatgpt_auth
