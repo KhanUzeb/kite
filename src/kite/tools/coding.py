@@ -808,14 +808,24 @@ def make_coding_tools(
                 )
             if not text or not options:
                 continue
-            normalized.append(
-                {
-                    "question": text,
-                    "header": str(entry.get("header") or "")[:40],
-                    "multiple": bool(entry.get("multiple")),
-                    "options": options,
-                }
-            )
+            item: dict[str, Any] = {
+                "question": text,
+                "header": str(entry.get("header") or "")[:40],
+                "multiple": bool(entry.get("multiple")),
+                "options": options,
+            }
+            recommended = str(entry.get("recommended") or "").strip()
+            if recommended:
+                item["recommended"] = recommended
+            timeout_raw = entry.get("timeout")
+            if (
+                isinstance(timeout_raw, (int, float))
+                and not isinstance(timeout_raw, bool)
+                and float(timeout_raw) >= 0
+                and float(timeout_raw) != float("inf")
+            ):
+                item["timeout"] = timeout_raw
+            normalized.append(item)
         if not normalized:
             msg = "each question needs text and at least one labeled option"
             return {"ok": False, "error": msg, "output": msg}
@@ -1327,6 +1337,8 @@ def make_coding_tools(
                     "(never for anything you can decide or discover with tools). "
                     "Use sparingly — max 4 questions per call, each with 2-4 labeled options; "
                     "the user may also answer in free text or skip. "
+                    "Each question may set recommended (default option label, picked on empty input) "
+                    "and timeout (seconds before auto-picking recommended, else skip). "
                     "In non-interactive runs there is no one to ask: you get an empty "
                     "answer set and must proceed on your best assumption."
                 ),
@@ -1350,6 +1362,14 @@ def make_coding_tools(
                                     "multiple": {
                                         "type": "boolean",
                                         "description": "Allow selecting more than one option",
+                                    },
+                                    "recommended": {
+                                        "type": "string",
+                                        "description": "Label of the default option (Enter picks it; shown with a Recommended suffix)",
+                                    },
+                                    "timeout": {
+                                        "type": "number",
+                                        "description": "Seconds before auto-picking recommended (or skip); 0 expires immediately",
                                     },
                                     "options": {
                                         "type": "array",

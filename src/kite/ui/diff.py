@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import re
 from pathlib import Path
 
 from rich.text import Text
@@ -18,6 +19,17 @@ from kite.ui.style import (
 )
 
 _DIFF_BAR = PANEL_BAR
+
+#: Banner for edit/write preview text shown before the change is applied —
+#: keeps the model from believing the files on disk already changed.
+PREVIEW_NOT_APPLIED = "Staged as a proposal — files NOT modified yet."
+
+
+def _staged(text: str) -> str:
+    """Prefix preview text with the not-applied banner (never doubled)."""
+    if text.startswith(PREVIEW_NOT_APPLIED):
+        return text
+    return f"{PREVIEW_NOT_APPLIED}\n{text}" if text else PREVIEW_NOT_APPLIED
 
 
 def make_unified_diff(path: str, before: str, after: str) -> str:
@@ -61,14 +73,14 @@ def preview_patch_diff(path: str, old: str, new: str) -> str:
         lines.append(f"-{line}")
     for line in new.splitlines():
         lines.append(f"+{line}")
-    return "\n".join(lines) + "\n"
+    return _staged("\n".join(lines) + "\n")
 
 
 def preview_write_diff(path: str, content: str, *, existing_bytes: int | None) -> str:
     """Approval preview for write — uses args; notes size when replacing a large file."""
     rel = path.replace("\\", "/")
     if existing_bytes is None:
-        return make_unified_diff(path, "", content)
+        return _staged(make_unified_diff(path, "", content))
     header = (
         f"--- a/{rel}\n"
         f"+++ b/{rel}\n"
@@ -79,7 +91,7 @@ def preview_write_diff(path: str, content: str, *, existing_bytes: int | None) -
     extra = len(content.splitlines()) - len(shown)
     if extra > 0:
         body += f"... +{extra} more lines in new content\n"
-    return header + body
+    return _staged(header + body)
 
 
 def preview_mutating_diff(
@@ -97,20 +109,20 @@ def preview_mutating_diff(
     if tool == "write":
         content = str(args.get("content") or "")
         if not path.is_file():
-            return make_unified_diff(rel, "", content)
+            return _staged(make_unified_diff(rel, "", content))
         size = path.stat().st_size
         if size <= PREVIEW_FILE_MAX_BYTES:
             try:
                 before = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 before = ""
-            return make_unified_diff(rel, before, content)
+            return _staged(make_unified_diff(rel, before, content))
         return preview_write_diff(rel, content, existing_bytes=size)
 
     if tool == "edit":
         old, new = str(args.get("old") or ""), str(args.get("new") or "")
         if path.is_file() and old and not file_contains(path, old):
-            return f"--- a/{rel}\n+++ b/{rel}\n@@ warning @@\n-old text not found in file\n"
+            return _staged(f"--- a/{rel}\n+++ b/{rel}\n@@ warning @@\n-old text not found in file\n")
         if path.is_file() and path.stat().st_size <= PREVIEW_FILE_MAX_BYTES:
             try:
                 before = path.read_text(encoding="utf-8", errors="replace")
@@ -120,7 +132,7 @@ def preview_mutating_diff(
                 after = before.replace(old, new)
             else:
                 after = before.replace(old, new, 1)
-            return make_unified_diff(rel, before, after)
+            return _staged(make_unified_diff(rel, before, after))
         return preview_patch_diff(rel, old, new)
 
     return ""
@@ -180,6 +192,81 @@ def render_diff_stat(
     return t
 
 
+_WORD_SPLIT = re.compile(r"(\s+)")
+
+
+def _is_del_line(line: str) -> bool:
+    return line.startswith("-") and not line.startswith("---")
+
+
+def _is_add_line(line: str) -> bool:
+    return line.startswith("+") and not line.startswith("+++")
+
+
+def _split_indent(text: str) -> tuple[str, str]:
+    """Split leading spaces/tabs from the rest of a diff content line."""
+    idx = 0
+    while idx < len(text) and text[idx] in (" ", "\t"):
+        idx += 1
+    return text[:idx], text[idx:]
+
+
+def _word_diff_segments(
+    old_words: list[str], new_words: list[str]
+) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+    """Align two word lists; each segment is (text, changed)."""
+    old_segs: list[tuple[str, bool]] = []
+    new_segs: list[tuple[str, bool]] = []
+    matcher = difflib.SequenceMatcher(None, old_words, new_words, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            old_segs.append(("".join(old_words[i1:i2]), False))
+            new_segs.append(("".join(new_words[j1:j2]), False))
+        else:
+            if i1 != i2:
+                old_segs.append(("".join(old_words[i1:i2]), True))
+            if j1 != j2:
+                new_segs.append(("".join(new_words[j1:j2]), True))
+    return old_segs, new_segs
+
+
+def _append_pair_side(
+    body: Text, *, sign: str, indent: str, segments: list[tuple[str, bool]]
+) -> None:
+    """One side of a paired -/+ line: visible indent, changed words in reverse."""
+    bar, base = (f"{_DIFF_BAR}− ", "kite.diff.del") if sign == "-" else (f"{_DIFF_BAR}+ ", "kite.diff.add")
+    body.append(GUTTER)
+    body.append(bar, style=base)
+    for char in indent:
+        body.append("→" if char == "\t" else "·", style="kite.muted dim")
+    for text, changed in segments:
+        if text:
+            body.append(text, style=f"{base} reverse" if changed else base)
+    body.append("\n")
+
+
+def _append_word_pair(body: Text, old: str, new: str) -> None:
+    """Paired -/+ lines: highlight changed words only, show leading whitespace."""
+    old_indent, old_rest = _split_indent(old)
+    new_indent, new_rest = _split_indent(new)
+    old_segs, new_segs = _word_diff_segments(
+        _WORD_SPLIT.split(old_rest), _WORD_SPLIT.split(new_rest)
+    )
+    _append_pair_side(body, sign="-", indent=old_indent, segments=old_segs)
+    _append_pair_side(body, sign="+", indent=new_indent, segments=new_segs)
+
+
+def _append_plain_line(body: Text, line: str) -> None:
+    """Single diff line exactly as before (headers, hunks, context, unpaired)."""
+    bar, content, style = _diff_line_style(line)
+    body.append(GUTTER)
+    body.append(bar, style="kite.muted" if style == "kite.diff.ctx" else style)
+    if content:
+        body.append(content + "\n", style=style)
+    else:
+        body.append("\n", style=style)
+
+
 def _diff_line_style(line: str) -> tuple[str, str, str]:
     """Return (bar_prefix, body, rich_style) for one unified-diff line."""
     if line.startswith("+++") or line.startswith("---"):
@@ -225,14 +312,27 @@ def render_diff(
         if added or deleted:
             body.append_text(render_diff_stat(added, deleted, bar=True))
         body.append("\n")
-    for line in shown:
-        bar, content, style = _diff_line_style(line)
-        body.append(GUTTER)
-        body.append(bar, style="kite.muted" if style == "kite.diff.ctx" else style)
-        if content:
-            body.append(content + "\n", style=style)
+    idx = 0
+    total = len(shown)
+    while idx < total:
+        line = shown[idx]
+        if _is_del_line(line):
+            end_del = idx
+            while end_del < total and _is_del_line(shown[end_del]):
+                end_del += 1
+            end_add = end_del
+            while end_add < total and _is_add_line(shown[end_add]):
+                end_add += 1
+            dels, adds = shown[idx:end_del], shown[end_del:end_add]
+            pairs = min(len(dels), len(adds))
+            for old_line, new_line in zip(dels[:pairs], adds[:pairs], strict=False):
+                _append_word_pair(body, old_line[1:], new_line[1:])
+            for rest in (*dels[pairs:], *adds[pairs:]):
+                _append_plain_line(body, rest)
+            idx = end_add
         else:
-            body.append("\n", style=style)
+            _append_plain_line(body, line)
+            idx += 1
     extra = len(lines) - len(shown)
     if extra > 0:
         glyph = SYMBOL_EXPAND if not collapsed else SYMBOL_COLLAPSE
@@ -242,6 +342,7 @@ def render_diff(
 
 
 __all__ = [
+    "PREVIEW_NOT_APPLIED",
     "make_unified_diff",
     "count_diff_lines",
     "diff_path",
