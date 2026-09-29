@@ -744,6 +744,52 @@ def test_reasoning_picker_and_slash_levels(tmp_path, kite_home) -> None:
     assert dispatched.state.reasoning == "thinking:high"
 
 
+def test_variants_strict_menu_persist_and_label(tmp_path, kite_home) -> None:
+    from unittest.mock import MagicMock
+
+    from kite.config import UserConfig
+    from kite.models.reasoning import ReasoningSupport
+    from kite.ui.status import format_model_label
+
+    def _support() -> ReasoningSupport:
+        return ReasoningSupport(
+            supported=True,
+            can_fast=True,
+            can_thinking=True,
+            can_disable=True,
+            thinking_kwargs={"reasoning_effort": "high"},
+            fast_kwargs={"reasoning_effort": "low"},
+            efforts=("none", "low", "medium", "high"),
+        )
+
+    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
+    session.console = Console(file=StringIO(), force_terminal=False, width=120)
+    session._reasoning_support = _support()
+    session._harness = MagicMock()
+
+    session._slash_variants("high")
+    assert session.state.reasoning == "thinking:high"
+    assert UserConfig.load().reasoning == "thinking:high"
+    assert format_model_label(session.state) == "groq/llama-3.3-70b#high"
+
+    before = session.state.reasoning
+    session._slash_variants("max")  # not offered: strict reject, no clamp
+    assert session.state.reasoning == before
+    assert "max is not offered" in strip_ansi(session.console.file.getvalue())
+
+    session._slash_variants("off")
+    assert session.state.reasoning == "off"
+    assert format_model_label(session.state) == "groq/llama-3.3-70b#off"
+
+    assert session._handle_slash("/variants low") is True
+    assert session.state.reasoning == "fast:low"
+
+    # Fresh sessions inherit the saved default; auto stays bare.
+    fresh = ChatSession(cwd=str(tmp_path))
+    assert fresh.state.reasoning == "fast:low"
+    assert format_model_label(SessionUiState(model="m", provider="p")) == "p/m"
+
+
 def test_pending_approval_panel_plan_git_footer(tmp_path, kite_home) -> None:
     """Busy-tick crash: panel id must exist before the first approval render (no AttributeError)."""
     from kite.application.policy import ApprovalRequest

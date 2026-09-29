@@ -7,7 +7,6 @@ import shutil
 from rich.text import Text
 
 from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name
-from kite.models.reasoning import reasoning_badge
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_SEP
 from kite.ui.theme import glyph
@@ -16,15 +15,24 @@ _CONTEXT_BAR_WIDTH = 8
 
 
 def terminal_width(default: int = 120) -> int:
-    """Live terminal width — read fresh so windowed ↔ fullscreen resizes apply."""
+    """Live terminal width — read fresh so windowed ↔ fullscreen resizes apply.
+
+    Under Orca relay the reported pty width is not the phone width, so clamp
+    to the relay tier (never as a desktop default).
+    """
+    from kite.util.tty import relay_width
+
     try:
-        return max(40, int(shutil.get_terminal_size(fallback=(default, 24)).columns or default))
+        detected = max(40, int(shutil.get_terminal_size(fallback=(default, 24)).columns or default))
     except OSError:
-        return default
+        detected = default
+    return relay_width(detected)
 
 
 def _terminal_compact() -> bool:
-    return terminal_width() < 100
+    from kite.util.tty import is_orca_relay
+
+    return True if is_orca_relay() else terminal_width() < 100
 
 
 def cache_meter(ratio: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
@@ -124,9 +132,25 @@ def context_meter(pct: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
 
 
 def format_model_label(state: SessionUiState) -> str:
+    """provider/model with the thinking variant alongside (OpenCode #variant)."""
     if state.provider:
-        return f"{state.provider}/{state.model}"
-    return state.model or "—"
+        base = f"{state.provider}/{state.model}"
+    else:
+        base = state.model or "—"
+    badge = _variant_badge(state.reasoning)
+    return f"{base}#{badge}" if badge else base
+
+
+def _variant_badge(raw: str | None) -> str:
+    """Compact Pi level for the status line — pure, no model metadata needed."""
+    from kite.models.reasoning import split_reasoning
+
+    mode, effort = split_reasoning(raw)
+    if mode == "auto":
+        return ""
+    if effort and effort.lower() not in {"", "on"}:
+        return effort.lower()
+    return mode
 
 
 _VERIFY_LABELS = {
@@ -154,8 +178,6 @@ def _short_error(text: str, limit: int = 64) -> str:
 
 def status_context_parts(state: SessionUiState) -> list[str]:
     parts: list[str] = [format_model_label(state)]
-    if state.reasoning and state.reasoning != "auto":
-        parts.append(reasoning_badge(state.reasoning) or state.reasoning)
     if state.pending_attach:
         parts.append(f"+{state.pending_attach}")
     if state.active_jobs:

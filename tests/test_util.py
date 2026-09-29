@@ -122,3 +122,44 @@ def test_replay_retry_and_tool_metadata(tmp_path: Path, workspace: Path) -> None
     tool = Tool("read", "read file", {"type": "object", "properties": {}}, lambda _a: {"ok": True})
     assert tool.metadata.read_only is True
     assert ToolRegistry([Tool("grep", "grep", {"type": "object", "properties": {}}, lambda _a: {"ok": True})]).get("grep").metadata.concurrency_safe
+
+
+def test_orca_relay_detection_and_width(monkeypatch) -> None:
+    from kite.util.tty import ORCA_RELAY_MARKERS, RELAY_WIDTH, is_orca_relay, relay_width
+
+    for var in (*ORCA_RELAY_MARKERS, "KITE_COMPACT_UI"):
+        monkeypatch.delenv(var, raising=False)
+    assert is_orca_relay() is False
+    assert relay_width(120) == 120
+
+    monkeypatch.setenv("ORCA_CLI_COMMAND", "orca")
+    assert is_orca_relay() is True
+    assert relay_width(120) == RELAY_WIDTH
+    assert relay_width(40) == 40
+
+    # Explicit override wins both ways.
+    monkeypatch.setenv("KITE_COMPACT_UI", "0")
+    assert is_orca_relay() is False
+    monkeypatch.setenv("KITE_COMPACT_UI", "1")
+    assert is_orca_relay() is True
+
+
+def test_relay_narrows_pick_list_and_status(monkeypatch) -> None:
+    from kite.ui.credentials import render_pick_list
+    from kite.ui.state import SessionUiState
+    from kite.ui.status import _terminal_compact, status_segments
+    from kite.util.tty import ORCA_RELAY_MARKERS
+
+    long_label = "x" * 80
+    for var in (*ORCA_RELAY_MARKERS, "KITE_COMPACT_UI"):
+        monkeypatch.delenv(var, raising=False)
+    full = render_pick_list([("a", long_label)], title="t", noun="item").plain
+    assert long_label[:63] in full and long_label not in full
+
+    monkeypatch.setenv("KITE_COMPACT_UI", "1")
+    narrow = render_pick_list([("a", long_label)], title="t", noun="item").plain
+    assert long_label[:40] not in narrow and "…" in narrow
+    assert _terminal_compact() is True
+    state = SessionUiState(model="m", provider="p")
+    texts = [text for text, _ in status_segments(state)]
+    assert not any(t.startswith("ctx ") for t in texts)

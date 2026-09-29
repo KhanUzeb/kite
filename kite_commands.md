@@ -141,6 +141,7 @@ kite models --refresh          # bypass cache; re-fetch from the provider API
 kite models --select           # same picker
 kite theme [name] [--list]     # TTY: typed number/name pick (same as /theme)
 kite font [name] [--list]      # TTY: typed unicode|ascii pick (same as /font)
+kite variants [level] [--list] [-p provider] [-m model]  # thinking variant (same as /variants)
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
               [--session-persistence full|redacted|disabled]
 kite privacy [--session-persistence full|redacted|disabled]   # security policy summary
@@ -250,6 +251,7 @@ These never go to the model.
 | `/theme [auto\|kite\|dark\|light\|dim\|mono\|monochrome\|catppuccin\|ember\|forest\|hues\|transparent]` | Color palette. Empty: pick |
 | `/font [unicode\|ascii]` | Glyph pack. Empty: pick |
 | `/thinking` `[off\|minimal\|low\|medium\|high\|…]` | Pi-style thinking level for the current model. Empty: **cycle** to the next level. `off` hidden when the model cannot disable reasoning. Unsupported levels clamp to the nearest supported one with a notice (e.g. `xhigh` on a low/high-only model → `high`) |
+| `/variants [level]` | Thinking variant for the current model — **strictly** limited to levels it supports (no clamping; unsupported names are rejected with the offered list). Empty: typed pick. Saved as the default for fresh sessions; shown as `provider/model#variant` in the status line |
 | `/model [provider/id]` | Show or set model |
 | `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
 | `/select [provider]` | Pick provider if needed, login if unlinked, then pick a live model (saved) |
@@ -431,13 +433,14 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 
 ## 4. Agent tools (model-called, not typed by you)
 
-**Plan mode:** `read` `grep` `glob` `ls` `task` `webfetch` `websearch` `webcrawl` `skill` `memory` `todo_read` `todo_write` (inspection `bash` only at runtime).
+**Plan mode:** `read` `grep` `glob` `ls` `task` `webfetch` `websearch` `webcrawl` `skill` `memory` `todo_read` `todo_write` `question` (inspection `bash` only at runtime).
 
-**Build mode adds:** `write` `edit` `bash` **`submit`**.
+**Build mode adds:** `write` `edit` `bash` **`submit`** (plus `question`).
 
 | Tool | Purpose |
 |------|---------|
 | `submit` | Structured completion — `message` with Done / Changed / Verification sections (preferred over bash echo marker) |
+| `question` | Clarifying questions for genuine ambiguity (opencode-style: header/question/options, number or free text, skippable). Interactive REPL answers live; headless runs get an empty set and proceed on assumptions |
 | `write` / `edit` | Edits preserve the file's on-disk line endings (no LF↔CRLF churn); new files default to CRLF on Windows / LF elsewhere unless `.gitattributes`/`editorconfig` say otherwise |
 | `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. Runs with the project `.venv` first on PATH when one exists (system toolchains otherwise). Dynamic `gh` lives here too (no hardcoded tools needed): read-only `gh issue/pr view\|list` runs free in build AND plan mode; publishing commands (`create`/`comment`/`merge`/`close`) prompt for approval in auto mode |
 | `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |

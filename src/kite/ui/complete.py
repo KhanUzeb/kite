@@ -271,7 +271,7 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                     continue
                 seen.add(name)
                 extra = ""
-                if spec.name == "thinking":
+                if spec.name in {"thinking", "variants"}:
                     from kite.models.reasoning import thinking_level_menu
 
                     extra = " ".join(pi for pi, _ in thinking_level_menu(support))
@@ -312,7 +312,7 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         choices: list[tuple[str, str]] = []
         routed = legacy_cmd or cmd
 
-        if cmd == "thinking" or routed == "fast":
+        if cmd in {"thinking", "variants"} or routed == "fast":
             from kite.models.reasoning import thinking_level_menu
 
             info = self._support()
@@ -664,7 +664,7 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
             continue
         if ":" in spec.name:
             continue
-        if spec.name == "thinking" and not support.supported:
+        if spec.name in {"thinking", "variants"} and not support.supported:
             continue
         if spec.name in {"reasoning", "effort", "fast"}:
             continue

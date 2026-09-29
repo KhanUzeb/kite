@@ -157,8 +157,12 @@ def render_pick_list(
     """Left-bar numbered picker, same visual language as login panels.
 
     Long labels truncate with … so narrow terminals (40-60 cols) keep one
-    row per item instead of rewrapping the list.
+    row per item instead of rewrapping the list. Under Orca relay the
+    budget shrinks further (relay tier ≈60 cols).
     """
+    from kite.util.tty import is_orca_relay
+
+    label_limit = 40 if is_orca_relay() else 64
     body = Text()
     body.append(f"{GUTTER}┊ ", style="kite.pending")
     body.append(title, style="kite.pending bold")
@@ -169,8 +173,8 @@ def render_pick_list(
         mark = " *" if is_current and "*" not in label else ""
         prefix = "▸ " if is_cursor else "  "
         text = f"{label}{mark}"
-        if len(text) > 64:
-            text = text[:63] + "…"
+        if len(text) > label_limit:
+            text = text[: label_limit - 1] + "…"
         body.append(f"{GUTTER}┊ ", style="kite.muted")
         body.append(f"{prefix}{i:>3}  ", style="kite.pick")
         body.append(

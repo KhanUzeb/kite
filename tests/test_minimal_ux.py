@@ -27,7 +27,7 @@ def test_cli_help_and_parser_lists_usable_commands() -> None:
     assert "interactive session" in CLI_EPILOG
     parser = build_parser()
     help_text_cli = parser.format_help()
-    for name in ("run", "resume", "setup", "sessions", "tasks", "help", "models", "chat", "exec", "config", "bench", "theme", "font"):
+    for name in ("run", "resume", "setup", "sessions", "tasks", "help", "models", "chat", "exec", "config", "bench", "theme", "font", "variants"):
         assert name in help_text_cli
     assert "maintainer" not in help_text_cli
     assert parser.parse_args(["chat"]).command == "chat"
@@ -48,14 +48,16 @@ def test_repl_help_and_legacy_slash_dispatch() -> None:
     assert "/compact" in full
     assert "/select" in full
     primary = primary_builtins()
-    assert len(primary) == 15
+    assert len(primary) == 16
     assert primary[0].name == "build"
     assert primary[1].name == "plan"
     assert any(b.name == "thinking" for b in primary)
+    assert any(b.name == "variants" for b in primary)
     assert any(b.name == "new" for b in primary)
     assert any(b.name == "usage" for b in primary)
     assert parse_slash("/compact").command == "compact"
     assert parse_slash("/thinking").command == "thinking"
+    assert parse_slash("/variants").command == "variants"
     assert parse_slash("/reasoning").command == "reasoning"
     assert parse_slash("/fast").command == "thinking"
     assert parse_slash("/fast").legacy == "fast"

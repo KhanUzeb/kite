@@ -165,6 +165,8 @@ class ChatSession:
             self.provider = cfg.default_provider or self.provider
         if not self.model:
             self.model = cfg.default_model or self.model
+        if (self.state.reasoning or "auto") == "auto" and (cfg.reasoning or "auto") != "auto":
+            self.state.reasoning = cfg.reasoning
         self.state.provider = self.provider or self.state.provider
         self.state.model = self.model or self.state.model
 
@@ -293,6 +295,7 @@ class ChatSession:
     def _startup_banner(self) -> None:
         from kite import __version__
         from kite.config.readiness import assess_setup_status_fast, format_setup_banner, is_first_run
+        from kite.util.tty import is_orca_relay
 
         cfg = UserConfig.load()
         prov = self.provider or cfg.default_provider or "—"
@@ -314,7 +317,7 @@ class ChatSession:
                 workspace=cwd.name or str(cwd),
                 context_files=context_bits,
                 mode=self.state.mode.value,
-                compact=self.console.width < 60,
+                compact=self.console.width < 60 or is_orca_relay(),
             )
         )
         if needs_agents_bootstrap(root):
@@ -373,6 +376,12 @@ class ChatSession:
 
             self._memory = MemoryStore.open(self.cwd)
         return self._memory
+
+    def _ask_user_live(self, questions: list[dict]) -> list[dict] | None:
+        """Answer the model's clarifying questions on the live console."""
+        from kite.ui.question import ask_user_questions
+
+        return ask_user_questions(self.console, questions)
 
     def _approver(self):
         from kite.config import load_runtime_config
@@ -1640,6 +1649,7 @@ class ChatSession:
             "provider": self._slash_model_provider,
             "refresh": self._slash_refresh_models,
             "thinking": self._slash_thinking,
+            "variants": self._slash_variants,
             "fast": self._slash_fast,
             "reasoning": self._slash_reasoning,
             "compact": self._compact_now,
@@ -2144,6 +2154,52 @@ class ChatSession:
 
     def _slash_thinking(self, arg: str) -> None:
         self._apply_thinking_level(arg)
+
+    def _slash_variants(self, arg: str) -> None:
+        """Pi-style variant menu, strictly gated to what the model supports."""
+        from kite.models.reasoning import reasoning_to_thinking_level, thinking_level_menu
+
+        self._ensure_model_resolved()
+        info = self._reasoning_info_sync()
+        menu = thinking_level_menu(info) if info is not None and info.supported else ()
+        if not menu:
+            self.console.print("[kite.muted]this model does not advertise thinking variants[/]")
+            return
+        ids = [pi for pi, _ in menu]
+        token = arg.strip().lower()
+        if not token:
+            from kite.ui.complete import _LEVEL_META
+            from kite.ui.pick import _typed_pick
+
+            current = reasoning_to_thinking_level(self.state.reasoning, info)
+            picked = _typed_pick(
+                self.console,
+                [(pi, _LEVEL_META.get(pi, pi)) for pi, _ in menu],
+                current=current if current in ids else None,
+                title=f"Thinking variant — {self.model}",
+                noun="variant",
+            )
+            if not picked:
+                self.console.print(f"[kite.muted]variant[/]  {current}  ·  {self.model}")
+                return
+            token = picked
+        for pi, enc in menu:
+            if token == pi:
+                self._commit_reasoning(enc, label="variant")
+                self._save_reasoning_default(enc)
+                return
+        self.console.print(
+            f"[kite.muted]{arg} is not offered by {self.model} — pick: {'|'.join(ids)}[/]"
+        )
+
+    def _save_reasoning_default(self, encoded: str) -> None:
+        """Persist the variant as the default for fresh sessions."""
+        try:
+            cfg = UserConfig.load()
+            cfg.reasoning = encoded
+            cfg.save()
+        except OSError:
+            pass
 
     def _slash_fast(self, arg: str) -> None:
         self._apply_thinking_level(arg or "low")
@@ -3280,6 +3336,7 @@ class ChatSession:
         harness = self._make_harness(resume=resume, follow_up=task if resume else None)
         self._harness = harness
         harness.approver = self._approver()
+        harness.ask_user = self._ask_user_live
         self._wire_harness_git(harness)
         harness.todos = self.todos
         self._busy = True
@@ -3436,6 +3493,7 @@ class ChatSession:
             self.display._spin(False)
             harness = self._make_harness(resume=True, follow_up=run_task)
             harness.approver = self._approver()
+            harness.ask_user = self._ask_user_live
             self._wire_harness_git(harness)
             harness.todos = self.todos
 

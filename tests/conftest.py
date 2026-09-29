@@ -35,6 +35,18 @@ def workspace(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _scrub_relay_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Relay detection is env-based: Orca-managed dev shells export ORCA_*,
+    which would otherwise flip narrow rendering on for every test here.
+    Scrub so the suite is hermetic; relay tests opt back in explicitly."""
+    from kite.util.tty import ORCA_RELAY_MARKERS
+
+    for var in (*ORCA_RELAY_MARKERS, "KITE_COMPACT_UI"):
+        monkeypatch.delenv(var, raising=False)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _stop_kite_spinners():
     """Ensure WaitSpinner daemon threads never outlive a test (CI 3.11 abort)."""
     yield

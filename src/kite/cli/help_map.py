@@ -21,6 +21,7 @@ CLI_COMMANDS: frozenset[str] = frozenset({
     "models",
     "theme",
     "font",
+    "variants",
     "config",
     "privacy",
     "context",
@@ -79,6 +80,7 @@ self-manage
 setup
   kite setup | login | logout | keys | web-keys | providers | models
   kite theme [name] [--list] | kite font [name] [--list]
+  kite variants [level] [--list] [-p provider] [-m model]
   kite config | privacy
 
 project
@@ -135,6 +137,7 @@ Setup & model
   kite models [-p groq]         pick a model (--list to dump)
   kite theme [name] [--list]  color palette (same as /theme)
   kite font [name] [--list]   glyph pack: unicode|ascii (same as /font)
+  kite variants [level]       thinking variant for this model (same as /variants)
   kite config [--select-model] [--session-persistence full|redacted|disabled]
   kite privacy                  security policy summary
 

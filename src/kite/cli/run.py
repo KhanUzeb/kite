@@ -889,6 +889,78 @@ def cmd_font(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_variants(args: argparse.Namespace) -> int:
+    """Show or set the thinking variant — `kite variants`, same source as /variants.
+
+    Strictly gated: only levels from the model's live Pi menu are accepted.
+    Typed picker only (see cmd_theme): no raw console mode, no mouse.
+    The pick persists to ~/.kite/config.toml as the default for fresh sessions.
+    """
+    from kite.config import UserConfig
+    from kite.models.reasoning import (
+        detect_reasoning,
+        reasoning_to_thinking_level,
+        thinking_level_menu,
+    )
+    from kite.providers.resolve import resolve_model
+
+    console = _console()
+    cfg = UserConfig.load()
+    provider = (getattr(args, "provider", None) or "").strip() or None
+    model = (getattr(args, "model", None) or "").strip() or None
+    level = (getattr(args, "level", None) or "").strip().lower()
+    show_list = bool(getattr(args, "list", False)) or level in {"list", "ls"}
+    if level in {"list", "ls"}:
+        level = ""
+    resolved = resolve_model(provider=provider, model=model, config=cfg)
+    info = detect_reasoning(resolved.provider, resolved.model, litellm_model=resolved.litellm_model)
+    menu = thinking_level_menu(info) if info.supported else ()
+    ids = [pi for pi, _ in menu]
+    tag = f"{resolved.provider}/{resolved.model}"
+    if show_list:
+        if not menu:
+            console.print(f"[kite.muted]{tag} does not advertise thinking variants[/]")
+            return 1
+        for pi, _enc in menu:
+            console.print(f"{pi:<10} {tag}")
+        return 0
+    if not menu:
+        console.print(f"[kite.muted]{tag} does not advertise thinking variants[/]")
+        return 1
+    if level:
+        for pi, enc in menu:
+            if level == pi:
+                cfg.reasoning = enc
+                cfg.save()
+                console.print(f"[kite.muted]variant[/]  {pi}  ·  {tag}")
+                return 0
+        console.print(f"[red]{level} is not offered by {tag} — pick: {'|'.join(ids)}[/]")
+        return 2
+    from kite.ui.pick import _typed_pick, can_prompt
+
+    if can_prompt():
+        from kite.ui.complete import _LEVEL_META
+
+        current = reasoning_to_thinking_level(cfg.reasoning, info)
+        picked = _typed_pick(
+            console,
+            [(pi, _LEVEL_META.get(pi, pi)) for pi, _ in menu],
+            current=current if current in ids else None,
+            title=f"Thinking variant — {resolved.model}",
+            noun="variant",
+        )
+        if picked:
+            enc = dict(menu)[picked]
+            cfg.reasoning = enc
+            cfg.save()
+        current = reasoning_to_thinking_level(cfg.reasoning, info)
+        console.print(f"[kite.muted]variant[/]  {current}  ·  {tag}")
+        return 0
+    current = reasoning_to_thinking_level(cfg.reasoning, info)
+    console.print(f"[kite.muted]variant[/]  {current}  ·  {tag}  —  kite variants --list")
+    return 0
+
+
 def cmd_config(args: argparse.Namespace) -> int:
     from rich.panel import Panel
 
@@ -1605,6 +1677,13 @@ def build_parser() -> argparse.ArgumentParser:
     font_p.add_argument("name", nargs="?", help="unicode|ascii (omit to pick)")
     font_p.add_argument("--list", action="store_true", help="List glyph packs")
     font_p.set_defaults(func=cmd_font)
+
+    variants_p = sub.add_parser("variants", help="Show or set the thinking variant (same as /variants)")
+    variants_p.add_argument("level", nargs="?", help="Pi level, e.g. low|medium|high (omit to pick)")
+    variants_p.add_argument("--list", action="store_true", help="List levels this model supports")
+    variants_p.add_argument("-p", "--provider", help="Provider name from catalog")
+    variants_p.add_argument("-m", "--model", help="Model id within provider")
+    variants_p.set_defaults(func=cmd_variants)
 
     config = sub.add_parser("config", help="Show or update ~/.kite/config.toml")
     config.add_argument("--set-provider", help="Set default provider")

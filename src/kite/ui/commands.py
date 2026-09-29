@@ -192,6 +192,13 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
         visibility="primary",
     ),
     BuiltinCommand(
+        "variants",
+        "Thinking variant for this model — only levels it supports",
+        hint="[level]",
+        group="model",
+        visibility="primary",
+    ),
+    BuiltinCommand(
         "reasoning",
         "Legacy effort modes — prefer /thinking",
         hint="auto|off|fast|thinking",

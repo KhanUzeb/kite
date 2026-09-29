@@ -123,14 +123,28 @@ def cell_continuation_indent(first_line_prefix: str) -> str:
 
 def make_console(*, stderr: bool = False, quiet: bool = False) -> Console:
     from kite.ui.theme import ensure_prefs
+    from kite.util.tty import RELAY_WIDTH, is_orca_relay
 
     ensure_prefs()
+    width: int | None = None
+    if is_orca_relay():
+        # Relay-only narrow shift: render as if on a small screen. Piped
+        # (non-tty) output keeps natural width so --json/logs never reflow.
+        import sys as _sys
+
+        stream = _sys.stderr if stderr else _sys.stdout
+        try:
+            if stream.isatty():
+                width = RELAY_WIDTH
+        except Exception:
+            width = None
     return Console(
         stderr=stderr,
         quiet=quiet,
         theme=rich_theme(),
         highlight=False,
         soft_wrap=True,
+        width=width,
     )
 
 
