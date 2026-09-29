@@ -804,6 +804,83 @@ def cmd_models(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def cmd_theme(args: argparse.Namespace) -> int:
+    """Show or set the color palette — `kite theme`, same source as /theme."""
+    from kite.ui.theme import THEME_HELP, THEME_NAMES, ensure_prefs, set_theme, theme_label
+
+    ensure_prefs()
+    console = _console()
+    name = (getattr(args, "name", None) or "").strip()
+    if getattr(args, "list", False) or name in {"list", "ls"}:
+        for item in THEME_NAMES:
+            console.print(f"{item:<12} {THEME_HELP.get(item, '')}")
+        return 0
+    if name:
+        if set_theme(name, persist=True) is None:
+            console.print(f"[red]Unknown theme {name!r}[/]  —  kite theme --list")
+            return 2
+        console.print(f"[kite.muted]theme[/]  {theme_label()}")
+        return 0
+    from kite.ui.pick import can_prompt, numbered_pick
+
+    if can_prompt():
+        picked = numbered_pick(
+            console,
+            [(item, THEME_HELP.get(item, item)) for item in THEME_NAMES],
+            current=theme_label().split(" ", 1)[0],
+            title="Color palette",
+            noun="theme",
+        )
+        if picked:
+            set_theme(picked, persist=True)
+        console.print(f"[kite.muted]theme[/]  {theme_label()}")
+        return 0
+    console.print(f"[kite.muted]theme[/]  {theme_label()}  —  kite theme --list")
+    return 0
+
+
+def cmd_font(args: argparse.Namespace) -> int:
+    """Show or set the glyph pack — `kite font`, same source as /font."""
+    from kite.ui.theme import (
+        FONT_HELP,
+        FONT_NAMES,
+        current_font,
+        ensure_prefs,
+        glyph_preview,
+        set_font,
+    )
+
+    ensure_prefs()
+    console = _console()
+    name = (getattr(args, "name", None) or "").strip()
+    if getattr(args, "list", False) or name in {"list", "ls"}:
+        for item in FONT_NAMES:
+            console.print(f"{item:<12} {FONT_HELP.get(item, '')}")
+        return 0
+    if name:
+        if set_font(name, persist=True) is None:
+            console.print(f"[red]Unknown font {name!r}[/]  —  kite font --list")
+            return 2
+        console.print(f"[kite.muted]font[/]  {current_font()}  {glyph_preview()}")
+        return 0
+    from kite.ui.pick import can_prompt, numbered_pick
+
+    if can_prompt():
+        picked = numbered_pick(
+            console,
+            [(item, FONT_HELP.get(item, item)) for item in FONT_NAMES],
+            current=current_font(),
+            title="Glyph pack",
+            noun="font",
+        )
+        if picked:
+            set_font(picked, persist=True)
+        console.print(f"[kite.muted]font[/]  {current_font()}  {glyph_preview()}")
+        return 0
+    console.print(f"[kite.muted]font[/]  {current_font()}  —  kite font --list")
+    return 0
+
+
 def cmd_config(args: argparse.Namespace) -> int:
     from rich.panel import Panel
 
@@ -1510,6 +1587,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bypass the model-list cache and re-fetch from the provider API",
     )
     models.set_defaults(func=cmd_models)
+
+    theme_p = sub.add_parser("theme", help="Show or set the color palette (same as /theme)")
+    theme_p.add_argument("name", nargs="?", help="Palette name (omit to pick)")
+    theme_p.add_argument("--list", action="store_true", help="List palettes")
+    theme_p.set_defaults(func=cmd_theme)
+
+    font_p = sub.add_parser("font", help="Show or set the glyph pack (same as /font)")
+    font_p.add_argument("name", nargs="?", help="unicode|ascii (omit to pick)")
+    font_p.add_argument("--list", action="store_true", help="List glyph packs")
+    font_p.set_defaults(func=cmd_font)
 
     config = sub.add_parser("config", help="Show or update ~/.kite/config.toml")
     config.add_argument("--set-provider", help="Set default provider")

@@ -122,8 +122,10 @@ kite login [provider]          # pick provider if omitted → BYOK key or BYOS b
                                 # day, so status checks stay instant.
                                 # Already linked → reuses the session (no browser) and jumps to model pick.
                                 # `kite login grok` also bridges tokens to LiteLLM under ~/.kite/oauth/xai
-                                # via the xAI subscription chat proxy. Claude/Antigravity stay CLI-owned:
-                                # calls need ANTHROPIC_API_KEY / GEMINI_API_KEY.
+                                # via the xAI subscription chat proxy. Claude stays CLI-owned
+                                # (calls need ANTHROPIC_API_KEY); Antigravity answers through
+                                # the signed-in agy CLI (`agy -p --mode plan`, text-only —
+                                # GEMINI_API_KEY adds direct calls with tool support).
 kite logout [provider]         # unlink BYOS subscription (codex, claude, grok/xai, antigravity)
                                 # antigravity also needs `/logout` inside `agy` to purge its keyring
                                 # session (Kite only held a linkage marker).
@@ -137,6 +139,8 @@ kite providers                 # status; TTY then pick to connect
 kite models [-p provider]      # TTY: pick a live model (saved). --list dumps the table
 kite models --refresh          # bypass cache; re-fetch from the provider API
 kite models --select           # same picker
+kite theme [name] [--list]     # TTY: pick the color palette (same as /theme)
+kite font [name] [--list]      # TTY: pick the glyph pack unicode|ascii (same as /font)
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
               [--session-persistence full|redacted|disabled]
 kite privacy [--session-persistence full|redacted|disabled]   # security policy summary

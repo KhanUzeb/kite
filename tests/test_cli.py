@@ -91,6 +91,51 @@ def test_apply_diff_and_pickers(tmp_path: Path) -> None:
     assert _posix_mouse("\x1b[<64;4;12M", drawn) == "up"
 
 
+def test_win_click_release_selects() -> None:
+    """Windows press highlights, release confirms — same as the POSIX path."""
+    from types import SimpleNamespace
+
+    from kite.ui.pick import _WinEvents
+
+    picker = _WinEvents.__new__(_WinEvents)
+    picker._drawn = {"item_y0": 10, "n_view": 4}
+    picker._down = False
+
+    def _click(*, buttons: int, y: int, flags: int = 0):
+        mouse = SimpleNamespace(
+            EventFlags=flags,
+            ButtonState=buttons,
+            MousePosition=SimpleNamespace(Y=y),
+        )
+        return picker._mouse(mouse)
+
+    assert _click(buttons=0x1, y=11) == "goto:1"
+    assert _click(buttons=0x0, y=11) == "pick:1"
+    assert _click(buttons=0x1, y=11) == "goto:1"
+    assert _click(buttons=0x0, y=99) == "enter"
+    assert _click(buttons=0x0, y=11) is None  # release without press: no-op
+
+
+def test_theme_font_subcommands(kite_home) -> None:
+    from kite.cli.run import build_parser, cmd_font, cmd_theme
+    from kite.ui.theme import current_font, reset_prefs, set_font, theme_label
+
+    reset_prefs(theme="auto", font="unicode")
+    parser = build_parser()
+    assert parser.parse_args(["theme", "--list"]).func is cmd_theme
+    assert parser.parse_args(["font", "ascii"]).func is cmd_font
+    assert cmd_theme(argparse.Namespace(name=None, list=True)) == 0
+    assert cmd_theme(argparse.Namespace(name="nope", list=False)) == 2
+    assert cmd_theme(argparse.Namespace(name="dark", list=False)) == 0
+    assert theme_label() == "dark"
+    assert set_font("unicode") == "unicode"
+    assert set_font("ascii") == "ascii"
+    assert cmd_font(argparse.Namespace(name="ascii", list=False)) == 0
+    assert current_font() == "ascii"
+    assert cmd_font(argparse.Namespace(name="bogus", list=False)) == 2
+    reset_prefs(theme="auto", font="unicode")
+
+
 def test_slash_help_and_legacy_routing() -> None:
     assert parse_slash("/select groq").command == "select"
     assert parse_slash("/thinking").command == "thinking"

@@ -27,7 +27,7 @@ def test_cli_help_and_parser_lists_usable_commands() -> None:
     assert "interactive session" in CLI_EPILOG
     parser = build_parser()
     help_text_cli = parser.format_help()
-    for name in ("run", "resume", "setup", "sessions", "tasks", "help", "models", "chat", "exec", "config", "bench"):
+    for name in ("run", "resume", "setup", "sessions", "tasks", "help", "models", "chat", "exec", "config", "bench", "theme", "font"):
         assert name in help_text_cli
     assert "maintainer" not in help_text_cli
     assert parser.parse_args(["chat"]).command == "chat"
