@@ -2,6 +2,44 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-09-29
+
+### Added
+- `kite theme` / `kite font` CLI subcommands — same source as `/theme`
+  and `/font` (list, typed pick, or set by name).
+- `kite variants` and `/variants` — Pi-style thinking-variant menu strictly
+  gated to levels the current model supports (unsupported names rejected,
+  no clamping). Saved as the fresh-session default and shown as
+  `provider/model#variant` in the status line.
+- Opencode-style `question` tool — the model asks clarifying questions
+  mid-turn (number, free text, or skip). The REPL answers live; headless
+  runs get an empty set and proceed on assumptions. Serial-only,
+  read-only, in plan and build modes.
+- Antigravity subscription turns via the signed-in `agy` CLI
+  (`agy --mode plan`, prompt on stdin, text-only). Quota exhaustion maps
+  to `ProviderFault` with the reset clock; `GEMINI_API_KEY` upgrades to
+  direct LiteLLM calls with tool support.
+- Orca-relay compact UI — narrow rendering (pick lists, status, banner,
+  console width) activates only inside Orca-managed sessions (`ORCA_*`
+  env, `KITE_COMPACT_UI` override); desktop defaults untouched.
+
+### Changed
+- Theme/font selection uses the typed picker only — no raw console mode
+  or mouse capture, so option lists cannot freeze or leak escape bytes.
+- Antigravity default model refreshed to a live `agy` id
+  (`gemini-3.7-flash-medium`); `GEMINI_API_KEY` falls back through the
+  antigravity provider like Claude's `ANTHROPIC_API_KEY` fallback.
+
+### Fixed
+- Windows picker click-release now selects the row (was highlight-only,
+  unlike the POSIX path).
+- `_normalize_font` accepts canonical `unicode`/`ascii` — font choice
+  applies and persists again.
+- Long agy turns passed the prompt as argv and died with WinError 206;
+  the prompt travels on stdin now.
+- Bare `_typed_pick` calls crashed with `TypeError` (missing
+  `show`/`refreshable`) — same defaults as `numbered_pick`.
+
 ## [Unreleased]
 
 ## [1.0.2] - 2026-09-25
