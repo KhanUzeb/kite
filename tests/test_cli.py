@@ -136,6 +136,36 @@ def test_theme_font_subcommands(kite_home) -> None:
     reset_prefs(theme="auto", font="unicode")
 
 
+def test_theme_typed_picker_wiring(kite_home, monkeypatch) -> None:
+    """Bare `kite theme` uses the typed picker — never raw mouse mode."""
+    from unittest.mock import MagicMock
+
+    from kite.cli.run import cmd_theme
+    from kite.ui.pick import _typed_pick
+    from kite.ui.theme import reset_prefs, theme_label
+
+    reset_prefs(theme="auto", font="unicode")
+    # Typed picker itself: number, name, and cancel over a scripted console.
+    console = MagicMock()
+    items = [("a", "alpha"), ("b", "beta")]
+    kwargs: dict = {"current": None, "title": "t", "noun": "theme", "show": 10, "refreshable": False}
+    console.input.return_value = "2"
+    assert _typed_pick(console, items, **kwargs) == "b"
+    console.input.return_value = "b"
+    assert _typed_pick(console, items, **kwargs) == "b"
+    console.input.return_value = ""
+    assert _typed_pick(console, items, **kwargs) is None
+
+    # Wiring: the bare subcommand delegates to _typed_pick (module attrs are
+    # looked up at call time, so monkeypatch applies).
+    monkeypatch.setattr("kite.ui.pick.can_prompt", lambda: True)
+    monkeypatch.setattr("kite.cli.run._console", lambda: MagicMock())
+    monkeypatch.setattr("kite.ui.pick._typed_pick", lambda *a, **k: "ocean")
+    assert cmd_theme(argparse.Namespace(name=None, list=False)) == 0
+    assert theme_label() == "ocean"
+    reset_prefs(theme="auto", font="unicode")
+
+
 def test_slash_help_and_legacy_routing() -> None:
     assert parse_slash("/select groq").command == "select"
     assert parse_slash("/thinking").command == "thinking"

@@ -930,12 +930,17 @@ class ChatSession:
         from kite.ui.theme import THEME_NAMES, set_theme, theme_label
 
         if not raw.strip():
+            # Typed picker only: the raw mouse picker freezes on some
+            # terminals and leaks escape bytes — theme selection stays on
+            # number/name + Enter.
+            from kite.ui.pick import _typed_pick
             from kite.ui.theme import THEME_HELP
 
-            picked = self._pick(
+            picked = _typed_pick(
+                self.console,
                 [(name, THEME_HELP.get(name, name)) for name in THEME_NAMES],
-                title="Color palette",
                 current=theme_label().split(" ", 1)[0],
+                title="Color palette",
                 noun="theme",
             )
             if not picked:
@@ -1007,12 +1012,15 @@ class ChatSession:
         from kite.ui.theme import FONT_NAMES, glyph_preview, set_font
 
         if not raw.strip():
+            # Typed picker only (see _set_theme).
+            from kite.ui.pick import _typed_pick
             from kite.ui.theme import FONT_HELP, current_font
 
-            picked = self._pick(
+            picked = _typed_pick(
+                self.console,
                 [(name, FONT_HELP.get(name, name)) for name in FONT_NAMES],
-                title="Glyph pack",
                 current=current_font(),
+                title="Glyph pack",
                 noun="font",
             )
             if not picked:

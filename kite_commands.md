@@ -139,8 +139,8 @@ kite providers                 # status; TTY then pick to connect
 kite models [-p provider]      # TTY: pick a live model (saved). --list dumps the table
 kite models --refresh          # bypass cache; re-fetch from the provider API
 kite models --select           # same picker
-kite theme [name] [--list]     # TTY: pick the color palette (same as /theme)
-kite font [name] [--list]      # TTY: pick the glyph pack unicode|ascii (same as /font)
+kite theme [name] [--list]     # TTY: typed number/name pick (same as /theme)
+kite font [name] [--list]      # TTY: typed unicode|ascii pick (same as /font)
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
               [--session-persistence full|redacted|disabled]
 kite privacy [--session-persistence full|redacted|disabled]   # security policy summary

@@ -805,7 +805,12 @@ def cmd_models(args: argparse.Namespace) -> int:
 
 
 def cmd_theme(args: argparse.Namespace) -> int:
-    """Show or set the color palette — `kite theme`, same source as /theme."""
+    """Show or set the color palette — `kite theme`, same source as /theme.
+
+    Typed picker only (number/name + Enter): theme selection never takes
+    over the console with raw keys or mouse capture, so it cannot freeze
+    or leak escape bytes into the terminal.
+    """
     from kite.ui.theme import THEME_HELP, THEME_NAMES, ensure_prefs, set_theme, theme_label
 
     ensure_prefs()
@@ -821,10 +826,10 @@ def cmd_theme(args: argparse.Namespace) -> int:
             return 2
         console.print(f"[kite.muted]theme[/]  {theme_label()}")
         return 0
-    from kite.ui.pick import can_prompt, numbered_pick
+    from kite.ui.pick import _typed_pick, can_prompt
 
     if can_prompt():
-        picked = numbered_pick(
+        picked = _typed_pick(
             console,
             [(item, THEME_HELP.get(item, item)) for item in THEME_NAMES],
             current=theme_label().split(" ", 1)[0],
@@ -840,7 +845,10 @@ def cmd_theme(args: argparse.Namespace) -> int:
 
 
 def cmd_font(args: argparse.Namespace) -> int:
-    """Show or set the glyph pack — `kite font`, same source as /font."""
+    """Show or set the glyph pack — `kite font`, same source as /font.
+
+    Typed picker only (see cmd_theme): no raw console mode, no mouse.
+    """
     from kite.ui.theme import (
         FONT_HELP,
         FONT_NAMES,
@@ -863,10 +871,10 @@ def cmd_font(args: argparse.Namespace) -> int:
             return 2
         console.print(f"[kite.muted]font[/]  {current_font()}  {glyph_preview()}")
         return 0
-    from kite.ui.pick import can_prompt, numbered_pick
+    from kite.ui.pick import _typed_pick, can_prompt
 
     if can_prompt():
-        picked = numbered_pick(
+        picked = _typed_pick(
             console,
             [(item, FONT_HELP.get(item, item)) for item in FONT_NAMES],
             current=current_font(),
