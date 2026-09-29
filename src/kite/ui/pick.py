@@ -780,8 +780,8 @@ def _typed_pick(
     current: str | None,
     title: str,
     noun: str,
-    show: int,
-    refreshable: bool,
+    show: int = _PICK_SHOW,
+    refreshable: bool = False,
 ) -> str | None:
     from kite.ui.credentials import render_pick_list
 

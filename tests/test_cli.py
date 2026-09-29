@@ -148,7 +148,8 @@ def test_theme_typed_picker_wiring(kite_home, monkeypatch) -> None:
     # Typed picker itself: number, name, and cancel over a scripted console.
     console = MagicMock()
     items = [("a", "alpha"), ("b", "beta")]
-    kwargs: dict = {"current": None, "title": "t", "noun": "theme", "show": 10, "refreshable": False}
+    # Defaults cover bare calls (the /theme + `kite theme` wiring omits show/refreshable).
+    kwargs: dict = {"current": None, "title": "t", "noun": "theme"}
     console.input.return_value = "2"
     assert _typed_pick(console, items, **kwargs) == "b"
     console.input.return_value = "b"
