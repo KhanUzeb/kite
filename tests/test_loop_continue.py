@@ -101,7 +101,6 @@ def test_tool_failure_does_not_end_loop() -> None:
             return dict(kwargs)
 
         def format_observation_messages(self, message, outputs, template_vars=None):
-            actions = message.get("extra", {}).get("actions", [])
             return [
                 {"role": "tool", "tool_call_id": "c1", "content": str(o.get("output"))}
                 for o in outputs
