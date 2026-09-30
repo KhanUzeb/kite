@@ -48,10 +48,10 @@ class SessionUiState:
     last_trace: str = ""
     todos: list[TodoItem] = field(default_factory=list)
     last_tool: ToolBlock | None = None
-    expanded_all: bool = False
-    live_terminal: bool = False
-    live_subagents: bool = False
-    thinking_expanded: bool = False
+    expanded_all: bool = True
+    live_terminal: bool = True
+    live_subagents: bool = True
+    thinking_expanded: bool = True
     last_thinking: str = ""
     reasoning: str = "auto"
     pending_attach: int = 0
@@ -98,7 +98,7 @@ class SessionUiState:
         import time
 
         now = time.monotonic()
-        min_interval = 0.4 if self.busy else 0.125
+        min_interval = 0.15 if self.busy else 0.125
         if not force and self._refresh and (now - self._last_touch_at) < min_interval:
             self._touch_pending = True
             return
@@ -163,7 +163,9 @@ class SessionUiState:
         self.stream_started_at = None
         self.ttft_ms = None
         self.tps = 0.0
-        self.touch()
+        # Forced: cancel/turn boundaries must not drop the footer update
+        # to a throttled touch — otherwise reset looks like lost events.
+        self.touch(force=True)
 
     def note_stream_first_token(self, ttft_ms: int) -> None:
         if self.ttft_ms is None and ttft_ms >= 0:
@@ -185,8 +187,10 @@ class SessionUiState:
         if elapsed > 0:
             est = self.stream_tokens if self.stream_tokens > 0 else max(1, self.stream_chars // 4)
             self.tps = est / elapsed
-        if not self.busy:
-            self.touch()
+        # Busy turns own the footer via the composer toolbar — without a touch
+        # here the running line sits silent through a long generation and reads
+        # as frozen. touch() throttles (0.15s busy), so this stays bounded.
+        self.touch()
 
     def note_stream_usage(self, usage: dict) -> None:
         completion = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)

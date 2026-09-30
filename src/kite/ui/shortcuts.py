@@ -43,6 +43,7 @@ while a turn is running
   /tasks          running work + queue
   /live           stream bash output
   /live agents    stream subagent crew activity
+  /agents watch   what subagents are doing + commands
 """
 
 APPROVAL_SHORTCUTS = """\

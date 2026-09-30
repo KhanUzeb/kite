@@ -277,6 +277,20 @@ def _user_interrupt() -> Interrupted:
     )
 
 
+def _is_stream_stall(exc: BaseException) -> bool:
+    """Kite-internal bounded stream timeouts — recoverable, not fatal.
+
+    ``StreamStalledError`` / ``stream timed out after …`` mean the gateway
+    held the stream open with no data and the blocking fallback already ran.
+    Retrying the same dead stream would hang again, but the turn is
+    recoverable via the REPL resume chain — never a hard ``Error`` stop.
+    """
+    if exc.__class__.__name__ == "StreamStalledError":
+        return True
+    msg = str(exc).lower()
+    return "stream stalled" in msg or "stream timed out after" in msg
+
+
 def _blocked(error: str, output: str | None = None) -> dict:
     return {"ok": False, "blocked": True, "error": error, "output": output or error}
 
@@ -835,6 +849,8 @@ class DefaultAgent:
                     raise _user_interrupt() from None
                 except Exception as e:
                     last_error = e
+                    if self._interrupt:
+                        raise _user_interrupt() from None
                     if attempts >= self.provider_max_retries or not is_transient_provider_error(e):
                         raise
                     delay = retry_delay_s(attempts)
@@ -856,7 +872,16 @@ class DefaultAgent:
             self.request_interrupt()
             raise _user_interrupt() from None
         except Exception as e:
-            if is_transient_provider_error(e):
+            if self._interrupt:
+                raise _user_interrupt() from None
+            if is_transient_provider_error(e) or _is_stream_stall(e):
+                self._emit(
+                    "provider_fault",
+                    error=str(e)[:240],
+                    attempts=attempts,
+                    recoverable=True,
+                    stall=_is_stream_stall(e),
+                )
                 raise ProviderFault(str(e), attempts=attempts) from e
             raise
         if self._interrupt:

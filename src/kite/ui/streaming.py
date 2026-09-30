@@ -98,6 +98,27 @@ class StreamCoalescer:
         self._last_push.clear()
         return out
 
+    def flush_due(self, *, now: float | None = None) -> dict[str, str]:
+        """Return buffered chunks stalled past their channel latency.
+
+        ``push`` only flushes when the next token arrives, so a slow gap
+        leaves the trailing partial invisible until more text (or stream_end)
+        comes. The REPL polls this on every toolbar tick so the last token
+        paints within ~max_latency_s instead of hanging.
+        """
+        current = now if now is not None else time.monotonic()
+        out: dict[str, str] = {}
+        for channel, buf in list(self._buffers.items()):
+            if not buf:
+                continue
+            profile = self._profile(channel)
+            started = self._last_push.get(channel, current)
+            if (current - started) >= profile.max_latency_s:
+                out[channel] = buf
+                self._buffers.pop(channel, None)
+                self._last_push.pop(channel, None)
+        return out
+
 
 @dataclass
 class StreamMetrics:

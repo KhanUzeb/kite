@@ -501,7 +501,14 @@ class ChatSession:
                 event = self._ui_queue.get_nowait()
             except queue.Empty:
                 break
-            self._apply_ui_event(event)
+            try:
+                self._apply_ui_event(event)
+            except Exception:
+                pass
+        try:
+            self.display.flush_due_streams()
+        except Exception:
+            pass
         self._sync_queue_count()
         self.state.flush_pending_touch()
 
@@ -536,13 +543,18 @@ class ChatSession:
             self._approval_wake_sent = True
 
     def _toolbar_poll(self) -> None:
-        """Render-path poll — state-only, never prints or wakes.
+        """Render-path poll — keep streaming live while the composer blocks.
 
         ``_prompt_once`` calls this from the bottom-toolbar renderer every
-        250ms while busy. Printing or waking there re-enters prompt_toolkit
-        mid-render and glitches the composer, so this only mirrors the
-        pending request into ``state.awaiting_approval`` for the toolbar.
+        250ms while busy. It drains a small batch through ``_apply_ui_event``
+        (the same path ``_busy_tick`` uses between prompts) so tokens paint
+        continuously instead of hanging until submit. No wakes here — waking
+        re-enters prompt_toolkit mid-render and glitches the composer.
         """
+        try:
+            self._drain_ui_queue(limit=50)
+        except Exception:
+            pass
         try:
             req = self._approval_coordinator.pending
         except Exception:
@@ -1888,20 +1900,95 @@ class ChatSession:
         self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
 
     def _slash_live(self, arg: str) -> None:
-        token = (arg or "").strip().lower()
-        if token in {"agents", "crew", "subagents"}:
-            self.state.live_subagents = not self.state.live_subagents
+        parts = (arg or "").strip().lower().split()
+        if parts and parts[0] in {"agents", "crew", "subagents"}:
+            rest = parts[1] if len(parts) > 1 else ""
+            if rest in {"on", "enable", "enabled", "yes"}:
+                turning_on = not self.state.live_subagents
+                self.state.live_subagents = True
+            elif rest in {"off", "disable", "disabled", "no"}:
+                self.state.live_subagents = False
+                turning_on = False
+            elif not rest:
+                mode = "on" if self.state.live_subagents else "off"
+                self.console.print(
+                    f"[kite.muted]live subagents {mode}[/]  — crew tools + shell stream with worker prefix  (/live agents on|off)"
+                )
+                self.state.touch()
+                return
+            else:
+                self.console.print("[kite.muted]use /live agents on|off[/]")
+                return
             mode = "on" if self.state.live_subagents else "off"
             self.console.print(
                 f"[kite.muted]live subagents {mode}[/]  — crew tools + shell stream with worker prefix"
             )
-        else:
-            self.state.live_terminal = not self.state.live_terminal
-            mode = "on" if self.state.live_terminal else "off"
+            if turning_on:
+                self._dump_live_backlog()
+            self.state.touch()
+            return
+        token = parts[0] if parts else ""
+        if token in {"on", "enable", "enabled", "yes"}:
+            turning_on = not self.state.live_terminal
+            self.state.live_terminal = True
+        elif token in {"off", "disable", "disabled", "no"}:
+            self.state.live_terminal = False
+            turning_on = False
+        elif not token:
+            term = "on" if self.state.live_terminal else "off"
+            crew = "on" if self.state.live_subagents else "off"
             self.console.print(
-                f"[kite.muted]live terminal {mode}[/]  — bash output streams  (/live agents for crew)"
+                f"[kite.muted]live terminal {term} · live subagents {crew}[/]  — /live on|off · /live agents on|off"
             )
+            self.state.touch()
+            return
+        else:
+            self.console.print("[kite.muted]use /live on|off · /live agents on|off[/]")
+            return
+        mode = "on" if self.state.live_terminal else "off"
+        self.console.print(
+            f"[kite.muted]live terminal {mode}[/]  — bash output streams  (/live agents for crew)"
+        )
+        if turning_on:
+            self._dump_live_backlog()
         self.state.touch()
+
+    def _dump_live_backlog(self, *, tail: int = 20) -> None:
+        """Print a bounded tail of running jobs when live streaming is enabled."""
+        dumped = False
+        try:
+            running = self.jobs.list(active_only=True)
+        except AttributeError:
+            running = []
+        for job in running:
+            if job.kind != "bash":
+                continue
+            try:
+                backlog = job.log_text(tail=tail)
+            except TypeError:
+                backlog = job.log_text()[-4000:]
+            if not backlog.strip():
+                continue
+            dumped = True
+            self.console.print(
+                f"[kite.muted]  backfill {job.id} · last {tail} lines[/]",
+                highlight=False,
+            )
+            from kite.ui.render import _collapse_text
+
+            self.console.print(
+                _collapse_text(backlog, expanded=self.state.expanded_all),
+                highlight=False,
+            )
+        if not dumped:
+            # No job output yet — surface the freshest activity instead so
+            # enabling live mid-turn still shows a glimpse immediately.
+            preview = (self.state.activity_preview or "").strip()
+            if preview:
+                self.console.print(f"[kite.muted]  live {preview}[/]", highlight=False)
+            tail_text = (getattr(self.display, "_stream_tail", "") or "")[-800:].strip()
+            if tail_text:
+                self.console.print(f"[kite.muted]{tail_text}[/]", highlight=False)
 
     def _slash_expand_thinking(self, arg: str) -> None:
         note = self._toggle_thinking_display(arg=arg)
@@ -2550,6 +2637,74 @@ class ChatSession:
         else:
             self.console.print("[kite.muted]crew idle[/]  · /agents profiles to list personas")
 
+    def _slash_agents_watch(self, arg: str) -> None:
+        """Live view of what subagents are doing, with commands run."""
+        from kite.ui.render import _collapse_text
+
+        want = (arg or "").strip().lower()
+        # Watching implies live crew streaming so follow-up output is instant.
+        if not self.state.live_subagents:
+            self.state.live_subagents = True
+            self.console.print("[kite.muted]live subagents on[/]  — streaming crew activity")
+        rows = [j for j in self.jobs.list(active_only=False) if j.kind == "subagent"]
+        if want:
+            match = next((j for j in rows if j.id.lower() == want), None)
+            if match is None:
+                prefixed = [j for j in rows if j.id.lower().startswith(want)]
+                match = prefixed[0] if len(prefixed) == 1 else None
+                if match is None and len(prefixed) > 1:
+                    ids = ", ".join(j.id[:8] for j in prefixed)
+                    self.console.print(f"[kite.error]ambiguous id[/]  · matches {ids}")
+                    return
+            if match is None:
+                self.console.print(
+                    f"[kite.error]unknown subagent {arg.strip()}[/]  · /agents watch to list crew"
+                )
+                return
+            rows = [match]
+        if not rows:
+            self.console.print(
+                "[kite.muted]no crew yet[/]  · run a subagent task, then /agents watch"
+            )
+            return
+        for job in rows[-8:]:
+            payload = job.result_payload or {}
+            elapsed_ms = payload.get("elapsed_ms")
+            elapsed = f" · {int(elapsed_ms)}ms" if elapsed_ms else ""
+            profile = job.profile or str(payload.get("profile") or "—")
+            self.console.print(
+                f"[kite.plan]{job.id[:8]}[/]  {escape(job.display_label(width=48))}"
+                f"  [kite.muted]{profile} · {job.status}{elapsed}[/]"
+            )
+            prompt = (job.command or "").strip()
+            if prompt:
+                shown = prompt if len(prompt) <= 500 else prompt[:497] + "…"
+                self.console.print(f"[kite.muted]  prompt:[/] {escape(shown)}")
+            log = ""
+            try:
+                log = job.log_text(tail=30)
+            except TypeError:
+                log = job.log_text()[-4000:]
+            if log.strip():
+                self.console.print("[kite.muted]  recent commands/activity:[/]", highlight=False)
+                self.console.print(
+                    _collapse_text(log, expanded=self.state.expanded_all),
+                    highlight=False,
+                )
+            elif payload:
+                preview = str(payload.get("preview") or payload.get("output") or "")[:800]
+                if preview.strip():
+                    self.console.print(f"[kite.muted]  result:[/] {escape(preview.strip())}")
+            else:
+                self.console.print("[kite.muted]  (no activity logged yet — live output streams here)[/]")
+        running = sum(1 for j in rows if j.status == "running")
+        if running and not want:
+            self.console.print(
+                f"[kite.muted]{running} running[/]  · /agents watch <id> for one · /kill to stop"
+            )
+        elif want:
+            self.console.print("[kite.muted]live on — further crew lines stream with worker prefix[/]")
+
     def _slash_agents(self, arg: str) -> None:
         from kite.agent.subagent_profiles import get_profile, reload_profiles
 
@@ -2573,6 +2728,9 @@ class ChatSession:
         if sub == "reload":
             reload_profiles()
             self.console.print("[kite.success]reloaded[/] subagent profiles")
+            return
+        if sub == "watch":
+            self._slash_agents_watch(rest)
             return
         if sub and sub not in {"crew", "board"} and get_profile(sub) is not None:
             self._agents_show_profile(sub)
@@ -3621,9 +3779,20 @@ class ChatSession:
         if extra.get("exit_status") in {"LimitsExceeded", "TimeExceeded"}:
             self.state.last_error = str(extra.get("submission") or extra.get("content") or extra.get("exit_status"))
             return
-        if extra.get("exit_status") in {"Error", "Stalled"}:
+        if extra.get("exit_status") in {"Error", "Stalled", "RepeatedFormatError"}:
             self.state.last_error = str(extra.get("error") or extra.get("submission") or extra.get("exit_status"))
             self.state.last_trace = str(extra.get("traceback") or "")
+            try:
+                from kite.memory.recovery import recoverable_stop_hint
+
+                hint = recoverable_stop_hint(
+                    str(extra.get("exit_status") or ""),
+                    str(extra.get("error") or extra.get("submission") or extra.get("content") or ""),
+                )
+                if hint:
+                    self.console.print(f"[kite.muted]{escape(hint)}[/]")
+            except Exception:
+                pass
             return
         if extra.get("cost") is not None:
             try:

@@ -21,6 +21,7 @@ JobStatus = Literal["running", "done", "killed", "failed"]
 
 _LOG_RING = 200
 _MAX_FINISHED_JOBS = 24
+_KILL_TAIL_LINES = 20
 
 
 @dataclass
@@ -50,9 +51,12 @@ class BackgroundJob:
         with self._lock:
             self.log.append(line)
 
-    def log_text(self) -> str:
+    def log_text(self, *, tail: int | None = None) -> str:
         with self._lock:
-            return "".join(self.log)
+            lines = list(self.log)
+        if tail is not None and tail >= 0:
+            lines = lines[-tail:] if tail else list(lines)
+        return "".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -184,6 +188,9 @@ class JobRegistry:
         ).start()
         return job
 
+    def _job_tail(self, job: BackgroundJob, n: int = _KILL_TAIL_LINES) -> str:
+        return job.log_text(tail=n)
+
     def _drain_bash(self, job: BackgroundJob, timeout_seconds: float = 3600.0) -> None:
         from kite.env.shell import sanitize_shell_line
         from kite.guardrails.redact import redact_string
@@ -224,15 +231,19 @@ class JobRegistry:
             if job.status != "running":
                 return  # killed already emitted job_end
             job.status = "done" if rc == 0 else "failed"
+            status = job.status
+        tail = self._job_tail(job)
         self._emit(
             "job_end",
             id=job.id,
             kind="bash",
             ok=rc == 0,
-            status=job.status,
+            status=status,
             returncode=rc,
             label=job.display_label(),
             active=self.active_count(),
+            tail=tail,
+            output=tail,
         )
         self._prune_finished()
 
@@ -295,14 +306,18 @@ class JobRegistry:
                 job.result_payload = dict(result_payload)
             kind = job.kind
             label = job.display_label()
+            status_value = job.status
+        tail = self._job_tail(job)
         self._emit(
             "job_end",
             id=job_id,
             kind=kind,
             ok=ok,
-            status=job.status,
+            status=status_value,
             label=label,
             active=self.active_count(),
+            tail=tail,
+            output=tail,
         )
         self._prune_finished()
 
@@ -332,6 +347,12 @@ class JobRegistry:
             self._kill_bash(job)
         elif job.cancel is not None:
             job.cancel.request()
+        # Give the drain thread a beat to flush buffered pipe lines into the
+        # ring before we snapshot the tail, so kill shows context, not a void.
+        if job.kind == "bash":
+            time.sleep(0.2)
+            job.append_log("\n...[job killed]...\n")
+        tail = self._job_tail(job)
         self._emit(
             "job_end",
             id=job.id,
@@ -340,6 +361,8 @@ class JobRegistry:
             status="killed",
             label=job.display_label(),
             active=self.active_count(),
+            tail=tail,
+            output=tail,
         )
         self._prune_finished()
         return True

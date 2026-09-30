@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from kite.memory.continuity import should_budget_auto_continue
+from kite.memory.continuity import has_unfinished_work, should_budget_auto_continue
 
 RECOVERABLE_EXITS = frozenset(
-    {"ProviderFault", "LimitsExceeded", "TimeExceeded", "Stalled", "Error"}
+    {"ProviderFault", "LimitsExceeded", "TimeExceeded", "Stalled", "Error", "RepeatedFormatError"}
 )
 _DEFAULT_MAX_RECOVERY = 3
 _PROVIDER_FAULT_AUTO_RETRIES = 2
@@ -44,6 +44,14 @@ def should_auto_recover(
         )
     if status == "TimeExceeded" and (goal_active or (todos and tool_call_count > 0)):
         return True
+    if status in {"Stalled", "Error", "RepeatedFormatError"}:
+        # No-goal runs stall on idle prose or a stalled stream — resume while
+        # there is evidence of unfinished work instead of forcing `continue`.
+        return has_unfinished_work(
+            todos=todos,
+            exit_status=status,
+            tool_call_count=tool_call_count,
+        )
     return False
 
 
@@ -70,6 +78,15 @@ def decide_recovery_continue(
     ):
         return "continue"
     return "stop"
+
+
+def recoverable_stop_hint(exit_status: str, detail: str = "") -> str | None:
+    """UI hint for recoverable stops: ``stopped: <reason>, type continue``."""
+    status = (exit_status or "").strip()
+    if status not in RECOVERABLE_EXITS:
+        return None
+    reason = (detail or status).strip()[:160] or status
+    return f"stopped: {reason} — type continue to resume"
 
 
 def build_recovery_follow_up(

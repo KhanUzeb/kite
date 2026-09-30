@@ -168,7 +168,7 @@ REPL essentials (type /help in chat, /help all for everything)
   /privacy                      security policy; /privacy sessions …
   /stop /steer                  stop turn or redirect (session stays)
   /goal [text]            persistent objective; /goal pause|resume|clear
-  /jobs /agents /kill [id|all]  crew board; /agents profiles|init|show
+  /jobs /agents /kill [id|all]  crew board; /agents profiles|init|show|watch [id]
   /tools                        built-in agent tools (same glyphs as the transcript)
 
 Flags on run: -p provider  -m model  --cwd PATH  --mode plan|build

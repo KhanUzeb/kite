@@ -913,9 +913,13 @@ class SubagentOrchestrator:
                         pending.discard(jid)
                     elif job is not None and job.status != "running" and job.kind == "subagent":
                         payload = job.result_payload or {}
+                        try:
+                            backlog = job.log_text(tail=40)[-_SECTION_LIMIT:]
+                        except TypeError:
+                            backlog = job.log_text()[-_SECTION_LIMIT:]
                         collected[jid] = {
                             "ok": bool(payload.get("ok", job.status == "done")),
-                            "output": str(payload.get("output") or job.log_text()[:_SECTION_LIMIT] or f"exit={job.status}"),
+                            "output": str(payload.get("output") or backlog or f"exit={job.status}"),
                             "subagent_id": jid,
                             "quality": str(payload.get("quality") or job.status),
                         }

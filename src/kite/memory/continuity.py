@@ -114,12 +114,24 @@ def has_unfinished_work(
     tool_call_count: int = 0,
 ) -> bool:
     status = (exit_status or "").strip()
-    if status in {"Submitted", "Interrupted", "Stalled"}:
+    if status in {"Submitted", "Interrupted", "Cancelled"}:
         return False
     for t in todos or []:
         if str(t.get("status") or "") in {"pending", "in_progress"}:
             return True
-    return tool_call_count > 0 and status == "LimitsExceeded"
+    # Recoverable stops (stall, provider/stream fault, budget) keep prior
+    # tool calls as evidence of unfinished work — a stall must not discard
+    # progress just because no todo list exists.
+    if status in {
+        "Stalled",
+        "Error",
+        "RepeatedFormatError",
+        "ProviderFault",
+        "TimeExceeded",
+        "LimitsExceeded",
+    }:
+        return tool_call_count > 0
+    return False
 
 
 def should_budget_auto_continue(

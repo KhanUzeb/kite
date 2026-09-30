@@ -487,7 +487,25 @@ def make_coding_tools(
                     if cancel is not None and cancel.is_set():
                         terminate_process_tree(proc)
                         reader.join(timeout=1.0)
-                        partial = "".join(output_parts)
+                        partial = "".join(output_parts) + "\n...[cancelled]...\n"
+                        if len(partial) > 32_000:
+                            try:
+                                from kite.context.spill import spill_text
+
+                                spilled = spill_text(partial, cwd=workdir, prefix="bash")
+                                if spilled.get("spilled"):
+                                    return {
+                                        "ok": False,
+                                        "returncode": -1,
+                                        "output": str(spilled["output"]),
+                                        "error": "cancelled",
+                                        "cancelled": True,
+                                        "spilled": True,
+                                        "spill_path": spilled.get("path"),
+                                        "spill_size": spilled.get("size"),
+                                    }
+                            except Exception:
+                                pass
                         return {
                             "ok": False,
                             "returncode": -1,
@@ -501,7 +519,21 @@ def make_coding_tools(
                         if time.monotonic() >= deadline:
                             terminate_process_tree(proc)
                             reader.join(timeout=1.0)
-                            partial = "".join(output_parts)
+                            partial = "".join(output_parts) + f"\n...[timeout after {limit}s]...\n"
+                            if len(partial) > 32_000:
+                                try:
+                                    from kite.context.spill import spill_text as _spill
+
+                                    spilled = _spill(partial, cwd=workdir, prefix="bash")
+                                    if spilled.get("spilled"):
+                                        return {
+                                            "ok": False,
+                                            "returncode": -1,
+                                            "output": str(spilled["output"]),
+                                            "error": f"timeout after {limit}s",
+                                        }
+                                except Exception:
+                                    pass
                             return {
                                 "ok": False,
                                 "returncode": -1,

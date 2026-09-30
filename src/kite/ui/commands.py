@@ -117,7 +117,7 @@ BUILTINS: tuple[BuiltinCommand, ...] = (
     BuiltinCommand(
         "agents",
         "Crew, jobs, tasks, kill, personas",
-        hint="profiles|show <id>|init <id>|reload",
+        hint="profiles|show <id>|init <id>|reload|watch [id]",
         group="session",
         visibility="primary",
     ),
@@ -353,6 +353,7 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
         ("show", "print one persona by id"),
         ("init", "scaffold ~/.kite/subagents/<id>.md"),
         ("reload", "reload profiles from disk"),
+        ("watch", "live view of what subagents are doing + commands [id]"),
     ],
     "usage": [
         ("session", "current session totals"),

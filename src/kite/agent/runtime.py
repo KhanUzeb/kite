@@ -41,6 +41,36 @@ from kite.tools.jobs import JobRegistry
 from kite.tools.store import TodoStore
 
 
+def _format_subagent_log_line(kind: str, payload: dict[str, Any]) -> str:
+    """One human-readable ring line per crew event for /agents watch."""
+    try:
+        if kind == "tool_start":
+            tool = str(payload.get("tool") or "?")
+            args = payload.get("args")
+            detail = ""
+            if isinstance(args, dict):
+                cmd = str(args.get("command") or args.get("path") or args.get("pattern") or "")
+                detail = cmd.replace("\n", " ").strip()[:160]
+            line = f"▸ {tool} {detail}".rstrip() + "\n"
+            return line
+        if kind == "tool_output" or kind == "job_output":
+            line = str(payload.get("line") or "").rstrip("\n")
+            return (line + "\n") if line else ""
+        if kind == "tool_progress":
+            hint = str(payload.get("hint") or "").strip()
+            tool = str(payload.get("tool") or "?")
+            return f"… {tool} {hint}\n".rstrip() + "\n" if hint else ""
+        if kind == "tool_end":
+            tool = str(payload.get("tool") or "?")
+            ok = payload.get("ok", True)
+            preview = str(payload.get("preview") or "")[:160].replace("\n", " ")
+            mark = "✓" if ok else "✗"
+            return f"{mark} {tool} {preview}\n".rstrip() + "\n"
+    except Exception:
+        return ""
+    return ""
+
+
 @dataclass
 class RuntimeOptions:
     provider: str | None = None
@@ -508,6 +538,17 @@ class AgentRuntime:
                     payload.setdefault("subagent_glyph", glyph)
                     if profile:
                         payload.setdefault("subagent_profile", profile)
+                    # Mirror crew activity into the job ring so
+                    # /agents watch <id> shows commands even for
+                    # finished workers (live stream shows running ones).
+                    try:
+                        _job = self.job_registry.get(subagent_id) if self.job_registry else None
+                        if _job is not None:
+                            _line = _format_subagent_log_line(event.kind, payload)
+                            if _line:
+                                _job.append_log(_line)
+                    except Exception:
+                        pass
                     self._on_event(Event(kind=event.kind, payload=payload))
                 else:
                     self._on_event(event)

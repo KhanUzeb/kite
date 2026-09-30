@@ -263,11 +263,12 @@ def render_user_cell(task: str) -> Padding:
 def render_session_transcript(
     console: Any, session: Any, *, tail: int | None = None, total: int | None = None
 ) -> None:
-    """Print the complete chronological transcript for resume/show paths.
+    """Print the chronological transcript for resume/show paths.
 
-    Renders every persisted message (user, assistant, tool calls/results, system, exit/submit)
-    with full multi-line bodies — terminal scrollback keeps long messages readable instead of
-    silently truncating them. ``tail`` windows the oldest entries only (None = all).
+    Long tool/output bodies show in full by default (``/expand`` toggles
+    back to collapsed) so ``continue``/``resume`` replays stream
+    without hiding information behind a cover.
+    ``tail`` windows the oldest entries only (None = all).
     ``total`` is the full message count when ``session.messages`` holds a tail
     window (see load_session_tail) so the skipped note stays exact.
     """
@@ -302,7 +303,14 @@ def render_session_transcript(
             continue
         if kind == "assistant":
             if body:
-                console.print(Text(body, style="kite.answer"), highlight=False, markup=False)
+                lines = body.splitlines()
+                if len(lines) > COLLAPSE_LINES + 8:
+                    console.print(
+                        _collapse_text(body, expanded=True),
+                        highlight=False,
+                    )
+                else:
+                    console.print(Text(body, style="kite.answer"), highlight=False, markup=False)
             for line in entry.get("tool_calls") or []:
                 # Text, not markup: persisted tool-call lines may hold brackets.
                 console.print(
@@ -317,16 +325,25 @@ def render_session_transcript(
             # Labels come from persisted transcripts — never markup-format them.
             console.print(Text(f"  {label}", style="kite.brand"), highlight=False, markup=False)
             viewable = format_viewable_output(body).rstrip("\n") or "—"
-            console.print(Text(viewable, style="kite.terminal"), highlight=False, markup=False)
+            if len(viewable.splitlines()) > COLLAPSE_LINES:
+                console.print(_collapse_text(viewable, expanded=True), highlight=False)
+            else:
+                console.print(Text(viewable, style="kite.terminal"), highlight=False, markup=False)
             continue
         if kind == "exit":
             status = str(entry.get("status") or label)
             console.print(Text(f"  {status}", style="kite.brand"), highlight=False, markup=False)
             if body and body != status:
-                console.print(Text(body, style="kite.muted"), highlight=False, markup=False)
+                if len(body.splitlines()) > COLLAPSE_LINES:
+                    console.print(_collapse_text(body, expanded=True), highlight=False)
+                else:
+                    console.print(Text(body, style="kite.muted"), highlight=False, markup=False)
             continue
         console.print(Text(f"  {label}", style="kite.brand"), highlight=False, markup=False)
-        console.print(Text(body or "—", style="kite.muted"), highlight=False, markup=False)
+        if len((body or "").splitlines()) > COLLAPSE_LINES:
+            console.print(_collapse_text(body or "—", expanded=True), highlight=False)
+        else:
+            console.print(Text(body or "—", style="kite.muted"), highlight=False, markup=False)
 
 
 def _composer_owns_bottom(state: SessionUiState) -> bool:
@@ -440,6 +457,20 @@ class RunDisplay:
 
     def _print(self, *args: Any, **kwargs: Any) -> None:
         self.console.print(*args, **kwargs)
+        self._flush_console()
+
+    def _flush_console(self) -> None:
+        """Push buffered Rich output to the terminal promptly.
+
+        Streaming writes use ``end=""`` partials — without a flush the last
+        chunk sits in the buffer through a slow token gap and reads as a hang.
+        """
+        try:
+            file = getattr(self.console, "file", None)
+            if file is not None:
+                file.flush()
+        except Exception:
+            pass
 
     def flush_transcript_buffer(self) -> None:
         for item in self._transcript_buffer:
@@ -652,7 +683,29 @@ class RunDisplay:
     def _flush_stream_buffers(self) -> None:
         for channel, chunk in self._stream_coalesce.flush().items():
             if chunk:
-                self._stream_write(chunk, channel=channel)
+                self._write_stream_chunk(chunk, channel=channel)
+
+    def _write_stream_chunk(self, chunk: str, *, channel: str) -> None:
+        """Single commit path for coalesced text: stats + footer + paint + flush."""
+        self.state.note_stream_delta(chunk)
+        if _composer_owns_bottom(self.state):
+            self._spin(True, "streaming" if channel == "answer" else "thinking")
+        else:
+            self._spin(False)
+        self._stream_write(chunk, channel=channel)
+        if channel == "answer":
+            # Bounded tail: enough to tell whether the final submit report
+            # repeats what is already on screen.
+            self._stream_tail = (self._stream_tail + chunk)[-_STREAM_TAIL_CHARS:]
+        self._flush_console()
+
+    def flush_due_streams(self) -> None:
+        """Paint coalescer partials stalled past their latency (timer flush)."""
+        if self.quiet:
+            return
+        for channel, chunk in self._stream_coalesce.flush_due().items():
+            if chunk:
+                self._write_stream_chunk(chunk, channel=channel)
 
     def _flush_tool_preview(self) -> None:
         if not self._pending_tool_name:
@@ -666,13 +719,7 @@ class RunDisplay:
     def _coalesced_stream(self, channel: str, text: str) -> None:
         chunk = self._stream_coalesce.push(channel, text)
         if chunk:
-            self.state.note_stream_delta(chunk)
-            self._spin(False)
-            self._stream_write(chunk, channel=channel)
-            if channel == "answer":
-                # Bounded tail: enough to tell whether the final submit report
-                # repeats what is already on screen.
-                self._stream_tail = (self._stream_tail + chunk)[-_STREAM_TAIL_CHARS:]
+            self._write_stream_chunk(chunk, channel=channel)
 
 
     def _spin(self, on: bool, label: str = "thinking") -> None:
@@ -806,16 +853,13 @@ class RunDisplay:
             return
         if self._thinking_buf:
             self._finalize_thinking()
-        # Mirror the answer tail into the running line. The REPL defers the real
-        # answer text until the busy composer is torn down, so without this the
-        # footer sits silent through a long generation and reads as frozen.
+        # Mirror the answer tail into the running line so the footer stays
+        # live through a long generation instead of reading as frozen.
         self._note_answer_tail(text)
-        if self.composer_owns_input:
-            # patch_stdout is held for the whole turn, so writing here renders
-            # the text above the pinned composer as it arrives. Deferring it to
-            # teardown left the REPL silent for minutes and read as a hang.
-            self._coalesced_stream("answer", text)
-            return
+        # patch_stdout is held for the whole turn when the composer is pinned,
+        # so writing here renders above it as text arrives. Always commit —
+        # dropping here (composer-less runs) silently loses the answer.
+        self._coalesced_stream("answer", text)
 
     def _note_answer_tail(self, text: str) -> None:
         """Feed the last partial line to the footer as the live activity line."""
@@ -1210,6 +1254,7 @@ class RunDisplay:
         self._print(line)
 
     def _on_interrupt(self, p: dict[str, Any]) -> None:
+        self._flush_stream_buffers()
         self._end_stream_line()
         self._spin(False)
         # One line per turn: several cancel paths can emit this event and a
@@ -1369,10 +1414,23 @@ class RunDisplay:
             self.state.last_error = err
             self.state.last_trace = trace
             self._print(render_error(err, traceback_text=trace))
+            line = Text()
+            line.append(f"{GUTTER}{SYMBOL_OK} ", style="kite.success")
+            line.append(
+                f"stopped: {err[:120]} — type continue to resume",
+                style="kite.success",
+            )
+            line.append("\n")
+            self._print(line)
             return
         if status == "RepeatedFormatError":
             detail = str(p.get("submission") or p.get("content") or status)
             self._print(render_error(f"{status}: {detail}", show_trace_hint=False))
+            line = Text()
+            line.append(f"{GUTTER}{SYMBOL_OK} ", style="kite.success")
+            line.append("session saved — type continue to resume", style="kite.success")
+            line.append("\n")
+            self._print(line)
             return
         if status in {"LimitsExceeded", "TimeExceeded"}:
             detail = str(p.get("submission") or p.get("content") or "").strip()
@@ -1626,6 +1684,10 @@ class RunDisplay:
         status = str(p.get("status") or ("done" if ok else "ended"))
         if kind == "bash":
             self._print(Text(f"{GUTTER}{mark} job  {kind}  {label}  {status}", style=style))
+            tail = str(p.get("tail") or p.get("output") or "")
+            if tail.strip():
+                expanded = self.verbose or self.state.expanded_all
+                self._print(_collapse_text(tail, expanded=expanded))
 
     def _on_warning(self, p: dict[str, Any]) -> None:
         msg = str(p.get("message") or "").strip()
