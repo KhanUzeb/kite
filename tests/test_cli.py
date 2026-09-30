@@ -91,6 +91,39 @@ def test_apply_diff_and_pickers(tmp_path: Path) -> None:
     assert _posix_mouse("\x1b[<64;4;12M", drawn) == "up"
 
 
+def test_picker_filter_never_absorbs_escape_fragments() -> None:
+    """A PTY relay can split one control sequence across reads.
+
+    The tail (``[B``, ``<35;22;19M``) is all printable, so it used to land in
+    the type-to-filter buffer: every row stopped matching, the heading read
+    "0 matches" plus raw bytes, and the panel repainted forever.
+    """
+    from kite.ui.pick import _MAX_FILTER, _consume_event, _filter_char
+
+    for ch in "[];<>~":
+        assert not _filter_char(ch), ch
+    # Ordinary filter characters must still work, including letters that appear
+    # inside control sequences (M, O) and punctuation like _ and -.
+    for ch in "abcdefghijklmnopqrstuvwxyzABCOPM0123456789.-_/*+ '\"{}#":
+        assert _filter_char(ch), ch
+
+    # A split sequence's tail cannot start a filter: the leading marker is
+    # rejected, so nothing behind it can accumulate.
+    for ch in "[<;":
+        assert not _filter_char(ch)
+    assert _filter_char("B") and _filter_char("M"), "tail letters stay typeable on their own"
+
+    # A whole SGR mouse report is consumed as one sequence, not eight chars.
+    ev, rest, more = _consume_event("\x1b[<35;22;19Mabc", {})
+    assert more is False and rest == "abc"
+    assert ev is None or ev.startswith(("goto:", "pick:"))
+
+    # Cursor keys still decode.
+    assert _consume_event("\x1b[B", {})[0] == "down"
+    assert _consume_event("\x1b[A", {})[0] == "up"
+    assert _MAX_FILTER <= 128, "a stuck filter must not grow without bound"
+
+
 def test_win_click_release_selects() -> None:
     """Windows press highlights, release confirms — same as the POSIX path."""
     from types import SimpleNamespace

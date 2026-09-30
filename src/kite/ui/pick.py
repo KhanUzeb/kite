@@ -45,6 +45,25 @@ def provider_sort_key(
 _PAGE_NEXT = {"+", ">", "more", "pgdn", "pagedown"}
 _PAGE_PREV = {"-", "<", "prev", "pgup", "pageup"}
 
+#: Structural characters that lead or shape a terminal control sequence.
+#: A PTY relay can split one sequence across reads, and a tail like ``[B`` or
+#: ``<35;22;19M`` is all printable — so it would land in the type-to-filter
+#: buffer, match nothing, and repaint the panel forever. Blocking the *leading*
+#: marker is enough to keep the rest out, which leaves letters like ``M``/``O``
+#: usable as filters. ``_``, ``^`` and ``\`` are ordinary filter characters.
+_ESC_SEQUENCE_ONLY = frozenset("[];<>~")
+_MAX_FILTER = 64
+
+
+def _filter_char(ch: str) -> bool:
+    """True when `ch` is safe to append to the type-to-filter buffer."""
+    return (
+        len(ch) == 1
+        and ch.isprintable()
+        and ch not in _ESC_SEQUENCE_ONLY
+    )
+
+
 
 def can_prompt() -> bool:
     """True when we can ask a question (stdin TTY; we print prompts on stderr)."""
@@ -362,6 +381,13 @@ def _raw_pick(
                     paint()
                 continue
             if ev in {"esc", "ctrl-c"}:
+                if ev == "esc" and state["filter"]:
+                    # Esc clears an active filter first — cancelling with a junk
+                    # filter in the buffer was unrecoverable.
+                    state["filter"] = ""
+                    state["cursor"] = 0
+                    paint()
+                    continue
                 console.print("[kite.pending]Cancelled[/]")
                 return None
             if ev == "space":
@@ -414,8 +440,9 @@ def _raw_pick(
             elif ev == "q" and not state["filter"]:
                 console.print("[kite.pending]Cancelled[/]")
                 return None
-            elif isinstance(ev, str) and len(ev) == 1 and ev.isprintable():
-                state["filter"] += ev
+            elif _filter_char(ev):
+                if len(state["filter"]) < _MAX_FILTER:
+                    state["filter"] += ev
                 state["cursor"] = 0
             else:
                 continue
@@ -502,7 +529,11 @@ def _consume_event(buf: str, drawn: dict) -> tuple[str | None, str, bool]:
             return "backspace", rest, False
         if ch == "\x12":
             return "refresh", rest, False
-        return (ch if ch.isprintable() else None), rest, False
+        if _filter_char(ch):
+            return ch, rest, False
+        # Not filterable (escape-sequence tail, control byte): drop it rather
+        # than let it poison the type-to-filter buffer.
+        return None, rest, False
     # Buffer starts with ESC — need at least one more byte to decide.
     if len(buf) == 1:
         return None, buf, True
