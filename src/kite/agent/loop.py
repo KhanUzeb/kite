@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import signal
 import threading
 import time
@@ -83,6 +84,10 @@ def _exit_msg(status: str, *, content: str | None = None, submission: str = "", 
     }
 
 
+_SUBMIT_MARKER = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+# Providers occasionally leak a literal tool call into assistant text instead of
+# emitting tool_calls. Recover the message rather than counting it as an idle turn.
+_LEAKED_SUBMIT_RE = re.compile(r"<submit\b[^>]*?\bmessage=\"(.*?)\"\s*(?:/>|</submit>)?", re.DOTALL | re.I)
 _MAX_IDLE_TURNS = 3
 # Completion contract (interactive build):
 # - Text-only submit: only when the USER's last turn was casual (_is_casual_user_turn).
@@ -206,9 +211,31 @@ def _is_injected_nudge(content: str) -> bool:
         return False
     if text == _IDLE_NUDGE or text.startswith("Stopped after"):
         return True
+    if text.startswith(_SUBMIT_MARKER):
+        return True
     if text.startswith("Last ") and "tool calls failed" in text:
         return True
     return False
+
+
+def text_submission(content: str) -> str:
+    """Recover an explicit submission from a text-only assistant reply.
+
+    Models signal "done" three ways: the `submit` tool, bash
+    `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, or — when a provider drops the
+    tool call — the bare marker / leaked `<submit message="...">` tag as plain text.
+    All three mean submit. Returns "" when the text is ordinary prose.
+    """
+    text = (content or "").strip()
+    if not text:
+        return ""
+    leaked = _LEAKED_SUBMIT_RE.search(text)
+    if leaked:
+        return (leaked.group(1) or "").strip()
+    lines = text.splitlines()
+    if lines and lines[0].strip() == _SUBMIT_MARKER:
+        return "\n".join(lines[1:]).strip() or _SUBMIT_MARKER
+    return ""
 
 
 def _last_human_user_content(messages: list[dict]) -> str:
@@ -346,6 +373,8 @@ class DefaultAgent:
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
         self._consecutive_no_tool_turns = 0
+        self._last_idle_content = ""
+        self._blocked_submission = ""
         self._tool_fail_streak = 0
         self._awaiting_approval = False
         self._start_time = time.time()
@@ -905,6 +934,11 @@ class DefaultAgent:
     def _handle_no_actions(self, message: dict) -> list[dict]:
         content = (message.get("content") or "").strip()
         last_user = _last_human_user_content(self.messages)
+        explicit = text_submission(content)
+        if explicit:
+            # An explicit submit marker is an intent, not narration — run the same
+            # gate the `submit` tool does instead of nudging for more tool calls.
+            return self._submit_text(explicit)
         if _allow_text_submit(
             content,
             mode=self.mode,
@@ -949,14 +983,57 @@ class DefaultAgent:
             return self.add_messages({"role": "user", "content": nudge})
         self._consecutive_no_tool_turns += 1
         if self.mode is AgentMode.BUILD and self._consecutive_no_tool_turns >= _MAX_IDLE_TURNS:
-            msg = _IDLE_STALL.format(turns=self._consecutive_no_tool_turns)
-            self.add_messages(_exit_msg("Stalled", content=msg))
+            # Carry the last report forward: stalling must not throw away work the
+            # model already described (the CLI has nothing else to show).
+            self.add_messages(
+                _exit_msg("Stalled", content=_IDLE_STALL.format(turns=self._consecutive_no_tool_turns), submission=content)
+            )
             return []
+        if content and content == self._last_idle_content:
+            # Same text twice in a row — nudging again just burns budget.
+            self.add_messages(
+                _exit_msg(
+                    "Stalled",
+                    content=(
+                        "Stopped after repeating the same reply with no tool calls — "
+                        "need a concrete next step or clarification."
+                    ),
+                    submission=content,
+                )
+            )
+            return []
+        self._last_idle_content = content
         if self.mode is AgentMode.BUILD and self.verify_before_submit and content:
             reason = self.verification.unfounded_claim_reason(content)
             if reason:
                 return self.add_messages({"role": "user", "content": reason})
         return self.add_messages({"role": "user", "content": _IDLE_NUDGE})
+
+    def _submit_text(self, submission: str) -> list[dict]:
+        """Gate a text-only submission the same way the `submit` tool is gated."""
+        self._consecutive_no_tool_turns = 0
+        self._last_idle_content = ""
+        reason = self.verification.submit_block_reason(
+            submission,
+            require_verification=self.verify_before_submit,
+        )
+        if reason:
+            self._emit("submit_blocked", reason=reason, verification=self.verification.summary())
+            if submission == self._blocked_submission:
+                # Same report blocked twice — re-nudging cannot clear it. Stop, but
+                # hand the report back so the work stays visible.
+                self.add_messages(
+                    _exit_msg(
+                        "Stalled",
+                        content=f"{reason}\n\nStopped after the same submission was blocked twice.",
+                        submission=submission,
+                    )
+                )
+                return []
+            self._blocked_submission = submission
+            return self.add_messages({"role": "user", "content": reason})
+        self._blocked_submission = ""
+        raise Submitted(_exit_msg("Submitted", content=submission, submission=submission))
 
     def _execute_parallel_actions(self, actions: list[dict], outputs: list[dict]) -> None:
         blocked = self._tool_budget_block()
@@ -1032,6 +1109,7 @@ class DefaultAgent:
         if not actions:
             return self._handle_no_actions(message)
         self._consecutive_no_tool_turns = 0
+        self._last_idle_content = ""
         outputs: list[dict] = []
         cwd = self._execution_cwd()
         try:

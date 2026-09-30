@@ -18,13 +18,22 @@ _UNEXPECTED_STOP_PHRASES = (
     "doing that now",
     "working on it",
 )
+# "let me know if you want X" offers help — it is not an unkept promise to act.
+_UNEXPECTED_STOP_EXEMPT_SUFFIXES = ("let me know",)
 
 
 def is_unexpected_stop(content: str) -> bool:
     text = (content or "").strip().lower()
     if not text or text.endswith("?"):
         return False
-    return any(phrase in text for phrase in _UNEXPECTED_STOP_PHRASES)
+    for phrase in _UNEXPECTED_STOP_PHRASES:
+        idx = text.find(phrase)
+        while idx != -1:
+            tail = text[idx:]
+            if not any(tail.startswith(exempt) for exempt in _UNEXPECTED_STOP_EXEMPT_SUFFIXES):
+                return True
+            idx = text.find(phrase, idx + 1)
+    return False
 READ_ONLY_REPEAT_THRESHOLD = 6
 DEFAULT_HARD_THRESHOLD = 7
 

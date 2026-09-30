@@ -1286,8 +1286,28 @@ class RunDisplay:
             self._print(line)
             return
         if status == "Stalled":
-            msg = str(p.get("submission") or p.get("content") or "stopped — no progress")
-            self._print(render_error(msg, show_trace_hint=False))
+            # content = why it stopped, submission = the last report the model wrote.
+            # Show the report first — the work is done, only the turn never closed.
+            report = str(p.get("submission") or "").strip()
+            reason = str(p.get("content") or "").strip()
+            if report and report != reason:
+                if not self._streamed_answer:
+                    self._stream_write(report, channel="answer")
+                    self._end_stream_line()
+                self._print(
+                    Text(
+                        f"{GUTTER}{SYMBOL_WARN} stopped  ·  {reason or 'no progress'}",
+                        style="kite.pending",
+                    )
+                )
+                self._print(
+                    Text(
+                        f"{GUTTER}{SYMBOL_OK} session saved — send another message to continue",
+                        style="kite.success",
+                    )
+                )
+                return
+            self._print(render_error(reason or "stopped — no progress", show_trace_hint=False))
             return
         if status == "Error":
             err = str(p.get("error") or "unexpected error")

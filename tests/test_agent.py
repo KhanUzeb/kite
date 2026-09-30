@@ -12,7 +12,13 @@ from kite.agent.compaction import CompactionConfig, LoopCompactor
 from kite.agent.dispatch_mode import dispatch_hint, resolve_dispatch_mode
 from kite.agent.exceptions import LimitsExceeded, ProviderFault, Submitted
 from kite.agent.harness_build import build_harness_config
-from kite.agent.loop import _MAX_IDLE_TURNS, DefaultAgent, _allow_text_submit, _is_casual_user_turn
+from kite.agent.loop import (
+    _MAX_IDLE_TURNS,
+    DefaultAgent,
+    _allow_text_submit,
+    _is_casual_user_turn,
+    text_submission,
+)
 from kite.agent.loop_guard import LoopGuard, is_unexpected_stop
 from kite.agent.mode import (
     MUTATING_TOOLS,
@@ -248,6 +254,40 @@ def test_informational_completion_idle_and_error(monkeypatch) -> None:
     monkeypatch.setattr("kite.models.retry.is_transient_provider_error", lambda _e: False)
     result = boom.run("do something")
     assert result.get("exit_status") == "Error"
+
+
+def test_text_submit_marker_ends_the_turn(workspace: Path) -> None:
+    # Regression: a provider dropped the tool call and the model wrote
+    # COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT as prose. That used to be counted as an
+    # idle turn and the run ended Stalled after three nudges, hiding finished work.
+    agent = DefaultAgent(_TextOnlyModel(), _StubEnv(), interactive=True, mode=AgentMode.BUILD, provider_max_retries=1)
+    agent.messages = [{"role": "user", "content": "can you create a tetris game in html"}]
+    report = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n\n## Done\n- created `game_tetris/index.html`"
+    with pytest.raises(Submitted) as ei:
+        agent.execute_actions({"role": "assistant", "content": report, "extra": {"actions": []}})
+    extra = ei.value.messages[0].get("extra") or {}
+    assert extra.get("exit_status") == "Submitted"
+    assert extra.get("submission") == "## Done\n- created `game_tetris/index.html`"
+
+    leaked = DefaultAgent(_TextOnlyModel(), _StubEnv(), interactive=True, mode=AgentMode.BUILD, provider_max_retries=1)
+    leaked.messages = [{"role": "user", "content": "run the tests"}]
+    with pytest.raises(Submitted):
+        leaked.execute_actions(
+            {"role": "assistant", "content": 'all good\n<submit message="## Done\n- ran pytest"></submit>', "extra": {"actions": []}}
+        )
+
+    assert text_submission("just a normal reply") == ""
+    assert is_unexpected_stop("Thanks! Let me know if you want tweaks") is False
+    assert is_unexpected_stop("Let me fix the import now.") is True
+
+    # Repeating the same prose must not burn the whole idle budget.
+    stuck = DefaultAgent(_TextOnlyModel(), _StubEnv(), interactive=True, mode=AgentMode.BUILD, provider_max_retries=1)
+    stuck.messages = [{"role": "user", "content": "refactor the parser"}]
+    for _ in range(_MAX_IDLE_TURNS):
+        stuck.execute_actions({"role": "assistant", "content": "I am thinking about it", "extra": {"actions": []}})
+    assert stuck.messages[-1].get("extra", {}).get("exit_status") == "Stalled"
+    # The last report survives the stall so the CLI has something to show.
+    assert stuck.messages[-1].get("extra", {}).get("submission") == "I am thinking about it"
 
 
 def test_submit_tool_call_accounting(workspace: Path) -> None:

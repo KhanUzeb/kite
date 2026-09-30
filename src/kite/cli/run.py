@@ -340,6 +340,19 @@ def cmd_run(args: argparse.Namespace) -> int:
         console.print(f"[red]{result.get('error')}[/]")
         if result.get("traceback"):
             console.print("[dim]See session log or re-run with -v for full traceback[/]")
+    elif result.get("exit_status") == "Stalled":
+        detail = str(result.get("submission") or "").strip()
+        if detail:
+            console.print(detail)
+            console.print(
+                "[kite.pending]stopped — the run above is what the agent produced.[/] "
+                f"[kite.muted]continue: kite resume {sid} \"continue\"[/]"
+            )
+        else:
+            console.print(
+                "[kite.pending]stalled — no progress. "
+                f"[kite.muted]continue: kite resume {sid} \"continue\"[/]"
+            )
     return 0 if ok else (int(cli_result.exit_code) or 1)
 
 

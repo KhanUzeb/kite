@@ -172,9 +172,11 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **ReplayBundle** — Recorded run transcript (`kite.eval`) for replay without live providers. May include `events` and `acceptance` criteria (`content_contains`, `event_kinds`, `min_events`).
 
-**Submit** — End of a build turn when the task is finished. Preferred: structured **`submit`** tool with `message` (Done / Changed / Verification sections). Legacy: bash `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. In interactive build chat, a **text-only** reply may submit **only when the user's last turn was casual** (hi, thanks, short non-task Q&A) — not when the assistant reply looks like a greeting. Task requests (`lower tests`, `fix bug`, …) require tools, verification, or `submit`; greeting-only replies get an idle nudge.
+**Submit** — End of a build turn when the task is finished. Preferred: structured **`submit`** tool with `message` (Done / Changed / Verification sections). Legacy: bash `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. The marker is also honored when a provider drops the tool call and the model writes it as **plain text** (bare marker on the first line, or a leaked `<submit message="…">` tag) — that is an explicit submit intent and goes through the same submit gate, not the idle path. In interactive build chat, a **text-only** reply may submit **only when the user's last turn was casual** (hi, thanks, short non-task Q&A) — not when the assistant reply looks like a greeting. Task requests (`lower tests`, `fix bug`, …) require tools, verification, or `submit`; greeting-only replies get an idle nudge.
 
 **Text submit (casual chat)** — Harness rule in `DefaultAgent._allow_text_submit`: interactive build mode ends on prose without tools when `_is_casual_user_turn(last_user_message)` is true. Assistant content like `Hey! 👋` does not trigger submit on its own.
+
+**Stalled** — Exit status for a build turn that ended with no progress: `_MAX_IDLE_TURNS` idle nudges, two identical text-only replies in a row, or the same submission blocked by the submit gate twice. The exit message carries the model's last report in `submission` so the CLI/REPL shows what was produced instead of a bare "no progress".
 
 **Interrupt** — User cancellation (Ctrl+C) propagates to the model stream and long-running bash; does not kill the REPL.
 
