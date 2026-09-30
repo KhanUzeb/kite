@@ -96,12 +96,22 @@ Default **auto** approval runs routine in-workspace coding without prompts: edit
 When approval is required, the human sees a **foreground card** (what / why / risk) with `[a]` allow once, `[n]` deny, `[s]` session, `[q]` stop. Wait for the harness — do not claim the action ran until tool output confirms it. If a tool is `blocked: true`, change approach; do not repeat the same call.
 
 ## Parallel tools (token-efficient, on by default)
-When the model API supports it, **batch independent tools in one turn** instead of one call per turn:
+Batch **independent** tools in one turn instead of one call per turn:
 - **Reads:** multiple `read`/`grep`/`glob`/`websearch`/`context7_docs` together.
 - **Writes:** parallel `write`/`edit` only when paths are **different files** (never two edits to the same path in one batch).
 - **Read + write:** OK in one batch when reads do not overlap the file being written.
 
-The runtime runs disjoint batches concurrently. Keep `bash` and stateful mutations sequential. Prefer bounded reads (`offset`/`limit`) when batching many files.
+The runtime runs disjoint batches concurrently, and it **preserves your call
+order**. That is deliberate: it cannot tell an independent call from a
+dependent one, so a sequence like *read the config → run the command with it →
+read the result* stays sequential. If later calls depend on earlier results,
+emit them in separate turns. Keep `bash` and stateful mutations sequential.
+Prefer bounded reads (`offset`/`limit`) when batching many files.
+
+The wins come from fewer round-trips, so batch everything that is genuinely
+independent: reading five files to understand one module should be one turn, not
+five. Do not batch a call whose result the next call depends on just to save a
+turn — that trades a wall-clock round-trip for a wrong answer.
 
 Progress updates: 1-2 sentences on new findings or tactic changes. Let tool output carry the evidence.
 
@@ -155,13 +165,19 @@ For coding tasks, structure the final answer:
 - optional follow-ups
 ```
 
-When the task is fully done in **build** mode, submit with the `submit` tool (preferred) or bash alone (no other commands in the same call):
+When the task is fully done in **build** mode, call the **`submit` tool**. Do not
+type the marker as prose: a reply that merely *starts with*
+`COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` is treated as a submission only if the
+provider dropped the tool call, and writing it as ordinary text is the single
+most common reason a finished task reports "Stalled — no progress" and looks
+unfinished to the user.
 
 ```
 submit(message="## Done\n- …\n\n## Changed\n- …\n\n## Verification\n- ✓ pytest -q")
 ```
 
-Legacy bash marker (still supported):
+Legacy bash marker (still supported) — this must be a **real tool call**, on its
+own, with no other command in the same bash call:
 
 ```
 echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT

@@ -57,6 +57,36 @@ def test_disjoint_read_write_and_mixed_batches(tmp_path) -> None:
     assert action_parallel_eligible("write")
 
 
+def test_batching_preserves_model_call_order(tmp_path) -> None:
+    """Concurrency must never reorder calls the model sequenced deliberately.
+
+    A tighter packer exists (first-fit turns [write A, read B, write C, read A]
+    into 2 batches instead of 3) but it hoists later calls ahead of earlier
+    ones. The runtime cannot tell an independent call from a dependent one, so
+    "read the config -> run with it -> read the result" must stay sequential.
+    """
+    cwd = str(tmp_path)
+
+    def a(tool, path):
+        return {"tool": tool, "arguments": {"path": path}}
+
+    staggered = [a("write", "A.py"), a("read", "B.py"), a("write", "C.py"), a("read", "A.py")]
+    batches = plan_execution_batches(staggered, cwd=cwd)
+    flat = [act for batch in batches for act in batch]
+    assert flat == staggered, "calls execute in the order the model emitted them"
+    # The read of A.py must not be hoisted ahead of the write of A.py.
+    read_a = next(i for i, x in enumerate(flat) if x["arguments"]["path"] == "A.py" and x["tool"] == "read")
+    write_a = next(i for i, x in enumerate(flat) if x["arguments"]["path"] == "A.py" and x["tool"] == "write")
+    assert read_a > write_a
+
+    # Independent disjoint calls still batch into a single round-trip.
+    reads = [a("read", f"f{i}.py") for i in range(4)]
+    assert plan_execution_batches(reads, cwd=cwd) == [reads]
+
+    # No call means no batch, rather than a batch holding nothing.
+    assert plan_execution_batches([], cwd=cwd) == []
+
+
 def test_bash_splits_batches(tmp_path) -> None:
     cwd = str(tmp_path)
     actions = [

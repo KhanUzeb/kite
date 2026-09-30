@@ -216,9 +216,19 @@ def coalesce_crew_calls(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def plan_execution_batches(actions: list[dict[str, Any]], *, cwd: str) -> list[list[dict[str, Any]]]:
-    """Partition model tool calls into sequential batches; each batch may run in parallel."""
+    """Partition model tool calls into sequential batches; each batch may run in parallel.
+
+    Model order is preserved. Batching only groups calls that are already
+    adjacent, because tool calls are frequently causal — "read the config, run
+    the command with it, read the result". A first-fit packer finds tighter
+    batches ([write A, read B, write C, read A] packs into 2 instead of 3) but
+    does so by hoisting later calls ahead of earlier ones, which silently breaks
+    that sequence. Correct order beats a round-trip saved.
+    """
     actions = coalesce_crew_calls(actions)
-    if len(actions) <= 1:
+    if not actions:
+        return []
+    if len(actions) == 1:
         return [list(actions)]
 
     remaining = list(actions)
@@ -230,7 +240,7 @@ def plan_execution_batches(actions: list[dict[str, Any]], *, cwd: str) -> list[l
         if tool in _SERIAL_ONLY or not action_parallel_eligible(tool):
             batches.append(batch)
             continue
-        while remaining and can_parallelize_batch(batch + [remaining[0]], cwd=cwd):
+        while remaining and can_parallelize_batch([*batch, remaining[0]], cwd=cwd):
             batch.append(remaining.pop(0))
         batches.append(batch)
 

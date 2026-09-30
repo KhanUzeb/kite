@@ -29,6 +29,11 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
   mouse support and Space-to-toggle multi-select on an interactive TTY.
 
 ### Changed
+- The system prompt tells the model to submit with the `submit` **tool** and
+  warns that writing `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as prose is the
+  usual reason a finished task reports "Stalled — no progress". The parallel
+  tools section now states that the runtime preserves call order and why
+  (dependent calls stay sequential), rather than implying everything batches.
 - Auto-approve now matches what it always claimed to be. In `auto`/`trust`/
   `yolo` the agent runs on its own and only risky effect classes prompt —
   destructive shell, network, package/skill install, durable memory, and

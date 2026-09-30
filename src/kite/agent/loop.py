@@ -51,7 +51,8 @@ def _system_prompt() -> str:
             _SYSTEM_PROMPT = load_prompt_template("system")
         except Exception:  # pragma: no cover
             _SYSTEM_PROMPT = (
-                "You are a coding agent. Use tools. Submit with COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT."
+                "You are a coding agent. Use tools. When the task is done, call the "
+                "`submit` tool with a Done/Changed/Verification summary."
             )
     return _SYSTEM_PROMPT
 
@@ -1068,6 +1069,9 @@ class DefaultAgent:
         for row in pool.map(_worker, list(enumerate(prepared))):
             idx, tool, args, action, out = row
             results[idx] = (tool, args, action, out)
+        # Observations must stay aligned with the model's tool_calls order, so
+        # _after_tool runs in index order rather than completion order (pool.map
+        # already yields in order; this states the invariant).
         for idx in range(len(prepared)):
             if idx not in results:
                 continue
