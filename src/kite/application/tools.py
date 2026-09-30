@@ -202,13 +202,36 @@ MANDATORY_EFFECTS: frozenset[SideEffect] = frozenset({
 })
 
 
+#: Approval tiers where a routine in-workspace mutation does NOT prompt.
+#: Only the risky effect classes below still gate in these modes.
+AUTO_RUNNING_APPROVALS: frozenset[str] = frozenset({"auto", "trust", "yolo"})
+
+
+def _prompts_every_mutation(approval: str) -> bool:
+    """`supervised` keeps prompting for every mutation (the historical rule)."""
+    return str(approval or "auto").strip().lower() not in AUTO_RUNNING_APPROVALS
+
+
 def tool_requires_approval_gate(
     tool: str,
     arguments: dict[str, Any],
     *,
     workspace_cwd: str | None = None,
+    approval: str = "auto",
 ) -> bool:
-    """True when a tool call must pass the approval gate (beyond policy deny)."""
+    """True when a tool call must pass the approval gate (beyond policy deny).
+
+    Tiers:
+    - ``auto`` / ``trust`` / ``yolo`` — the agent runs on its own. Only risky
+      effects gate: destructive shell, network fetches, package/skill installs,
+      durable-memory writes, and nested agents on untrusted projects. Writing a
+      file inside the workspace and running a slow command are the job, not a
+      decision for the human — otherwise the agent stops on every edit.
+    - ``supervised`` — prompt on every mutation, as before.
+
+    Sandbox denies are unaffected: an out-of-workspace or protected path is
+    still refused outright by :func:`PolicyEngine.authorize`.
+    """
     from kite.guardrails.project_trust import without_nested_agent_if_trusted
 
     effects = without_nested_agent_if_trusted(
@@ -218,6 +241,8 @@ def tool_requires_approval_gate(
     if effects & MANDATORY_EFFECTS:
         return True
     if "workspace_write" in effects or "long_running" in effects:
+        if not _prompts_every_mutation(approval):
+            return False
         return tool in {"write", "edit", "bash", "todo_write", "apply_patch"}
     return False
 

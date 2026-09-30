@@ -29,6 +29,24 @@ Kite runs tools against your local workspace. Its guardrails protect against **m
 
 Tool calls marked as requiring approval fail closed when no approver is available. Non-interactive and headless runs preserve the requested approval mode: `readonly` blocks mutations, `approve` denies mutations because no prompt can be shown, and `auto`/`yolo` permit routine in-workspace work (installs, tests, local commits) while **SERIOUS** actions (network fetch via `curl`/`wget`, destructive deletes, `chmod`, shell wrappers) prompt in `auto` and are auto-allowed in `yolo`; critical gates (outside workspace, sudo, remote shell) are denied. Relative tool paths are authorized against the live execution cwd, so `set_cwd` cannot shift a later write outside the approval boundary; embedded shell path changes are checked against the same boundary. Interactive approval requires an explicit choice; pressing Enter alone does not authorize an action. Plan-mode inspection rejects command substitution, process substitution, and mutating `find` actions.
 
+### What gates a prompt
+
+In the `auto`, `trust`, and `yolo` tiers the agent runs on its own. A prompt appears only for a **risky effect class**, never for "it changed something":
+
+| Effect | Gates in `auto`/`trust`/`yolo` |
+|--------|-------------------------------|
+| `destructive` (`rm -rf`, `chmod`, wrappers) | yes |
+| `network` (`curl`/`wget`, `gh` publish, cloud CLIs, `websearch`/`webfetch`) | yes |
+| `package_or_skill_install` | yes |
+| `durable_memory` | yes |
+| `nested_agent` | yes, unless the project is trusted |
+| `workspace_write` (write/edit/apply_patch inside the workspace) | **no** |
+| `long_running` (any slow command) | **no** |
+
+Writing a file inside the workspace and running a slow test are the job, not a decision for the human — treating them as gated made the agent stop on nearly every edit. `supervised` keeps the older rule and prompts for every mutation.
+
+This changes *who is asked*, not *what is possible*. Path sandbox denies are untouched: an out-of-workspace or protected path is refused outright regardless of tier, as are the critical gates (sudo, outside workspace, remote shell).
+
 ## Session persistence
 
 Session transcripts are stored under `~/.kite/sessions/` as JSONL. Configure persistence in `~/.kite/config.toml`:

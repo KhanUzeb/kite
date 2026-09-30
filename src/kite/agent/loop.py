@@ -316,7 +316,7 @@ class DefaultAgent:
         verification: VerificationCollector | None = None,
         audit=None,
         tool_executor=None,
-        tool_progress_interval_seconds: float = 5.0,
+        tool_progress_interval_seconds: float = 2.0,
         verify_before_submit: bool = True,
         loop_hard_threshold: int = 5,
         long_task: bool = False,
@@ -1432,7 +1432,7 @@ class DefaultAgent:
         args = self._effective_tool_arguments(tool, args)
         action = {**action, "arguments": args}
         needs_gate = tool in MUTATING_TOOLS or tool_requires_approval_gate(
-            tool, args, workspace_cwd=self._execution_cwd()
+            tool, args, workspace_cwd=self._execution_cwd(), approval=self.approval
         )
         inspection_bash = tool == "bash" and is_inspection_bash(str(args.get("command") or ""))
         if needs_gate and not inspection_bash and self.approver is None:

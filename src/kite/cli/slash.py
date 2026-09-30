@@ -45,6 +45,16 @@ class CommandIndex:
     skills: list[Skill] = field(default_factory=list)
     plugins: list[Plugin] = field(default_factory=list)
     commands: list[PromptCommand] = field(default_factory=list)
+    #: lowercased skill name -> source, built once. The completion menu resolves
+    #: a skill's origin per spec per keystroke; a linear scan each time made
+    #: typing lag on large skill sets.
+    _skill_sources: dict[str, str] | None = field(default=None, repr=False, compare=False)
+
+    def skill_source(self, name: str) -> str | None:
+        """Source of the skill backing `name`, or None when it is not a skill."""
+        if self._skill_sources is None:
+            self._skill_sources = {s.name.lower(): (s.source or "") for s in self.skills}
+        return self._skill_sources.get(name)
 
     def get(self, name: str) -> SlashSpec | None:
         return self.specs.get(name.strip().lower().lstrip("/"))

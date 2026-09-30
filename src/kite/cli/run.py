@@ -820,9 +820,8 @@ def cmd_models(args: argparse.Namespace) -> int:
 def cmd_theme(args: argparse.Namespace) -> int:
     """Show or set the color palette — `kite theme`, same source as /theme.
 
-    Typed picker only (number/name + Enter): theme selection never takes
-    over the console with raw keys or mouse capture, so it cannot freeze
-    or leak escape bytes into the terminal.
+    Full picker: arrows, wheel and click on a real terminal, typed
+    number/name everywhere else. `KITE_TYPED_PICK=1` forces the typed path.
     """
     from kite.ui.theme import THEME_HELP, THEME_NAMES, ensure_prefs, set_theme, theme_label
 
@@ -839,10 +838,10 @@ def cmd_theme(args: argparse.Namespace) -> int:
             return 2
         console.print(f"[kite.muted]theme[/]  {theme_label()}")
         return 0
-    from kite.ui.pick import _typed_pick, can_prompt
+    from kite.ui.pick import can_prompt, pick_one
 
     if can_prompt():
-        picked = _typed_pick(
+        picked = pick_one(
             console,
             [(item, THEME_HELP.get(item, item)) for item in THEME_NAMES],
             current=theme_label().split(" ", 1)[0],
@@ -860,7 +859,7 @@ def cmd_theme(args: argparse.Namespace) -> int:
 def cmd_font(args: argparse.Namespace) -> int:
     """Show or set the glyph pack — `kite font`, same source as /font.
 
-    Typed picker only (see cmd_theme): no raw console mode, no mouse.
+    Full picker (see cmd_theme): arrows, wheel, click, typed fallback.
     """
     from kite.ui.theme import (
         FONT_HELP,
@@ -884,10 +883,10 @@ def cmd_font(args: argparse.Namespace) -> int:
             return 2
         console.print(f"[kite.muted]font[/]  {current_font()}  {glyph_preview()}")
         return 0
-    from kite.ui.pick import _typed_pick, can_prompt
+    from kite.ui.pick import can_prompt, pick_one
 
     if can_prompt():
-        picked = _typed_pick(
+        picked = pick_one(
             console,
             [(item, FONT_HELP.get(item, item)) for item in FONT_NAMES],
             current=current_font(),
@@ -943,7 +942,7 @@ def cmd_variants(args: argparse.Namespace) -> int:
     """Show or set the thinking variant — `kite variants`, same source as /variants.
 
     Strictly gated: only levels from the model's live Pi menu are accepted.
-    Typed picker only (see cmd_theme): no raw console mode, no mouse.
+    Full picker (see cmd_theme): arrows, wheel, click, typed fallback.
     The pick persists to ~/.kite/config.toml as the default for fresh sessions.
     """
     from kite.config import UserConfig
@@ -985,13 +984,13 @@ def cmd_variants(args: argparse.Namespace) -> int:
                 return 0
         console.print(f"[red]{level} is not offered by {tag} — pick: {'|'.join(ids)}[/]")
         return 2
-    from kite.ui.pick import _typed_pick, can_prompt
+    from kite.ui.pick import can_prompt, pick_one
 
     if can_prompt():
         from kite.ui.complete import _LEVEL_META
 
         current = reasoning_to_thinking_level(cfg.reasoning, info)
-        picked = _typed_pick(
+        picked = pick_one(
             console,
             [(pi, _LEVEL_META.get(pi, pi)) for pi, _ in menu],
             current=current if current in ids else None,

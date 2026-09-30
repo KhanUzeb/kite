@@ -68,6 +68,7 @@ _KITE_STYLES = {
     "kite.diff.hunk": "bold bright_cyan",
     "kite.diff.meta": "#5a5a5a",
     "kite.diff.ctx": "#7a7a7a",
+    "kite.diff.lineno": "#3f3f46",
     "kite.plan": "bold yellow",
     "kite.build": "bold green",
     "kite.accent": "bold magenta",

@@ -772,6 +772,10 @@ class RunDisplay:
             return
         if self._thinking_buf:
             self._finalize_thinking()
+        # Mirror the answer tail into the running line. The REPL defers the real
+        # answer text until the busy composer is torn down, so without this the
+        # footer sits silent through a long generation and reads as frozen.
+        self._note_answer_tail(text)
         if self.composer_owns_input:
             # The busy prompt is erased on exit. Keep answer text out of those
             # temporary rows and commit one canonical copy after teardown.
@@ -779,6 +783,15 @@ class RunDisplay:
             self.state.note_stream_delta(text)
             return
         self._coalesced_stream("answer", text)
+
+    def _note_answer_tail(self, text: str) -> None:
+        """Feed the last partial line to the footer as the live activity line."""
+        tail = text.rsplit("\n", 1)[-1].strip()
+        if not tail:
+            self.state.set_activity_preview("")
+            return
+        self.state.set_activity_preview(tail)
+        self._touch_state()
 
     def _on_stream_tool(self, p: dict[str, Any]) -> None:
         name = str(p.get("name") or "?")
@@ -977,6 +990,10 @@ class RunDisplay:
                 self._print(collapsed)
             if redacted:
                 self._print(Text(f"{GUTTER}{GUTTER}· {redacted} secret(s) hidden", style="kite.muted"))
+        # The next model call starts here — hand the spinner straight over so the
+        # UI never sits dead between a finished tool and the next generation.
+        # _spin routes by ownership: footer label when busy, thread otherwise.
+        self._spin(True, "thinking")
 
     def _on_artifact(self, p: dict[str, Any]) -> None:
         self._end_stream_line()

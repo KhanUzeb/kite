@@ -85,6 +85,57 @@ def test_render_events_busy_spin_and_quiet_tools() -> None:
     assert "read" in plain
 
 
+def test_spinner_heartbeats_when_stderr_is_not_a_tty(monkeypatch) -> None:
+    """Relayed/redirected stderr has no \\r animation — it still must show life.
+
+    Disabling the spinner entirely there is what made long turns look frozen
+    while the agent was working.
+    """
+    import time
+
+    from kite.ui import spinner as spinner_mod
+
+    monkeypatch.setattr(spinner_mod, "os_environ_pytest", lambda: False)
+    buf = StringIO()
+    buf.isatty = lambda: False  # type: ignore[method-assign]
+    sp = spinner_mod.WaitSpinner(buf, delay=0.05, heartbeat_s=0.05, label="working  bash")
+    try:
+        sp.start()
+        time.sleep(0.35)
+    finally:
+        sp.stop()
+    out = buf.getvalue()
+    assert out.strip(), "a non-TTY stream still gets progress lines"
+    assert "\r" not in out, "carriage returns corrupt piped/relayed logs"
+    assert "working  bash" in out
+    assert sp._shown is False, "nothing to erase on a non-TTY stream"
+
+
+def test_turn_stays_visibly_alive_between_events() -> None:
+    """No dead windows: the answer tail and the next model call both show up.
+
+    A REPL turn that buffers the answer and leaves the spinner off between a
+    finished tool and the next generation reads as a hang while work continues.
+    """
+    buf = StringIO()
+    display = RunDisplay(Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME))
+    display.composer_owns_input = True  # REPL defers the canonical answer copy
+    display(Event("stream_delta", payload={"text": "Reading src/kite/agent/loop.py"}))
+    assert "Reading src/kite/agent" in display.state.activity_preview
+    assert display._deferred_answer_parts, "the canonical copy is still committed later"
+
+    display(Event("tool_end", payload={"tool": "read", "ok": True, "preview": "ok", "output": "x\n"}))
+    assert display._spinner_on is True, "a finished tool hands the spinner to the next call"
+    display.close()
+
+    # With the composer owning the bottom, the footer carries the label instead.
+    footer = RunDisplay(Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME))
+    footer.state.busy = True
+    footer(Event("tool_end", payload={"tool": "read", "ok": True, "preview": "ok", "output": "x\n"}))
+    assert footer.state.running_label == "thinking"
+    footer.close()
+
+
 def test_output_and_thinking_unwrap_full_width() -> None:
     from kite.ui.output_view import (
         format_thinking_text,
@@ -413,6 +464,30 @@ def test_preview_builders_carry_not_applied_banner(tmp_path) -> None:
     assert count_diff_lines(shown) == (1, 1)
     rendered = render_diff(shown).plain
     assert PREVIEW_NOT_APPLIED in rendered
+
+
+def test_render_diff_shows_old_new_line_numbers() -> None:
+    from kite.ui.diff import _line_numbers
+
+    diff = make_unified_diff(
+        "src/app.py",
+        "def f():\n    return 1\n\n\ndef g():\n    pass\n",
+        "def f(a, b):\n    total = a + b\n    return total\n\n\ndef g():\n    pass\n",
+    )
+    plain = render_diff(diff).plain
+    # Context advances both counters; an added line has no old number.
+    assert "  3 4 " in plain and "  5 6 " in plain
+    assert "  1   " in plain, "the paired -/+ lines carry their own numbers"
+    assert "  1 ┊ +" in plain
+    # Meta and hunk rows keep the left edge instead of blank number columns.
+    meta = [ln for ln in plain.splitlines() if any(t in ln for t in ("--- a/", "+++ b/", "@@ -"))]
+    assert meta and all(ln.lstrip().startswith("┊") for ln in meta)
+
+    assert _line_numbers(["@@ -10,3 +20,2 @@", "-a", "+b", " ctx"])[1:] == [
+        (10, None),
+        (None, 20),
+        (11, 21),
+    ]
 
 
 def test_render_diff_word_highlights_mixed_indent() -> None:

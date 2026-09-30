@@ -153,16 +153,24 @@ def render_pick_list(
     refreshable: bool = False,
     page_hint: bool = False,
     cursor: int | None = None,
+    checked: set[str] | None = None,
+    details: dict[str, str] | None = None,
+    hint: str | None = None,
 ) -> Text:
     """Left-bar numbered picker, same visual language as login panels.
 
     Long labels truncate with … so narrow terminals (40-60 cols) keep one
     row per item instead of rewrapping the list. Under Orca relay the
     budget shrinks further (relay tier ≈60 cols).
+
+    ``cursor`` is the highlighted row (arrow keys / mouse), ``checked`` the
+    set of ids toggled on in a multi-select, ``details`` optional second
+    lines keyed by id, and ``hint`` replaces the default footer keys.
     """
     from kite.util.tty import is_orca_relay
 
     label_limit = 40 if is_orca_relay() else 64
+    detail_limit = label_limit - 2
     body = Text()
     body.append(f"{GUTTER}┊ ", style="kite.pending")
     body.append(title, style="kite.pending bold")
@@ -170,6 +178,7 @@ def render_pick_list(
     for i, (item_id, label) in enumerate(items, start=1):
         is_current = bool(current and item_id == current)
         is_cursor = cursor is not None and (i - 1) == cursor
+        is_checked = bool(checked and item_id in checked)
         mark = " *" if is_current and "*" not in label else ""
         prefix = "▸ " if is_cursor else "  "
         text = f"{label}{mark}"
@@ -179,10 +188,18 @@ def render_pick_list(
         body.append(f"{prefix}{i:>3}  ", style="kite.pick")
         body.append(
             f"{text}\n",
-            style="kite.pick.current" if (is_current or is_cursor) else "",
+            style="kite.pick.current" if (is_current or is_cursor or is_checked) else "",
         )
+        detail = (details or {}).get(item_id, "").strip()
+        if detail:
+            if len(detail) > detail_limit:
+                detail = detail[: detail_limit - 1] + "…"
+            body.append(f"{GUTTER}┊     {detail}\n", style="kite.muted")
     body.append(f"{GUTTER}┊\n", style="kite.muted")
     body.append(f"{GUTTER}┊ ", style="kite.muted")
+    if hint:
+        body.append(hint + "\n", style="kite.muted")
+        return body
     bits: list[str] = []
     if refreshable:
         bits.append("r = refresh from API")

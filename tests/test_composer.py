@@ -196,6 +196,46 @@ def test_slash_completion_wiring() -> None:
     assert "quit" in names and "exit" in names
 
 
+def test_slash_menu_rows_are_cached_until_invalidated() -> None:
+    """complete_while_typing re-runs the completer per keystroke.
+
+    Rebuilding the visible specs and re-rendering every menu row made typing a
+    slash command lag; both are memoized and must drop when the index changes.
+    """
+    from prompt_toolkit.completion import CompleteEvent
+    from prompt_toolkit.document import Document
+
+    import kite.ui.complete as complete
+    from kite.cli.slash import CommandIndex, SlashSpec
+
+    index = CommandIndex.load(".")
+    completer = complete.SlashCompleter(lambda: index)
+
+    calls: list[int] = []
+    real = complete._visible_specs
+
+    def _counting(index_arg, *, support):  # noqa: ANN001, ANN202
+        calls.append(1)
+        return real(index_arg, support=support)
+
+    orig, complete._visible_specs = complete._visible_specs, _counting
+    try:
+        list(completer.get_completions(Document("/", 1), CompleteEvent()))
+        list(completer.get_completions(Document("/a", 2), CompleteEvent()))
+        list(completer.get_completions(Document("/ab", 3), CompleteEvent()))
+    finally:
+        complete._visible_specs = orig
+    assert len(calls) == 1, "visible specs are built once, not per keystroke"
+
+    # Rendered rows are memoized per spec name, and rebuilt after invalidate().
+    spec = SlashSpec(name="thinker", kind="control", source="builtin", description="d")
+    first = complete.cached_completion_display(completer, spec, index)
+    assert complete.cached_completion_display(completer, spec, index) is first
+    completer.invalidate()
+    assert completer._display_cache == {}
+    assert complete.cached_completion_display(completer, spec, index) is not None
+
+
 def test_composer_layout_multiline_and_newlines(kite_home, monkeypatch) -> None:
     from types import SimpleNamespace
 

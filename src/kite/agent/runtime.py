@@ -594,6 +594,7 @@ class AgentRuntime:
                     {"tool": call.name, "arguments": dict(call.arguments)}
                 ),
                 policy_engine=self.policy_engine_override,
+                approval=approval.value,
             )
 
         if self.slots.model is not None:

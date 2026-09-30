@@ -111,6 +111,49 @@ def test_run_state_and_legacy_event_bridge() -> None:
     assert back.kind == "tool_start" and back.payload["tool"] == "read"
 
 
+def test_approval_tiers_gate_only_risky_effects(tmp_path: Path) -> None:
+    """auto/trust/yolo run on their own; supervised prompts for every mutation."""
+    from kite.application.policy import PolicyEngine
+    from kite.application.tools import tool_requires_approval_gate
+
+    routine = [
+        ("read", {"path": "a.py"}),
+        ("grep", {"pattern": "x"}),
+        ("write", {"path": "src/app.py", "content": "x"}),
+        ("edit", {"path": "src/app.py", "old": "a", "new": "b"}),
+        ("bash", {"command": "pytest -q"}),
+        ("bash", {"command": "git commit -m x"}),
+        ("bash", {"command": "npm run build"}),
+    ]
+    for tool, args in routine:
+        for tier in ("auto", "trust", "yolo"):
+            assert not tool_requires_approval_gate(tool, args, approval=tier), (tool, args, tier)
+    for tool, args in routine:
+        if tool in {"write", "edit", "bash"}:
+            assert tool_requires_approval_gate(tool, args, approval="supervised"), tool
+
+    risky = [
+        ("bash", {"command": "rm -rf build/"}),
+        ("bash", {"command": "curl http://x.com"}),
+        ("bash", {"command": "pip install requests"}),
+        ("websearch", {"query": "x"}),
+        ("memory", {"action": "remember", "text": "x"}),
+        ("subagent", {"prompt": "x"}),
+    ]
+    for tool, args in risky:
+        assert tool_requires_approval_gate(tool, args, approval="auto"), (tool, args)
+        assert tool_requires_approval_gate(tool, args, approval="yolo"), (tool, args)
+
+    # The policy engine agrees, and the sandbox still refuses the escape.
+    auto = PolicyEngine(tmp_path, approval="auto")
+    write = ToolCall(call_id="w", name="write", arguments={"path": "src/app.py", "content": "x"})
+    assert not auto.authorize(auto.derive_intent(write)).requires_approval
+    sup = PolicyEngine(tmp_path, approval="supervised")
+    assert sup.authorize(sup.derive_intent(write)).requires_approval
+    outside = ToolCall(call_id="o", name="write", arguments={"path": "../evil.py", "content": "x"})
+    assert not auto.authorize(auto.derive_intent(outside)).allowed
+
+
 def test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path) -> None:
     ok, _ = check_path_access("../outside", workspace)
     assert not ok
@@ -135,8 +178,20 @@ def test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path)
     assert not restricted.authorize(restricted.derive_intent(curl)).allowed
     executor = ToolExecutor(policy=engine, runner=lambda c: {"ok": True, "output": "done"}, approver=lambda i, d: False)
     write = ToolCall(call_id="w1", name="write", arguments={"path": "src/app.py", "content": "x"})
-    assert executor.execute(write).status == "denied"
+    # auto: a routine in-workspace write is the agent's job, not a prompt.
+    assert executor.execute(write).status == "ok"
+    # supervised keeps the historical rule: prompt every mutation, deny when
+    # nobody can approve.
+    supervised = ToolExecutor(
+        policy=PolicyEngine(workspace, approval="supervised"),
+        runner=lambda c: {"ok": True, "output": "done"},
+        approver=lambda i, d: False,
+    )
+    assert supervised.execute(write).status == "denied"
     assert executor.execute(write, skip_approval=True).ok
+    # A risky effect still gates in auto, and is denied without an approver.
+    risky = ToolCall(call_id="w2", name="bash", arguments={"command": "curl http://evil.com"})
+    assert executor.execute(risky).status == "denied"
     def _raise(_call):
         raise Submitted({"role": "exit", "content": "done", "extra": {"exit_status": "Submitted"}})
 

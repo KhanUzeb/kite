@@ -16,6 +16,7 @@ from kite.application.tools import (
     PolicyDecision,
     ToolCall,
     ToolIntent,
+    _prompts_every_mutation,
     derive_effects,
     mandatory_reason,
 )
@@ -59,10 +60,12 @@ class PolicyEngine:
         *,
         execution_mode: str = "restricted",
         no_guardrails: bool = False,
+        approval: str = "auto",
     ) -> None:
         self.workspace = str(Path(workspace).expanduser().resolve())
         self.execution_mode = execution_mode or "restricted"
         self.no_guardrails = no_guardrails
+        self.approval = str(approval or "auto")
         self.policy_version = POLICY_VERSION
 
     def derive_intent(self, call: ToolCall) -> ToolIntent:
@@ -149,9 +152,12 @@ class PolicyEngine:
                 policy_version=self.policy_version,
             )
 
-        requires_approval = any(e in intent.side_effects for e in MANDATORY_EFFECTS) or any(
-            e in intent.side_effects for e in ("workspace_write", "long_running")
-        )
+        requires_approval = any(e in intent.side_effects for e in MANDATORY_EFFECTS)
+        if _prompts_every_mutation(self.approval) and (
+            any(e in intent.side_effects for e in ("workspace_write", "long_running"))
+        ):
+            # `supervised` prompts on every mutation; the auto tiers do not.
+            requires_approval = True
         return PolicyDecision(
             allowed=True,
             requires_approval=requires_approval,

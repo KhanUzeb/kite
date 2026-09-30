@@ -70,7 +70,7 @@ class ToolsConfig:
         ]
     )
     bash_timeout_seconds: int = 120
-    progress_interval_seconds: float = 5.0
+    progress_interval_seconds: float = 2.0
 
 
 @dataclass
@@ -164,7 +164,7 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         tools=ToolsConfig(
             enabled=list(tools["enabled"]) if "enabled" in tools else ToolsConfig().enabled,
             bash_timeout_seconds=int(tools.get("bash_timeout_seconds", 120)),
-            progress_interval_seconds=float(tools.get("progress_interval_seconds", 5.0)),
+            progress_interval_seconds=float(tools.get("progress_interval_seconds", 2.0)),
         ),
         guardrails=GuardrailConfig(
             enabled=bool(guard.get("enabled", True)),

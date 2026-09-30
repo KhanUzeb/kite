@@ -116,6 +116,92 @@ def test_win_click_release_selects() -> None:
     assert _click(buttons=0x0, y=11) is None  # release without press: no-op
 
 
+def test_picker_terminal_type_and_relay_guards(monkeypatch) -> None:
+    """A Windows relay is a PTY: never drive it with msvcrt, never ask for mouse."""
+    import sys
+
+    from kite.ui import pick
+
+    monkeypatch.setattr(pick, "_pick_debug", lambda *_a, **_k: None)
+    seen: list[str] = []
+
+    class _FakeReader:
+        def __init__(self, drawn, tag):
+            seen.append(tag)
+            self._drawn = drawn
+
+    monkeypatch.setattr(pick, "_PosixEvents", lambda d: _FakeReader(d, "posix"))
+    monkeypatch.setattr(pick, "_WinPtyEvents", lambda d: _FakeReader(d, "pty"))
+    monkeypatch.setattr(pick, "_WinEvents", lambda d: _FakeReader(d, "console"))
+    monkeypatch.setattr(pick, "_WinKeyOnly", lambda d: _FakeReader(d, "keyonly"))
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(pick, "native_console", lambda: False)
+    assert type(pick._event_reader({})).__name__ == "_FakeReader"
+    assert seen[-1] == "pty", "a PTY relay must not get the console reader"
+    monkeypatch.setattr(pick, "native_console", lambda: True)
+    pick._event_reader({})
+    assert seen[-1] == "console"
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    pick._event_reader({})
+    assert seen[-1] == "posix"
+
+    # Relay sessions must not receive SGR mouse-enable bytes (they echo junk).
+    monkeypatch.setenv("ORCA_RELAY", "1")
+    assert pick.mouse_supported() is False
+    monkeypatch.delenv("ORCA_RELAY")
+    assert pick.mouse_supported() is True
+
+    # Our own cursor-position probe is parsed, never leaked into the filter.
+    ev, rest, need_more = pick._consume_event("\x1b[12;40Rabc", {})
+    assert ev == "__cpr__:12;40" and rest == "abc" and need_more is False
+
+    # A panel taller than the screen must not repaint with relative cursor moves.
+    monkeypatch.setattr(pick, "_screen_height", lambda: 10)
+    assert pick._screen_height() == 10
+
+
+def test_picker_multi_select_typed_fallback() -> None:
+    from kite.ui.pick import numbered_pick
+
+    console = MagicMock()
+    console.input.side_effect = ["2,1"]
+    picked = numbered_pick(
+        console,
+        [("red", "red"), ("blue", "blue"), ("green", "green")],
+        title="Color",
+        noun="option",
+        multiple=True,
+    )
+    assert picked == ["red", "blue"], "list order, not typed order"
+
+    console.input.side_effect = [""]
+    assert numbered_pick(console, [("a", "a")], title="t", noun="option", multiple=True) == []
+
+    from kite.ui.pick import pick_one
+
+    console.input.side_effect = ["2"]
+    assert pick_one(console, [("a", "alpha"), ("b", "beta")], title="t", noun="model") == "b"
+
+
+def test_render_pick_list_cursor_checkbox_and_details() -> None:
+    from kite.ui.credentials import render_pick_list
+
+    panel = render_pick_list(
+        [("red", "red"), ("blue", "blue")],
+        title="Color",
+        cursor=1,
+        checked={"red"},
+        details={"blue": "cool tones"},
+        hint="↑/↓ move",
+    )
+    text = panel.plain
+    assert "▸" in text and "▸" in text.split("blue")[0]
+    assert "cool tones" in text, "multi-line rows need the description rendered"
+    assert text.rstrip().endswith("↑/↓ move"), "explicit hint replaces the default footer"
+
+
 def test_theme_font_subcommands(kite_home) -> None:
     from kite.cli.run import build_parser, cmd_font, cmd_theme
     from kite.ui.theme import current_font, reset_prefs, set_font, theme_label

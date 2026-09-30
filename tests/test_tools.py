@@ -515,6 +515,54 @@ def test_question_console_handler_numbers_text_and_skip() -> None:
     assert out[0]["options"] == ["red"] and out[1]["options"] == []
 
 
+def test_question_interactive_picker_uses_arrows_and_skips_on_cancel() -> None:
+    from unittest.mock import MagicMock, patch
+
+    from kite.ui.question import ask_user_questions
+
+    opts = [{"label": "red", "description": "warm"}, {"label": "blue", "description": "cool"}]
+    console = MagicMock()
+
+    with patch("kite.ui.pick.can_scroll_pick", return_value=True), patch(
+        "kite.ui.pick._console_is_scripted", return_value=False
+    ), patch("kite.ui.pick.numbered_pick", return_value="blue") as pick:
+        out = ask_user_questions(console, [{"question": "Color?", "options": opts}])
+    assert out is not None and out[0] == {"answer": "blue", "options": ["blue"]}
+    assert pick.call_args.kwargs["details"] == {"red": "warm", "blue": "cool"}
+    assert "Space toggle" not in pick.call_args.kwargs["hint"]
+
+    with patch("kite.ui.pick.can_scroll_pick", return_value=True), patch(
+        "kite.ui.pick._console_is_scripted", return_value=False
+    ), patch("kite.ui.pick.numbered_pick", return_value=["red", "blue"]) as pick:
+        out = ask_user_questions(
+            console, [{"question": "Colors?", "options": opts, "multiple": True}]
+        )
+    assert out is not None and out[0]["options"] == ["red", "blue"]
+    assert "Space toggle" in pick.call_args.kwargs["hint"]
+
+    # Esc cancels one question, the rest still get asked.
+    with patch("kite.ui.pick.can_scroll_pick", return_value=True), patch(
+        "kite.ui.pick._console_is_scripted", return_value=False
+    ), patch("kite.ui.pick.numbered_pick", side_effect=[None, "red"]):
+        out = ask_user_questions(
+            console,
+            [
+                {"question": "A?", "options": opts},
+                {"question": "B?", "options": opts},
+            ],
+        )
+    assert out is not None and [a["answer"] for a in out] == ["", "red"]
+
+    # A timed question keeps the blocking typed path (the picker cannot time out).
+    timed = MagicMock()
+    timed.input.side_effect = ["1"]
+    with patch("kite.ui.pick.numbered_pick", side_effect=AssertionError("no picker with a timeout")):
+        out = ask_user_questions(
+            timed, [{"question": "Color?", "options": opts, "timeout": 30}]
+        )
+    assert out is not None and out[0]["answer"] == "red"
+
+
 def test_question_recommended_enter_and_helpers() -> None:
     from unittest.mock import MagicMock
 

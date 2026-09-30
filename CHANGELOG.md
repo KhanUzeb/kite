@@ -22,25 +22,57 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 - Orca-relay compact UI — narrow rendering (pick lists, status, banner,
   console width) activates only inside Orca-managed sessions (`ORCA_*`
   env, `KITE_COMPACT_UI` override); desktop defaults untouched.
+- Picker rows render a cursor, multi-select checkmarks, per-option
+  descriptions and an explicit key hint.
+- Diffs show a dim old/new line-number gutter derived from the hunk headers.
+- Clarifying questions (`question` tool) use the arrow-driven picker with
+  mouse support and Space-to-toggle multi-select on an interactive TTY.
 
 ### Changed
-- Theme/font selection uses the typed picker only — no raw console mode
-  or mouse capture, so option lists cannot freeze or leak escape bytes.
+- Auto-approve now matches what it always claimed to be. In `auto`/`trust`/
+  `yolo` the agent runs on its own and only risky effect classes prompt —
+  destructive shell, network, package/skill install, durable memory, and
+  nested agents on untrusted projects. An in-workspace `write`/`edit` and a
+  slow command no longer stop the turn for a decision the human cannot make
+  meaningfully. `supervised` still prompts on every mutation, and sandbox
+  denies (outside workspace, protected paths, sudo) are unchanged.
+- Slash-command completion is cached per index: the visible menu and every
+  rendered row are built once instead of on each keystroke. Typing `/` went
+  from ~10ms to ~0.8ms per keystroke.
+- Theme/font selection is back on the full picker (arrows, wheel, click)
+  instead of the typed-only fallback introduced earlier in this release —
+  the relay reader that made it unsafe is fixed (see Fixed).
+  `KITE_TYPED_PICK=1` still forces typed input.
 - Antigravity default model refreshed to a live `agy` id
   (`gemini-3.7-flash-medium`); `GEMINI_API_KEY` falls back through the
   antigravity provider like Claude's `ANTHROPIC_API_KEY` fallback.
+- `tools.progress_interval_seconds` defaults to 2.0 (was 5.0) so a running
+  tool never sits silent for long.
 
 ### Fixed
 - Windows picker click-release now selects the row (was highlight-only,
   unlike the POSIX path).
+- Pickers no longer pick their input reader by `sys.platform`. A Windows
+  relay (Orca, mintty, conpty hosts) is a PTY, and driving it with `msvcrt`
+  blocked forever — arrows did nothing and the terminal had to be killed.
+  Terminal type now decides: native console vs VT reader.
+- Mouse reporting is no longer enabled on relay sessions (`ORCA_*`), which
+  echoed the enable bytes back as escape junk.
+- A picker panel taller than the screen repaints with a clear+home instead of
+  relative cursor moves that landed in the scrollback.
+- Mouse row hit-testing works off Windows: the picker asks the terminal for
+  its cursor row instead of relying on the Win32 console API.
+- A turn no longer goes silent while it works. The spinner was hard-disabled
+  whenever stderr was not a TTY, so long runs looked frozen in pipes, relays
+  and CI; it now emits newline heartbeats there. The answer tail mirrors into
+  the footer running line during generation, and a finished tool hands the
+  spinner straight to the next model call.
 - `_normalize_font` accepts canonical `unicode`/`ascii` — font choice
   applies and persists again.
 - Long agy turns passed the prompt as argv and died with WinError 206;
   the prompt travels on stdin now.
 - Bare `_typed_pick` calls crashed with `TypeError` (missing
   `show`/`refreshable`) — same defaults as `numbered_pick`.
-
-## [Unreleased]
 
 ## [1.0.2] - 2026-09-25
 

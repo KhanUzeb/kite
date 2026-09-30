@@ -87,11 +87,39 @@ def _read_with_timeout(
     return outcome.get("line", ""), False
 
 
+def _question_rows(
+    options: list[dict[str, Any]], recommended: str
+) -> tuple[list[tuple[str, str]], dict[str, str]]:
+    """Rows for the picker: (label, display) plus a description line per label."""
+    rows: list[tuple[str, str]] = []
+    details: dict[str, str] = {}
+    for opt in options:
+        label = str(opt.get("label") or "").strip()
+        desc = str(opt.get("description") or "").strip()
+        rows.append((label, _display_label(label, recommended)))
+        if desc:
+            details[label] = desc
+    return rows, details
+
+
+def _pick_hint(*, multiple: bool, noun: str = "option") -> str:
+    bits = ["↑/↓ move", "Enter select"]
+    if multiple:
+        bits.insert(1, "Space toggle")
+    bits += ["type to filter", "number picks", "Esc skip"]
+    return " · ".join(bits)
+
+
 def ask_user_questions(
     console: Console, questions: list[dict[str, Any]]
 ) -> list[dict[str, Any]] | None:
-    """Prompt every question; return aligned [{answer, options}] or None on EOF."""
-    from kite.ui.pick import _read_choice
+    """Prompt every question; return aligned [{answer, options}] or None on EOF.
+
+    Interactive TTY without a timeout uses the arrow-driven picker (mouse too);
+    scripted consoles, pipes and timed questions stay on the typed path so
+    tests and CI keep driving ``console.input``.
+    """
+    from kite.ui.pick import _console_is_scripted, _read_choice, can_scroll_pick
 
     answers: list[dict[str, Any]] = []
     total = len(questions)
@@ -104,6 +132,17 @@ def ask_user_questions(
         timeout_s = _coerce_timeout(item.get("timeout"))
         title = f"question {idx + 1}/{total}" + (f" · {header}" if header else "")
         console.print(f"[kite.brand]{title}[/]  {text}")
+
+        interactive = (
+            options
+            and timeout_s is None
+            and not _console_is_scripted(console)
+            and can_scroll_pick()
+        )
+        if interactive:
+            answers.append(_ask_interactive(console, options, recommended, multiple=multiple))
+            continue
+
         for num, opt in enumerate(options, start=1):
             label = str(opt.get("label") or "").strip()
             desc = str(opt.get("description") or "").strip()
@@ -137,6 +176,36 @@ def ask_user_questions(
         )
         answers.append({"answer": answer, "options": picked})
     return answers
+
+
+def _ask_interactive(
+    console: Console,
+    options: list[dict[str, Any]],
+    recommended: str,
+    *,
+    multiple: bool,
+) -> dict[str, Any]:
+    """Arrow/mouse question prompt — Esc skips this question, not the rest."""
+    from kite.ui.pick import numbered_pick
+
+    rows, details = _question_rows(options, recommended)
+    prefill = [recommended] if recommended else []
+    chosen = numbered_pick(
+        console,
+        rows,
+        current=prefill[0] if prefill else None,
+        title="pick an option",
+        noun="option",
+        multiple=multiple,
+        details=details,
+        hint=_pick_hint(multiple=multiple),
+    )
+    if chosen is None:  # cancelled
+        return {"answer": "", "options": []}
+    picked = [chosen] if isinstance(chosen, str) else list(chosen)
+    if not picked:
+        return {"answer": "", "options": []}
+    return {"answer": ", ".join(picked), "options": picked}
 
 
 def _interpret_answer(

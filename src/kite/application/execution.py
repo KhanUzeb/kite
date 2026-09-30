@@ -346,11 +346,13 @@ def build_tool_executor(
     no_guardrails: bool,
     runner: Callable[[ToolCall], dict[str, Any]],
     policy_engine: PolicyEngine | None = None,
+    approval: str = "auto",
 ) -> ToolExecutor:
     policy = policy_engine or PolicyEngine(
         workspace_root,
         execution_mode=execution_mode,
         no_guardrails=no_guardrails,
+        approval=approval,
     )
     return ToolExecutor(
         policy=policy,

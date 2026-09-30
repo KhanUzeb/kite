@@ -190,7 +190,11 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Collapse** — Tool output truncated by default; user expands with `/expand` or Ctrl+O.
 
-**Picker** — Console list for models, providers, and sessions. TTY: arrows or a number. Scripts/CI: typed prompt (`KITE_TYPED_PICK=1`). Not a fullscreen prompt_toolkit dialog.
+**Picker** — Console list for models, providers, sessions, appearance, and clarifying questions. TTY: arrows, Page Up/Down, wheel, click-to-highlight (release selects), type to filter, type a number then Enter. Scripts/CI: typed prompt (`KITE_TYPED_PICK=1`). Not a fullscreen prompt_toolkit dialog. The input reader is chosen by **terminal type**, not `sys.platform`: a Windows relay (Orca, mintty, conpty hosts) is a PTY and gets the VT reader — driving it with `msvcrt` blocks forever. Mouse reporting is never enabled on relay sessions (`ORCA_*`), which echo those bytes back as junk; `KITE_NO_MOUSE_PICK=1` disables it anywhere.
+
+**Picker fallback chain** — `numbered_pick` (multi-select capable) → `_raw_pick` (arrows/mouse, wrapped in try/except) → `_typed_pick`. UI surfaces call `pick_one`, the single-select wrapper with the narrowed return type. `_typed_pick` stays reachable as the forced-typed escape hatch.
+
+**Progress heartbeat** — `WaitSpinner` animates with `\r` on a TTY. On a non-TTY stderr (pipe, relay, CI log) a `\r` redraw is invisible, so it emits newline-delimited heartbeat lines starting at `heartbeat_s` and backing off to a 15s ceiling. Without this, long turns look frozen while the agent works. `tools.progress_interval_seconds` (default 2s) bounds silence between `tool_progress` events.
 
 ---
 

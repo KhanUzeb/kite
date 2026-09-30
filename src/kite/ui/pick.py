@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -71,7 +71,40 @@ def can_scroll_pick() -> bool:
 
     if os.environ.get("KITE_TYPED_PICK", "").strip().lower() in {"1", "true", "yes", "on"}:
         return False
+    if os.environ.get("KITE_NO_MOUSE_PICK", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return mouse_supported()  # only a hint; keys still work
     return can_prompt()
+
+
+def native_console() -> bool:
+    """True when stdin is a real Win32 console (not a PTY/conpty relay).
+
+    Terminal relays — Orca's embedded terminal, mintty, conpty hosts — hand the
+    process a PTY on Windows. ``sys.platform`` stays ``"win32"`` there, so a
+    platform check picks the ``msvcrt`` reader for a handle it cannot drive:
+    ``getwch()`` blocks forever and the picker wedges the terminal. Ask the
+    console itself instead.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        mode = wintypes.DWORD()
+        handle = ctypes.windll.kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        return bool(ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)))
+    except Exception:
+        return False
+
+
+def mouse_supported() -> bool:
+    """False on relay terminals — they echo our mouse-enable bytes as junk."""
+    from kite.util.tty import is_orca_relay
+
+    if is_orca_relay():
+        return False
+    return True
 
 
 def _read_choice(console: Console, prompt: str) -> str:
@@ -101,11 +134,22 @@ def numbered_pick(
     noun: str,
     show: int = _PICK_SHOW,
     refreshable: bool = False,
-) -> str | None:
+    multiple: bool = False,
+    details: dict[str, str] | None = None,
+    hint: str | None = None,
+) -> str | list[str] | None:
     """Pick from a list.
 
-    Interactive TTY: arrows, Page Up/Down, wheel/trackpad (Windows console), type to
-    filter, Enter. Scripted/tests: number, id, substring, ``+``/``-`` pages, ``r``.
+    Interactive TTY: arrows, Page Up/Down, wheel/trackpad, click to highlight
+    (release selects), type to filter, Enter. Scripted/tests: number, id,
+    substring, ``+``/``-`` pages, ``r``.
+
+    ``multiple`` toggles rows with Space and returns every checked id. The
+    return type widens to ``list[str]`` only in that mode.
+
+    The reader is chosen by terminal type, not ``sys.platform``: a Windows relay
+    (Orca, mintty, conpty) is a PTY and needs the VT reader — driving it with
+    ``msvcrt`` blocks forever.
     """
     if not items:
         from kite.ui.empty import render_empty
@@ -125,12 +169,18 @@ def numbered_pick(
                 noun=noun,
                 show=show,
                 refreshable=refreshable,
+                multiple=multiple,
+                details=details,
+                hint=hint,
             )
         except (EOFError, KeyboardInterrupt):
             console.print("\n[kite.pending]Cancelled[/]")
             return None
         except Exception:
             pass
+    if multiple:
+        picked = _typed_pick_multi(console, items, title=title, noun=noun, show=show, refreshable=refreshable)
+        return picked
     return _typed_pick(
         console,
         items,
@@ -142,6 +192,50 @@ def numbered_pick(
     )
 
 
+def pick_one(
+    console: Console,
+    items: list[tuple[str, str]],
+    *,
+    title: str,
+    noun: str,
+    current: str | None = None,
+    show: int = _PICK_SHOW,
+    refreshable: bool = False,
+    details: dict[str, str] | None = None,
+    hint: str | None = None,
+) -> str | None:
+    """Single-select picker with the narrowed return type callers expect.
+
+    Arrows + wheel + click on a real terminal, type-to-filter everywhere, and a
+    typed fallback when the raw reader cannot drive the stream. This is what UI
+    surfaces should call — ``_typed_pick`` stays the forced-typed escape hatch.
+    """
+    picked = numbered_pick(
+        console,
+        items,
+        current=current,
+        title=title,
+        noun=noun,
+        show=show,
+        refreshable=refreshable,
+        details=details,
+        hint=hint,
+    )
+    if isinstance(picked, list):
+        return picked[0] if picked else None
+    return picked
+
+
+def _screen_height() -> int:
+    """Usable rows, never below a sane floor (relays under-report the size)."""
+    try:
+        import shutil
+
+        return max(8, int(shutil.get_terminal_size((80, 24)).lines))
+    except Exception:
+        return 24
+
+
 def _raw_pick(
     console: Console,
     items: list[tuple[str, str]],
@@ -151,15 +245,20 @@ def _raw_pick(
     noun: str,
     show: int,
     refreshable: bool,
-) -> str | None:
+    multiple: bool = False,
+    details: dict[str, str] | None = None,
+    hint: str | None = None,
+) -> str | list[str] | None:
     """In-place list driven by raw keys, wheel, and click (press highlights, release selects)."""
     _ensure_vt_output()
     pool = list(items)
     state = {"filter": "", "cursor": 0, "offset": 0}
+    checked: set[str] = set()
     ids = [item_id for item_id, _ in pool]
     if current and current in ids:
         state["cursor"] = ids.index(current)
-    drawn = {"lines": 0}
+    drawn: dict[str, Any] = {"lines": 0, "n_view": 0, "item_y0": None}
+    show = max(1, min(show, _screen_height() - 6))
 
     def filtered() -> list[tuple[str, str]]:
         needle = state["filter"].lower()
@@ -208,18 +307,25 @@ def _raw_pick(
             refreshable=refreshable,
             page_hint=extra > 0,
             cursor=state["cursor"] - state["offset"] if view else None,
+            hint=hint,
+            checked=checked,
+            details=details,
         )
-        if drawn["lines"]:
-            sys.stderr.write(f"\x1b[{drawn['lines']}A\x1b[J")
-            sys.stderr.flush()
         with console.capture() as cap:
             console.print(panel)
         text = cap.get()
-        sys.stderr.write(text)
         if not text.endswith("\n"):
-            sys.stderr.write("\n")
+            text += "\n"
+        lines = text.count("\n")
+        # A panel taller than the screen cannot be repainted with relative cursor
+        # moves (ESC[nA lands in the scrollback) — clear and redraw instead.
+        if drawn["lines"] and lines <= _screen_height() - 1:
+            sys.stderr.write(f"\x1b[{drawn['lines']}A\x1b[J")
+        elif drawn["lines"]:
+            sys.stderr.write("\x1b[2J\x1b[H")
+        sys.stderr.write(text)
         sys.stderr.flush()
-        drawn["lines"] = text.count("\n") + (0 if text.endswith("\n") else 1)
+        drawn["lines"] = lines
         drawn["n_view"] = len(view)
         end_y = _stderr_cursor_y()
         if end_y is not None:
@@ -228,6 +334,13 @@ def _raw_pick(
 
     paint()
     reader = _event_reader(drawn)
+    if drawn.get("item_y0") is None:
+        # Relays have no console API — ask the terminal where we started so
+        # clicks map to rows. A silent terminal simply loses click-to-select.
+        base = reader.cursor_row() if hasattr(reader, "cursor_row") else None
+        if base is not None:
+            drawn["start_y"] = base
+            drawn["item_y0"] = base + 1
     try:
         while True:
             ev = reader()
@@ -243,23 +356,41 @@ def _raw_pick(
                 if 0 <= vis < min(show, len(rows)):
                     state["cursor"] = state["offset"] + vis
                     if ev.startswith("pick:"):
+                        if multiple:
+                            return _finish_multi(rows, state, checked)
                         return rows[state["cursor"]][0]
                     paint()
                 continue
             if ev in {"esc", "ctrl-c"}:
                 console.print("[kite.pending]Cancelled[/]")
                 return None
-            if ev == "enter":
+            if ev == "space":
+                rows = clamp()
+                if multiple and rows:
+                    row = rows[state["cursor"]][0]
+                    checked.symmetric_difference_update({row})
+                elif rows:
+                    return rows[state["cursor"]][0]
+            elif ev == "enter":
                 rows = clamp()
                 if not rows:
                     return None
                 if state["filter"].isdigit():
                     idx = int(state["filter"])
                     view = rows[state["offset"] : state["offset"] + show]
+                    hit = None
                     if 1 <= idx <= len(view):
-                        return view[idx - 1][0]
-                    if 1 <= idx <= len(rows):
-                        return rows[idx - 1][0]
+                        hit = view[idx - 1][0]
+                    elif 1 <= idx <= len(rows):
+                        hit = rows[idx - 1][0]
+                    if hit is not None:
+                        if not multiple:
+                            return hit
+                        checked.symmetric_difference_update({hit})
+                        paint()
+                        continue
+                if multiple:
+                    return _finish_multi(rows, state, checked)
                 return rows[state["cursor"]][0]
             if ev == "up":
                 move(-1)
@@ -293,6 +424,12 @@ def _raw_pick(
         close = getattr(reader, "close", None)
         if close is not None:
             close()
+
+
+def _finish_multi(rows: list[tuple[str, str]], state: dict, checked: set[str]) -> list[str]:
+    """Enter in multi-select: the checked ids in list order (empty = skip)."""
+    order = [item_id for item_id, _ in rows]
+    return [item_id for item_id in order if item_id in checked]
 
 
 def view_index_from_mouse(*, mouse_y: int, item_y0: int, n_view: int) -> int | None:
@@ -391,6 +528,11 @@ def _consume_event(buf: str, drawn: dict) -> tuple[str | None, str, bool]:
         if len(buf) >= 6:
             return None, buf[6:], False
         return None, buf, True
+    # Cursor-position report ESC[row;colR — our own DSR probe, never filter text.
+    m = re.match(r"^\x1b\[(\d+);(\d+)R", buf)
+    if m:
+        seq = m.group(0)
+        return f"__cpr__:{m.group(1)};{m.group(2)}", buf[len(seq) :], False
     m = re.match(r"^\x1b\[[0-9;:<=>\?]*[@-~]", buf)
     if m:
         seq = m.group(0)
@@ -403,16 +545,25 @@ def _consume_event(buf: str, drawn: dict) -> tuple[str | None, str, bool]:
 
 
 def _event_reader(drawn: dict):
-    if sys.platform == "win32":
-        try:
-            reader = _WinEvents(drawn)
-        except OSError as exc:
-            _pick_debug(f"reader=_WinKeyOnly fallback ({exc!r})")
-            return _WinKeyOnly(drawn)
-        _pick_debug("reader=_WinEvents")
-        return reader
-    _pick_debug("reader=_PosixEvents")
-    return _PosixEvents(drawn)
+    """Pick a reader by *terminal type*, not by ``sys.platform``.
+
+    A Windows relay (Orca, mintty, conpty hosts) is a PTY: arrows arrive as ANSI
+    bytes and ``msvcrt`` cannot drive the handle. Anything that is not a native
+    Win32 console goes down the VT path.
+    """
+    if sys.platform != "win32":
+        _pick_debug("reader=_PosixEvents")
+        return _PosixEvents(drawn)
+    if not native_console():
+        _pick_debug("reader=_WinPtyEvents (relay/pty)")
+        return _WinPtyEvents(drawn)
+    try:
+        reader = _WinEvents(drawn)
+    except OSError as exc:
+        _pick_debug(f"reader=_WinKeyOnly fallback ({exc!r})")
+        return _WinKeyOnly(drawn)
+    _pick_debug("reader=_WinEvents")
+    return reader
 
 
 def _ensure_vt_output() -> None:
@@ -432,6 +583,182 @@ def _ensure_vt_output() -> None:
             k32.SetConsoleMode(h, mode.value | 0x0004)
     except Exception:
         return
+
+
+class _WinPtyEvents:
+    """VT reader for a Windows PTY relay (Orca, mintty, conpty hosts).
+
+    ``sys.platform`` is win32 but there is no console to call ``msvcrt`` on, so
+    we do what a POSIX terminal does: ask for virtual-terminal input, read bytes
+    off the fd, and feed them to the same ``_consume_event`` parser. Split escape
+    sequences are coalesced across reads so ``[B`` fragments never leak into the
+    type-to-filter buffer.
+
+    Mouse reporting stays off — relays echo those enable bytes back as junk.
+    """
+
+    _SETTLE_ROUNDS = 6
+    _SETTLE_SLEEP = 0.015
+
+    def __init__(self, drawn: dict | None = None) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        self._drawn = drawn or {}
+        self._buf = ""
+        self._closed = False
+        self._k32 = ctypes.windll.kernel32
+        self._h = self._k32.GetStdHandle(-10)
+        self._old = wintypes.DWORD()
+        self._restore: tuple[int, int] | None = None
+        if self._k32.GetConsoleMode(self._h, ctypes.byref(self._old)):
+            # ENABLE_VIRTUAL_TERMINAL_INPUT: arrows become ESC[A/ESC[B.
+            # ENABLE_PROCESSED_INPUT off so Ctrl-C arrives as \x03 for us.
+            mode = (int(self._old.value) | 0x0200) & ~0x0001 & ~0x0004
+            if self._k32.SetConsoleMode(self._h, mode):
+                self._restore = (int(self._h), int(self._old.value))
+        self._fd = _stdin_fd()
+
+    def _read_ready(self) -> str:
+        import os
+
+        if self._fd is None:
+            return ""
+        try:
+            chunk = os.read(self._fd, 4096)
+        except OSError:
+            return ""
+        if not chunk:
+            return "\x04"  # EOF on the PTY — the picker loop turns this into cancel
+        return chunk.decode("utf-8", errors="replace")
+
+    def _fill(self, timeout: float) -> bool:
+        """Buffer more bytes, waiting up to ``timeout`` for the first one."""
+        import select
+        import time
+
+        if self._fd is None:
+            return False
+        deadline = time.monotonic() + max(0.0, timeout)
+        grew = False
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if not select.select([self._fd], [], [], remaining)[0]:
+                break
+            data = self._read_ready()
+            if not data:
+                break
+            self._buf += data
+            grew = True
+            break
+        # Coalesce a sequence split across reads instead of leaking "[B".
+        for _ in range(self._SETTLE_ROUNDS):
+            _, _, need_more = _consume_event(self._buf, self._drawn)
+            if not need_more:
+                break
+            time.sleep(self._SETTLE_SLEEP)
+            try:
+                import os as _os
+
+                more = _os.read(self._fd, 4096) if self._fd is not None else b""
+            except OSError:
+                break
+            if not more:
+                break
+            self._buf += more.decode("utf-8", errors="replace")
+            grew = True
+        return grew
+
+    def __call__(self) -> str | None:
+        grew = self._fill(0.5 if not self._buf else 0.0)
+        while self._buf:
+            ev, rest, need_more = _consume_event(self._buf, self._drawn)
+            if need_more:
+                if self._buf == "\x1b" and not grew:
+                    self._buf = ""
+                    _pick_debug("ev='esc' (lone)")
+                    return "esc"
+                self._fill(self._SETTLE_SLEEP * 2)
+                continue
+            self._buf = rest
+            if ev is None and rest:
+                continue  # swallowed junk, more input queued
+            _pick_debug(f"ev={ev!r}")
+            return ev
+        return None
+
+    def cursor_row(self) -> int | None:
+        return _dsr_cursor_row(self)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._restore is not None:
+            try:
+                from ctypes import wintypes
+
+                self._k32.SetConsoleMode(self._restore[0], wintypes.DWORD(self._restore[1]))
+            except Exception:
+                pass
+
+
+def _stdin_fd() -> int | None:
+    """Raw fd for stdin, or None when stdin is not selectable."""
+    import os
+
+    for stream in (sys.stdin, getattr(sys.stdin, "buffer", None)):
+        try:
+            fd = stream.fileno()
+        except Exception:
+            continue
+        try:
+            if os.isatty(fd):
+                return fd
+        except Exception:
+            continue
+    return None
+
+
+def _dsr_cursor_row(reader: Any) -> int | None:
+    """Ask the terminal where the cursor is (ESC[6n → ESC[row;colR).
+
+    Needed for mouse hit-testing on relays, where the Win32 console API is
+    unavailable. Returns 0-based row, or None when the terminal stays silent.
+    """
+    import re
+    import time
+
+    fd = getattr(reader, "_fd", None)
+    if fd is None:
+        return None
+    sys.stderr.write("\x1b[6n")
+    sys.stderr.flush()
+    deadline = time.monotonic() + 0.35
+    while time.monotonic() < deadline:
+        ev, rest, need_more = _consume_event(getattr(reader, "_buf", ""), {})
+        if need_more:
+            time.sleep(0.01)
+            continue
+        reader._buf = rest  # noqa: SLF001
+        if isinstance(ev, str) and ev.startswith("__cpr__"):
+            m = re.match(r"__cpr__:(\d+);(\d+)", ev)
+            if m:
+                return max(0, int(m.group(1)) - 1)
+        try:
+            import os
+            import select
+
+            if select.select([fd], [], [], 0.05)[0]:
+                chunk = os.read(fd, 64).decode("utf-8", errors="replace")
+                reader._buf += chunk  # noqa: SLF001
+                continue
+        except OSError:
+            return None
+        time.sleep(0.01)
+    return None
 
 
 class _WinKeyOnly:
@@ -534,7 +861,10 @@ class _WinEvents:
         if not self._k32.GetConsoleMode(self._h, ctypes.byref(self._old)):
             raise OSError("no console")
         # Mouse on, Quick Edit off so drag events reach us (restored on close).
-        mode = (int(self._old.value) | 0x0010 | 0x0008 | 0x0080 | 0x0001) & ~0x0040 & ~0x0002 & ~0x0004
+        mode = int(self._old.value) | 0x0001 | 0x0008
+        if mouse_supported():
+            mode |= 0x0010 | 0x0080
+        mode &= ~0x0040 & ~0x0002 & ~0x0004
         if not self._k32.SetConsoleMode(self._h, mode):
             raise OSError("console mode")
         self._IR = INPUT_RECORD
@@ -624,8 +954,11 @@ class _PosixEvents:
         self._termios = termios
         self._old = termios.tcgetattr(self._fd)
         tty.setcbreak(self._fd)
-        sys.stderr.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h")
-        sys.stderr.flush()
+        # Relays echo these enable bytes back as junk — only ask when supported.
+        self._mouse = mouse_supported()
+        if self._mouse:
+            sys.stderr.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h")
+            sys.stderr.flush()
         self._closed = False
         self._buf = ""
 
@@ -709,13 +1042,17 @@ class _PosixEvents:
             return None
         return ev
 
+    def cursor_row(self) -> int | None:
+        return _dsr_cursor_row(self)
+
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
         try:
-            sys.stderr.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l")
-            sys.stderr.flush()
+            if getattr(self, "_mouse", True):
+                sys.stderr.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l")
+                sys.stderr.flush()
             self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._old)
         except Exception:
             pass
@@ -865,6 +1202,72 @@ def _typed_pick(
         console.print(f"[kite.pending]No matching {noun}[/]  — type part of the id")
         pool = list(items)
         offset = 0
+
+
+def _typed_pick_multi(
+    console: Console,
+    items: list[tuple[str, str]],
+    *,
+    title: str,
+    noun: str,
+    show: int = _PICK_SHOW,
+    refreshable: bool = False,
+) -> list[str] | None:
+    """Typed fallback for multi-select: comma-separated numbers/ids, empty = skip."""
+    from kite.ui.credentials import render_pick_list
+
+    pool = list(items)
+    offset = 0
+    while True:
+        shown = pool[offset : offset + show]
+        extra = max(0, len(pool) - offset - len(shown))
+        console.print(
+            render_pick_list(
+                shown,
+                title=title,
+                noun=noun,
+                refreshable=refreshable,
+                extra=extra,
+                page_hint=extra > 0,
+            )
+        )
+        prompt = f"Pick {noun} (numbers comma-separated"
+        if refreshable:
+            prompt += ", r refresh"
+        prompt += ", empty = skip, q = cancel): "
+        try:
+            raw = _read_choice(console, prompt)
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[kite.pending]Cancelled[/]")
+            return None
+        if raw.lower() in {"q", "quit"}:
+            console.print("[kite.pending]Cancelled[/]")
+            return None
+        if refreshable and raw.lower() in {"r", "refresh"}:
+            return [REFRESH_PICK]
+        if not raw:
+            return []
+        by_id = {item_id: item_id for item_id, _ in pool}
+        picked: list[str] = []
+        for tok in (t.strip() for t in raw.split(",")):
+            if not tok:
+                continue
+            if tok.isdigit() and 1 <= int(tok) <= len(pool):
+                value = pool[int(tok) - 1][0]
+            elif tok in by_id:
+                value = tok
+            else:
+                hits = [i for i, _ in pool if tok.lower() in i.lower()]
+                if len(hits) != 1:
+                    console.print(f"[kite.pending]No unique {noun} for {tok!r}[/]")
+                    break
+                value = hits[0]
+            if value not in picked:
+                picked.append(value)
+        else:
+            order = [item_id for item_id, _ in pool]
+            return [i for i in order if i in picked]
+        continue
 
 
 def confirm(console: Console, question: str, *, default: bool = True) -> bool:

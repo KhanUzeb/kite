@@ -977,13 +977,13 @@ class ChatSession:
         from kite.ui.theme import THEME_NAMES, set_theme, theme_label
 
         if not raw.strip():
-            # Typed picker only: the raw mouse picker freezes on some
-            # terminals and leaks escape bytes — theme selection stays on
-            # number/name + Enter.
-            from kite.ui.pick import _typed_pick
+            # Full picker — the reader is chosen by terminal type, so a
+            # Windows PTY relay (Orca) gets the VT reader instead of the
+            # console one that used to hang it.
+            from kite.ui.pick import pick_one
             from kite.ui.theme import THEME_HELP
 
-            picked = _typed_pick(
+            picked = pick_one(
                 self.console,
                 [(name, THEME_HELP.get(name, name)) for name in THEME_NAMES],
                 current=theme_label().split(" ", 1)[0],
@@ -1059,11 +1059,11 @@ class ChatSession:
         from kite.ui.theme import FONT_NAMES, glyph_preview, set_font
 
         if not raw.strip():
-            # Typed picker only (see _set_theme).
-            from kite.ui.pick import _typed_pick
+            # Full picker (see _set_theme).
+            from kite.ui.pick import pick_one
             from kite.ui.theme import FONT_HELP, current_font
 
-            picked = _typed_pick(
+            picked = pick_one(
                 self.console,
                 [(name, FONT_HELP.get(name, name)) for name in FONT_NAMES],
                 current=current_font(),
@@ -2215,10 +2215,10 @@ class ChatSession:
         token = arg.strip().lower()
         if not token:
             from kite.ui.complete import _LEVEL_META
-            from kite.ui.pick import _typed_pick
+            from kite.ui.pick import pick_one
 
             current = reasoning_to_thinking_level(self.state.reasoning, info)
-            picked = _typed_pick(
+            picked = pick_one(
                 self.console,
                 [(pi, _LEVEL_META.get(pi, pi)) for pi, _ in menu],
                 current=current if current in ids else None,
@@ -2255,9 +2255,9 @@ class ChatSession:
             return
         token = (arg or "").strip().lower()
         if not token:
-            from kite.ui.pick import _typed_pick
+            from kite.ui.pick import pick_one
 
-            picked = _typed_pick(
+            picked = pick_one(
                 self.console,
                 generic,
                 current=None,

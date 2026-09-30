@@ -218,6 +218,8 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         self._reasoning_info = reasoning_info
         self._index_cache: CommandIndex | None = None
         self._support_cache: ReasoningSupport | None = None
+        self._visible_cache: tuple[CommandIndex, list[SlashSpec]] | None = None
+        self._display_cache: dict[str, Any] = {}
 
     def _index(self) -> CommandIndex:
         if self._index_cache is None:
@@ -227,6 +229,8 @@ class SlashCompleter(Completer):  # type: ignore[misc]
     def invalidate(self) -> None:
         self._index_cache = None
         self._support_cache = None
+        self._visible_cache = None
+        self._display_cache = {}
 
     def _support(self) -> ReasoningSupport:
         if self._support_cache is not None:
@@ -258,12 +262,11 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         body = raw[1:]
         cmd, sep, rest = body.partition(" ")
         index = self._index()
-        support = self._support_cache or ReasoningSupport(False, False, False, False, source="none")
 
         if not sep:
             prefix = cmd.lower()
             seen: set[str] = set()
-            for spec in _visible_specs(index, support=support):
+            for spec in cached_visible_specs(self):
                 name = spec.name
                 if name in seen:
                     continue
@@ -274,11 +277,11 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                 if spec.name in {"thinking", "variants"}:
                     from kite.models.reasoning import thinking_level_menu
 
-                    extra = " ".join(pi for pi, _ in thinking_level_menu(support))
+                    extra = " ".join(pi for pi, _ in thinking_level_menu(self._support()))
                 yield Completion(
                     spec.name,
                     start_position=-len(cmd),
-                    display=_slash_completion_display(spec, index),
+                    display=cached_completion_display(self, spec, index),
                     display_meta=_slash_meta(spec, index, extra),
                 )
             for alias, canonical in DISCOVERABLE_ALIASES:
@@ -480,15 +483,11 @@ def _slash_origin(spec: SlashSpec, index: CommandIndex) -> str:
     if spec.source == "builtin":
         return "builtin"
     if spec.source == "skill":
-        skill = next((s for s in index.skills if s.name.lower() == spec.name), None)
-        if skill is None:
+        source = index.skill_source(spec.name)
+        if source is None:
             return "skill-bundled"
-        if skill.source == "user":
-            return "skill-user"
-        if skill.source == "project":
-            return "skill-project"
-        if skill.source == "plugin":
-            return "skill-plugin"
+        if source in {"user", "project", "plugin"}:
+            return f"skill-{source}"
         return "skill-bundled"
     if spec.plugin:
         return "plugin"
@@ -539,6 +538,22 @@ def _slash_completion_display(spec: SlashSpec, index: CommandIndex, *, name: str
     if not _PT:
         return label
     return HTML(f"<style fg='{color}'><b>{_escape_html(label)}</b></style>")
+
+
+def cached_completion_display(completer: SlashCompleter, spec: SlashSpec, index: CommandIndex) -> Any:
+    """Memoized `_slash_completion_display`.
+
+    Building the `HTML` markup cost ~8ms for the full menu, and
+    `complete_while_typing` re-rendered all ~110 rows on every keystroke — that
+    was the lag you feel while typing a slash command. The rendered row only
+    changes when the index is invalidated, so cache it.
+    """
+    cache = completer._display_cache  # noqa: SLF001
+    hit = cache.get(spec.name)
+    if hit is None:
+        hit = _slash_completion_display(spec, index)
+        cache[spec.name] = hit
+    return hit
 
 
 def _slash_meta(spec: SlashSpec, index: CommandIndex, extra: str = "") -> str:
@@ -652,6 +667,19 @@ def _path_completions(prefix: str, start: int):
             return
 
 
+_ORIGIN_RANK = {
+    "builtin": 0,
+    "prompt-bundled": 1,
+    "prompt-user": 2,
+    "prompt-project": 3,
+    "plugin": 4,
+    "skill-bundled": 5,
+    "skill-user": 6,
+    "skill-project": 7,
+    "skill-plugin": 8,
+}
+
+
 def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[SlashSpec]:
     """Specs shown in the bare-slash menu.
 
@@ -675,22 +703,28 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
         seen.add(spec.name)
         rows.append(spec)
 
-    rank = {
-        "builtin": 0,
-        "prompt-bundled": 1,
-        "prompt-user": 2,
-        "prompt-project": 3,
-        "plugin": 4,
-        "skill-bundled": 5,
-        "skill-user": 6,
-        "skill-project": 7,
-        "skill-plugin": 8,
-    }
-
     def _sort_key(spec: SlashSpec) -> tuple[int, str]:
-        return (rank.get(_slash_origin(spec, index), 9), spec.name)
+        return (_ORIGIN_RANK.get(_slash_origin(spec, index), 9), spec.name)
 
     rows.sort(key=_sort_key)
+    return rows
+
+
+def cached_visible_specs(completer: SlashCompleter) -> list[SlashSpec]:
+    """`_visible_specs` memoized per index.
+
+    `complete_while_typing` re-runs the completer on every keystroke, and the
+    bare-slash menu rebuilt plus re-sorted ~180 specs each time. The menu only
+    changes when the index is invalidated (`/reload`, skills added), so cache
+    against the index identity.
+    """
+    index = completer._index()  # noqa: SLF001
+    cached = completer._visible_cache  # noqa: SLF001
+    if cached is not None and cached[0] is index:
+        return cached[1]
+    support = completer._support()  # noqa: SLF001
+    rows = _visible_specs(index, support=support)
+    completer._visible_cache = (index, rows)  # noqa: SLF001
     return rows
 
 

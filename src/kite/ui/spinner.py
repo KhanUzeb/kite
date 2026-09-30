@@ -53,10 +53,11 @@ class WaitSpinner:
         self,
         stream: TextIO | None = None,
         *,
-        delay: float = 0.45,
+        delay: float = 0.25,
         label: str = "thinking",
         style: str | None = None,
         shimmer: bool = True,
+        heartbeat_s: float = 2.0,
     ):
         self._stream = stream
         self.delay = delay
@@ -64,12 +65,14 @@ class WaitSpinner:
         self.label = label
         self.style = style or default_loader_style()
         self.shimmer = shimmer
+        self.heartbeat_s = max(0.1, float(heartbeat_s))
         self._lock = threading.Lock()
         self._last = time.monotonic()
         self._started: float | None = None
         self._tick = 0
         self._stop = threading.Event()
         self._shown = False
+        self._tty = True
         self._thread: threading.Thread | None = None
 
     @property
@@ -101,12 +104,20 @@ class WaitSpinner:
         self.kick()
         with _ACTIVE_LOCK:
             _ACTIVE.add(self)
-        # Avoid daemon stderr writers under pytest / pipes — they race interpreter
+        # Avoid daemon stderr writers under pytest — they race interpreter
         # shutdown on Linux 3.11 (`_enter_buffered_busy` fatal abort).
-        if os_environ_pytest() or not _stream_is_tty(self.stream):
+        if os_environ_pytest():
             self._thread = None
             return
-        self._thread = threading.Thread(target=self._run, name="kite-spinner", daemon=True)
+        self._tty = _stream_is_tty(self.stream)
+        if self._tty:
+            target, name = self._run, "kite-spinner"
+        else:
+            # A \r redraw is invisible in a pipe or a relay log, which is exactly
+            # where "the CLI froze but the work was done" comes from. Fall back
+            # to discrete heartbeat lines so progress is still visible.
+            target, name = self._run_heartbeat, "kite-spinner-heartbeat"
+        self._thread = threading.Thread(target=target, name=name, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -125,12 +136,37 @@ class WaitSpinner:
 
     def _clear(self) -> None:
         try:
-            if _interpreter_finalizing():
+            if _interpreter_finalizing() or not self._tty:
                 return
             self.stream.write("\r\033[K")
             self.stream.flush()
         except Exception:
             pass
+
+    def _run_heartbeat(self) -> None:
+        """Non-TTY fallback: newline-delimited progress, backing off over time.
+
+        Starts at ``heartbeat_s`` and doubles to a 15s ceiling so a long run
+        stays legible instead of scrolling hundreds of identical lines.
+        """
+        interval = self.heartbeat_s
+        while True:
+            if self._stop.wait(interval):
+                return
+            if _interpreter_finalizing():
+                return
+            with self._lock:
+                if self._started is None:
+                    return
+                elapsed = format_elapsed(time.monotonic() - self._started)
+                label = self.label
+            try:
+                self.stream.write(f"  · {label}  {elapsed}\n")
+                self.stream.flush()
+            except Exception:
+                return
+            self._shown = False
+            interval = min(interval * 2, 15.0)
 
     def _format_line(self) -> str:
         glyph = loader_glyph(self.style, self._tick)

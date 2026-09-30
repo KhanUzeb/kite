@@ -231,11 +231,17 @@ def _word_diff_segments(
 
 
 def _append_pair_side(
-    body: Text, *, sign: str, indent: str, segments: list[tuple[str, bool]]
+    body: Text,
+    *,
+    sign: str,
+    indent: str,
+    segments: list[tuple[str, bool]],
+    line_no: int | None,
+    widths: tuple[int, int],
 ) -> None:
     """One side of a paired -/+ line: visible indent, changed words in reverse."""
     bar, base = (f"{_DIFF_BAR}− ", "kite.diff.del") if sign == "-" else (f"{_DIFF_BAR}+ ", "kite.diff.add")
-    body.append(GUTTER)
+    _gutter(body, line_no if sign == "-" else None, line_no if sign == "+" else None, widths)
     body.append(bar, style=base)
     for char in indent:
         body.append("→" if char == "\t" else "·", style="kite.muted dim")
@@ -245,21 +251,36 @@ def _append_pair_side(
     body.append("\n")
 
 
-def _append_word_pair(body: Text, old: str, new: str) -> None:
+def _append_word_pair(
+    body: Text,
+    old: str,
+    new: str,
+    *,
+    old_no: int | None = None,
+    new_no: int | None = None,
+    widths: tuple[int, int] = (0, 0),
+) -> None:
     """Paired -/+ lines: highlight changed words only, show leading whitespace."""
     old_indent, old_rest = _split_indent(old)
     new_indent, new_rest = _split_indent(new)
     old_segs, new_segs = _word_diff_segments(
         _WORD_SPLIT.split(old_rest), _WORD_SPLIT.split(new_rest)
     )
-    _append_pair_side(body, sign="-", indent=old_indent, segments=old_segs)
-    _append_pair_side(body, sign="+", indent=new_indent, segments=new_segs)
+    _append_pair_side(body, sign="-", indent=old_indent, segments=old_segs, line_no=old_no, widths=widths)
+    _append_pair_side(body, sign="+", indent=new_indent, segments=new_segs, line_no=new_no, widths=widths)
 
 
-def _append_plain_line(body: Text, line: str) -> None:
+def _append_plain_line(
+    body: Text,
+    line: str,
+    *,
+    old_no: int | None = None,
+    new_no: int | None = None,
+    widths: tuple[int, int] = (0, 0),
+) -> None:
     """Single diff line exactly as before (headers, hunks, context, unpaired)."""
     bar, content, style = _diff_line_style(line)
-    body.append(GUTTER)
+    _gutter(body, old_no, new_no, widths)
     body.append(bar, style="kite.muted" if style == "kite.diff.ctx" else style)
     if content:
         body.append(content + "\n", style=style)
@@ -284,6 +305,64 @@ def _diff_line_style(line: str) -> tuple[str, str, str]:
     return _DIFF_BAR, line, "kite.diff.meta"
 
 
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def _line_numbers(lines: list[str]) -> list[tuple[int | None, int | None]]:
+    """Per-line (old, new) numbers from the unified hunk headers.
+
+    Context lines advance both counters, ``-`` advances old, ``+`` advances new.
+    Meta/hunk rows get ``None``. Lets the renderer print a real gutter instead
+    of asking the reader to count lines.
+    """
+    out: list[tuple[int | None, int | None]] = []
+    old = new = 0
+    for line in lines:
+        m = _HUNK_RE.match(line)
+        if m:
+            old = int(m.group(1))
+            new = int(m.group(3))
+            out.append((None, None))
+            continue
+        if line.startswith("---") or line.startswith("+++"):
+            out.append((None, None))
+            continue
+        if line.startswith("-"):
+            out.append((old, None))
+            old += 1
+            continue
+        if line.startswith("+"):
+            out.append((None, new))
+            new += 1
+            continue
+        out.append((old, new))
+        old += 1
+        new += 1
+    return out
+
+
+def _num_widths(numbers: list[tuple[int | None, int | None]]) -> tuple[int, int]:
+    old = [str(o) for o, _ in numbers if o is not None]
+    new = [str(n) for _, n in numbers if n is not None]
+    return (max((len(v) for v in old), default=0), max((len(v) for v in new), default=0))
+
+
+def _gutter(body: Text, old: int | None, new: int | None, widths: tuple[int, int]) -> None:
+    """Dim `old  new` line-number gutter, right-aligned.
+
+    Meta and hunk rows carry no numbers and keep the left edge instead of a
+    column of blanks.
+    """
+    body.append(GUTTER)
+    if old is None and new is None:
+        return
+    ow, nw = widths
+    body.append(f"{(str(old) if old is not None else '').rjust(ow)}", style="kite.diff.lineno")
+    body.append(" ")
+    body.append(f"{(str(new) if new is not None else '').rjust(nw)}", style="kite.diff.lineno")
+    body.append(" ")
+
+
 def render_diff(
     diff: str,
     *,
@@ -302,6 +381,8 @@ def render_diff(
     body = Text()
     added, deleted = count_diff_lines(diff)
     path = diff_path(diff)
+    numbers = _line_numbers(shown)
+    widths = _num_widths(numbers)
     if path or added or deleted:
         body.append(GUTTER)
         body.append(_DIFF_BAR, style="kite.muted")
@@ -325,13 +406,35 @@ def render_diff(
                 end_add += 1
             dels, adds = shown[idx:end_del], shown[end_del:end_add]
             pairs = min(len(dels), len(adds))
-            for old_line, new_line in zip(dels[:pairs], adds[:pairs], strict=False):
-                _append_word_pair(body, old_line[1:], new_line[1:])
-            for rest in (*dels[pairs:], *adds[pairs:]):
-                _append_plain_line(body, rest)
+            for offset, (old_line, new_line) in enumerate(
+                zip(dels[:pairs], adds[:pairs], strict=False)
+            ):
+                _append_word_pair(
+                    body,
+                    old_line[1:],
+                    new_line[1:],
+                    old_no=numbers[idx + offset][0],
+                    new_no=numbers[end_del + offset][1],
+                    widths=widths,
+                )
+            for offset, rest in enumerate((*dels[pairs:], *adds[pairs:])):
+                base = idx + (end_del - idx - pairs) + offset
+                _append_plain_line(
+                    body,
+                    rest,
+                    old_no=numbers[base][0],
+                    new_no=numbers[base][1],
+                    widths=widths,
+                )
             idx = end_add
         else:
-            _append_plain_line(body, line)
+            _append_plain_line(
+                body,
+                line,
+                old_no=numbers[idx][0],
+                new_no=numbers[idx][1],
+                widths=widths,
+            )
             idx += 1
     extra = len(lines) - len(shown)
     if extra > 0:
