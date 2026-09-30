@@ -50,6 +50,17 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
   tool never sits silent for long.
 
 ### Fixed
+- **The REPL never streamed the answer.** With the composer pinned,
+  `_on_stream_delta` buffered tokens and painted nothing until teardown, so a
+  turn could sit silent for minutes and read as a hang. Tokens now stream live
+  through `patch_stdout` (held for the whole turn) and teardown appends a submit
+  report only when it is not already on screen — never a duplicate copy.
+- `agent_end` never flushed the stream coalescer, so a short trailing chunk
+  under the flush threshold was silently discarded.
+- `X stopped` printed once per interrupt event, stacking up to four identical
+  rows when several cancel paths fired. One line per turn now.
+- Pydantic serializer `UserWarning` noise from provider usage objects no longer
+  dumps a traceback into the middle of the transcript.
 - Windows picker click-release now selects the row (was highlight-only,
   unlike the POSIX path).
 - Pickers no longer pick their input reader by `sys.platform`. A Windows

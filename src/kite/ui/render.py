@@ -61,6 +61,32 @@ def _looks_like_turn_report(text: str) -> bool:
     return "## done" in lowered or "## changed" in lowered or "## verification" in lowered
 
 
+#: Trailing answer text kept to decide whether a submit report is already shown.
+_STREAM_TAIL_CHARS = 1200
+
+
+def _already_shown(text: str, tail: str) -> bool:
+    """True when `text` is already on screen (whole body, or its first section)."""
+    if not text:
+        return True
+    if text in tail:
+        return True
+    # Compare section-wise: a report streamed earlier may differ in trailing detail.
+    head = text.split("\n\n", 1)[0].strip()
+    return bool(head) and len(head) > 20 and head in tail
+
+
+def _is_answer_only_turn(task: str) -> bool:
+    """True for chat/informational turns where the streamed prose IS the answer.
+
+    A `## Done` report after `tell me about X` is noise on top of the answer —
+    the user asked a question, not for a change summary.
+    """
+    from kite.agent.loop import _is_casual_user_turn
+
+    return bool(task) and _is_casual_user_turn(task)
+
+
 def _ellipsize(text: str, limit: int) -> str:
     """Shorten an overlong card segment so narrow terminals don't wrap mid-token."""
     text = text or ""
@@ -381,6 +407,8 @@ class RunDisplay:
         self._did_first_line = False
         self._saw_answer = False
         self._streamed_answer = False
+        self._stream_tail = ""
+        self._answer_only_turn = False
         self._deferred_answer_parts: list[str] = []
         self._deferred_agent_end: dict[str, Any] | None = None
         self._spinner = WaitSpinner(label="thinking")
@@ -641,6 +669,10 @@ class RunDisplay:
             self.state.note_stream_delta(chunk)
             self._spin(False)
             self._stream_write(chunk, channel=channel)
+            if channel == "answer":
+                # Bounded tail: enough to tell whether the final submit report
+                # repeats what is already on screen.
+                self._stream_tail = (self._stream_tail + chunk)[-_STREAM_TAIL_CHARS:]
 
 
     def _spin(self, on: bool, label: str = "thinking") -> None:
@@ -726,10 +758,12 @@ class RunDisplay:
         self._thinking_buf.clear()
         if not self.composer_owns_input:
             self.print_user_turn(str(p.get("task") or "").strip())
+        self._answer_only_turn = _is_answer_only_turn(str(p.get("task") or ""))
         self.print_plan()
         self._channel = None
         self._saw_answer = False
         self._streamed_answer = False
+        self._stream_tail = ""
         self._deferred_answer_parts.clear()
         self._deferred_agent_end = None
         self._run_tools = 0
@@ -777,12 +811,11 @@ class RunDisplay:
         # footer sits silent through a long generation and reads as frozen.
         self._note_answer_tail(text)
         if self.composer_owns_input:
-            # The busy prompt is erased on exit. Keep answer text out of those
-            # temporary rows and commit one canonical copy after teardown.
-            self._deferred_answer_parts.append(text)
-            self.state.note_stream_delta(text)
+            # patch_stdout is held for the whole turn, so writing here renders
+            # the text above the pinned composer as it arrives. Deferring it to
+            # teardown left the REPL silent for minutes and read as a hang.
+            self._coalesced_stream("answer", text)
             return
-        self._coalesced_stream("answer", text)
 
     def _note_answer_tail(self, text: str) -> None:
         """Feed the last partial line to the footer as the live activity line."""
@@ -1179,6 +1212,10 @@ class RunDisplay:
     def _on_interrupt(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
+        # One line per turn: several cancel paths can emit this event and a
+        # stack of identical "stopped" rows reads as a crash, not a stop.
+        if self.state.interrupted:
+            return
         self.state.interrupted = True
         self._print(f"[kite.error]{SYMBOL_FAIL} stopped[/] [kite.muted]— steer with a follow-up to continue[/]")
 
@@ -1355,6 +1392,9 @@ class RunDisplay:
         self._print(render_error(str(status), show_trace_hint=False))
 
     def _on_agent_end(self, p: dict[str, Any]) -> None:
+        # Flush before closing the line: a short trailing chunk still under the
+        # coalescer's threshold would otherwise be discarded with the buffer.
+        self._flush_stream_buffers()
         self._end_stream_line()
         self._spin(False)
         self.state.budget_limit = None
@@ -1376,19 +1416,30 @@ class RunDisplay:
             return
         submission = str(payload.get("submission") or payload.get("content") or "").strip()
         streamed = "".join(self._deferred_answer_parts).strip()
-        if str(payload.get("exit_status") or "Submitted") == "Submitted":
-            vsum = payload.get("verification") if isinstance(payload.get("verification"), dict) else {}
-            had_work = bool(vsum.get("artifact_count") or vsum.get("diff_count"))
-            if submission and streamed and _looks_like_turn_report(submission):
-                answer = streamed if not had_work else f"{streamed}\n\n{submission}"
-            else:
-                answer = submission or streamed
-        else:
-            answer = submission or streamed
-        if answer and str(payload.get("exit_status") or "Submitted") == "Submitted":
-            self._streamed_answer = False
-            self._stream_write(answer, channel="answer")
-            self._end_stream_line()
+        # Live streaming already painted the answer above the composer. Do not
+        # repaint it, but do surface a structured turn report the model added at
+        # submit time when it is not already on screen.
+        painted = self._streamed_answer
+        status = str(payload.get("exit_status") or "Submitted")
+        if status == "Submitted":
+            if not painted:
+                vsum = payload.get("verification") if isinstance(payload.get("verification"), dict) else {}
+                had_work = bool(vsum.get("artifact_count") or vsum.get("diff_count"))
+                if submission and streamed and _looks_like_turn_report(submission):
+                    answer = streamed if not had_work else f"{streamed}\n\n{submission}"
+                else:
+                    answer = submission or streamed
+                if answer:
+                    self._stream_write(answer, channel="answer")
+                    self._end_stream_line()
+            elif (
+                submission
+                and _looks_like_turn_report(submission)
+                and not self._answer_only_turn
+                and not _already_shown(submission, self._stream_tail)
+            ):
+                self._stream_write(submission, channel="answer")
+                self._end_stream_line()
         self._render_agent_end_status(payload)
         self._print_run_meter(payload)
 

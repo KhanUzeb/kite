@@ -1915,7 +1915,30 @@ def _bare_cli_namespace(**overrides) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
+def _quiet_third_party_warnings() -> None:
+    """Drop library warnings that are pure noise in a live TUI.
+
+    Pydantic's serializer warning fires on every provider usage object and
+    prints a multi-line traceback into the middle of the transcript — it tells
+    the user nothing they can act on.
+    """
+    import warnings
+
+    warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*Pydantic serializer warnings.*",
+        category=UserWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*PydanticSerializationUnexpectedValue.*",
+        category=UserWarning,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
+    _quiet_third_party_warnings()
     raw = rewrite_implicit_task(list(sys.argv[1:] if argv is None else argv))
     if raw in (["--version"], ["-V"]):
         from kite import __version__

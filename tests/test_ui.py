@@ -119,10 +119,11 @@ def test_turn_stays_visibly_alive_between_events() -> None:
     """
     buf = StringIO()
     display = RunDisplay(Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME))
-    display.composer_owns_input = True  # REPL defers the canonical answer copy
+    display.composer_owns_input = True  # REPL streams through patch_stdout live
     display(Event("stream_delta", payload={"text": "Reading src/kite/agent/loop.py"}))
     assert "Reading src/kite/agent" in display.state.activity_preview
-    assert display._deferred_answer_parts, "the canonical copy is still committed later"
+    # The answer paints during the turn rather than being deferred to teardown.
+    assert "Reading src/kite/agent/loop.py" in strip_ansi(buf.getvalue())
 
     display(Event("tool_end", payload={"tool": "read", "ok": True, "preview": "ok", "output": "x\n"}))
     assert display._spinner_on is True, "a finished tool hands the spinner to the next call"
@@ -303,6 +304,50 @@ def test_composer_interrupt_kinds_aliases_and_empty() -> None:
 
     got = read_repl_line(session=None, state=SessionUiState(), fallback=lambda: "   ")
     assert got.kind == "empty"
+
+
+def test_live_streaming_paints_once_and_interrupt_is_quiet() -> None:
+    """The turn must look alive, and never repeat itself."""
+    buf = StringIO()
+    display = RunDisplay(Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME))
+    display.composer_owns_input = True
+    display(Event("agent_start", payload={"task": "fix the auth race"}))
+    for piece in ("Root cause was ", "a race in ", "the auth middleware."):
+        display(Event("stream_delta", payload={"text": piece}))
+    display(Event("stream_end", payload={}))
+    painted = strip_ansi(buf.getvalue())
+    assert "Root cause was a race in the auth middleware." in painted, "tokens must reach the screen"
+
+    display(
+        Event(
+            "agent_end",
+            payload={"exit_status": "Submitted", "submission": "## Done\n- Fixed the race"},
+        )
+    )
+    display.finish_composer_turn()
+    final = strip_ansi(buf.getvalue())
+    assert final.count("Root cause was a race in the auth middleware.") == 1
+    assert final.count("Fixed the race") == 1, "the report is surfaced exactly once"
+    display.close()
+
+    # Several cancel paths can emit interrupt; the user sees one line.
+    stops = StringIO()
+    quiet = RunDisplay(Console(file=stops, width=80, force_terminal=True, theme=KITE_THEME))
+    quiet(Event("agent_start", payload={"task": "long task"}))
+    for _ in range(4):
+        quiet(Event("interrupt", payload={"reason": "esc"}))
+    assert strip_ansi(stops.getvalue()).count("stopped") == 1
+    quiet.close()
+
+
+def test_agent_end_flushes_a_short_trailing_chunk() -> None:
+    """A final chunk under the coalescer threshold must not be dropped."""
+    buf = StringIO()
+    display = RunDisplay(Console(file=buf, width=80, theme=KITE_THEME))
+    display(Event("agent_start", payload={"task": "hi"}))
+    display(Event("stream_delta", payload={"text": "all done"}))
+    display(Event("agent_end", payload={"exit_status": "Submitted", "submission": "all done"}))
+    assert "all done" in strip_ansi(buf.getvalue())
 
 
 def test_repl_lazy_slash_and_jobs(monkeypatch, tmp_path, kite_home) -> None:
@@ -611,6 +656,7 @@ def test_composer_turn_answer_lifecycle() -> None:
         display(event)
     assert "Hello there" not in strip_ansi(with_composer.getvalue())
 
+    # No stream_delta arrived, so teardown still commits the canonical answer.
     display.finish_composer_turn(events[-1].payload)
     plain = strip_ansi(with_composer.getvalue())
     assert "hi" not in plain
@@ -634,8 +680,10 @@ def test_composer_turn_answer_lifecycle() -> None:
     absent(Event("stream_delta", payload={"text": "Hello "}))
     absent(Event("stream_delta", payload={"text": "there"}))
     absent(Event("agent_end", payload={"exit_status": "Submitted"}))
-    assert "Hello there" not in strip_ansi(missing.getvalue())
+    # Live streaming: the text is already on screen before teardown.
+    assert strip_ansi(missing.getvalue()).count("Hello there") == 1
     absent.finish_composer_turn()
+    # Teardown must not paint it a second time.
     assert strip_ansi(missing.getvalue()).count("Hello there") == 1
 
     preview_buf = StringIO()
@@ -1057,26 +1105,30 @@ def test_git_dirty_tracking_and_branch_marker(tmp_path, kite_home, monkeypatch) 
     # (this machine nests Temp inside a home-directory repo).
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
     assert git_dirty_count(str(tmp_path)) == -1
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, timeout=60)
+    # Own subdirectory: debris left in a reused basetemp would otherwise show up
+    # as an extra untracked file and make the dirty count flaky.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=60)
     from kite.ui import git as git_ui
 
     git_ui._status_cache.clear()
     subprocess.run(
-        ["git", "-C", str(tmp_path), "config", "user.email", "t@t"],
+        ["git", "-C", str(repo), "config", "user.email", "t@t"],
         check=True,
         timeout=60,
     )
     subprocess.run(
-        ["git", "-C", str(tmp_path), "config", "user.name", "t"],
+        ["git", "-C", str(repo), "config", "user.name", "t"],
         check=True,
         timeout=60,
     )
-    assert git_dirty_count(str(tmp_path)) == 0
-    (tmp_path / "new.txt").write_text("x", encoding="utf-8")
+    assert git_dirty_count(str(repo)) == 0
+    (repo / "new.txt").write_text("x", encoding="utf-8")
     git_ui._status_cache.clear()
-    assert git_dirty_count(str(tmp_path)) == 1
+    assert git_dirty_count(str(repo)) == 1
 
-    chat = ChatSession(cwd=str(tmp_path))
+    chat = ChatSession(cwd=str(repo))
     buf = StringIO()
     chat.console = Console(file=buf, force_terminal=False)
     git_ui._status_cache.clear()
