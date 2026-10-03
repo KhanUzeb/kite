@@ -26,7 +26,7 @@ _PROBES: tuple[tuple[str, str], ...] = (
 )
 
 _CACHE_TTL_S = 600.0
-_CACHE: dict[tuple[str, str], tuple[float, list["Toolchain"]]] = {}
+_CACHE: dict[tuple[str, str], tuple[float, list[Toolchain]]] = {}
 
 
 @dataclass(frozen=True)
@@ -132,7 +132,7 @@ def render_toolchains(items: list[Toolchain], *, max_chars: int = 1_500) -> str:
         return ""
     lines = []
     for item in items:
-        detail = f"{item.name} {item.version}".strip()
+        detail = item.version if item.version.lower().startswith(item.name) else f"{item.name} {item.version}".strip()
         lines.append(f"- {detail} ({item.path}) [{item.source}]")
     text = "## Toolchains\n" + "\n".join(lines)
     if len(text) > max_chars:

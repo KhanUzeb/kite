@@ -96,7 +96,8 @@ def test_toolchain_scout_finds_python(tmp_path) -> None:
     assert any(Path(item.path).is_file() for item in items if item.name == "python")
     assert any(item.source in {"project-venv", "active", "path"} for item in items)
     section = render_toolchains(items)
-    assert "## Toolchains" in section and sys.executable.replace("\\", "/")[:20] in section.replace("\\", "/")
+    resolved_exe = str(Path(sys.executable).resolve()).replace("\\", "/")
+    assert "## Toolchains" in section and resolved_exe in section.replace("\\", "/")
 
 
 def test_batch_00(tmp_path) -> None:

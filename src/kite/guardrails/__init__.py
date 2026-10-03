@@ -17,7 +17,6 @@ from kite.guardrails.sandbox import (
     is_inside,
     is_protected,
     is_sensitive_basename,
-    is_user_skill_read,
     resolve_in_workspace,
     workspace_root,
 )
