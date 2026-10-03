@@ -51,7 +51,7 @@ def _c_test_host_allows_external_read_restricted_blocks(workspace: Path, tmp_pat
         )
     )
     blocked = rest_env.execute({"tool": "read", "arguments": {"path": str(external)}})
-    assert blocked["ok"] is False and blocked.get("blocked") is True
+    assert blocked["ok"] is True and "hello host" in blocked["output"]  # reads outside are free
 
 
 def _c_test_set_cwd_updates_session_and_can_leave_project(workspace: Path, tmp_path: Path) -> None:
@@ -82,6 +82,21 @@ def _c_test_set_cwd_updates_session_and_can_leave_project(workspace: Path, tmp_p
     host = ExecutionSession(WorkspaceContext.discover(workspace, execution_mode=ExecutionMode.HOST))
     target, err = host.set_cwd(elsewhere)
     assert err == "" and target == elsewhere.resolve()
+
+
+def test_toolchain_scout_finds_python(tmp_path) -> None:
+    """The model sees runnable interpreters/compilers with versions and paths."""
+    import sys
+
+    from kite.context.toolchains import render_toolchains, scout_toolchains
+
+    items = scout_toolchains(tmp_path, tmp_path)
+    names = {item.name for item in items}
+    assert "python" in names
+    assert any(Path(item.path).is_file() for item in items if item.name == "python")
+    assert any(item.source in {"project-venv", "active", "path"} for item in items)
+    section = render_toolchains(items)
+    assert "## Toolchains" in section and sys.executable.replace("\\", "/")[:20] in section.replace("\\", "/")
 
 
 def test_batch_00(tmp_path) -> None:

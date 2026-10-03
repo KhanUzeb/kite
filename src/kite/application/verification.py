@@ -576,7 +576,10 @@ def build_verification_plan(
     if "python" in kinds:
         required.extend(_python_checks(paths, profile))
     if "html" in kinds:
-        required.extend(_html_checks(paths))
+        # Simple markup has no runnable check — the structural parse is
+        # recorded automatically on write and stays advisory only, so plain
+        # .html edits submit freely like docs.
+        optional.extend(_html_checks(paths))
     if "js" in kinds:
         required.extend(_js_checks(paths, profile))
     if "rust" in kinds:
@@ -1026,13 +1029,13 @@ def unfounded_claim_reason(collector: VerificationCollector, text: str) -> str |
     if not _DONE_CLAIM_RE.search(body):
         return None
     if not collector.has_edits():
-        if verified:
-            return None
-        return (
-            "Do not claim the task is done. No edits or verification were recorded this session. "
-            "Use tools, then submit with evidence — do not narrate completion."
-        )
+        # Read-only / Q&A / info turns need no evidence to close — only
+        # false "tests pass" claims are blocked (checked above).
+        return None
     plan = collector.plan()
+    if not plan.required_checks:
+        # Docs/config/other-only edits have nothing verifiable — submit freely.
+        return None
     if plan.required_checks:
         if plan_status(plan, collector._records) != "verified":
             return (
@@ -1091,7 +1094,16 @@ def submit_block_reason(
     *,
     require_verification: bool = True,
     require_verification_section: bool = True,
+    structured: bool = True,
 ) -> str | None:
+    """Why a submit is blocked, or None when it may proceed.
+
+    ``structured`` is True for the ``submit`` tool (Done/Changed/Verification
+    sections required for verifiable code edits) and False for the legacy
+    bash marker / prose path, which carries a free-form summary — there only
+    the evidence itself is gated (checks complete, no false claims), never
+    the section format.
+    """
     if not require_verification:
         return None
     plan = collector.plan()
@@ -1116,8 +1128,8 @@ def submit_block_reason(
     if claim:
         return claim
 
-    if require_verification_section and collector.has_edits() and body:
-        return _missing_verification_section(body, need_verification=bool(plan.required_checks))
+    if require_verification_section and structured and collector.has_edits() and body and bool(plan.required_checks):
+        return _missing_verification_section(body, need_verification=True)
     return None
 
 

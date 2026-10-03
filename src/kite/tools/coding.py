@@ -385,14 +385,16 @@ def make_coding_tools(
         command = str(args["command"])
         workdir = str(args.get("cwd") or _root())
         background = bool(args.get("background"))
-        # Last-line sandbox: never launch a shell outside the workspace root.
+        # Last-line sandbox: never launch a shell outside the workspace root,
+        # unless host mode is on or the user approved this exact call.
         try:
             from kite.guardrails.sandbox import clamp_cwd, workspace_root
 
             clamped, reason = clamp_cwd(
                 workdir,
                 workspace_root(_root()),
-                allow_outside=bool(guardrails and guardrails.config.host_access()),
+                allow_outside=bool(guardrails and guardrails.config.host_access())
+                or bool(args.get("_approved_external")),
             )
             if clamped is None:
                 return {"ok": False, "error": reason, "output": reason, "blocked": True}

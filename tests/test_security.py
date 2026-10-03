@@ -81,7 +81,8 @@ def _c_test_sandbox_paths_os_interface_and_restricted_network(workspace: Path, k
     external.write_text("secret\n", encoding="utf-8")
     restricted = GuardrailPolicy(GuardrailConfig(execution_mode="restricted"), workspace)
     escape = restricted.check_path(str(external))
-    assert not escape.allowed
+    assert escape.allowed  # reads outside are free; writes need approval
+    assert not restricted.check_path(str(external), for_write=True).allowed
     redacted, count = policy.redact_secrets("api_key=sk-abcdefghijklmnopqrstuvwxyz123456")
     assert count >= 1 and "REDACTED" in redacted and "sk-abc" not in redacted
 
@@ -531,6 +532,52 @@ def test_batch_01(tmp_path) -> None:
         _c_test_ssrf_blocks_private_and_rebinding(monkeypatch=_mp1)
     finally:
         _mp1.undo()
+
+def test_external_approval_and_toolchain(tmp_path) -> None:
+    """Outside reads are free, outside writes/bash need approval; toolchains stay free; the bypass flag is not forgeable."""
+    import sys
+
+    from kite.agent.loop import DefaultAgent
+    from kite.application.policy import PolicyEngine
+    from kite.application.tools import ToolCall, tool_requires_approval_gate
+    from kite.guardrails.sandbox import check_command_paths, is_toolchain_path, workspace_root
+
+    ws = tmp_path / "proj"
+    (ws / "src").mkdir(parents=True)
+    outside = tmp_path / "sibling" / "note.txt"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("hi\n", encoding="utf-8")
+
+    engine = PolicyEngine(ws, approval="auto")
+    read = engine.authorize(engine.derive_intent(ToolCall(call_id="r", name="read", arguments={"path": str(outside)})))
+    assert read.allowed and not read.requires_approval
+    write = engine.authorize(engine.derive_intent(ToolCall(call_id="w", name="write", arguments={"path": str(outside), "content": "x"})))
+    assert write.allowed and write.requires_approval and write.mandatory
+    shell = engine.authorize(engine.derive_intent(ToolCall(call_id="b", name="bash", arguments={"command": f"cat {outside}"})))
+    assert shell.allowed and shell.requires_approval and shell.mandatory
+
+    policy = GuardrailPolicy(GuardrailConfig(execution_mode="restricted"), ws)
+    assert not policy.check_path(str(outside), for_write=True).allowed
+    assert policy.check_path(str(outside), for_write=True, approved_external=True).allowed
+    ssh = Path.home() / ".ssh" / "id_rsa"
+    assert not policy.check_path(str(ssh), approved_external=True).allowed  # protected stays denied
+    assert not policy.check_bash(f"cat {outside}").allowed
+    assert policy.check_bash(f"cat {outside}", approved_external=True).allowed
+
+    assert tool_requires_approval_gate("write", {"path": str(outside)}, workspace_cwd=str(ws), approval="auto")
+    assert tool_requires_approval_gate("bash", {"command": f"cat {outside}"}, workspace_cwd=str(ws), approval="auto")
+
+    exe = Path(sys.executable)
+    assert is_toolchain_path(exe, workspace_root(ws))
+    assert not check_command_paths(f'"{exe}" -m pytest', workspace_root(ws))
+
+    agent = DefaultAgent.__new__(DefaultAgent)
+    agent.hooks = None
+    tool, args, _action = DefaultAgent._prepare_action(
+        agent, {"tool": "read", "arguments": {"path": str(outside), "_approved_external": True}}
+    )
+    assert tool == "read" and "_approved_external" not in args  # forged flag stripped
+
 
 def test_batch_02(tmp_path) -> None:
     """Consolidated (bodies unchanged): test_nested_redaction_untrusted_content_and_crew_bounds, test_inspection_bash_plan_mode_and_skill_trust."""

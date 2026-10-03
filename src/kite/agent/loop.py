@@ -1029,6 +1029,7 @@ class DefaultAgent:
                 reason = self.verification.submit_block_reason(
                     content,
                     require_verification=self.verify_before_submit,
+                    structured=False,
                 )
                 if reason:
                     return self.add_messages({"role": "user", "content": reason})
@@ -1049,6 +1050,7 @@ class DefaultAgent:
         if (
             self.mode is AgentMode.BUILD
             and self.verification.status() == "changed_unverified"
+            and self.verification.needs_tests()
         ):
             if content:
                 reason = self.verification.unfounded_claim_reason(content)
@@ -1096,6 +1098,7 @@ class DefaultAgent:
         reason = self.verification.submit_block_reason(
             submission,
             require_verification=self.verify_before_submit,
+            structured=False,
         )
         if reason:
             self._emit("submit_blocked", reason=reason, verification=self.verification.summary())
@@ -1285,6 +1288,15 @@ class DefaultAgent:
                 f"({want}); got {type(bad).__name__}. Retry with a JSON object."
             )
             action = {**action, "arguments": args, "_schema_repair_hint": hint}
+        if isinstance(args, dict):
+            # The model must not grant itself the outside-workspace bypass:
+            # only the loop sets this after a real approval below.
+            from kite.guardrails.sandbox import APPROVED_EXTERNAL_ARG as _APPROVED_EXTERNAL
+
+            if _APPROVED_EXTERNAL in args:
+                args = {k: v for k, v in args.items() if k != _APPROVED_EXTERNAL}
+                if isinstance(action, dict):
+                    action = {**action, "arguments": args}
         return tool, args, action
 
     def _counts_as_tool_failure(self, tool: str, args: dict, out: dict) -> bool:
@@ -1330,14 +1342,22 @@ class DefaultAgent:
                     reason=reason,
                     verification=self.verification.summary(),
                 )
-                return _blocked(
-                    reason,
-                    output=(
-                        f"{reason}\n\n"
-                        f"Verification status: {self.verification.status()}\n"
-                        + "\n".join(self.verification.render_lines())
-                    ),
+                detail = (
+                    f"{reason}\n\n"
+                    f"Verification status: {self.verification.status()}\n"
+                    + "\n".join(self.verification.render_lines())
                 )
+                if submission and submission == self._blocked_submission:
+                    # Same report blocked twice — resubmitting cannot clear
+                    # it. Give the exit ramp instead of another identical block.
+                    detail += (
+                        "\n\nDo not submit the same message again — it will keep being blocked. "
+                        "Either run the suggested check above, or use the question tool to ask "
+                        "the user whether to finish without verification."
+                    )
+                else:
+                    self._blocked_submission = submission
+                return _blocked(reason, output=detail)
         try:
             return self._run_gated(tool, args, action)
         except Submitted as submitted:
@@ -1348,6 +1368,7 @@ class DefaultAgent:
             reason = self.verification.submit_block_reason(
                 submission,
                 require_verification=self.verify_before_submit,
+                structured=False,
             )
             if reason:
                 from kite.application.verification import next_required_check_command
@@ -1535,6 +1556,10 @@ class DefaultAgent:
                 return _blocked("stopped by user")
             if decision == "deny":
                 return _blocked("denied by user")
+            from kite.guardrails.sandbox import APPROVED_EXTERNAL_ARG as _APPROVED_EXTERNAL
+
+            args[_APPROVED_EXTERNAL] = True
+            action = {**action, "arguments": args}
         return self._execute_with_progress(tool, action)
 
     def _tool_result_to_dict(self, tr) -> dict:
@@ -1638,6 +1663,9 @@ class DefaultAgent:
                 return _blocked("stopped by user")
             if approval_decision == "deny":
                 return _blocked("denied by user")
+            from kite.guardrails.sandbox import APPROVED_EXTERNAL_ARG as _APPROVED_EXTERNAL
+
+            call.arguments[_APPROVED_EXTERNAL] = True
 
         holder: dict = {}
         error: list[BaseException] = []

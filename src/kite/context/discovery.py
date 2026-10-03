@@ -49,6 +49,7 @@ class ProjectContext:
     repo_map: str = ""
     verification_command: str = ""
     verification_source: str = ""  # ci | manifest | empty
+    toolchains: str = ""  # rendered ## Toolchains section (compilers/interpreters)
 
     def render_for_prompt(self, *, max_chars: int = 12_000) -> str:
         from kite.context.project_init import agent_nudges_markdown
@@ -70,6 +71,8 @@ class ProjectContext:
                 f"## Canonical verification ({src})\n"
                 f"Prefer this command before claiming done:\n`{self.verification_command}`"
             )
+        if self.toolchains:
+            parts.append(self.toolchains)
         if self.repo_map:
             parts.append(f"## Repo map (symbols)\n```\n{self.repo_map}\n```")
         if self.tree_snippet:
@@ -267,6 +270,13 @@ def gather_project_context(
         if include_repo_map and build_repo_map is not None:
             repo_map = build_repo_map(root, max_chars=4_000)
         verify_cmd, verify_src = resolve_verification_command(root)
+        toolchains = ""
+        try:
+            from kite.context.toolchains import render_toolchains, scout_toolchains
+
+            toolchains = render_toolchains(scout_toolchains(cwd_path, root))
+        except Exception:
+            toolchains = ""
         return ProjectContext(
             root=root,
             cwd=cwd_path,
@@ -276,6 +286,7 @@ def gather_project_context(
             repo_map=repo_map,
             verification_command=verify_cmd,
             verification_source=verify_src,
+            toolchains=toolchains,
         )
 
     ctx = build()

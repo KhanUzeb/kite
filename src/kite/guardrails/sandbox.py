@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import sys
+from functools import lru_cache
 from pathlib import Path
 
 # Commands that are never legitimate in a coding-agent workspace.
@@ -372,10 +375,98 @@ def check_command_paths(command: str, workspace: Path) -> str:
         except OSError:
             continue
         if not is_inside(resolved, workspace):
+            # Language toolchain paths (project venv, active interpreter)
+            # stay free so `~/.venv/bin/python -m pytest` works — the
+            # approval layer still gates genuinely risky commands.
+            if is_toolchain_path(resolved, workspace):
+                continue
             return f"bash path escapes workspace sandbox ({workspace}): {resolved}"
         if is_protected(resolved):
             return f"bash path is protected: {resolved}"
     return ""
+
+
+# Single-call bypass marker: the agent loop sets this argument after the
+# user approves an outside-workspace action, so guardrails and the bash
+# handler honor that one granted call (protected paths stay denied).
+APPROVED_EXTERNAL_ARG = "_approved_external"
+
+# Interpreter/manager binaries the agent may invoke by absolute path without
+# an outside-workspace prompt (Codex-style toolchain freedom).
+_TOOLCHAIN_BINARIES = ("python", "python3", "node", "npm", "npx", "uv", "cargo", "rustc", "go")
+
+
+@lru_cache(maxsize=64)
+def _which_binary(name: str) -> Path | None:
+    """Resolved system binary for *name*, or None when not on PATH."""
+    try:
+        found = shutil.which(name)
+    except OSError:
+        return None
+    if not found:
+        return None
+    try:
+        return Path(found).resolve()
+    except OSError:
+        return None
+
+
+def _toolchain_dirs(workspace: Path) -> list[Path]:
+    """Directories whose contents count as toolchain (venv bin dirs)."""
+    dirs: list[Path] = []
+    venv = os.environ.get("VIRTUAL_ENV")
+    if venv:
+        try:
+            dirs.append(Path(venv).expanduser().resolve())
+        except OSError:
+            pass
+    try:
+        from kite.env.venv import discover_venv, venv_bin_dir
+
+        found = discover_venv(str(workspace))
+        if found is not None:
+            try:
+                dirs.append(venv_bin_dir(found).resolve())
+            except OSError:
+                pass
+            try:
+                dirs.append(found.resolve())
+            except OSError:
+                pass
+    except Exception:
+        pass
+    return dirs
+
+
+def is_toolchain_path(path: Path, workspace: Path) -> bool:
+    """True when *path* is a language toolchain binary/env the agent may use freely.
+
+    Covers the active interpreter (``sys.executable``), binaries resolved
+    from PATH (python/node/npm/uv/cargo/…) by exact file match, and anything
+    inside a project venv (``.venv``/``venv`` bin dir, ``$VIRTUAL_ENV``).
+    Reads/executions of these never trigger the outside-workspace prompt;
+    writes still go through the normal approval path.
+    """
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        return False
+    try:
+        if resolved == Path(sys.executable).resolve():
+            return True
+    except OSError:
+        pass
+    for bindir in _toolchain_dirs(workspace):
+        try:
+            if resolved == bindir or resolved.is_relative_to(bindir):
+                return True
+        except (ValueError, OSError):
+            continue
+    for name in _TOOLCHAIN_BINARIES:
+        candidate = _which_binary(name)
+        if candidate is not None and resolved == candidate:
+            return True
+    return False
 
 
 def check_dangerous(command: str) -> str:

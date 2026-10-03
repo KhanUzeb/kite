@@ -324,12 +324,13 @@ def _c_test_submit_tool_call_accounting(workspace: Path) -> None:
             raise _Submitted({"role": "exit", "content": "submitted", "extra": {"exit_status": "Submitted"}})
 
     submit_agent = _DefaultAgent(_SubmitModel(), _SubmitEnv(), step_limit=2)
-    submit_agent.run("do it")
+    result = submit_agent.run("do it")
+    assert result.get("exit_status") == "Submitted"  # no-edit submit closes freely
     transcript = [m for m in submit_agent.messages if m.get("role") != "exit"]
     calls = [tc["id"] for m in transcript if m.get("tool_calls") for tc in m["tool_calls"]]
     answered = [m.get("tool_call_id") for m in transcript if m.get("role") == "tool"]
     assert calls == ["call_submit"]
-    assert answered == ["call_submit"]
+    assert answered == ["call_submit"]  # success still answers the tool call
     # (merged from test_stopped_batches_answer_every_tool_call)
     from kite.agent.exceptions import Interrupted
 
@@ -425,7 +426,7 @@ def _c_test_submit_gate_and_verification(workspace: Path) -> None:
         {"path": "../outside.txt"},
         {"tool": "read", "arguments": {"path": "../outside.txt"}},
     )
-    assert blocked.get("blocked") or not blocked.get("ok")
+    assert blocked.get("ok") is True  # outside reads are free; writes need approval
     denied = DefaultAgent(MagicMock(), MagicMock(), tool_executor=None)._run_gated("write", {"path": "outside.txt", "content": "x"}, {})
     assert denied.get("blocked") is True
     inspect = DefaultAgent(MagicMock(), MagicMock(), tool_executor=build_tool_executor(workspace_root=workspace, execution_mode="host", no_guardrails=False, runner=lambda call: {"ok": True, "output": "clean"}), mode=AgentMode.PLAN)

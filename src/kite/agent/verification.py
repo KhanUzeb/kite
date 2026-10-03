@@ -148,12 +148,14 @@ class VerificationCollector:
         *,
         require_verification: bool = True,
         require_verification_section: bool = True,
+        structured: bool = True,
     ) -> str | None:
         return _submit_block_reason(
             self,
             submission,
             require_verification=require_verification,
             require_verification_section=require_verification_section,
+            structured=structured,
         )
 
     def post_edit_nudge(self) -> str | None:

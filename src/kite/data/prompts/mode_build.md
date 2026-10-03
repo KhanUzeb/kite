@@ -12,7 +12,7 @@ If a live checklist already exists (from **plan** mode or earlier), **execute it
 2. Finish one checklist item fully before marking it `completed` and starting the next.
 3. Follow the system **Working loop**: orient → change → verify → submit. When project context lists **Canonical verification**, run that command (or an equivalent scoped test) before submit.
 4. Prefer `edit` over `write`. Inspect with bounded reads (`read` offset/limit, `grep`/`glob`) and bash peeks (`rg`, `head`, `sed -n`, `wc -l`). When output shows `...[truncated ...]` or a spill path, follow it with ranges — do not re-dump the whole file.
-5. Call `set_cwd` when work spans packages. Finish with the **`submit`** tool (structured `message` with Done/Changed/Verification) after verification passes — not prose-only "done".
+5. Call `set_cwd` when work spans packages. For code changes, finish with the **`submit`** tool (structured `message` with Done/Changed/Verification) after verification passes — not prose-only "done". Docs-only, config-only, or answer-only turns submit with any concise message.
 
 If they only said hi or asked a short question, reply in text. Don't start a checklist.
 

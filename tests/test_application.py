@@ -151,7 +151,11 @@ def _c_test_approval_tiers_gate_only_risky_effects(tmp_path: Path) -> None:
     sup = PolicyEngine(tmp_path, approval="supervised")
     assert sup.authorize(sup.derive_intent(write)).requires_approval
     outside = ToolCall(call_id="o", name="write", arguments={"path": "../evil.py", "content": "x"})
-    assert not auto.authorize(auto.derive_intent(outside)).allowed
+    decision = auto.authorize(auto.derive_intent(outside))
+    assert decision.allowed and decision.requires_approval and decision.mandatory
+    outside_read = ToolCall(call_id="r", name="read", arguments={"path": "../notes.txt"})
+    allowed_read = auto.authorize(auto.derive_intent(outside_read))
+    assert allowed_read.allowed and not allowed_read.requires_approval
 
 
 def _c_test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path) -> None:
@@ -219,25 +223,25 @@ def _c_test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Pa
     app.write_text("user edit\n", encoding="utf-8")
     _, conflicts = journal.restore()
     assert conflicts and app.read_text(encoding="utf-8") == "user edit\n"
-    # glob takes `root` (not `path`) — it must be authorized like every other path target.
+    # glob takes `root` (not `path`) — reads outside are free like every other reader.
     outside = tmp_path / "outside"
     outside.mkdir()
     denied_glob = engine.authorize(
         engine.derive_intent(ToolCall(call_id="g1", name="glob", arguments={"pattern": "**/*.py", "root": str(outside)}))
     )
-    assert not denied_glob.allowed, denied_glob.reason
+    assert denied_glob.allowed and not denied_glob.requires_approval, denied_glob.reason
     inside = engine.authorize(
         engine.derive_intent(ToolCall(call_id="g2", name="glob", arguments={"pattern": "**/*.py", "root": str(workspace)}))
     )
     assert inside.allowed, inside.reason
-    # Parity with the sibling readers: all deny the same escape.
+    # Parity with the sibling readers: all allow the same outside read.
     for name, args in (
         ("read", {"path": str(outside / "secret.txt")}),
         ("grep", {"pattern": "x", "path": str(outside)}),
         ("ls", {"path": str(outside)}),
     ):
         decision = engine.authorize(engine.derive_intent(ToolCall(call_id="p1", name=name, arguments=args)))
-        assert not decision.allowed, (name, decision.reason)
+        assert decision.allowed and not decision.requires_approval, (name, decision.reason)
 
 
 def _c_test_verification_plans_replay_and_package_paths(workspace: Path, tmp_path: Path) -> None:
@@ -262,8 +266,9 @@ def _c_test_verification_plans_replay_and_package_paths(workspace: Path, tmp_pat
     evidence.on_tool_end("bash", {"command": "pytest -q"}, {"ok": True, "returncode": 0, "output": "3 passed"})
     assert evidence.summary().get("evidence", {}).get("status") == "verified"
     html_plan = build_verification_plan(("dashboard.html",))
-    assert html_plan.required_checks[0].artifact_kind == "html"
-    assert all(c.command is None or "pytest" not in (c.command or "").lower() for c in html_plan.required_checks)
+    assert not html_plan.required_checks  # markup is advisory-only, like docs
+    assert html_plan.optional_checks and html_plan.optional_checks[0].artifact_kind == "html"
+    assert all(c.command is None or "pytest" not in (c.command or "").lower() for c in html_plan.optional_checks)
     assert classify_path("x.py") == "python"
     pytest_record = VerificationRecord(
         check=CheckSpec(kind="project_test", command="pytest -q", affected_paths=("a.py",), artifact_kind="python"),
@@ -273,7 +278,7 @@ def _c_test_verification_plans_replay_and_package_paths(workspace: Path, tmp_pat
         ok=True,
         output_summary="1 passed",
     )
-    assert not record_satisfies_check(pytest_record, html_plan.required_checks[0])
+    assert not record_satisfies_check(pytest_record, html_plan.optional_checks[0])
     assert plan_status(build_verification_plan(("README",)), []) == "changed_unverified"
     bundle = ReplayBundle(
         run_id="acc-1",
@@ -387,6 +392,21 @@ def test_batch_01(tmp_path) -> None:
     (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
     (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
     _c_test_policy_paths_glob_executor_and_journal(tmp_path=_t1, workspace=_w1)
+
+def test_marker_and_prose_submit_skip_section_format(tmp_path) -> None:
+    """Marker/prose submits gate evidence only; the submit tool also gates sections."""
+    from kite.agent.verification import VerificationCollector
+
+    vc = VerificationCollector(workspace_root=".")
+    vc.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+    vc.on_tool_end("bash", {"command": "pytest -q"}, {"ok": True, "returncode": 0, "output": "1 passed"})
+    assert vc.submit_block_reason("shipped the fix, tests pass", structured=False) is None
+    assert vc.submit_block_reason("shipped the fix, tests pass", structured=True) is not None
+    bare = VerificationCollector(workspace_root=".")
+    bare.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+    assert bare.submit_block_reason("shipped", structured=False) is not None  # evidence still gated
+    assert "Suggested command" in (bare.submit_block_reason("shipped", structured=False) or "")
+
 
 def test_batch_02(tmp_path) -> None:
     """Consolidated (bodies unchanged): test_verification_plans_replay_and_package_paths, test_effects_coordinator_runner_and_cli_result."""

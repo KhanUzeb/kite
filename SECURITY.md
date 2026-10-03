@@ -42,10 +42,12 @@ In the `auto`, `trust`, and `yolo` tiers the agent runs on its own. A prompt app
 | `nested_agent` | yes, unless the project is trusted |
 | `workspace_write` (write/edit/apply_patch inside the workspace) | **no** |
 | `long_running` (any slow command) | **no** |
+| reads outside the workspace (non-protected files) | **no** — free, like Codex |
+| writes / shell outside the workspace | **yes, always** — even in `yolo`; denied headless |
 
 Writing a file inside the workspace and running a slow test are the job, not a decision for the human — treating them as gated made the agent stop on nearly every edit. `supervised` keeps the older rule and prompts for every mutation.
 
-This changes *who is asked*, not *what is possible*. Path sandbox denies are untouched: an out-of-workspace or protected path is refused outright regardless of tier, as are the critical gates (sudo, outside workspace, remote shell).
+ Reads outside the workspace are free (Codex-style); only protected paths (`.ssh`, `.aws`, `*.env`, OS interfaces, system roots) stay hard-denied. Writes and shell commands outside the workspace are approval-gated per call — the prompt shows the exact path, and headless runs deny them. Language toolchains (project `.venv`, `$VIRTUAL_ENV`, the active interpreter) never trigger the outside prompt, and the run prompt lists every detected toolchain with its version. The model cannot grant itself the bypass: a forged approval marker in tool arguments is stripped before authorization.
 
 ## Session persistence
 

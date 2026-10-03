@@ -6,6 +6,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from kite.guardrails.sandbox import (
+    check_command_paths,
+    is_inside,
+    resolve_in_workspace,
+    workspace_root,
+)
+
 ToolStatus = Literal["ok", "error", "denied", "cancelled"]
 
 SideEffect = Literal[
@@ -231,8 +238,15 @@ def tool_requires_approval_gate(
 
     Sandbox denies are unaffected: an out-of-workspace or protected path is
     still refused outright by :func:`PolicyEngine.authorize`.
+
+    Outside-workspace targets always gate: the policy allows them with
+    mandatory approval, so the user is asked instead of seeing a silent
+    deny after the fact.
     """
     from kite.guardrails.project_trust import without_nested_agent_if_trusted
+
+    if workspace_cwd and _targets_outside_workspace(tool, arguments, workspace_cwd):
+        return True
 
     effects = without_nested_agent_if_trusted(
         set(derive_effects(ToolCall("gate", tool, arguments))),
@@ -244,6 +258,36 @@ def tool_requires_approval_gate(
         if not _prompts_every_mutation(approval):
             return False
         return tool in {"write", "edit", "bash", "todo_write", "apply_patch"}
+    return False
+
+
+def _targets_outside_workspace(tool: str, arguments: dict[str, Any], workspace_cwd: str) -> bool:
+    """True when a tool call touches paths outside the workspace (approval-gated)."""
+    try:
+        root = workspace_root(workspace_cwd)
+    except OSError:
+        return False
+    if tool == "bash":
+        if check_command_paths(str(arguments.get("command") or ""), root):
+            return True
+        cwd = str(arguments.get("cwd") or "").strip()
+        if cwd:
+            try:
+                if not is_inside(resolve_in_workspace(cwd, root), root):
+                    return True
+            except OSError:
+                return False
+        return False
+    keys = ("path", "root") if tool in {"read", "write", "edit", "grep", "glob", "ls", "task"} else ("path",)
+    for key in keys:
+        value = arguments.get(key)
+        if not value:
+            continue
+        try:
+            if not is_inside(resolve_in_workspace(str(value), root), root):
+                return True
+        except OSError:
+            continue
     return False
 
 

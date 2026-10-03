@@ -106,8 +106,9 @@ def _c_test_sandbox_escape_and_write_combined(workspace: Path, tmp_path: Path) -
     external.write_text("secret\n", encoding="utf-8")
     policy = GuardrailPolicy(GuardrailConfig(execution_mode="restricted"), workspace)
     verdict = policy.check_path(str(external))
-    assert not verdict.allowed
-    assert "sandbox" in verdict.reason.lower() or "escape" in verdict.reason.lower()
+    assert verdict.allowed  # reads outside are free (Codex-style); writes need approval
+    assert not policy.check_path(str(external), for_write=True).allowed
+    assert policy.check_path(str(external), for_write=True, approved_external=True).allowed
     # (merged from test_write_inside_workspace_allowed)
     policy2 = GuardrailPolicy(GuardrailConfig(), workspace)
     target = workspace / "src" / "new.py"

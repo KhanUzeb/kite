@@ -20,7 +20,7 @@ from kite.application.tools import (
     derive_effects,
     mandatory_reason,
 )
-from kite.guardrails.sandbox import check_command_paths, is_inside, protected_roots, resolve_in_workspace
+from kite.guardrails.sandbox import check_command_paths, is_inside, is_protected, protected_roots, resolve_in_workspace
 
 POLICY_VERSION = "0.9.0"
 
@@ -125,6 +125,31 @@ class PolicyEngine:
         for target in intent.canonical_targets:
             if intent.tool in ("read", "write", "edit", "grep", "glob", "ls", "apply_patch") or "path" in intent.normalized_arguments:
                 write = intent.tool in ("write", "edit", "apply_patch")
+                try:
+                    resolved = resolve_in_workspace(target, self.workspace)
+                except Exception as exc:
+                    return PolicyDecision(allowed=False, reason=str(exc), policy_version=self.policy_version)
+                if is_protected(resolved):
+                    kind = "write" if write else "touch"
+                    return PolicyDecision(
+                        allowed=False,
+                        reason=f"refusing to {kind} protected path: {resolved}",
+                        policy_version=self.policy_version,
+                    )
+                if self.execution_mode != "host" and not is_inside(resolved, Path(self.workspace)):
+                    # Codex-style boundary: reads outside the workspace are
+                    # free (protected paths stay denied above); writes outside
+                    # need explicit approval (mandatory → denied headless).
+                    if write:
+                        return PolicyDecision(
+                            allowed=True,
+                            reason=f"writes outside the project workspace need approval: {resolved}",
+                            requires_approval=True,
+                            mandatory=True,
+                            policy_version=self.policy_version,
+                            scope=intent.tool,
+                        )
+                    continue
                 ok, reason = check_path_access(
                     target,
                     self.workspace,
@@ -138,12 +163,38 @@ class PolicyEngine:
             cmd = str(intent.normalized_arguments.get("command") or "")
             escaped = check_command_paths(cmd, Path(self.workspace))
             if escaped:
-                return PolicyDecision(allowed=False, reason=escaped, policy_version=self.policy_version)
+                # Shell touching outside paths runs only with approval
+                # (mandatory → denied headless). Toolchain binaries and
+                # venv paths are already exempt inside check_command_paths.
+                return PolicyDecision(
+                    allowed=True,
+                    reason=f"shell paths outside the project workspace need approval: {escaped}",
+                    requires_approval=True,
+                    mandatory=True,
+                    policy_version=self.policy_version,
+                    scope=intent.tool,
+                )
             cwd = intent.normalized_arguments.get("cwd")
             if cwd:
-                ok, reason = check_path_access(str(cwd), self.workspace, execution_mode=self.execution_mode)
-                if not ok:
-                    return PolicyDecision(allowed=False, reason=reason, policy_version=self.policy_version)
+                try:
+                    resolved_cwd = resolve_in_workspace(str(cwd), self.workspace)
+                except Exception as exc:
+                    return PolicyDecision(allowed=False, reason=str(exc), policy_version=self.policy_version)
+                if is_protected(resolved_cwd):
+                    return PolicyDecision(
+                        allowed=False,
+                        reason=f"refusing to run in protected path: {resolved_cwd}",
+                        policy_version=self.policy_version,
+                    )
+                if not is_inside(resolved_cwd, Path(self.workspace)):
+                    return PolicyDecision(
+                        allowed=True,
+                        reason=f"shell outside the project workspace needs approval: {resolved_cwd}",
+                        requires_approval=True,
+                        mandatory=True,
+                        policy_version=self.policy_version,
+                        scope=intent.tool,
+                    )
 
         if intent.tool == "skill" and intent.normalized_arguments.get("install"):
             return PolicyDecision(

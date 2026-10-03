@@ -9,6 +9,7 @@ from typing import Any
 
 from kite.config import GuardrailConfig
 from kite.guardrails.sandbox import (
+    APPROVED_EXTERNAL_ARG,
     check_command_paths,
     check_dangerous,
     clamp_cwd,
@@ -94,7 +95,7 @@ class GuardrailPolicy:
             return workspace_root(self.execution.execution_cwd)
         return self.cwd
 
-    def check_path(self, path: str | Path, *, for_write: bool = False) -> GuardrailVerdict:
+    def check_path(self, path: str | Path, *, for_write: bool = False, approved_external: bool = False) -> GuardrailVerdict:
         if not self.config.enabled:
             return GuardrailVerdict(True)
         try:
@@ -104,7 +105,10 @@ class GuardrailPolicy:
 
         if self.config.sandbox_to_cwd and not self.config.host_access():
             if not is_inside(resolved, self.workspace):
-                if for_write or not is_user_skill_read(resolved):
+                # Codex-style boundary: reads outside the workspace are free
+                # (protected paths stay denied below); writes outside run
+                # only with a loop approval for that exact call.
+                if for_write and not approved_external:
                     return GuardrailVerdict(
                         False,
                         f"path escapes workspace sandbox ({self.workspace}): {resolved}",
@@ -119,7 +123,7 @@ class GuardrailPolicy:
 
         return GuardrailVerdict(True)
 
-    def check_bash(self, command: str, *, cwd: str | None = None) -> GuardrailVerdict:
+    def check_bash(self, command: str, *, cwd: str | None = None, approved_external: bool = False) -> GuardrailVerdict:
         if not self.config.enabled:
             return GuardrailVerdict(True)
         dangerous = check_dangerous(command)
@@ -135,11 +139,15 @@ class GuardrailPolicy:
             return GuardrailVerdict(False, blocked)
         if _OS_INTERFACE_READ.search(command):
             return GuardrailVerdict(False, "refusing to read OS interface paths via bash")
-        if self.config.sandbox_to_cwd and not self.config.host_access():
+        if self.config.sandbox_to_cwd and not self.config.host_access() and not approved_external:
             escaped = check_command_paths(command, self.workspace)
             if escaped:
                 return GuardrailVerdict(False, escaped)
-        workdir, reason = clamp_cwd(cwd, self.workspace, allow_outside=self.config.host_access())
+        workdir, reason = clamp_cwd(
+            cwd,
+            self.workspace,
+            allow_outside=self.config.host_access() or approved_external,
+        )
         if workdir is None:
             return GuardrailVerdict(False, reason)
         return GuardrailVerdict(True, rewritten_args={"cwd": str(workdir)})
@@ -170,20 +178,31 @@ class GuardrailPolicy:
         if not self.config.enabled:
             return GuardrailVerdict(True)
         args = dict(arguments)
+        # Set by the agent loop after the user approves an outside-workspace
+        # action: honor that one granted call (protected paths stay denied).
+        approved_external = bool(args.get(APPROVED_EXTERNAL_ARG))
 
         if tool in {"read", "write", "edit", "grep", "glob", "ls", "task"}:
             path_key = "path" if "path" in args else ("root" if "root" in args else None)
             if path_key and args.get(path_key):
-                v = self.check_path(str(args[path_key]), for_write=tool in {"write", "edit"})
+                v = self.check_path(
+                    str(args[path_key]),
+                    for_write=tool in {"write", "edit"},
+                    approved_external=approved_external,
+                )
                 if not v.allowed:
                     return v
             if tool == "glob" and args.get("root"):
-                v = self.check_path(str(args["root"]))
+                v = self.check_path(str(args["root"]), approved_external=approved_external)
                 if not v.allowed:
                     return v
 
         if tool == "bash":
-            v = self.check_bash(str(args.get("command") or ""), cwd=str(args.get("cwd") or "") or None)
+            v = self.check_bash(
+                str(args.get("command") or ""),
+                cwd=str(args.get("cwd") or "") or None,
+                approved_external=approved_external,
+            )
             if not v.allowed:
                 return v
             if v.rewritten_args:

@@ -173,7 +173,9 @@ type the marker as prose: a reply that merely *starts with*
 provider dropped the tool call, and writing it as ordinary text is the single
 most common reason a finished task reports "Stalled — no progress" and looks
 unfinished to the user. Prose-only "done" without the `submit` tool (or a real
-bash marker call) never finishes a code task.
+bash marker call) never finishes a code task. Code changes need the full
+structured message; docs/config/answer-only turns submit with any concise
+message (no verification demanded).
 
 ```
 submit(message="## Done\n- …\n\n## Changed\n- …\n\n## Verification\n- ✓ pytest -q")
