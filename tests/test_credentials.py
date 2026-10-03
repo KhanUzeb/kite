@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import stat
 
+import pytest
+
 from kite.providers.catalog import load_catalog
 from kite.providers.credentials import (
     api_key_fingerprint,
@@ -17,7 +19,7 @@ from kite.providers.credentials import (
 )
 
 
-def test_write_api_key_combined(tmp_path, monkeypatch) -> None:
+def _c_test_write_api_key_combined(tmp_path, monkeypatch) -> None:
     # (merged from test_write_api_key_replaces_existing)
     env = tmp_path / ".env"
     env.write_text("OPENAI_API_KEY=old\nOTHER=1\n", encoding="utf-8")
@@ -35,7 +37,7 @@ def test_write_api_key_combined(tmp_path, monkeypatch) -> None:
         assert mode == 0o600
 
 
-def test_remove_api_key_combined(tmp_path, monkeypatch) -> None:
+def _c_test_remove_api_key_combined(tmp_path, monkeypatch) -> None:
     # (merged from test_remove_api_key)
     env = tmp_path / ".env"
     env.write_text("GROQ_API_KEY=abc\nOTHER=1\n", encoding="utf-8")
@@ -56,7 +58,7 @@ def test_remove_api_key_combined(tmp_path, monkeypatch) -> None:
     assert "OTHER=1" in text
 
 
-def test_load_kite_env_combined(tmp_path, monkeypatch) -> None:
+def _c_test_load_kite_env_combined(tmp_path, monkeypatch) -> None:
     # (merged from test_load_kite_env_fills_empty_project_placeholder)
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
@@ -91,7 +93,7 @@ def test_load_kite_env_combined(tmp_path, monkeypatch) -> None:
     assert os.getenv("RELOAD_KEY") == "two-much-longer"
 
 
-def test_login_provider_alias_cleanup_combined(tmp_path, monkeypatch) -> None:
+def _c_test_login_provider_alias_cleanup_combined(tmp_path, monkeypatch) -> None:
     # (merged from test_login_provider_removes_alias_keys_from_env_file)
     env = tmp_path / ".env"
     env.write_text("NGC_API_KEY=old-alias\nOTHER=1\n", encoding="utf-8")
@@ -119,7 +121,7 @@ def test_login_provider_alias_cleanup_combined(tmp_path, monkeypatch) -> None:
     assert "FIRECRAWL_API_KEY" in msg
 
 
-def test_api_key_validation_and_prompt_combined(monkeypatch) -> None:
+def _c_test_api_key_validation_and_prompt_combined(monkeypatch) -> None:
     # (merged from test_validate_api_key_rejects_empty_and_short)
     assert validate_api_key("") == "API key cannot be empty"
     assert validate_api_key("valid-key-123") is None
@@ -131,13 +133,13 @@ def test_api_key_validation_and_prompt_combined(monkeypatch) -> None:
     assert err == "keys did not match — nothing saved"
 
 
-def test_api_key_fingerprint_masks_set_key(monkeypatch) -> None:
+def _c_test_api_key_fingerprint_masks_set_key(monkeypatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "gsk_test_key_abcdefgh")
     assert api_key_fingerprint(load_catalog().get("groq")) == "••••efgh"
     assert mask_api_key_fingerprint("sk-abcdefghijklmnop") == "••••mnop"
 
 
-def test_web_tool_login_logout_combined(tmp_path, monkeypatch) -> None:
+def _c_test_web_tool_login_logout_combined(tmp_path, monkeypatch) -> None:
     # (merged from test_login_web_tool_key_writes_secure_env)
     env = tmp_path / ".env"
     monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
@@ -169,7 +171,7 @@ def test_web_tool_login_logout_combined(tmp_path, monkeypatch) -> None:
     assert web_tool_api_key("exa") is None
 
 
-def test_web_keys_cli_and_status_combined(tmp_path, monkeypatch) -> None:
+def _c_test_web_keys_cli_and_status_combined(tmp_path, monkeypatch) -> None:
     # (merged from test_web_keys_cli_parser_registered)
     from kite.cli.run import build_parser
 
@@ -195,3 +197,66 @@ def test_web_keys_cli_and_status_combined(tmp_path, monkeypatch) -> None:
     assert rows["tavily"][1] == "TAVILY_API_KEY"
     assert rows["exa"][0] is False
     assert rows["firecrawl"][0] is False
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_write_api_key_combined, test_remove_api_key_combined, test_load_kite_env_combined."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t0_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _c_test_write_api_key_combined(tmp_path=_t0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t0_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_remove_api_key_combined(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _t2 = tmp_path / "t0_2"
+        _t2.mkdir(parents=True, exist_ok=True)
+        _c_test_load_kite_env_combined(tmp_path=_t2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_login_provider_alias_cleanup_combined, test_api_key_validation_and_prompt_combined, test_api_key_fingerprint_masks_set_key."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t1_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _c_test_login_provider_alias_cleanup_combined(tmp_path=_t0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _c_test_api_key_validation_and_prompt_combined(monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _c_test_api_key_fingerprint_masks_set_key(monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_02(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_web_tool_login_logout_combined, test_web_keys_cli_and_status_combined."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t2_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _c_test_web_tool_login_logout_combined(tmp_path=_t0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t2_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_web_keys_cli_and_status_combined(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+

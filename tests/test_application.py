@@ -34,7 +34,7 @@ from kite.application.verification import (
 from kite.eval import ReplayBundle, run_replay
 
 
-def test_flattened_modules_export_public_names() -> None:
+def _c_test_flattened_modules_export_public_names() -> None:
     from kite import tasks
     from kite.application import adapters, cli, execution, model, persistence, policy, tools, verification
     from kite.plugins import extensions
@@ -66,7 +66,7 @@ class _FakeHarness:
         return self._result
 
 
-def test_run_spec_roundtrip_and_service(workspace: Path) -> None:
+def _c_test_run_spec_roundtrip_and_service(workspace: Path) -> None:
     original = HarnessConfig(
         provider="groq",
         model_name="llama-3.3-70b-versatile",
@@ -94,7 +94,7 @@ def test_run_spec_roundtrip_and_service(workspace: Path) -> None:
     assert failed.status == "failed"
 
 
-def test_run_state_and_legacy_event_bridge() -> None:
+def _c_test_run_state_and_legacy_event_bridge() -> None:
     state = RunState("created")
     state.transition("prepared")
     state.transition("awaiting_model")
@@ -111,7 +111,7 @@ def test_run_state_and_legacy_event_bridge() -> None:
     assert back.kind == "tool_start" and back.payload["tool"] == "read"
 
 
-def test_approval_tiers_gate_only_risky_effects(tmp_path: Path) -> None:
+def _c_test_approval_tiers_gate_only_risky_effects(tmp_path: Path) -> None:
     """auto/trust/yolo run on their own; supervised prompts for every mutation."""
     from kite.application.policy import PolicyEngine
     from kite.application.tools import tool_requires_approval_gate
@@ -154,7 +154,7 @@ def test_approval_tiers_gate_only_risky_effects(tmp_path: Path) -> None:
     assert not auto.authorize(auto.derive_intent(outside)).allowed
 
 
-def test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path) -> None:
+def _c_test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path) -> None:
     ok, _ = check_path_access("../outside", workspace)
     assert not ok
     sibling = tmp_path / "proj-ok"
@@ -240,7 +240,7 @@ def test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path)
         assert not decision.allowed, (name, decision.reason)
 
 
-def test_verification_plans_replay_and_package_paths(workspace: Path, tmp_path: Path) -> None:
+def _c_test_verification_plans_replay_and_package_paths(workspace: Path, tmp_path: Path) -> None:
     vc = VerificationCollector()
     vc.on_tool_end("bash", {"command": "pytest tests/ -q"}, {"ok": True, "returncode": 0, "output": "out"})
     assert any(a.kind == "test" for a in vc.artifacts) and vc.status() == "verified"
@@ -323,7 +323,7 @@ def test_verification_plans_replay_and_package_paths(workspace: Path, tmp_path: 
     assert collector.artifacts[-1].path == str(absolute)
 
 
-def test_effects_coordinator_runner_and_cli_result(workspace: Path, tmp_path: Path) -> None:
+def _c_test_effects_coordinator_runner_and_cli_result(workspace: Path, tmp_path: Path) -> None:
     import sys
 
     assert set(derive_effects(ToolCall("1", "bash", {"command": "rm -rf build"}))) == {"destructive", "long_running"}
@@ -363,3 +363,45 @@ def test_effects_coordinator_runner_and_cli_result(workspace: Path, tmp_path: Pa
     assert CliResult.from_run_result(unfinished).ok is False
     limited = RunResult(status="failed", stop_reason="limits_exceeded", final_message="steps")
     assert CliResult.from_run_result(limited).ok is False
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_flattened_modules_export_public_names, test_run_spec_roundtrip_and_service, test_run_state_and_legacy_event_bridge."""
+    _c_test_flattened_modules_export_public_names()
+    _w1 = tmp_path / "w0_1"
+    (_w1 / "src").mkdir(parents=True, exist_ok=True)
+    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_run_spec_roundtrip_and_service(workspace=_w1)
+    _c_test_run_state_and_legacy_event_bridge()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_approval_tiers_gate_only_risky_effects, test_policy_paths_glob_executor_and_journal."""
+    _t0 = tmp_path / "t1_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _c_test_approval_tiers_gate_only_risky_effects(tmp_path=_t0)
+    _t1 = tmp_path / "t1_1"
+    _t1.mkdir(parents=True, exist_ok=True)
+    _w1 = tmp_path / "w1_1"
+    (_w1 / "src").mkdir(parents=True, exist_ok=True)
+    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_policy_paths_glob_executor_and_journal(tmp_path=_t1, workspace=_w1)
+
+def test_batch_02(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_verification_plans_replay_and_package_paths, test_effects_coordinator_runner_and_cli_result."""
+    _t0 = tmp_path / "t2_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _w0 = tmp_path / "w2_0"
+    (_w0 / "src").mkdir(parents=True, exist_ok=True)
+    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_verification_plans_replay_and_package_paths(tmp_path=_t0, workspace=_w0)
+    _t1 = tmp_path / "t2_1"
+    _t1.mkdir(parents=True, exist_ok=True)
+    _w1 = tmp_path / "w2_1"
+    (_w1 / "src").mkdir(parents=True, exist_ok=True)
+    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_effects_coordinator_runner_and_cli_result(tmp_path=_t1, workspace=_w1)
+

@@ -30,10 +30,15 @@ class CacheStats:
 
     @property
     def hit_ratio(self) -> float:
-        total_in = self.prompt_tokens + self.cache_read_tokens + self.cache_creation_tokens
+        # OpenAI `cached_tokens` is a SUBSET of `prompt_tokens` (and Anthropic
+        # `cache_read` may already be included in the reported input total),
+        # so adding the hit count on top double-counts. Normalize with max():
+        # subset case -> prompt + creation; disjoint case -> hit + creation.
+        hits = self.cache_hit_tokens
+        total_in = max(self.prompt_tokens, hits) + self.cache_creation_tokens
         if total_in <= 0:
             return 0.0
-        return self.cache_hit_tokens / total_in
+        return hits / total_in
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -9,7 +9,7 @@ from kite.models.cache import PromptCacheManager
 from kite.providers.capabilities import _litellm_openai_params
 
 
-def test_estimate_usage_and_compactor_measure() -> None:
+def _c_test_estimate_usage_and_compactor_measure() -> None:
     schemas = [{"name": "read", "parameters": {"type": "object"}}]
     precomputed = estimate_tool_schema_tokens(schemas)
     usage = estimate_usage(system="sys", messages=[], tool_tokens=precomputed, window=1000)
@@ -33,7 +33,7 @@ def test_estimate_usage_and_compactor_measure() -> None:
     assert calls.count("context") == 1
 
 
-def test_prompt_cache_manager_memoize_and_stable_prefix() -> None:
+def _c_test_prompt_cache_manager_memoize_and_stable_prefix() -> None:
     messages = [{"role": "system", "content": "You are helpful."}, {"role": "user", "content": "go"}]
     disabled = PromptCacheManager(provider="anthropic", enabled=False)
     a = disabled.prepare(messages)
@@ -49,7 +49,7 @@ def test_prompt_cache_manager_memoize_and_stable_prefix() -> None:
     assert second is not first and len(second) == len(grown) and mgr.prepare(grown) is second
 
 
-def test_runtime_prepare_static_and_litellm_cache() -> None:
+def _c_test_runtime_prepare_static_and_litellm_cache() -> None:
     from unittest.mock import MagicMock, patch
 
     from kite.config import UserConfig
@@ -78,4 +78,9 @@ def test_runtime_prepare_static_and_litellm_cache() -> None:
     assert info.hits + info.misses >= 1
 
 
+def test_batch_00() -> None:
+    """Consolidated (bodies unchanged): test_estimate_usage_and_compactor_measure, test_prompt_cache_manager_memoize_and_stable_prefix, test_runtime_prepare_static_and_litellm_cache."""
+    _c_test_estimate_usage_and_compactor_measure()
+    _c_test_prompt_cache_manager_memoize_and_stable_prefix()
+    _c_test_runtime_prepare_static_and_litellm_cache()
 

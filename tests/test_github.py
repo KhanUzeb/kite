@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from kite.tools.github import _auth_hint, make_github_tools
 
 
-def test_auth_failure_hint_markers() -> None:
+def _c_test_auth_failure_hint_markers() -> None:
     assert _auth_hint("error: not logged in to github.com") is not None
     hint = _auth_hint("Bad credentials (HTTP 401)")
     assert hint is not None and "kite gh auth login" in hint
@@ -15,7 +15,7 @@ def test_auth_failure_hint_markers() -> None:
     assert _auth_hint("all good") is None
 
 
-def test_run_gh_appends_auth_hint_and_gh_auth_tool() -> None:
+def _c_test_run_gh_appends_auth_hint_and_gh_auth_tool() -> None:
     tools = {t.name: t for t in make_github_tools()}
     assert "gh_auth" in tools
     assert tools["gh_auth"].parameters == {"type": "object", "properties": {}}
@@ -42,3 +42,10 @@ def test_run_gh_appends_auth_hint_and_gh_auth_tool() -> None:
         missing = tools["gh_auth"].run({})
     assert missing["ok"] is False
     assert "gh CLI not found" in missing["output"]
+
+
+def test_batch_00() -> None:
+    """Consolidated (bodies unchanged): test_auth_failure_hint_markers, test_run_gh_appends_auth_hint_and_gh_auth_tool."""
+    _c_test_auth_failure_hint_markers()
+    _c_test_run_gh_appends_auth_hint_and_gh_auth_tool()
+

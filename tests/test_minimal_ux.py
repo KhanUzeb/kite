@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import StringIO
 
+import pytest
 from rich.console import Console
 
 from kite.agent.mode import AgentMode
@@ -18,7 +19,7 @@ from kite.ui.style import KITE_THEME
 from tests.conftest import strip_ansi
 
 
-def test_cli_help_and_parser_lists_usable_commands() -> None:
+def _c_test_cli_help_and_parser_lists_usable_commands() -> None:
     brief = cli_help_brief()
     full = cli_help_text()
     assert "kite run" in brief and "kite help all" in brief
@@ -37,7 +38,7 @@ def test_cli_help_and_parser_lists_usable_commands() -> None:
     assert parser.parse_args(["-r"]).resume_pick is True
 
 
-def test_repl_help_and_legacy_slash_dispatch() -> None:
+def _c_test_repl_help_and_legacy_slash_dispatch() -> None:
     index = CommandIndex.load(".")
     brief = help_text(index)
     full = help_text(index, all=True)
@@ -66,7 +67,7 @@ def test_repl_help_and_legacy_slash_dispatch() -> None:
     assert is_primary_slash("plan")
 
 
-def test_completion_skills_cues_bare_slash_and_mouse() -> None:
+def _c_test_completion_skills_cues_bare_slash_and_mouse() -> None:
     index = CommandIndex.load(".")
     from kite.models.reasoning import ReasoningSupport
     from kite.ui.complete import _slash_display, _slash_meta, _slash_origin
@@ -138,7 +139,7 @@ def test_completion_skills_cues_bare_slash_and_mouse() -> None:
             os.environ["KITE_MOUSE"] = prev
 
 
-def test_variants_and_thinking_always_visible_before_detection() -> None:
+def _c_test_variants_and_thinking_always_visible_before_detection() -> None:
     """Regression: /variants + /thinking show before live detection warms.
 
     Support gates only the *levels* (menu rows / #variant suffixes fall back
@@ -171,7 +172,7 @@ def test_variants_and_thinking_always_visible_before_detection() -> None:
     assert {"off", "low", "medium", "high"} <= args
 
 
-def test_builtin_tool_catalog_cues() -> None:
+def _c_test_builtin_tool_catalog_cues() -> None:
     from kite.tools.cues import format_tool_catalog, tool_cue
     from kite.ui.tool_cards import ToolCard, render_tool_card_done, render_tool_card_start
 
@@ -190,7 +191,7 @@ def test_builtin_tool_catalog_cues() -> None:
     assert "✎" in done and "write" in done and "edit" in done
 
 
-def test_status_footer_modes() -> None:
+def _c_test_status_footer_modes() -> None:
     idle = SessionUiState(mode=AgentMode.BUILD, provider="groq", model="llama", cost=0.02)
     segments = status_segments(idle)
     texts = [t for t, _ in segments]
@@ -206,7 +207,7 @@ def test_status_footer_modes() -> None:
     assert segments[0][0] == "approval"
 
 
-def test_running_status_truncation_and_terminal_widths(monkeypatch) -> None:
+def _c_test_running_status_truncation_and_terminal_widths(monkeypatch) -> None:
     import os
     import shutil
 
@@ -236,3 +237,25 @@ def test_running_status_truncation_and_terminal_widths(monkeypatch) -> None:
         console.print(render_status(render_state))
         plain = strip_ansi(buf.getvalue())
         assert "kite" in plain and "plan" in plain and "$0.010" in plain
+
+
+def test_batch_00() -> None:
+    """Consolidated (bodies unchanged): test_cli_help_and_parser_lists_usable_commands, test_repl_help_and_legacy_slash_dispatch, test_completion_skills_cues_bare_slash_and_mouse."""
+    _c_test_cli_help_and_parser_lists_usable_commands()
+    _c_test_repl_help_and_legacy_slash_dispatch()
+    _c_test_completion_skills_cues_bare_slash_and_mouse()
+
+def test_batch_01() -> None:
+    """Consolidated (bodies unchanged): test_variants_and_thinking_always_visible_before_detection, test_builtin_tool_catalog_cues."""
+    _c_test_variants_and_thinking_always_visible_before_detection()
+    _c_test_builtin_tool_catalog_cues()
+
+def test_batch_02() -> None:
+    """Consolidated (bodies unchanged): test_status_footer_modes, test_running_status_truncation_and_terminal_widths."""
+    _c_test_status_footer_modes()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _c_test_running_status_truncation_and_terminal_widths(monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+

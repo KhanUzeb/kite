@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 from kite.agent.hooks import HookBus
 from kite.sol_pi.action_fusion import THEN_RUN_SUCCEEDED, merge_then_run_output, run_mutation_then_run
 from kite.sol_pi.config import load_sol_pi_config
@@ -36,7 +38,7 @@ class _HarnessStub:
     sol_pi: object | None = field(default=None, init=False)
 
 
-def test_sol_pi_config_load_and_attach(tmp_path: Path, monkeypatch) -> None:
+def _c_test_sol_pi_config_load_and_attach(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     missing = load_sol_pi_config(tmp_path)
     assert missing.action_fusion is False
@@ -66,7 +68,7 @@ def test_sol_pi_config_load_and_attach(tmp_path: Path, monkeypatch) -> None:
     assert cfg.enabled is True
 
 
-def test_economics_horizon_and_gate() -> None:
+def _c_test_economics_horizon_and_gate() -> None:
     horizon = estimate_remaining_requests(
         completed_boundary_request_counts=(4, 6, 5),
         remaining_boundaries=3,
@@ -113,7 +115,7 @@ def test_economics_horizon_and_gate() -> None:
     )
 
 
-def test_observation_pack_threshold_and_recall(tmp_path: Path) -> None:
+def _c_test_observation_pack_threshold_and_recall(tmp_path: Path) -> None:
     text = "line\n" * (THRESHOLD_BYTES // 5 + 10)
     obs = create_observation("bash", "call-1", text, tmp_path)
     assert obs is not None
@@ -126,7 +128,7 @@ def test_observation_pack_threshold_and_recall(tmp_path: Path) -> None:
     assert FULL_SENDS == 2
 
 
-def test_evidence_receipt_and_plan_transition() -> None:
+def _c_test_evidence_receipt_and_plan_transition() -> None:
     body = "FAILED test_foo\n" + ("x" * 5000)
     digest = sha256_text(body)
     archive = ArchiveObject(hash=digest, bytes=len(body), lines=2, body=body)
@@ -159,7 +161,7 @@ def test_evidence_receipt_and_plan_transition() -> None:
     assert len(transition.completed_steps) == 1
 
 
-def test_action_fusion_then_run_and_merge(tmp_path: Path) -> None:
+def _c_test_action_fusion_then_run_and_merge(tmp_path: Path) -> None:
     target = tmp_path / "f.txt"
     target.write_text("old\n", encoding="utf-8")
 
@@ -179,3 +181,26 @@ def test_action_fusion_then_run_and_merge(tmp_path: Path) -> None:
     )
     assert THEN_RUN_SUCCEEDED in merged["output"]
     assert merged.get("then_run_exit") == 1
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_sol_pi_config_load_and_attach, test_economics_horizon_and_gate, test_observation_pack_threshold_and_recall."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t0_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _c_test_sol_pi_config_load_and_attach(tmp_path=_t0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _c_test_economics_horizon_and_gate()
+    _t2 = tmp_path / "t0_2"
+    _t2.mkdir(parents=True, exist_ok=True)
+    _c_test_observation_pack_threshold_and_recall(tmp_path=_t2)
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_evidence_receipt_and_plan_transition, test_action_fusion_then_run_and_merge."""
+    _c_test_evidence_receipt_and_plan_transition()
+    _t1 = tmp_path / "t1_1"
+    _t1.mkdir(parents=True, exist_ok=True)
+    _c_test_action_fusion_then_run_and_merge(tmp_path=_t1)
+

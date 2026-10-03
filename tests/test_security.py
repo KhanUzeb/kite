@@ -38,7 +38,7 @@ from kite.guardrails.ssrf import (
 from kite.tools.web import _url_blocked, unwrap_tracking_url
 
 
-def test_dangerous_bash_and_benign_cache_deletes(workspace: Path) -> None:
+def _c_test_dangerous_bash_and_benign_cache_deletes(workspace: Path) -> None:
     assert check_dangerous("rm -rf /")
     assert check_dangerous("git push --force")
     assert check_dangerous("rm -rf .")
@@ -71,7 +71,7 @@ def test_dangerous_bash_and_benign_cache_deletes(workspace: Path) -> None:
     assert policy.check_bash("echo hello").allowed
 
 
-def test_sandbox_paths_os_interface_and_restricted_network(workspace: Path, kite_home: Path, tmp_path: Path, monkeypatch) -> None:
+def _c_test_sandbox_paths_os_interface_and_restricted_network(workspace: Path, kite_home: Path, tmp_path: Path, monkeypatch) -> None:
     root = workspace_root(workspace)
     assert cwd_in_trusted(workspace / "src", root, ["src/"])
     assert not cwd_in_trusted(workspace, root, ["src/"])
@@ -137,7 +137,7 @@ def test_sandbox_paths_os_interface_and_restricted_network(workspace: Path, kite
     assert "OPENAI_API_KEY" not in (captured.get("env") or {})
 
 
-def test_child_env_gh_inspection_and_token_passthrough(monkeypatch, workspace: Path, kite_home) -> None:
+def _c_test_child_env_gh_inspection_and_token_passthrough(monkeypatch, workspace: Path, kite_home) -> None:
     assert is_sensitive_env_key("OPENAI_API_KEY")
     assert is_sensitive_env_key("GITHUB_TOKEN")
     assert not is_sensitive_env_key("PATH")
@@ -208,7 +208,60 @@ def test_child_env_gh_inspection_and_token_passthrough(monkeypatch, workspace: P
     assert user_path().stat().st_mode & 0o077 == 0
 
 
-def test_ssrf_blocks_private_and_rebinding(monkeypatch) -> None:
+def _c_test_gh_tokens_only_for_single_gh_command(monkeypatch, workspace: Path) -> None:
+    from kite.guardrails.env_filter import is_single_gh_command
+
+    assert is_single_gh_command("gh issue list")
+    assert is_single_gh_command(["gh", "issue", "list"])
+    for chained in (
+        "gh issue list; python -c \"print('x')\"",
+        "gh issue list && echo done",
+        "gh issue list | jq .",
+        "cd foo && gh issue list",
+        "python -c \"print('x')\"; gh issue list",
+        "gh issue view $(whoami)",
+        "git status",
+        "",
+        None,
+    ):
+        assert not is_single_gh_command(chained), chained
+
+    monkeypatch.setenv("GH_TOKEN", "sentinel-gh")
+    monkeypatch.setenv("GITHUB_TOKEN", "sentinel-github")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    seen: list = []
+
+    class _FakeStdout:
+        def readline(self) -> str:
+            return ""
+
+        def close(self) -> None:
+            pass
+
+    class _FakeProc:
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN001, ANN002
+            seen.append(kwargs.get("env"))
+            self.stdout = _FakeStdout()
+
+        def wait(self, timeout=None):  # noqa: ANN001
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+    from kite.tools.coding import make_coding_tools
+
+    bash = next(t for t in make_coding_tools(cwd=str(workspace), enabled=["bash"]) if t.name == "bash")
+    bash.run({"command": "gh issue list; python -c \"print('x')\"", "cwd": str(workspace)})
+    bash.run({"command": "gh issue list", "cwd": str(workspace)})
+    assert len(seen) == 2
+    chained_env, single_env = seen
+    assert chained_env is not None and single_env is not None
+    assert "GH_TOKEN" not in chained_env and "GITHUB_TOKEN" not in chained_env
+    assert single_env.get("GH_TOKEN") == "sentinel-gh"
+    assert single_env.get("GITHUB_TOKEN") == "sentinel-github"
+    assert "OPENAI_API_KEY" not in single_env
+
+
+def _c_test_ssrf_blocks_private_and_rebinding(monkeypatch) -> None:
     cases = [
         ("http://2130706433/", "private"),
         ("http://0x7f000001/", "private"),
@@ -262,7 +315,7 @@ def test_ssrf_blocks_private_and_rebinding(monkeypatch) -> None:
     assert "_ValidatedHTTPHandler" in names and "_ValidatedHTTPSHandler" in names
 
 
-def test_nested_redaction_untrusted_content_and_crew_bounds(kite_home, tmp_path) -> None:
+def _c_test_nested_redaction_untrusted_content_and_crew_bounds(kite_home, tmp_path) -> None:
     payload = {
         "command": "curl -H 'Authorization: Bearer SECRET'",
         "headers": {"Authorization": "Bearer SECRET"},
@@ -337,7 +390,7 @@ def test_nested_redaction_untrusted_content_and_crew_bounds(kite_home, tmp_path)
         load_file(env_file)
 
 
-def test_inspection_bash_plan_mode_and_skill_trust(workspace: Path, tmp_path, kite_home) -> None:
+def _c_test_inspection_bash_plan_mode_and_skill_trust(workspace: Path, tmp_path, kite_home) -> None:
     assert is_inspection_bash("rg 'def foo' src/")
     assert is_inspection_bash("head -n 40 src/app.py")
     assert not is_inspection_bash("rm -rf build")
@@ -426,3 +479,83 @@ time.sleep(120)
         [sys.executable, "-c", "import time; time.sleep(30)"]
     )
     assert result.exit_code == -1
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_dangerous_bash_and_benign_cache_deletes, test_sandbox_paths_os_interface_and_restricted_network, test_child_env_gh_inspection_and_token_passthrough."""
+    _w0 = tmp_path / "w0_0"
+    (_w0 / "src").mkdir(parents=True, exist_ok=True)
+    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_dangerous_bash_and_benign_cache_deletes(workspace=_w0)
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t0_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k0_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _w1 = tmp_path / "w0_1"
+        (_w1 / "src").mkdir(parents=True, exist_ok=True)
+        (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_sandbox_paths_os_interface_and_restricted_network(tmp_path=_t1, kite_home=_k1, workspace=_w1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k0_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _w2 = tmp_path / "w0_2"
+        (_w2 / "src").mkdir(parents=True, exist_ok=True)
+        (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_child_env_gh_inspection_and_token_passthrough(kite_home=_k2, workspace=_w2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_gh_tokens_only_for_single_gh_command, test_ssrf_blocks_private_and_rebinding."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _w0 = tmp_path / "w1_0"
+        (_w0 / "src").mkdir(parents=True, exist_ok=True)
+        (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_gh_tokens_only_for_single_gh_command(workspace=_w0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _c_test_ssrf_blocks_private_and_rebinding(monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+
+def test_batch_02(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_nested_redaction_untrusted_content_and_crew_bounds, test_inspection_bash_plan_mode_and_skill_trust."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t2_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k2_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_nested_redaction_untrusted_content_and_crew_bounds(tmp_path=_t0, kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t2_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k2_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _w1 = tmp_path / "w2_1"
+        (_w1 / "src").mkdir(parents=True, exist_ok=True)
+        (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_inspection_bash_plan_mode_and_skill_trust(tmp_path=_t1, kite_home=_k1, workspace=_w1)
+    finally:
+        _mp1.undo()
+

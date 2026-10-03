@@ -15,7 +15,7 @@ from kite.agent.exceptions import InterruptAgentFlow
 from kite.application.policy import PolicyEngine
 from kite.application.tools import PolicyDecision, ToolCall, ToolIntent, ToolResult
 from kite.guardrails import redact_secrets
-from kite.guardrails.env_filter import filtered_child_env, invokes_gh_cli, with_gh_tokens
+from kite.guardrails.env_filter import filtered_child_env, is_single_gh_command, with_gh_tokens
 from kite.guardrails.process import popen_process_group_kwargs, terminate_process_tree
 
 _PASSTHROUGH_KEYS = (
@@ -169,8 +169,8 @@ class ProcessRunner:
 
     def run(self, command: list[str] | str, *, cwd: str | None = None, shell: bool = False) -> ProcessResult:
         env = self._child_env(cwd)
-        if invokes_gh_cli(command):
-            # Dynamic gh use: ambient GH_TOKEN/GITHUB_TOKEN flows impromptu.
+        if is_single_gh_command(command):
+            # Lone `gh ...` only: chained shells share env with non-gh siblings.
             env = with_gh_tokens(env)
         start = time.monotonic()
         proc = subprocess.Popen(

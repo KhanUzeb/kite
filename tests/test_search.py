@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from kite.tools.search import glob_search, grep_search, ls_search
 
 
@@ -15,7 +17,7 @@ def _tree(root: Path) -> None:
     (root / "tests" / "test_a.py").write_text("def test_foo():\n    assert foo()\n", encoding="utf-8")
 
 
-def test_grep_output_modes(tmp_path: Path) -> None:
+def _c_test_grep_output_modes(tmp_path: Path) -> None:
     _tree(tmp_path)
     files_only = grep_search(pattern="def foo", root=tmp_path, cwd=str(tmp_path), files_only=True)
     assert files_only["ok"] is True
@@ -34,7 +36,7 @@ def test_grep_output_modes(tmp_path: Path) -> None:
     assert "summary" in grouped
 
 
-def test_grep_filter_and_python_fallback(monkeypatch, tmp_path: Path) -> None:
+def _c_test_grep_filter_and_python_fallback(monkeypatch, tmp_path: Path) -> None:
     _tree(tmp_path)
     filtered = grep_search(
         pattern="def",
@@ -54,7 +56,7 @@ def test_grep_filter_and_python_fallback(monkeypatch, tmp_path: Path) -> None:
     assert "Bar" in fallback["output"]
 
 
-def test_glob_and_ls(tmp_path: Path) -> None:
+def _c_test_glob_and_ls(tmp_path: Path) -> None:
     _tree(tmp_path)
     recursive = glob_search(pattern="**/*.py", root=tmp_path)
     assert recursive["ok"] is True
@@ -72,7 +74,7 @@ def test_glob_and_ls(tmp_path: Path) -> None:
     assert "subdir" not in listed["output"]
 
 
-def test_glob_mtime_sort_skips_unreadable_files(tmp_path: Path, monkeypatch) -> None:
+def _c_test_glob_mtime_sort_skips_unreadable_files(tmp_path: Path, monkeypatch) -> None:
     """Permission-denied entries must not crash glob (is_file re-raises EACCES)."""
     (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
     (tmp_path / "b.py").write_text("y\n", encoding="utf-8")
@@ -89,7 +91,7 @@ def test_glob_mtime_sort_skips_unreadable_files(tmp_path: Path, monkeypatch) -> 
     assert "a.py" in out["output"]
 
 
-def test_grep_skips_credential_files_and_literal_patterns(tmp_path: Path, monkeypatch) -> None:
+def _c_test_grep_skips_credential_files_and_literal_patterns(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "a.py").write_text("token = visible\n", encoding="utf-8")
     (tmp_path / ".env").write_text("API_KEY=supersecret\n", encoding="utf-8")
@@ -106,3 +108,38 @@ def test_grep_skips_credential_files_and_literal_patterns(tmp_path: Path, monkey
     assert special["ok"] is True and "invalid regex" not in special.get("error", "")
     bad = grep_search(pattern="[", root=tmp_path, cwd=str(tmp_path))
     assert bad["ok"] is False and "invalid regex" in bad["output"]
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_grep_output_modes, test_grep_filter_and_python_fallback, test_glob_and_ls."""
+    _t0 = tmp_path / "t0_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _c_test_grep_output_modes(tmp_path=_t0)
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t0_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_grep_filter_and_python_fallback(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _t2 = tmp_path / "t0_2"
+    _t2.mkdir(parents=True, exist_ok=True)
+    _c_test_glob_and_ls(tmp_path=_t2)
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_glob_mtime_sort_skips_unreadable_files, test_grep_skips_credential_files_and_literal_patterns."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t1_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _c_test_glob_mtime_sort_skips_unreadable_files(tmp_path=_t0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t1_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_grep_skips_credential_files_and_literal_patterns(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+

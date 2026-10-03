@@ -203,10 +203,12 @@ def make_coding_tools(
             auto_venv=auto_venv,
         )
         if command:
-            from kite.guardrails.env_filter import invokes_gh_cli, with_gh_tokens
+            from kite.guardrails.env_filter import is_single_gh_command, with_gh_tokens
 
-            if invokes_gh_cli(command):
-                # Dynamic gh use: ambient GH_TOKEN/GITHUB_TOKEN flows impromptu.
+            if is_single_gh_command(command):
+                # Only a lone `gh ...` gets ambient tokens: its whole process
+                # tree is gh. A chained `gh ...; <other>` shares one shell env,
+                # so injecting there would leak GH_TOKEN to non-gh siblings.
                 env = with_gh_tokens(env)
         return env
 

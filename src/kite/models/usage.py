@@ -42,14 +42,17 @@ class UsageTotals:
 
     @property
     def cache_hit_ratio(self) -> float:
-        prompt = self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
+        # `cache_read` is a subset of the reported input on some providers,
+        # so it must not be added on top. max() keeps the subset case exact
+        # (input + write) without dropping the disjoint case entirely.
+        prompt = max(self.input_tokens, self.cache_read_tokens) + self.cache_write_tokens
         if prompt <= 0:
             return 0.0
         return self.cache_read_tokens / prompt
 
     @property
     def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
+        return max(self.input_tokens, self.cache_read_tokens) + self.output_tokens + self.cache_write_tokens
 
 
 def provider_quota(provider: str | None) -> dict[str, Any] | None:
@@ -84,7 +87,9 @@ def format_usage_report(
     testable without a console. ``quota=None`` means the provider did
     not report limits; the local totals still render.
     """
-    total = input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
+    # Cache-read hits are a subset of the reported input on some providers,
+    # so total must not add them on top (see UsageTotals.total_tokens).
+    total = max(input_tokens, cache_read_tokens) + output_tokens + cache_write_tokens
     lines = ["Usage", ""]
     lines.append("Session")
     lines.append(f"  Input tokens:       {input_tokens:,}")

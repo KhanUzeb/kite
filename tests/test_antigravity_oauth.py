@@ -34,7 +34,7 @@ def _fresh_marker(kite_home: Path) -> None:
     )
 
 
-def test_auth_url_filter() -> None:
+def _c_test_auth_url_filter() -> None:
     assert _auth_url_in_line("Visit https://accounts.google.com/o/oauth2/auth?x=1 now") != ""
     assert _auth_url_in_line("see https://antigravity.google/docs/cli/install/") != ""
     assert _auth_url_in_line("callback http://localhost:8080/?code=abc") == ""  # http only
@@ -42,7 +42,7 @@ def test_auth_url_filter() -> None:
     assert _auth_url_in_line("no url here") == ""
 
 
-def test_status_states(monkeypatch: pytest.MonkeyPatch, kite_home: Path) -> None:
+def _c_test_status_states(monkeypatch: pytest.MonkeyPatch, kite_home: Path) -> None:
     monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: None)
     missing = AntigravityAuthProvider().status()
     assert missing.authenticated is False
@@ -84,7 +84,7 @@ def test_status_states(monkeypatch: pytest.MonkeyPatch, kite_home: Path) -> None
     assert _marker(kite_home).is_file()
 
 
-def test_login_headless_verifies_probe(
+def _c_test_login_headless_verifies_probe(
     kite_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Headless login surfaces the sign-in URL and marks linked only on probe success."""
@@ -138,7 +138,7 @@ def test_login_headless_verifies_probe(
     assert "already linked" in again.message
 
 
-def test_login_exit_zero_without_session_fails(
+def _c_test_login_exit_zero_without_session_fails(
     kite_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Quitting agy (exit 0) without signing in must NOT mark linked."""
@@ -157,7 +157,7 @@ def test_login_exit_zero_without_session_fails(
     assert not _marker(kite_home).exists()
 
 
-def test_logout_clears_marker(kite_home: Path) -> None:
+def _c_test_logout_clears_marker(kite_home: Path) -> None:
     auth = AntigravityAuthProvider()
     assert auth.logout() is False
     marker = _marker(kite_home)
@@ -167,7 +167,7 @@ def test_logout_clears_marker(kite_home: Path) -> None:
     assert not marker.exists()
 
 
-def test_registry_session_and_credentials(
+def _c_test_registry_session_and_credentials(
     kite_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import kite.providers.auth as auth_mod
@@ -215,7 +215,7 @@ def test_registry_session_and_credentials(
     assert ready.linked is True and ready.usable is True
 
 
-def test_fetch_model_ids_probe_and_fallback(kite_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _c_test_fetch_model_ids_probe_and_fallback(kite_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     live = ("gemini-3.8-flash-medium", "claude-sonnet-4-6")
     # Pin the binary too: CI runners have no `agy`, and without it the
     # provider correctly falls back instead of probing.
@@ -237,7 +237,7 @@ def test_fetch_model_ids_probe_and_fallback(kite_home: Path, monkeypatch: pytest
     assert AntigravityAuthProvider().litellm_extras() == {}
 
 
-def test_agy_exec_argv_prompt_and_payload() -> None:
+def _c_test_agy_exec_argv_prompt_and_payload() -> None:
     from kite.providers.auth.antigravity_exec import (
         AntigravityExecError,
         AntigravityQuotaError,
@@ -291,7 +291,7 @@ def test_agy_exec_argv_prompt_and_payload() -> None:
         raise AssertionError("plain agy error must raise AntigravityExecError")
 
 
-def test_agy_turn_retries_without_model_on_unknown_model(monkeypatch: pytest.MonkeyPatch) -> None:
+def _c_test_agy_turn_retries_without_model_on_unknown_model(monkeypatch: pytest.MonkeyPatch) -> None:
     from kite.providers.auth import antigravity_exec as exec_mod
 
     monkeypatch.setattr(exec_mod, "agy_executable", lambda: "agy")
@@ -310,3 +310,69 @@ def test_agy_turn_retries_without_model_on_unknown_model(monkeypatch: pytest.Mon
     assert turn.text == "hi"
     assert len(seen) == 2 and "--model" not in seen[1][0]
     assert all("User: hi" in stdin for _, stdin in seen)  # prompt via stdin
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_auth_url_filter, test_status_states, test_login_headless_verifies_probe."""
+    _c_test_auth_url_filter()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k0_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_status_states(kite_home=_k1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k0_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_login_headless_verifies_probe(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_login_exit_zero_without_session_fails, test_logout_clears_marker, test_registry_session_and_credentials."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k1_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_login_exit_zero_without_session_fails(kite_home=_k0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k1_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_logout_clears_marker(kite_home=_k1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k1_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_registry_session_and_credentials(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_02(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_fetch_model_ids_probe_and_fallback, test_agy_exec_argv_prompt_and_payload, test_agy_turn_retries_without_model_on_unknown_model."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k2_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_fetch_model_ids_probe_and_fallback(kite_home=_k0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _c_test_agy_exec_argv_prompt_and_payload()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _c_test_agy_turn_retries_without_model_on_unknown_model(monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+

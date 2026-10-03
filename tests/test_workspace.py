@@ -12,7 +12,7 @@ from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
 
 
-def test_workspace_defaults_and_discovery(workspace: Path) -> None:
+def _c_test_workspace_defaults_and_discovery(workspace: Path) -> None:
     ctx = WorkspaceContext.discover(workspace)
     assert ctx.execution_mode is ExecutionMode.HOST
     assert GuardrailConfig().execution_mode == "host" and GuardrailConfig().host_access() is True
@@ -23,7 +23,7 @@ def test_workspace_defaults_and_discovery(workspace: Path) -> None:
     assert found.execution_cwd == nested.resolve()
 
 
-def test_host_allows_external_read_restricted_blocks(workspace: Path, tmp_path: Path) -> None:
+def _c_test_host_allows_external_read_restricted_blocks(workspace: Path, tmp_path: Path) -> None:
     external = tmp_path / "data.txt"
     external.write_text("hello host\n", encoding="utf-8")
     host = ExecutionSession(WorkspaceContext.discover(workspace, execution_mode=ExecutionMode.HOST))
@@ -54,7 +54,7 @@ def test_host_allows_external_read_restricted_blocks(workspace: Path, tmp_path: 
     assert blocked["ok"] is False and blocked.get("blocked") is True
 
 
-def test_set_cwd_updates_session_and_can_leave_project(workspace: Path, tmp_path: Path) -> None:
+def _c_test_set_cwd_updates_session_and_can_leave_project(workspace: Path, tmp_path: Path) -> None:
     sub = workspace / "pkg"
     sub.mkdir()
     session = ExecutionSession(WorkspaceContext.discover(workspace, execution_mode=ExecutionMode.RESTRICTED))
@@ -82,3 +82,27 @@ def test_set_cwd_updates_session_and_can_leave_project(workspace: Path, tmp_path
     host = ExecutionSession(WorkspaceContext.discover(workspace, execution_mode=ExecutionMode.HOST))
     target, err = host.set_cwd(elsewhere)
     assert err == "" and target == elsewhere.resolve()
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_workspace_defaults_and_discovery, test_host_allows_external_read_restricted_blocks, test_set_cwd_updates_session_and_can_leave_project."""
+    _w0 = tmp_path / "w0_0"
+    (_w0 / "src").mkdir(parents=True, exist_ok=True)
+    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_workspace_defaults_and_discovery(workspace=_w0)
+    _t1 = tmp_path / "t0_1"
+    _t1.mkdir(parents=True, exist_ok=True)
+    _w1 = tmp_path / "w0_1"
+    (_w1 / "src").mkdir(parents=True, exist_ok=True)
+    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_host_allows_external_read_restricted_blocks(tmp_path=_t1, workspace=_w1)
+    _t2 = tmp_path / "t0_2"
+    _t2.mkdir(parents=True, exist_ok=True)
+    _w2 = tmp_path / "w0_2"
+    (_w2 / "src").mkdir(parents=True, exist_ok=True)
+    (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_set_cwd_updates_session_and_can_leave_project(tmp_path=_t2, workspace=_w2)
+

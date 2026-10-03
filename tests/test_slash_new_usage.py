@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from io import StringIO
 
+import pytest
 from rich.console import Console
 
 
@@ -17,7 +18,7 @@ def _chat(tmp_path, kite_home, **kwargs):
     return chat, buf
 
 
-def test_new_registration_and_reset(tmp_path, kite_home) -> None:
+def _c_test_new_registration_and_reset(tmp_path, kite_home) -> None:
     from kite.cli.slash import CommandIndex, help_text
     from kite.ui.commands import is_primary_slash, parse_slash, primary_builtins
 
@@ -54,7 +55,7 @@ def test_new_registration_and_reset(tmp_path, kite_home) -> None:
     assert chat.provider == "groq" and chat.model == "llama-3.3-70b-versatile"
 
 
-def test_usage_reports_json_and_format(tmp_path, kite_home) -> None:
+def _c_test_usage_reports_json_and_format(tmp_path, kite_home) -> None:
     from kite.models.usage import format_usage_report, provider_quota
 
     chat, buf = _chat(tmp_path, kite_home, provider="groq", model="m")
@@ -77,13 +78,13 @@ def test_usage_reports_json_and_format(tmp_path, kite_home) -> None:
     chat._slash_usage("session")
     out = buf.getvalue()
     assert "12,430" in out and "4,210" in out and "8,900" in out and "1,200" in out
-    assert "26,740" in out and "$0.0842" in out and "12.7%" in out
+    assert "17,840" in out and "$0.0842" in out and "12.7%" in out
 
     buf.truncate(0)
     buf.seek(0)
     chat._slash_usage("--json")
     payload = json.loads(buf.getvalue())
-    assert payload["total_tokens"] == 26740 and payload["provider"] == "groq" and payload["quota"] is None
+    assert payload["total_tokens"] == 17840 and payload["provider"] == "groq" and payload["quota"] is None
     buf.truncate(0)
     buf.seek(0)
     chat._slash_usage("bogus")
@@ -97,10 +98,10 @@ def test_usage_reports_json_and_format(tmp_path, kite_home) -> None:
         cost=0.5, context_tokens=100, context_window=1000,
         provider="groq", quota={"rate_limit": "60 req/min", "resets": "12:00"},
     )
-    assert report["total_tokens"] == 20 and "60 req/min" in report["text"]
+    assert report["total_tokens"] == 17 and "60 req/min" in report["text"]
 
 
-def test_resume_picker_cards_scan_truncate_and_group(tmp_path, kite_home) -> None:
+def _c_test_resume_picker_cards_scan_truncate_and_group(tmp_path, kite_home) -> None:
     import time
 
     from kite.memory.session import SessionMeta
@@ -144,7 +145,7 @@ def test_resume_picker_cards_scan_truncate_and_group(tmp_path, kite_home) -> Non
     assert "Resume Session (current folder)" in out
 
 
-def test_unslop_bundled_command_loads_and_expands(tmp_path, kite_home) -> None:
+def _c_test_unslop_bundled_command_loads_and_expands(tmp_path, kite_home) -> None:
     from kite.cli.slash import CommandIndex
     from kite.commands.loader import load_bundled_commands
 
@@ -153,3 +154,51 @@ def test_unslop_bundled_command_loads_and_expands(tmp_path, kite_home) -> None:
     assert "unslop" in index.specs
     expanded = index.expand("unslop", "this README")
     assert expanded and "this README" in expanded and "behavior" in expanded.lower()
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_new_registration_and_reset, test_usage_reports_json_and_format."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t0_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k0_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_new_registration_and_reset(tmp_path=_t0, kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t0_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k0_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_usage_reports_json_and_format(tmp_path=_t1, kite_home=_k1)
+    finally:
+        _mp1.undo()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_resume_picker_cards_scan_truncate_and_group, test_unslop_bundled_command_loads_and_expands."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t1_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k1_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_resume_picker_cards_scan_truncate_and_group(tmp_path=_t0, kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t1_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k1_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_unslop_bundled_command_loads_and_expands(tmp_path=_t1, kite_home=_k1)
+    finally:
+        _mp1.undo()
+

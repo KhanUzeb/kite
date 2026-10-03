@@ -12,7 +12,7 @@ from kite.agent.parallel import (
 )
 
 
-def test_paths_overlap_and_disjoint_writes(tmp_path) -> None:
+def _c_test_paths_overlap_and_disjoint_writes(tmp_path) -> None:
     assert paths_overlap("/proj/src", "/proj/src/foo.py")
     assert not paths_overlap("/proj/a.py", "/proj/b.py")
 
@@ -25,7 +25,7 @@ def test_paths_overlap_and_disjoint_writes(tmp_path) -> None:
     assert plan_execution_batches(actions, cwd=cwd) == [actions]
 
 
-def test_write_conflicts_same_and_overlapping(tmp_path) -> None:
+def _c_test_write_conflicts_same_and_overlapping(tmp_path) -> None:
     cwd = str(tmp_path)
     left = {"tool": "write", "arguments": {"path": "same.py", "content": "a"}}
     right = {"tool": "edit", "arguments": {"path": "same.py", "old": "a", "new": "b"}}
@@ -40,7 +40,7 @@ def test_write_conflicts_same_and_overlapping(tmp_path) -> None:
     assert actions_conflict(grep, child_write, cwd=cwd)
 
 
-def test_disjoint_read_write_and_mixed_batches(tmp_path) -> None:
+def _c_test_disjoint_read_write_and_mixed_batches(tmp_path) -> None:
     cwd = str(tmp_path)
     disjoint = [
         {"tool": "read", "arguments": {"path": "a.py"}},
@@ -57,7 +57,7 @@ def test_disjoint_read_write_and_mixed_batches(tmp_path) -> None:
     assert action_parallel_eligible("write")
 
 
-def test_batching_preserves_model_call_order(tmp_path) -> None:
+def _c_test_batching_preserves_model_call_order(tmp_path) -> None:
     """Concurrency must never reorder calls the model sequenced deliberately.
 
     A tighter packer exists (first-fit turns [write A, read B, write C, read A]
@@ -87,7 +87,7 @@ def test_batching_preserves_model_call_order(tmp_path) -> None:
     assert plan_execution_batches([], cwd=cwd) == []
 
 
-def test_bash_splits_batches(tmp_path) -> None:
+def _c_test_bash_splits_batches(tmp_path) -> None:
     cwd = str(tmp_path)
     actions = [
         {"tool": "read", "arguments": {"path": "a.py"}},
@@ -106,7 +106,7 @@ def _sub(prompt: str, **kwargs) -> dict:
     return {"tool": "subagent", "arguments": {"prompt": prompt, **kwargs}}
 
 
-def test_coalesce_sibling_subagents_into_crew(tmp_path) -> None:
+def _c_test_coalesce_sibling_subagents_into_crew(tmp_path) -> None:
     cwd = str(tmp_path)
     actions = [
         _sub("scan auth", label="auth", profile="scout"),
@@ -125,7 +125,7 @@ def test_coalesce_sibling_subagents_into_crew(tmp_path) -> None:
     assert len(batches) == 2 and batches[0] == [crew]
 
 
-def test_coalesce_respects_async_collect_and_mismatch() -> None:
+def _c_test_coalesce_respects_async_collect_and_mismatch() -> None:
     assert coalesce_crew_calls([_sub("a", background=True), _sub("b")]) == [
         _sub("a", background=True),
         _sub("b"),
@@ -144,3 +144,33 @@ def test_coalesce_respects_async_collect_and_mismatch() -> None:
     # Non-adjacent subagents merge per run, not across other tools.
     split = coalesce_crew_calls([_sub("a"), {"tool": "bash", "arguments": {"command": "x"}}, _sub("b")])
     assert len(split) == 3
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_paths_overlap_and_disjoint_writes, test_write_conflicts_same_and_overlapping, test_disjoint_read_write_and_mixed_batches."""
+    _t0 = tmp_path / "t0_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _c_test_paths_overlap_and_disjoint_writes(tmp_path=_t0)
+    _t1 = tmp_path / "t0_1"
+    _t1.mkdir(parents=True, exist_ok=True)
+    _c_test_write_conflicts_same_and_overlapping(tmp_path=_t1)
+    _t2 = tmp_path / "t0_2"
+    _t2.mkdir(parents=True, exist_ok=True)
+    _c_test_disjoint_read_write_and_mixed_batches(tmp_path=_t2)
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_batching_preserves_model_call_order, test_bash_splits_batches."""
+    _t0 = tmp_path / "t1_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _c_test_batching_preserves_model_call_order(tmp_path=_t0)
+    _t1 = tmp_path / "t1_1"
+    _t1.mkdir(parents=True, exist_ok=True)
+    _c_test_bash_splits_batches(tmp_path=_t1)
+
+def test_batch_02(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_coalesce_sibling_subagents_into_crew, test_coalesce_respects_async_collect_and_mismatch."""
+    _t0 = tmp_path / "t2_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _c_test_coalesce_sibling_subagents_into_crew(tmp_path=_t0)
+    _c_test_coalesce_respects_async_collect_and_mismatch()
+

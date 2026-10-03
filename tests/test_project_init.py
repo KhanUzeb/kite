@@ -19,7 +19,7 @@ from kite.context.verify_hint import resolve_verification_command
 from kite.prompts import assemble_system_prompt, load_prompt_template
 
 
-def test_scaffold_and_force_overwrite(tmp_path: Path) -> None:
+def _c_test_scaffold_and_force_overwrite(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
     (root / "pyproject.toml").write_text(
@@ -48,7 +48,7 @@ def test_scaffold_and_force_overwrite(tmp_path: Path) -> None:
     assert "## Setup" in (node / "AGENTS.md").read_text(encoding="utf-8")
 
 
-def test_bootstrap_nudge_present_and_absent(tmp_path: Path) -> None:
+def _c_test_bootstrap_nudge_present_and_absent(tmp_path: Path) -> None:
     missing = tmp_path / "proj"
     missing.mkdir()
     (missing / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
@@ -68,7 +68,7 @@ def test_bootstrap_nudge_present_and_absent(tmp_path: Path) -> None:
     assert "<bootstrap_check>" not in rendered_present
 
 
-def test_ecosystem_ci_verify_and_context_block(tmp_path: Path) -> None:
+def _c_test_ecosystem_ci_verify_and_context_block(tmp_path: Path) -> None:
     root = tmp_path / "node"
     root.mkdir()
     (root / "package.json").write_text(
@@ -102,15 +102,36 @@ def test_ecosystem_ci_verify_and_context_block(tmp_path: Path) -> None:
     assert "Canonical verification" in rendered and "<worktree-reminder>" in rendered
 
 
-def test_memory_layers_prompt() -> None:
+def _c_test_memory_layers_prompt() -> None:
     assert "AGENTS.md" in load_prompt_template("memory_layers")
     assert "Memory layers" in assemble_system_prompt(config=load_runtime_config(), skills=[])
 
 
-def test_stable_setup_split_keeps_prefix_cacheable(tmp_path) -> None:
+def _c_test_stable_setup_split_keeps_prefix_cacheable(tmp_path) -> None:
     from kite.prompts import split_system_and_setup
 
     config = load_runtime_config()
     stable, setup = split_system_and_setup(config=config, skills=[])
     assert "UTC:" not in stable and "UTC:" in setup
     assert "Kite" in stable and len(stable) > 500
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_scaffold_and_force_overwrite, test_bootstrap_nudge_present_and_absent, test_ecosystem_ci_verify_and_context_block."""
+    _t0 = tmp_path / "t0_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _c_test_scaffold_and_force_overwrite(tmp_path=_t0)
+    _t1 = tmp_path / "t0_1"
+    _t1.mkdir(parents=True, exist_ok=True)
+    _c_test_bootstrap_nudge_present_and_absent(tmp_path=_t1)
+    _t2 = tmp_path / "t0_2"
+    _t2.mkdir(parents=True, exist_ok=True)
+    _c_test_ecosystem_ci_verify_and_context_block(tmp_path=_t2)
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_memory_layers_prompt, test_stable_setup_split_keeps_prefix_cacheable."""
+    _c_test_memory_layers_prompt()
+    _t1 = tmp_path / "t1_1"
+    _t1.mkdir(parents=True, exist_ok=True)
+    _c_test_stable_setup_split_keeps_prefix_cacheable(tmp_path=_t1)
+

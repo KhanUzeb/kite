@@ -1,4 +1,4 @@
-# kite-release-version: 1.0.3
+# kite-release-version: 1.0.4
 # Install Kite as a global CLI (default via irm|iex) or editable checkout (-Dev).
 # Global install uses `uv tool install git+https://github.com/...` only (not PyPI).
 #

@@ -5,11 +5,13 @@ from __future__ import annotations
 from contextlib import nullcontext
 from unittest.mock import MagicMock
 
+import pytest
+
 from kite.ui.complete import read_repl_line
 from kite.ui.state import SessionUiState
 
 
-def test_composer_interrupt_kinds_queue_and_eof(monkeypatch) -> None:
+def _c_test_composer_interrupt_kinds_queue_and_eof(monkeypatch) -> None:
     monkeypatch.setattr(
         "prompt_toolkit.patch_stdout.patch_stdout",
         lambda raw=False: nullcontext(),
@@ -57,7 +59,7 @@ def test_composer_interrupt_kinds_queue_and_eof(monkeypatch) -> None:
     assert len(q) == 0
 
 
-def test_busy_enter_steer_queue_classification(tmp_path, monkeypatch) -> None:
+def _c_test_busy_enter_steer_queue_classification(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "kite.providers.resolve.resolve_model",
         lambda **_: MagicMock(provider="groq", model="test"),
@@ -114,7 +116,7 @@ def test_busy_enter_steer_queue_classification(tmp_path, monkeypatch) -> None:
     assert parse_approval_choice("n", mandatory=True) == "deny"
 
 
-def test_approval_composer_keys(monkeypatch) -> None:
+def _c_test_approval_composer_keys(monkeypatch) -> None:
     """Composer wake exits empty while awaiting — must not auto-deny."""
     from kite.ui.complete import _prompt_once
 
@@ -153,7 +155,7 @@ def test_approval_composer_keys(monkeypatch) -> None:
     event.app.exit.assert_called_once_with(result="a")
 
 
-def test_slash_completion_wiring() -> None:
+def _c_test_slash_completion_wiring() -> None:
     from prompt_toolkit.buffer import Buffer, CompletionState
     from prompt_toolkit.completion import Completion
     from prompt_toolkit.document import Document
@@ -196,7 +198,7 @@ def test_slash_completion_wiring() -> None:
     assert "quit" in names and "exit" in names
 
 
-def test_slash_menu_rows_are_cached_until_invalidated() -> None:
+def _c_test_slash_menu_rows_are_cached_until_invalidated() -> None:
     """complete_while_typing re-runs the completer per keystroke.
 
     Rebuilding the visible specs and re-rendering every menu row made typing a
@@ -236,7 +238,7 @@ def test_slash_menu_rows_are_cached_until_invalidated() -> None:
     assert complete.cached_completion_display(completer, spec, index) is not None
 
 
-def test_composer_layout_multiline_and_newlines(kite_home, monkeypatch) -> None:
+def _c_test_composer_layout_multiline_and_newlines(kite_home, monkeypatch) -> None:
     from types import SimpleNamespace
 
     from prompt_toolkit.keys import Keys
@@ -363,7 +365,7 @@ def test_composer_layout_multiline_and_newlines(kite_home, monkeypatch) -> None:
     buffer.validate_and_handle.assert_not_called()
 
 
-def test_slash_completion_submit_flow() -> None:
+def _c_test_slash_completion_submit_flow() -> None:
     from types import SimpleNamespace
 
     from prompt_toolkit.buffer import Buffer, CompletionState
@@ -409,7 +411,7 @@ def test_slash_completion_submit_flow() -> None:
     submit_buffer.validate_and_handle.assert_called_once_with()
 
 
-def test_toolbar_busy_approval_and_hints(monkeypatch) -> None:
+def _c_test_toolbar_busy_approval_and_hints(monkeypatch) -> None:
     import time
 
     from kite.ui.complete import _activity_html, _toolbar_busy_bits, _toolbar_html
@@ -469,7 +471,7 @@ def test_toolbar_busy_approval_and_hints(monkeypatch) -> None:
     assert "Ctrl+G steer" in legacy_bits
 
 
-def test_busy_steer_keeps_composer_alive() -> None:
+def _c_test_busy_steer_keeps_composer_alive() -> None:
     """Steering must not stop/leave the busy composer — it interrupts the
     turn so the agent continues, while the composer stays pinned."""
     from kite.ui.complete import (
@@ -503,7 +505,7 @@ def test_busy_steer_keeps_composer_alive() -> None:
     assert calls[-1] == "queue:later"
 
 
-def test_fold_long_paste_collapse_expand_and_bindings() -> None:
+def _c_test_fold_long_paste_collapse_expand_and_bindings() -> None:
     from types import SimpleNamespace
 
     from prompt_toolkit.keys import Keys
@@ -568,7 +570,7 @@ def test_fold_long_paste_collapse_expand_and_bindings() -> None:
     assert key_buf.text.split("\n") == [f"line {i}" for i in range(12)]
 
 
-def test_plan_build_slash_text_runs_task(tmp_path, monkeypatch) -> None:
+def _c_test_plan_build_slash_text_runs_task(tmp_path, monkeypatch) -> None:
     """`/plan <text>` and `/build <text>` act immediately; bare forms report state."""
     from unittest.mock import MagicMock
 
@@ -597,7 +599,7 @@ def test_plan_build_slash_text_runs_task(tmp_path, monkeypatch) -> None:
     assert ran == ["fix it"]
 
 
-def test_reasoning_support_redetects_on_model_switch(tmp_path, monkeypatch) -> None:
+def _c_test_reasoning_support_redetects_on_model_switch(tmp_path, monkeypatch) -> None:
     """Thinking levels must follow the current model, never a stale cache."""
     from unittest.mock import MagicMock
 
@@ -625,7 +627,7 @@ def test_reasoning_support_redetects_on_model_switch(tmp_path, monkeypatch) -> N
     assert [model for _, model in calls] == ["model-a", "model-b"]
 
 
-def test_composer_data_paths_never_block_typing(tmp_path, monkeypatch) -> None:
+def _c_test_composer_data_paths_never_block_typing(tmp_path, monkeypatch) -> None:
     """Model lists and reasoning info must serve cache instantly (slow network warms in bg)."""
     import time
 
@@ -659,7 +661,7 @@ def test_composer_data_paths_never_block_typing(tmp_path, monkeypatch) -> None:
     assert time.monotonic() - started < 2.0
 
 
-def test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path, monkeypatch) -> None:
+def _c_test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path, monkeypatch) -> None:
     """A steer typed mid-turn must never be dropped when harness inject fails."""
     from unittest.mock import MagicMock
 
@@ -682,3 +684,83 @@ def test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path, monkeypatch) -
     chat._harness = harness2
     chat._queue_message("later")
     assert list(chat._inbox) == ["use grep not find", "later"]
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_composer_interrupt_kinds_queue_and_eof, test_busy_enter_steer_queue_classification, test_approval_composer_keys."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _c_test_composer_interrupt_kinds_queue_and_eof(monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t0_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_busy_enter_steer_queue_classification(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _c_test_approval_composer_keys(monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_slash_completion_wiring, test_slash_menu_rows_are_cached_until_invalidated, test_composer_layout_multiline_and_newlines."""
+    _c_test_slash_completion_wiring()
+    _c_test_slash_menu_rows_are_cached_until_invalidated()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k1_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_composer_layout_multiline_and_newlines(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_02() -> None:
+    """Consolidated (bodies unchanged): test_slash_completion_submit_flow, test_toolbar_busy_approval_and_hints, test_busy_steer_keeps_composer_alive."""
+    _c_test_slash_completion_submit_flow()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _c_test_toolbar_busy_approval_and_hints(monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _c_test_busy_steer_keeps_composer_alive()
+
+def test_batch_03(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_fold_long_paste_collapse_expand_and_bindings, test_plan_build_slash_text_runs_task, test_reasoning_support_redetects_on_model_switch."""
+    _c_test_fold_long_paste_collapse_expand_and_bindings()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t3_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_plan_build_slash_text_runs_task(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _t2 = tmp_path / "t3_2"
+        _t2.mkdir(parents=True, exist_ok=True)
+        _c_test_reasoning_support_redetects_on_model_switch(tmp_path=_t2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_04(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_composer_data_paths_never_block_typing, test_queue_steer_falls_back_to_inbox_and_interrupts."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t4_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _c_test_composer_data_paths_never_block_typing(tmp_path=_t0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t4_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+

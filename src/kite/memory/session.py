@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 from collections.abc import Iterator
@@ -65,6 +66,8 @@ def _read_session_meta(path: Path) -> SessionMeta | None:
         if not first_line.strip():
             return None
         row = json.loads(first_line)
+        if not isinstance(row, dict):
+            return None
         if row.get("type") != "meta":
             return None
         meta = SessionMeta.from_dict(row)
@@ -79,6 +82,8 @@ def _session_updated_at(path: Path, meta: SessionMeta) -> float:
     if sidecar.is_file():
         try:
             row = json.loads(sidecar.read_text(encoding="utf-8"))
+            if not isinstance(row, dict):
+                return meta.updated_at
             if isinstance(row.get("updated_at"), (int, float)):
                 return float(row["updated_at"])
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
@@ -178,6 +183,62 @@ DURABLE_EVENT_KINDS = frozenset(
         "subagent_end",
     }
 )
+
+
+def _read_existing_events(path: Path) -> list[dict[str, Any]]:
+    """Durable rows that must survive meta/message rewrites (F-03).
+
+    Collects ``event`` rows with durable kinds plus ``context_checkpoint``
+    rows so ``_write_meta`` (via ``set_exit`` / ``replace_messages`` / ``save``)
+    can re-append them after rewriting meta+messages.
+    """
+    preserved: list[dict[str, Any]] = []
+    try:
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                rtype = row.get("type")
+                if rtype == "event" and row.get("kind") in DURABLE_EVENT_KINDS:
+                    preserved.append(row)
+                elif rtype == "context_checkpoint":
+                    preserved.append(row)
+    except OSError:
+        return []
+    return preserved
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write ``data`` atomically via temp-file + os.replace (F-04).
+
+    Leaves the original intact on failure. Temp file gets owner-only perms
+    before the replace so the final file is 0o600.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        with tmp.open("wb") as f:
+            f.write(data)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        secure_session_file(tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    secure_session_file(path)
 
 
 @dataclass
@@ -280,13 +341,14 @@ class Session:
 
     def _write_meta(self) -> None:
         path = self._session_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
-            f.write(format_meta_line(self.meta) + "\n")
-            for m in self.messages:
-                row = {"type": "message", "message": prepare_persisted_value(m)}
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        secure_session_file(path)
+        preserved = _read_existing_events(path)
+        lines = [format_meta_line(self.meta)]
+        for m in self.messages:
+            row = {"type": "message", "message": prepare_persisted_value(m)}
+            lines.append(json.dumps(row, ensure_ascii=False))
+        for row in preserved:
+            lines.append(json.dumps(row, ensure_ascii=False))
+        _atomic_write_bytes(path, ("\n".join(lines) + "\n").encode("utf-8"))
         self._write_meta_sidecar(path, count=len(self.messages))
 
     def _persist_tail(self, messages: tuple[dict, ...] | list[dict]) -> None:
@@ -372,6 +434,8 @@ class Session:
             if not old_line.strip():
                 return
             row = json.loads(old_line)
+            if not isinstance(row, dict):
+                return
             if row.get("type") != "meta":
                 return
             new_line = format_meta_line(self.meta)
@@ -384,8 +448,7 @@ class Session:
             with path.open("rb") as f:
                 f.seek(line_len + 1)
                 tail = f.read()
-            with path.open("wb") as f:
-                f.write(new_bytes + b"\n" + tail)
+            _atomic_write_bytes(path, new_bytes + b"\n" + tail)
         except (OSError, json.JSONDecodeError, ValueError):
             pass
 
@@ -453,6 +516,8 @@ def resolve_session_path(session_id: str, *, unique: bool = False) -> Path:
 
 
 def _apply_session_row(row: dict[str, Any], messages: list[dict]) -> list[dict]:
+    if not isinstance(row, dict):
+        return messages
     if row.get("type") == "compact_snapshot":
         return list(row.get("messages") or [])
     if row.get("type") == "message":
@@ -471,6 +536,8 @@ def load_session(session_id: str, *, unique: bool = False) -> Session:
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
                 continue
             if row.get("type") == "meta":
                 meta = SessionMeta.from_dict(row)
@@ -665,6 +732,8 @@ def iter_session_messages(session_id: str) -> Iterator[dict]:
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
                 continue
             if row.get("type") == "meta":
                 continue

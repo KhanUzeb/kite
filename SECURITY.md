@@ -99,7 +99,7 @@ Background job output (`job_output`) is redacted before display, matching foregr
 
 ## Project trust
 
-Repo-local plugins and extensions can execute code from the workspace. Kite gates them until you trust the project (Pi-style).
+Repo-local plugins and extensions can execute code from the workspace. Kite gates them until you trust the project (Pi-style). Untrusted workspaces — including headless runs, which never prompt — load only user-global `~/.kite/extensions`; project-local `.kite/extensions` are skipped until trusted. `no_extensions` disables both.
 
 | Source | Stored in | Effect |
 |--------|-----------|--------|

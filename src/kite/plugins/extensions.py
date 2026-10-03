@@ -33,14 +33,52 @@ class ExtensionAPI:
 
 
 def extension_dirs(cwd: str | Path = ".") -> list[Path]:
+    return [global_extension_dir(), project_extension_dir(cwd)]
+
+
+def global_extension_dir() -> Path:
+    return kite_home() / "extensions"
+
+
+def project_extension_dir(cwd: str | Path = ".") -> Path:
     root = find_project_root(Path(cwd).expanduser().resolve())
-    return [kite_home() / "extensions", root / ".kite" / "extensions"]
+    return root / ".kite" / "extensions"
 
 
-def load_extensions(harness: Any, cwd: str | Path = ".") -> list[str]:
+def _project_is_trusted(cwd: str | Path, trusted: bool | None) -> bool:
+    if trusted is not None:
+        return bool(trusted)
+    try:
+        from kite.guardrails.project_trust import is_project_trusted
+    except Exception:
+        return False
+    try:
+        return bool(is_project_trusted(str(cwd)))
+    except Exception:
+        return False
+
+
+def load_extensions(
+    harness: Any,
+    cwd: str | Path = ".",
+    *,
+    require_trust: bool = True,
+    trusted: bool | None = None,
+) -> list[str]:
+    """Exec global extensions always; gate project-local ones behind trust.
+
+    Project ``.kite/extensions`` only loads when ``require_trust`` is False
+    or the workspace is trusted (fail-closed: unknown trust skips project
+    code, so headless runs never exec untrusted project modules).
+    """
+    directories = [global_extension_dir()]
+    if not require_trust or _project_is_trusted(cwd, trusted):
+        project_dir = project_extension_dir(cwd)
+        if project_dir not in directories:
+            directories.append(project_dir)
     loaded: list[str] = []
     api = ExtensionAPI(harness)
-    for directory in extension_dirs(cwd):
+    for directory in directories:
         if not directory.is_dir():
             continue
         try:

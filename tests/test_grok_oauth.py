@@ -47,7 +47,7 @@ def _offline_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(urllib.request, "urlopen", _raise)
 
 
-def test_grok_auth_record_shapes_and_expiry() -> None:
+def _c_test_grok_auth_record_shapes_and_expiry() -> None:
     flat = flatten_grok_auth_record(_nested_payload())
     assert flat["access_token"] == "ACC"
     assert flat["refresh_token"] == "REF"
@@ -79,7 +79,7 @@ def test_grok_auth_record_shapes_and_expiry() -> None:
     assert "expires_at" not in missing
 
 
-def test_materialize_litellm_xai_auth(
+def _c_test_materialize_litellm_xai_auth(
     kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_grok_home(monkeypatch, tmp_path, _nested_payload())
@@ -109,7 +109,7 @@ def test_materialize_litellm_xai_auth(
     assert env["XAI_OAUTH_API_BASE"] == "https://cli-chat-proxy.grok.com/v1"
 
 
-def test_xai_subscription_headers_fallback_version(
+def _c_test_xai_subscription_headers_fallback_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(grok_litellm, "_grok_version_cache", None)
@@ -121,7 +121,7 @@ def test_xai_subscription_headers_fallback_version(
     assert headers["x-grok-client-version"] != ""
 
 
-def test_resolve_model_grok_kwargs_include_oauth_extras(
+def _c_test_resolve_model_grok_kwargs_include_oauth_extras(
     kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from kite.providers.auth.base import AuthStatus
@@ -154,7 +154,7 @@ def test_resolve_model_grok_kwargs_include_oauth_extras(
     assert kwargs["extra_headers"]["x-grok-client-version"] != ""
 
 
-def test_grok_oauth_session_and_interactive_login(
+def _c_test_grok_oauth_session_and_interactive_login(
     kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """has_oauth_session covers xai/grok ids; interactive login opens the sign-in URL."""
@@ -210,7 +210,7 @@ def test_grok_oauth_session_and_interactive_login(
     assert opened and opened[0].startswith("https://auth.x.ai/")
 
 
-def test_logout_clears_materialized_xai_oauth(kite_home: Path, monkeypatch) -> None:
+def _c_test_logout_clears_materialized_xai_oauth(kite_home: Path, monkeypatch) -> None:
     import os
 
     from kite.providers.byos import clear_materialized_oauth, logout_oauth
@@ -239,3 +239,55 @@ def test_logout_clears_materialized_xai_oauth(kite_home: Path, monkeypatch) -> N
     assert logout_oauth(spec) is True
     assert not (folder / "auth.json").exists()
     assert "XAI_OAUTH_TOKEN_DIR" not in os.environ
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_grok_auth_record_shapes_and_expiry, test_materialize_litellm_xai_auth, test_xai_subscription_headers_fallback_version."""
+    _c_test_grok_auth_record_shapes_and_expiry()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t0_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k0_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_materialize_litellm_xai_auth(tmp_path=_t1, kite_home=_k1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _c_test_xai_subscription_headers_fallback_version(monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_resolve_model_grok_kwargs_include_oauth_extras, test_grok_oauth_session_and_interactive_login, test_logout_clears_materialized_xai_oauth."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t1_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k1_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_resolve_model_grok_kwargs_include_oauth_extras(tmp_path=_t0, kite_home=_k0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t1_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k1_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_grok_oauth_session_and_interactive_login(tmp_path=_t1, kite_home=_k1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k1_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_logout_clears_materialized_xai_oauth(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+

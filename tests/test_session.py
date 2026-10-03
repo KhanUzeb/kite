@@ -18,7 +18,7 @@ from kite.memory.session import (
 )
 
 
-def test_append_meta_lifecycle_and_touch(kite_home, monkeypatch) -> None:
+def _c_test_append_meta_lifecycle_and_touch(kite_home, monkeypatch) -> None:
     session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
     session.append({"role": "user", "content": "hi"})
     path = session.path
@@ -82,7 +82,7 @@ def test_append_meta_lifecycle_and_touch(kite_home, monkeypatch) -> None:
     touch.append({"role": "assistant", "content": "hello"})
 
 
-def test_replace_and_load_resilience(kite_home) -> None:
+def _c_test_replace_and_load_resilience(kite_home) -> None:
     session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
     for i in range(5):
         session.append({"role": "user", "content": f"turn {i}" * 50})
@@ -124,7 +124,7 @@ def test_replace_and_load_resilience(kite_home) -> None:
     assert load_session_todos(tail_session.id) == []
 
 
-def test_resolve_session_path_prefix_is_literal(kite_home) -> None:
+def _c_test_resolve_session_path_prefix_is_literal(kite_home) -> None:
     """Empty/glob prefixes must not silently load an arbitrary session."""
     session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
     assert session.path is not None
@@ -138,7 +138,7 @@ def test_resolve_session_path_prefix_is_literal(kite_home) -> None:
         resolve_session_path("../../tmp/escape")
 
 
-def test_session_tail_todos_reverse_and_total(kite_home) -> None:
+def _c_test_session_tail_todos_reverse_and_total(kite_home) -> None:
     from kite.memory.session import load_session_tail, load_session_todos
 
     session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
@@ -162,7 +162,7 @@ def test_session_tail_todos_reverse_and_total(kite_home) -> None:
     assert load_session_todos("nope-not-persisted-0000") == []
 
 
-def test_runtime_overlay_roundtrip_without_rewrite(kite_home) -> None:
+def _c_test_runtime_overlay_roundtrip_without_rewrite(kite_home) -> None:
     from kite.memory.session import list_sessions, load_session
 
     session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
@@ -183,7 +183,7 @@ def test_runtime_overlay_roundtrip_without_rewrite(kite_home) -> None:
     assert metas[session.id].model == "llama-x"
 
 
-def test_prune_keeps_newest(kite_home) -> None:
+def _c_test_prune_keeps_newest(kite_home) -> None:
     from kite.memory.session import list_sessions, prune_sessions
 
     ids = []
@@ -197,7 +197,7 @@ def test_prune_keeps_newest(kite_home) -> None:
     assert sorted(m.id for m in list_sessions(limit=10)) == sorted(ids[3:])
 
 
-def test_open_session_tails_transcript_and_restores_reasoning(tmp_path, kite_home, monkeypatch) -> None:
+def _c_test_open_session_tails_transcript_and_restores_reasoning(tmp_path, kite_home, monkeypatch) -> None:
     from io import StringIO
 
     from rich.console import Console
@@ -226,7 +226,7 @@ def test_open_session_tails_transcript_and_restores_reasoning(tmp_path, kite_hom
     assert chat._session_id == session.id
 
 
-def test_checkpoint_redacts_and_confines_session_id(kite_home) -> None:
+def _c_test_checkpoint_redacts_and_confines_session_id(kite_home) -> None:
     import stat
 
     from kite.config.user import UserConfig
@@ -247,3 +247,166 @@ def test_checkpoint_redacts_and_confines_session_id(kite_home) -> None:
         assert mode & 0o777 == stat.S_IRUSR | stat.S_IWUSR
     with pytest.raises(ValueError):
         save_checkpoint(session_id="../../tmp/escape", messages=[], cwd="/tmp")
+
+
+def _c_test_write_meta_preserves_durable_rows(kite_home) -> None:
+    """F-03: set_exit / replace_messages must not wipe event/checkpoint rows."""
+    session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
+    session.append({"role": "user", "content": "hi"})
+    session.record_event("tool_start", {"tool": "bash"})
+    session.record_event("tool_end", {"tool": "bash"})
+    session.record_context_checkpoint("cp-1", label="x")
+    assert session.path is not None
+
+    session.set_exit("ok")
+    text = session.path.read_text(encoding="utf-8")
+    assert text.count('"kind": "tool_start"') == 1 or text.count('"kind":"tool_start"') == 1 or '"tool_start"' in text
+    assert '"tool_end"' in text
+    assert '"context_checkpoint"' in text or '"cp-1"' in text
+    assert json.loads(text.splitlines()[0])["exit_status"] == "ok"
+
+    session.replace_messages([{"role": "user", "content": "compacted"}])
+    text2 = session.path.read_text(encoding="utf-8")
+    assert '"tool_start"' in text2 and '"tool_end"' in text2
+    assert '"cp-1"' in text2
+    loaded = load_session(session.id)
+    assert [m["content"] for m in loaded.messages] == ["compacted"]
+
+
+def _c_test_atomic_rewrite_failure_leaves_original(kite_home, monkeypatch) -> None:
+    """F-04: failed rewrite must leave the original file intact."""
+    import os as _os
+
+    session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
+    session.append({"role": "user", "content": "keep me"})
+    assert session.path is not None
+    before = session.path.read_bytes()
+    leftovers_before = set(session.path.parent.glob("*.tmp"))
+
+    def _boom(*_a, **_k):
+        raise OSError("disk full (test)")
+
+    monkeypatch.setattr(_os, "replace", _boom)
+    with pytest.raises(OSError):
+        session.set_exit("boom")
+    assert session.path.read_bytes() == before
+    assert b"keep me" in session.path.read_bytes()
+    assert set(session.path.parent.glob("*.tmp")) == leftovers_before
+
+
+def _c_test_non_object_jsonl_rows_skipped(kite_home) -> None:
+    """F-05: valid JSON non-objects must not crash forward loaders."""
+    from kite.memory.session import iter_session_messages
+
+    session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
+    session.append({"role": "user", "content": "hello"})
+    assert session.path is not None
+    with session.path.open("a", encoding="utf-8") as handle:
+        handle.write("null\n[]\n\"str\"\n42\n{not-json\n")
+    loaded = load_session(session.id)
+    assert [m["content"] for m in loaded.messages] == ["hello"]
+    assert [m["content"] for m in iter_session_messages(session.id)] == ["hello"]
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_append_meta_lifecycle_and_touch, test_replace_and_load_resilience, test_resolve_session_path_prefix_is_literal."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k0_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_append_meta_lifecycle_and_touch(kite_home=_k0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k0_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_replace_and_load_resilience(kite_home=_k1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k0_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_resolve_session_path_prefix_is_literal(kite_home=_k2)
+    finally:
+        _mp2.undo()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_session_tail_todos_reverse_and_total, test_runtime_overlay_roundtrip_without_rewrite, test_prune_keeps_newest."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k1_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_session_tail_todos_reverse_and_total(kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k1_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_runtime_overlay_roundtrip_without_rewrite(kite_home=_k1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k1_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_prune_keeps_newest(kite_home=_k2)
+    finally:
+        _mp2.undo()
+
+def test_batch_02(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_open_session_tails_transcript_and_restores_reasoning, test_checkpoint_redacts_and_confines_session_id, test_write_meta_preserves_durable_rows."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t2_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k2_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_open_session_tails_transcript_and_restores_reasoning(tmp_path=_t0, kite_home=_k0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k2_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_checkpoint_redacts_and_confines_session_id(kite_home=_k1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k2_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_write_meta_preserves_durable_rows(kite_home=_k2)
+    finally:
+        _mp2.undo()
+
+def test_batch_03(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_atomic_rewrite_failure_leaves_original, test_non_object_jsonl_rows_skipped."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k3_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_atomic_rewrite_failure_leaves_original(kite_home=_k0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k3_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_non_object_jsonl_rows_skipped(kite_home=_k1)
+    finally:
+        _mp1.undo()
+

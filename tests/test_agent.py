@@ -81,7 +81,7 @@ class _StubEnv:
         return {"ok": True, "output": ""}
 
 
-def test_query_limits_retry_fault_and_budget_guard() -> None:
+def _c_test_query_limits_retry_fault_and_budget_guard() -> None:
     # (merged from test_query_limits_retry_and_fault)
     model = _StubModel()
     agent = DefaultAgent(model, LocalEnvironment(registry=ToolRegistry([])), step_limit=2, cost_limit=5.0)
@@ -137,7 +137,7 @@ def test_query_limits_retry_fault_and_budget_guard() -> None:
         assert "budget" in blob
 
 
-def test_stable_setup_messages_and_compaction_history(workspace: Path) -> None:
+def _c_test_stable_setup_messages_and_compaction_history(workspace: Path) -> None:
     from kite.memory.compaction_ops import run_compaction
 
     model = _StubModel()
@@ -195,7 +195,7 @@ def test_stable_setup_messages_and_compaction_history(workspace: Path) -> None:
     assert "Schema repair" in outputs[0]["output"] and "path" in outputs[0]["output"]
 
 
-def test_informational_completion_idle_and_error(monkeypatch) -> None:
+def _c_test_informational_completion_idle_and_error(monkeypatch) -> None:
     # (merged from test_unexpected_stop_classifier)
     assert is_unexpected_stop("I'll inspect the failing test next.")
     assert is_unexpected_stop("Let me fix the import now.")
@@ -256,7 +256,7 @@ def test_informational_completion_idle_and_error(monkeypatch) -> None:
     assert result.get("exit_status") == "Error"
 
 
-def test_text_submit_marker_ends_the_turn(workspace: Path) -> None:
+def _c_test_text_submit_marker_ends_the_turn(workspace: Path) -> None:
     # Regression: a provider dropped the tool call and the model wrote
     # COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT as prose. That used to be counted as an
     # idle turn and the run ended Stalled after three nudges, hiding finished work.
@@ -290,7 +290,7 @@ def test_text_submit_marker_ends_the_turn(workspace: Path) -> None:
     assert stuck.messages[-1].get("extra", {}).get("submission") == "I am thinking about it"
 
 
-def test_submit_tool_call_accounting(workspace: Path) -> None:
+def _c_test_submit_tool_call_accounting(workspace: Path) -> None:
     # (merged from test_submit_leaves_no_unanswered_tool_call)
     from kite.agent.exceptions import Submitted as _Submitted
     from kite.agent.loop import DefaultAgent as _DefaultAgent
@@ -371,7 +371,7 @@ def test_submit_tool_call_accounting(workspace: Path) -> None:
     assert answered == ["call_0", "call_1"]
 
 
-def test_submit_gate_and_verification(workspace: Path) -> None:
+def _c_test_submit_gate_and_verification(workspace: Path) -> None:
     # (merged from test_submit_gate_and_executor_approval)
     class _EditThenSubmit:
         def __init__(self) -> None:
@@ -445,7 +445,7 @@ def test_submit_gate_and_verification(workspace: Path) -> None:
     assert clean.verification.submit_block_reason("hi") is None
 
 
-def test_plan_tools_and_dispatch_mode(workspace: Path) -> None:
+def _c_test_plan_tools_and_dispatch_mode(workspace: Path) -> None:
     # (merged from test_plan_build_tools_and_plan_submit_block)
     assert "write" not in PLAN_TOOLS and "edit" not in PLAN_TOOLS
     assert READONLY_TOOLS <= PLAN_TOOLS
@@ -492,7 +492,7 @@ def test_plan_tools_and_dispatch_mode(workspace: Path) -> None:
     assert "async" in dispatch_hint("auto-async")
 
 
-def test_steer_follow_up_and_compaction_events() -> None:
+def _c_test_steer_follow_up_and_compaction_events() -> None:
     queue = RunMessageQueue()
     queue.steer("focus on tests only")
     events: list[str] = []
@@ -540,7 +540,7 @@ def test_steer_follow_up_and_compaction_events() -> None:
     assert fired == ["yes"]
 
 
-def test_cancel_parallel_and_job_registry(workspace: Path) -> None:
+def _c_test_cancel_parallel_and_job_registry(workspace: Path) -> None:
     # (merged from test_cancel_parallel_reads_and_interrupt)
     import threading
     import time
@@ -589,7 +589,7 @@ def test_cancel_parallel_and_job_registry(workspace: Path) -> None:
     assert h.teardown_jobs() == 0
 
 
-def test_cost_estimate_harness_build_and_recovery(kite_home, workspace: Path, monkeypatch) -> None:
+def _c_test_cost_estimate_harness_build_and_recovery(kite_home, workspace: Path, monkeypatch) -> None:
     # (merged from test_estimate_cost_from_usage_falls_back_to_price_map)
     import litellm
 
@@ -645,7 +645,7 @@ def test_cost_estimate_harness_build_and_recovery(kite_home, workspace: Path, mo
     args = build_parser().parse_args(["resume", "--last", "--retry", "abc12345"])
     assert args.retry is True and args.session == "abc12345"
 
-def test_after_tool_subagent_cost_and_worker_files() -> None:
+def _c_test_after_tool_subagent_cost_and_worker_files() -> None:
     from kite.agent.loop import DefaultAgent
     from kite.env.local import LocalEnvironment
     from kite.tools import ToolRegistry
@@ -670,3 +670,67 @@ def test_after_tool_subagent_cost_and_worker_files() -> None:
     agent._after_tool("subagent", {}, {}, out, 5, [])
     assert agent.cost == pytest.approx(0.25)
     assert noted == ["w/a.py", "w/b.py"]
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_query_limits_retry_fault_and_budget_guard, test_stable_setup_messages_and_compaction_history, test_informational_completion_idle_and_error."""
+    _c_test_query_limits_retry_fault_and_budget_guard()
+    _w1 = tmp_path / "w0_1"
+    (_w1 / "src").mkdir(parents=True, exist_ok=True)
+    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_stable_setup_messages_and_compaction_history(workspace=_w1)
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _c_test_informational_completion_idle_and_error(monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_text_submit_marker_ends_the_turn, test_submit_tool_call_accounting, test_submit_gate_and_verification."""
+    _w0 = tmp_path / "w1_0"
+    (_w0 / "src").mkdir(parents=True, exist_ok=True)
+    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_text_submit_marker_ends_the_turn(workspace=_w0)
+    _w1 = tmp_path / "w1_1"
+    (_w1 / "src").mkdir(parents=True, exist_ok=True)
+    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_submit_tool_call_accounting(workspace=_w1)
+    _w2 = tmp_path / "w1_2"
+    (_w2 / "src").mkdir(parents=True, exist_ok=True)
+    (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_submit_gate_and_verification(workspace=_w2)
+
+def test_batch_02(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_plan_tools_and_dispatch_mode, test_steer_follow_up_and_compaction_events, test_cancel_parallel_and_job_registry."""
+    _w0 = tmp_path / "w2_0"
+    (_w0 / "src").mkdir(parents=True, exist_ok=True)
+    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_plan_tools_and_dispatch_mode(workspace=_w0)
+    _c_test_steer_follow_up_and_compaction_events()
+    _w2 = tmp_path / "w2_2"
+    (_w2 / "src").mkdir(parents=True, exist_ok=True)
+    (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_cancel_parallel_and_job_registry(workspace=_w2)
+
+def test_batch_03(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_cost_estimate_harness_build_and_recovery, test_after_tool_subagent_cost_and_worker_files."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k3_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _w0 = tmp_path / "w3_0"
+        (_w0 / "src").mkdir(parents=True, exist_ok=True)
+        (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_cost_estimate_harness_build_and_recovery(kite_home=_k0, workspace=_w0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _c_test_after_tool_subagent_cost_and_worker_files()
+

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from kite.agent.events import Event
 from kite.tasks import (
     HeadlessRunDisplay,
@@ -11,7 +13,7 @@ from kite.tasks import (
 )
 
 
-def test_headless_display_combined(capsys) -> None:
+def _c_test_headless_display_combined(capsys) -> None:
     # (merged from test_headless_display_tool_start)
     display = HeadlessRunDisplay(stream_tools=True)
     display(Event("tool_start", payload={"tool": "bash", "arguments": {"command": "pytest -q"}}))
@@ -31,7 +33,7 @@ def test_headless_display_combined(capsys) -> None:
     assert "scout" in crew_err
 
 
-def test_headless_batch_and_approval_wiring_combined(monkeypatch, workspace, kite_home) -> None:
+def _c_test_headless_batch_and_approval_wiring_combined(monkeypatch, workspace, kite_home) -> None:
     # (merged from test_run_headless_batch_dry_integration)
     calls: list[str] = []
 
@@ -80,7 +82,7 @@ def test_headless_batch_and_approval_wiring_combined(monkeypatch, workspace, kit
         assert observed == [expected]
 
 
-def test_headless_budgets_leftover_jobs_and_cli_flags(monkeypatch, workspace, kite_home) -> None:
+def _c_test_headless_budgets_leftover_jobs_and_cli_flags(monkeypatch, workspace, kite_home) -> None:
     from unittest.mock import MagicMock
 
     from kite.application.contracts import RunResult
@@ -159,3 +161,35 @@ def test_headless_budgets_leftover_jobs_and_cli_flags(monkeypatch, workspace, ki
     exec_args = parser.parse_args(["exec", "--steps", "4", "ci task"])
     assert cmd_exec(exec_args) == 0
     assert captured["headless"] is True and captured["quiet"] is True and captured["steps"] == 4
+
+
+def test_batch_00(tmp_path, capsys) -> None:
+    """Consolidated (bodies unchanged): test_headless_display_combined, test_headless_batch_and_approval_wiring_combined, test_headless_budgets_leftover_jobs_and_cli_flags."""
+    _c_test_headless_display_combined(capsys=capsys)
+    capsys.readouterr()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k0_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _w1 = tmp_path / "w0_1"
+        (_w1 / "src").mkdir(parents=True, exist_ok=True)
+        (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_headless_batch_and_approval_wiring_combined(kite_home=_k1, workspace=_w1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    capsys.readouterr()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k0_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _w2 = tmp_path / "w0_2"
+        (_w2 / "src").mkdir(parents=True, exist_ok=True)
+        (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_headless_budgets_leftover_jobs_and_cli_flags(kite_home=_k2, workspace=_w2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+

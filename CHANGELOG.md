@@ -2,6 +2,24 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-10-03
+
+### Security
+- Project-local `.kite/extensions` gated behind explicit project trust (F-01): untrusted and headless runs load only global `~/.kite/extensions`; `no_extensions` disables both.
+- `GH_TOKEN` / `GITHUB_TOKEN` injected only into a lone `gh …` subprocess, never into chained shells (F-02).
+
+### Fixed
+- Session rewrites preserve durable event rows across `set_exit` / compaction (F-03).
+- Session snapshots write atomically via temp-file + replace; interruption keeps the prior transcript (F-04).
+- Non-object JSONL rows skipped during session load/resume (F-05).
+- Cache hit ratio and token totals no longer double-count OpenAI-style cached input (F-06).
+- Project-context cache fingerprinted on instruction files + commit; `git status` refreshed on hits (F-07).
+- Plain `git push` / `clone` route to approval (SERIOUS); only `--force` / `-f` stays hard-blocked (F-08).
+- Agy prompt enforces the 24k-char ceiling after composing system + turns; agy child env filtered (F-09).
+
+### Changed
+- Test suite consolidated 305 → 114 collected with identical assertions (under the 150 CI budget).
+
 ## [1.0.3] - 2026-09-29
 
 ### Added

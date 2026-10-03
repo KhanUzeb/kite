@@ -39,7 +39,7 @@ def _model(*, temperature: float | None = None, mode: str = "fast") -> LitellmMo
     return model
 
 
-def test_completion_kwargs_temperature_without_reasoning() -> None:
+def _c_test_completion_kwargs_temperature_without_reasoning() -> None:
     request = _model()._completion_kwargs([], stream=True)
 
     assert "temperature" not in request
@@ -53,7 +53,7 @@ def test_completion_kwargs_temperature_without_reasoning() -> None:
     assert plain_request["temperature"] == 0.0
 
 
-def test_temperature_and_reasoning_error_fallbacks() -> None:
+def _c_test_temperature_and_reasoning_error_fallbacks() -> None:
     assert looks_like_temperature_reasoning_error(RuntimeError(_REASONING_ERROR))
     assert not looks_like_temperature_reasoning_error(RuntimeError("provider unavailable"))
 
@@ -93,7 +93,7 @@ def test_temperature_and_reasoning_error_fallbacks() -> None:
     assert fast._drop_reasoning is False
 
 
-def test_stream_stall_falls_back_to_blocking() -> None:
+def _c_test_stream_stall_falls_back_to_blocking() -> None:
     model = _model()
     calls: list[str] = []
 
@@ -111,7 +111,7 @@ def test_stream_stall_falls_back_to_blocking() -> None:
     assert calls == ["stream", "blocking"]
 
 
-def test_completion_kwargs_single_attempt_agent_loop_owns_retries() -> None:
+def _c_test_completion_kwargs_single_attempt_agent_loop_owns_retries() -> None:
     """LiteLLM must not retry internally — the agent loop owns provider retries.
 
     Stacking both loops (3 LiteLLM attempts x 4 agent attempts) multiplies
@@ -122,7 +122,7 @@ def test_completion_kwargs_single_attempt_agent_loop_owns_retries() -> None:
     assert _model()._completion_kwargs([], stream=False)["num_retries"] == 0
 
 
-def test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+def _c_test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     """A held-open stream must raise TimeoutError quickly, not hang the turn."""
     import sys
     import time
@@ -156,7 +156,7 @@ def test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     assert time.monotonic() - started < 15.0
 
 
-def test_kite_internal_timeouts_never_retry() -> None:
+def _c_test_kite_internal_timeouts_never_retry() -> None:
     """Deterministic classification: Kite's own bounded timeouts fail fast.
 
     The stall test above races the 4s stall against the 5s overall timeout —
@@ -170,7 +170,7 @@ def test_kite_internal_timeouts_never_retry() -> None:
     assert not is_transient_provider_error(RuntimeError("provider unavailable"))
 
 
-def test_peek_reasoning_cache_only() -> None:
+def _c_test_peek_reasoning_cache_only() -> None:
     from kite.models import reasoning
 
     key = ("peek-provider-xyz", "peek-model-xyz")
@@ -183,7 +183,7 @@ def test_peek_reasoning_cache_only() -> None:
         reasoning._cache.pop(key, None)
 
 
-def test_api_messages_repair_unanswered_tool_calls() -> None:
+def _c_test_api_messages_repair_unanswered_tool_calls() -> None:
     model = object.__new__(LitellmModel)
     projected = model._api_messages(
         [
@@ -222,7 +222,7 @@ def test_api_messages_repair_unanswered_tool_calls() -> None:
     assert repaired[1]["tool_call_id"] == "dangling"
 
 
-def test_token_efficiency_reasoning_and_cache_breakpoints() -> None:
+def _c_test_token_efficiency_reasoning_and_cache_breakpoints() -> None:
     from kite.models.cache import apply_cache_breakpoints
 
     model = object.__new__(LitellmModel)
@@ -270,7 +270,7 @@ def test_token_efficiency_reasoning_and_cache_breakpoints() -> None:
     assert isinstance(setup_out[2]["content"], str)
 
 
-def test_token_efficiency_report_and_routing() -> None:
+def _c_test_token_efficiency_report_and_routing() -> None:
     from kite.context.token_report import breakdown_request, price_weighted_cost, rank_opportunities, summarize_run
     from kite.models.routing import route_turn
 
@@ -292,7 +292,7 @@ def test_token_efficiency_report_and_routing() -> None:
     assert route_turn("implement auth fix", enabled=True) == "frontier"
 
 
-def test_usage_tracking_and_litellm_serializer() -> None:
+def _c_test_usage_tracking_and_litellm_serializer() -> None:
     import warnings
 
     from litellm.types.llms.openai import ResponsesAPIResponse
@@ -322,7 +322,7 @@ def test_usage_tracking_and_litellm_serializer() -> None:
     assert totals.cost == pytest.approx(0.05)
 
 
-def test_compaction_request_omits_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
+def _c_test_compaction_request_omits_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
     from kite.agent import summarize
 
     captured: dict = {}
@@ -354,7 +354,7 @@ def _menu_support() -> ReasoningSupport:
     )
 
 
-def test_thinking_level_clamp_and_apply(tmp_path, kite_home) -> None:
+def _c_test_thinking_level_clamp_and_apply(tmp_path, kite_home) -> None:
     from io import StringIO
 
     from rich.console import Console
@@ -389,7 +389,7 @@ def test_thinking_level_clamp_and_apply(tmp_path, kite_home) -> None:
     session._apply_thinking_level("high")
     assert session.state.reasoning == "thinking:high"
 
-def test_prewarm_litellm_idempotent_and_daemon() -> None:
+def _c_test_prewarm_litellm_idempotent_and_daemon() -> None:
     import sys
 
     from kite.models import litellm_model
@@ -406,7 +406,7 @@ def test_prewarm_litellm_idempotent_and_daemon() -> None:
     assert "litellm" in sys.modules
 
 
-def test_agy_subscription_turn_is_text_only(monkeypatch: pytest.MonkeyPatch) -> None:
+def _c_test_agy_subscription_turn_is_text_only(monkeypatch: pytest.MonkeyPatch) -> None:
     import sys
     from types import SimpleNamespace
 
@@ -457,3 +457,56 @@ def test_agy_subscription_turn_is_text_only(monkeypatch: pytest.MonkeyPatch) -> 
     model._query_agy = lambda messages: routed.append(messages) or {"routed": True}  # type: ignore[method-assign]
     assert model.query([{"role": "user", "content": "hi"}]) == {"routed": True}
     assert routed and routed[0][0]["content"] == "hi"
+
+
+def test_batch_00() -> None:
+    """Consolidated (bodies unchanged): test_completion_kwargs_temperature_without_reasoning, test_temperature_and_reasoning_error_fallbacks, test_stream_stall_falls_back_to_blocking."""
+    _c_test_completion_kwargs_temperature_without_reasoning()
+    _c_test_temperature_and_reasoning_error_fallbacks()
+    _c_test_stream_stall_falls_back_to_blocking()
+
+def test_batch_01() -> None:
+    """Consolidated (bodies unchanged): test_completion_kwargs_single_attempt_agent_loop_owns_retries, test_stream_stall_fails_fast, test_kite_internal_timeouts_never_retry."""
+    _c_test_completion_kwargs_single_attempt_agent_loop_owns_retries()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _c_test_stream_stall_fails_fast(monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _c_test_kite_internal_timeouts_never_retry()
+
+def test_batch_02() -> None:
+    """Consolidated (bodies unchanged): test_peek_reasoning_cache_only, test_api_messages_repair_unanswered_tool_calls, test_token_efficiency_reasoning_and_cache_breakpoints."""
+    _c_test_peek_reasoning_cache_only()
+    _c_test_api_messages_repair_unanswered_tool_calls()
+    _c_test_token_efficiency_reasoning_and_cache_breakpoints()
+
+def test_batch_03() -> None:
+    """Consolidated (bodies unchanged): test_token_efficiency_report_and_routing, test_usage_tracking_and_litellm_serializer, test_compaction_request_omits_temperature."""
+    _c_test_token_efficiency_report_and_routing()
+    _c_test_usage_tracking_and_litellm_serializer()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _c_test_compaction_request_omits_temperature(monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_04(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_thinking_level_clamp_and_apply, test_prewarm_litellm_idempotent_and_daemon, test_agy_subscription_turn_is_text_only."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t4_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k4_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_thinking_level_clamp_and_apply(tmp_path=_t0, kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _c_test_prewarm_litellm_idempotent_and_daemon()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _c_test_agy_subscription_turn_is_text_only(monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+

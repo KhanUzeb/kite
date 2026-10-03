@@ -56,7 +56,7 @@ from kite.ui.tool_cards import render_code_edit_preview
 from tests.conftest import strip_ansi
 
 
-def test_render_events_busy_spin_and_quiet_tools() -> None:
+def _c_test_render_events_busy_spin_and_quiet_tools() -> None:
     buf = StringIO()
     display = RunDisplay(Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME), state=SessionUiState(), quiet=False)
     display.state.busy = True
@@ -85,7 +85,7 @@ def test_render_events_busy_spin_and_quiet_tools() -> None:
     assert "read" in plain
 
 
-def test_spinner_heartbeats_when_stderr_is_not_a_tty(monkeypatch) -> None:
+def _c_test_spinner_heartbeats_when_stderr_is_not_a_tty(monkeypatch) -> None:
     """Relayed/redirected stderr has no \\r animation — it still must show life.
 
     Disabling the spinner entirely there is what made long turns look frozen
@@ -111,7 +111,7 @@ def test_spinner_heartbeats_when_stderr_is_not_a_tty(monkeypatch) -> None:
     assert sp._shown is False, "nothing to erase on a non-TTY stream"
 
 
-def test_turn_stays_visibly_alive_between_events() -> None:
+def _c_test_turn_stays_visibly_alive_between_events() -> None:
     """No dead windows: the answer tail and the next model call both show up.
 
     A REPL turn that buffers the answer and leaves the spinner off between a
@@ -137,7 +137,7 @@ def test_turn_stays_visibly_alive_between_events() -> None:
     footer.close()
 
 
-def test_output_and_thinking_unwrap_full_width() -> None:
+def _c_test_output_and_thinking_unwrap_full_width() -> None:
     from kite.ui.output_view import (
         format_thinking_text,
         format_viewable_output,
@@ -193,7 +193,7 @@ def _render_card(
     return strip_ansi(buf.getvalue())
 
 
-def test_startup_card_width_truncation_and_context() -> None:
+def _c_test_startup_card_width_truncation_and_context() -> None:
     wide = _render_card(100, context=["AGENTS.md"])
     for token in (
         "🪁 Kite 0.9.8.5",
@@ -239,7 +239,7 @@ def test_startup_card_width_truncation_and_context() -> None:
     assert line.split("demo", 1)[1].strip(" │") == ""
 
 
-def test_theme_palettes_and_status() -> None:
+def _c_test_theme_palettes_and_status() -> None:
     reset_prefs(theme="auto", font="unicode")
     for name in ("monochrome", "catppuccin", "ember", "forest", "hues", "transparent"):
         assert name in THEME_NAMES
@@ -266,7 +266,7 @@ def test_theme_palettes_and_status() -> None:
     reset_prefs(theme="auto", font="unicode")
 
 
-def test_composer_interrupt_kinds_aliases_and_empty() -> None:
+def _c_test_composer_interrupt_kinds_aliases_and_empty() -> None:
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr("prompt_toolkit.patch_stdout.patch_stdout", lambda raw=False: nullcontext())
     try:
@@ -306,7 +306,7 @@ def test_composer_interrupt_kinds_aliases_and_empty() -> None:
     assert got.kind == "empty"
 
 
-def test_live_streaming_paints_once_and_interrupt_is_quiet() -> None:
+def _c_test_live_streaming_paints_once_and_interrupt_is_quiet() -> None:
     """The turn must look alive, and never repeat itself."""
     buf = StringIO()
     display = RunDisplay(Console(file=buf, width=120, force_terminal=True, theme=KITE_THEME))
@@ -340,7 +340,7 @@ def test_live_streaming_paints_once_and_interrupt_is_quiet() -> None:
     quiet.close()
 
 
-def test_agent_end_flushes_a_short_trailing_chunk() -> None:
+def _c_test_agent_end_flushes_a_short_trailing_chunk() -> None:
     """A final chunk under the coalescer threshold must not be dropped."""
     buf = StringIO()
     display = RunDisplay(Console(file=buf, width=80, theme=KITE_THEME))
@@ -350,7 +350,7 @@ def test_agent_end_flushes_a_short_trailing_chunk() -> None:
     assert "all done" in strip_ansi(buf.getvalue())
 
 
-def test_repl_lazy_slash_and_jobs(monkeypatch, tmp_path, kite_home) -> None:
+def _c_test_repl_lazy_slash_and_jobs(monkeypatch, tmp_path, kite_home) -> None:
     monkeypatch.setattr("kite.providers.resolve.resolve_model", lambda **_: MagicMock(provider="groq", model="llama-test"))
     session = ChatSession(cwd=str(tmp_path))
     assert session._handle_slash("/quit") is False
@@ -440,7 +440,7 @@ def test_repl_lazy_slash_and_jobs(monkeypatch, tmp_path, kite_home) -> None:
     assert repl.state.awaiting_approval == "bash"
 
 
-def test_attach_clipboard_and_diff_helpers(tmp_path, kite_home, monkeypatch) -> None:
+def _c_test_attach_clipboard_and_diff_helpers(tmp_path, kite_home, monkeypatch) -> None:
     note = tmp_path / "note.txt"
     note.write_text("hello attach", encoding="utf-8")
     task, found = parse_inline_mentions(f"please fix @{note.name}", tmp_path)
@@ -490,7 +490,7 @@ def test_attach_clipboard_and_diff_helpers(tmp_path, kite_home, monkeypatch) -> 
     assert "foo" in preview_card.plain and "bar" in preview_card.plain
 
 
-def test_preview_builders_carry_not_applied_banner(tmp_path) -> None:
+def _c_test_preview_builders_carry_not_applied_banner(tmp_path) -> None:
     assert PREVIEW_NOT_APPLIED == "Staged as a proposal — files NOT modified yet."
     patch = preview_patch_diff("src/foo.py", "old line\n", "new line\n")
     assert patch.startswith(PREVIEW_NOT_APPLIED)
@@ -511,7 +511,7 @@ def test_preview_builders_carry_not_applied_banner(tmp_path) -> None:
     assert PREVIEW_NOT_APPLIED in rendered
 
 
-def test_render_diff_shows_old_new_line_numbers() -> None:
+def _c_test_render_diff_shows_old_new_line_numbers() -> None:
     from kite.ui.diff import _line_numbers
 
     diff = make_unified_diff(
@@ -535,7 +535,7 @@ def test_render_diff_shows_old_new_line_numbers() -> None:
     ]
 
 
-def test_render_diff_word_highlights_mixed_indent() -> None:
+def _c_test_render_diff_word_highlights_mixed_indent() -> None:
     diff = make_unified_diff("x.py", "\tfoo bar\n", "  foo BAZ\n")
     body = render_diff(diff)
     plain = body.plain
@@ -560,7 +560,7 @@ def _fake_composer_event():  # noqa: ANN202
     return SimpleNamespace(current_buffer=MagicMock(), app=MagicMock())
 
 
-def test_ctrl_v_pastes_text_or_attaches_screenshot(monkeypatch) -> None:
+def _c_test_ctrl_v_pastes_text_or_attaches_screenshot(monkeypatch) -> None:
     slot: dict = {}
     attached: list[str] = []
     bindings = make_repl_key_bindings(
@@ -583,7 +583,7 @@ def test_ctrl_v_pastes_text_or_attaches_screenshot(monkeypatch) -> None:
     event.app.invalidate.assert_called()
 
 
-def test_ctrl_c_copies_selection_without_stopping(monkeypatch) -> None:
+def _c_test_ctrl_c_copies_selection_without_stopping(monkeypatch) -> None:
     bindings = make_repl_key_bindings()
     matches = _bindings_by_handler(bindings, "_copy_selected")
     assert len(matches) == 1
@@ -594,7 +594,7 @@ def test_ctrl_c_copies_selection_without_stopping(monkeypatch) -> None:
     writer.assert_called_once_with("selected")
 
 
-def test_read_clipboard_text_falls_back_when_powershell_empty(monkeypatch) -> None:
+def _c_test_read_clipboard_text_falls_back_when_powershell_empty(monkeypatch) -> None:
     monkeypatch.setattr("kite.ui.attach.os.name", "nt")
     proc = MagicMock(stdout="", returncode=0)
     monkeypatch.setattr("kite.ui.attach.subprocess.run", lambda *a, **k: proc)
@@ -607,7 +607,7 @@ def test_read_clipboard_text_falls_back_when_powershell_empty(monkeypatch) -> No
         low.assert_not_called()
 
 
-def test_stream_answer_styles_boundaries_and_coalescing() -> None:
+def _c_test_stream_answer_styles_boundaries_and_coalescing() -> None:
     display = RunDisplay(Console(force_terminal=True, width=100, theme=KITE_THEME), state=SessionUiState())
     display._stream_write_answer("## Summary\n- first item\n```python\nx = 1\n```\n")
     # fence markers and bullet land in internal stream path — exercise prose helper directly
@@ -630,7 +630,7 @@ def test_stream_answer_styles_boundaries_and_coalescing() -> None:
     assert lines[1].strip() == "Second line"
 
 
-def test_composer_turn_answer_lifecycle() -> None:
+def _c_test_composer_turn_answer_lifecycle() -> None:
     from kite.ui.render import render_user_cell
 
     console = Console(file=StringIO(), width=48, height=24, theme=KITE_THEME, legacy_windows=False)
@@ -742,7 +742,7 @@ def test_composer_turn_answer_lifecycle() -> None:
     assert "Root cause was a race in auth" in plain2 and "Done" in plain2 and "Fixed the flake" in plain2
 
 
-def test_repl_prints_each_submitted_prompt_once(monkeypatch, tmp_path, kite_home) -> None:
+def _c_test_repl_prints_each_submitted_prompt_once(monkeypatch, tmp_path, kite_home) -> None:
     from kite.ui.complete import ComposerResult
 
     monkeypatch.setattr(
@@ -767,7 +767,7 @@ def test_repl_prints_each_submitted_prompt_once(monkeypatch, tmp_path, kite_home
     assert rows == ["first", "second"]
 
 
-def test_approval_panels_render_once() -> None:
+def _c_test_approval_panels_render_once() -> None:
     from kite.ui.approval import render_approval_panel
 
     diff = make_unified_diff("app.py", "old\n", "new\n")
@@ -777,7 +777,7 @@ def test_approval_panels_render_once() -> None:
     assert "+1" in panel and "-1" in panel
 
 
-def test_resume_transcript_rendering_and_tail(tmp_path, kite_home) -> None:
+def _c_test_resume_transcript_rendering_and_tail(tmp_path, kite_home) -> None:
     from kite.memory.session import Session, SessionMeta
 
     session = ChatSession(cwd=str(tmp_path))
@@ -845,7 +845,7 @@ def test_resume_transcript_rendering_and_tail(tmp_path, kite_home) -> None:
     assert session._parse_session_show_tail("--tail 3 abc") == ("abc", 3)
 
 
-def test_reasoning_picker_and_slash_levels(tmp_path, kite_home) -> None:
+def _c_test_reasoning_picker_and_slash_levels(tmp_path, kite_home) -> None:
     from kite.models.reasoning import ReasoningSupport
 
     def _support() -> ReasoningSupport:
@@ -911,7 +911,7 @@ def test_reasoning_picker_and_slash_levels(tmp_path, kite_home) -> None:
     assert dispatched.state.reasoning == "thinking:high"
 
 
-def test_variants_strict_menu_persist_and_label(tmp_path, kite_home) -> None:
+def _c_test_variants_strict_menu_persist_and_label(tmp_path, kite_home) -> None:
     from unittest.mock import MagicMock
 
     from kite.config import UserConfig
@@ -957,7 +957,7 @@ def test_variants_strict_menu_persist_and_label(tmp_path, kite_home) -> None:
     assert format_model_label(SessionUiState(model="m", provider="p")) == "p/m"
 
 
-def test_variants_unknown_support_strict_reject_and_known_absent(tmp_path, kite_home) -> None:
+def _c_test_variants_unknown_support_strict_reject_and_known_absent(tmp_path, kite_home) -> None:
     """Unknown detection applies nothing; known-absent keeps its message."""
     from kite.models.reasoning import ReasoningSupport
 
@@ -979,7 +979,7 @@ def test_variants_unknown_support_strict_reject_and_known_absent(tmp_path, kite_
     assert "does not advertise" in strip_ansi(session.console.file.getvalue())
 
 
-def test_variants_unknown_then_supported_applies_strict_menu(tmp_path, kite_home) -> None:
+def _c_test_variants_unknown_then_supported_applies_strict_menu(tmp_path, kite_home) -> None:
     """Unknown path offers the generic list but only applies supported levels."""
     from unittest.mock import MagicMock
 
@@ -1017,7 +1017,7 @@ def test_variants_unknown_then_supported_applies_strict_menu(tmp_path, kite_home
     assert "max is not offered" in strip_ansi(session.console.file.getvalue())
 
 
-def test_reasoning_info_sync_bounded_never_hangs(tmp_path, kite_home, monkeypatch) -> None:
+def _c_test_reasoning_info_sync_bounded_never_hangs(tmp_path, kite_home, monkeypatch) -> None:
     """A wedged models API must not hang explicit commands (bounded wait)."""
     import time
 
@@ -1037,7 +1037,7 @@ def test_reasoning_info_sync_bounded_never_hangs(tmp_path, kite_home, monkeypatc
     assert time.monotonic() - started < 5.0
 
 
-def test_pending_approval_panel_plan_git_footer(tmp_path, kite_home) -> None:
+def _c_test_pending_approval_panel_plan_git_footer(tmp_path, kite_home) -> None:
     """Busy-tick crash: panel id must exist before the first approval render (no AttributeError)."""
     from kite.application.policy import ApprovalRequest
 
@@ -1143,7 +1143,7 @@ def test_git_dirty_tracking_and_branch_marker(tmp_path, kite_home, monkeypatch) 
     assert "main*" not in status_context_parts(chat.state)
 
 
-def test_git_helpers_survive_missing_binary_and_cache_repo(tmp_path, monkeypatch) -> None:
+def _c_test_git_helpers_survive_missing_binary_and_cache_repo(tmp_path, monkeypatch) -> None:
     from kite.ui import git as git_ui
 
     calls: list[int] = []
@@ -1163,3 +1163,178 @@ def test_git_helpers_survive_missing_binary_and_cache_repo(tmp_path, monkeypatch
     assert git_ui.is_repo(tmp_path) is False
     assert git_ui.is_repo(tmp_path) is False
     assert len(calls) == 1
+
+
+def test_batch_00() -> None:
+    """Consolidated (bodies unchanged): test_render_events_busy_spin_and_quiet_tools, test_spinner_heartbeats_when_stderr_is_not_a_tty, test_turn_stays_visibly_alive_between_events."""
+    _c_test_render_events_busy_spin_and_quiet_tools()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _c_test_spinner_heartbeats_when_stderr_is_not_a_tty(monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _c_test_turn_stays_visibly_alive_between_events()
+
+def test_batch_01() -> None:
+    """Consolidated (bodies unchanged): test_output_and_thinking_unwrap_full_width, test_startup_card_width_truncation_and_context, test_theme_palettes_and_status."""
+    _c_test_output_and_thinking_unwrap_full_width()
+    _c_test_startup_card_width_truncation_and_context()
+    _c_test_theme_palettes_and_status()
+
+def test_batch_02() -> None:
+    """Consolidated (bodies unchanged): test_composer_interrupt_kinds_aliases_and_empty, test_live_streaming_paints_once_and_interrupt_is_quiet, test_agent_end_flushes_a_short_trailing_chunk."""
+    _c_test_composer_interrupt_kinds_aliases_and_empty()
+    _c_test_live_streaming_paints_once_and_interrupt_is_quiet()
+    _c_test_agent_end_flushes_a_short_trailing_chunk()
+
+def test_batch_03(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_repl_lazy_slash_and_jobs, test_attach_clipboard_and_diff_helpers, test_preview_builders_carry_not_applied_banner."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t3_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k3_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_repl_lazy_slash_and_jobs(tmp_path=_t0, kite_home=_k0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t3_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k3_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_attach_clipboard_and_diff_helpers(tmp_path=_t1, kite_home=_k1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _t2 = tmp_path / "t3_2"
+    _t2.mkdir(parents=True, exist_ok=True)
+    _c_test_preview_builders_carry_not_applied_banner(tmp_path=_t2)
+
+def test_batch_04() -> None:
+    """Consolidated (bodies unchanged): test_render_diff_shows_old_new_line_numbers, test_render_diff_word_highlights_mixed_indent, test_ctrl_v_pastes_text_or_attaches_screenshot."""
+    _c_test_render_diff_shows_old_new_line_numbers()
+    _c_test_render_diff_word_highlights_mixed_indent()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _c_test_ctrl_v_pastes_text_or_attaches_screenshot(monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_05() -> None:
+    """Consolidated (bodies unchanged): test_ctrl_c_copies_selection_without_stopping, test_read_clipboard_text_falls_back_when_powershell_empty, test_stream_answer_styles_boundaries_and_coalescing."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _c_test_ctrl_c_copies_selection_without_stopping(monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _c_test_read_clipboard_text_falls_back_when_powershell_empty(monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _c_test_stream_answer_styles_boundaries_and_coalescing()
+
+def test_batch_06(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_composer_turn_answer_lifecycle, test_repl_prints_each_submitted_prompt_once, test_approval_panels_render_once."""
+    _c_test_composer_turn_answer_lifecycle()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t6_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k6_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_repl_prints_each_submitted_prompt_once(tmp_path=_t1, kite_home=_k1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _c_test_approval_panels_render_once()
+
+def test_batch_07(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_resume_transcript_rendering_and_tail, test_reasoning_picker_and_slash_levels, test_variants_strict_menu_persist_and_label."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t7_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k7_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_resume_transcript_rendering_and_tail(tmp_path=_t0, kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t7_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k7_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_reasoning_picker_and_slash_levels(tmp_path=_t1, kite_home=_k1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _t2 = tmp_path / "t7_2"
+        _t2.mkdir(parents=True, exist_ok=True)
+        _k2 = tmp_path / "k7_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_variants_strict_menu_persist_and_label(tmp_path=_t2, kite_home=_k2)
+    finally:
+        _mp2.undo()
+
+def test_batch_08(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_variants_unknown_support_strict_reject_and_known_absent, test_variants_unknown_then_supported_applies_strict_menu, test_reasoning_info_sync_bounded_never_hangs."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t8_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k8_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_variants_unknown_support_strict_reject_and_known_absent(tmp_path=_t0, kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t8_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k8_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_variants_unknown_then_supported_applies_strict_menu(tmp_path=_t1, kite_home=_k1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _t2 = tmp_path / "t8_2"
+        _t2.mkdir(parents=True, exist_ok=True)
+        _k2 = tmp_path / "k8_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_reasoning_info_sync_bounded_never_hangs(tmp_path=_t2, kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_09(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_pending_approval_panel_plan_git_footer, test_git_helpers_survive_missing_binary_and_cache_repo."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t9_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k9_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_pending_approval_panel_plan_git_footer(tmp_path=_t0, kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t9_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_git_helpers_survive_missing_binary_and_cache_repo(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+

@@ -77,7 +77,7 @@ class _StubEnv:
         return {"ok": True, "output": ""}
 
 
-def test_session_append_compact_and_stats(kite_home, tmp_path) -> None:
+def _c_test_session_append_compact_and_stats(kite_home, tmp_path) -> None:
     session = create_session(task="demo", cwd=str(tmp_path), provider="groq", model="test")
     session.append({"role": "user", "content": "hi"})
     session.append({"role": "assistant", "content": "hello"})
@@ -103,7 +103,7 @@ def test_session_append_compact_and_stats(kite_home, tmp_path) -> None:
     assert scanned.compaction_count == 1 and scanned.tool_blocked == 1
 
 
-def test_session_persistence_modes(kite_home) -> None:
+def _c_test_session_persistence_modes(kite_home) -> None:
     cfg = UserConfig.load()
     cfg.session_persistence = "redacted"
     cfg.save()
@@ -125,7 +125,7 @@ def test_session_persistence_modes(kite_home) -> None:
     assert not off.path.is_file() or off.path.stat().st_size == 0
 
 
-def test_session_format_search_and_resume(kite_home, tmp_path) -> None:
+def _c_test_session_format_search_and_resume(kite_home, tmp_path) -> None:
     from kite.memory.session_format import transcript_entries
 
     session = create_session(task="long task text", cwd="/tmp", provider="p", model="m", label="Humanize docs")
@@ -173,7 +173,7 @@ def test_session_format_search_and_resume(kite_home, tmp_path) -> None:
     assert reloaded.messages[-1].get("content") == "continue" and len(reloaded.messages) == 3
 
 
-def test_continuity_budget_memory_render(workspace, kite_home) -> None:
+def _c_test_continuity_budget_memory_render(workspace, kite_home) -> None:
     brief = build_continuity_brief(messages=[{"role": "user", "content": "Add auth tests"}], todos=[{"status": "in_progress", "content": "write failing test"}], task="Add auth tests")
     assert "Add auth tests" in brief.to_markdown()
     assert should_budget_auto_continue(exit_status="LimitsExceeded", continues_used=0, max_continues=2, todos=[{"status": "pending", "content": "x"}], tool_call_count=2, inbox_queued=False)
@@ -207,7 +207,7 @@ def test_continuity_budget_memory_render(workspace, kite_home) -> None:
     assert "prefer ruff" in relevant and len(relevant) <= 800
 
 
-def test_user_context_profiles_and_working_style(workspace, kite_home) -> None:
+def _c_test_user_context_profiles_and_working_style(workspace, kite_home) -> None:
     assert user_path().name == "USER.md" and profile_path().name == "PROFILE.md"
     append_user_note("prefers pytest")
     append_profile_note("Python backend focus")
@@ -241,7 +241,7 @@ def test_user_context_profiles_and_working_style(workspace, kite_home) -> None:
     assert "untrusted" in format_working_section("### Signals\n- tends to plan first").lower()
 
 
-def test_prompts_chat_literal_and_checkpoint_lookup(tmp_path, kite_home) -> None:
+def _c_test_prompts_chat_literal_and_checkpoint_lookup(tmp_path, kite_home) -> None:
     agent = DefaultAgent(_StubModel(), _StubEnv(), instance_prompt="Please solve this task:\n\n{task}\nInspect before editing.", interactive=True)
     text = agent._user_turn_text("hi", follow="hi", kwargs={})
     assert text == "hi" and "Please solve this task" not in text
@@ -266,3 +266,73 @@ def test_prompts_chat_literal_and_checkpoint_lookup(tmp_path, kite_home) -> None
         load_checkpoint("sess-1", "*")
     assert delete_checkpoint("sess-1", "*") is False
     assert delete_checkpoint("sess-1", cp.id) is True
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_session_append_compact_and_stats, test_session_persistence_modes, test_session_format_search_and_resume."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t0_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k0_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_session_append_compact_and_stats(tmp_path=_t0, kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k0_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_session_persistence_modes(kite_home=_k1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _t2 = tmp_path / "t0_2"
+        _t2.mkdir(parents=True, exist_ok=True)
+        _k2 = tmp_path / "k0_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_session_format_search_and_resume(tmp_path=_t2, kite_home=_k2)
+    finally:
+        _mp2.undo()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_continuity_budget_memory_render, test_user_context_profiles_and_working_style, test_prompts_chat_literal_and_checkpoint_lookup."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k1_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _w0 = tmp_path / "w1_0"
+        (_w0 / "src").mkdir(parents=True, exist_ok=True)
+        (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_continuity_budget_memory_render(kite_home=_k0, workspace=_w0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k1_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _w1 = tmp_path / "w1_1"
+        (_w1 / "src").mkdir(parents=True, exist_ok=True)
+        (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_user_context_profiles_and_working_style(kite_home=_k1, workspace=_w1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _t2 = tmp_path / "t1_2"
+        _t2.mkdir(parents=True, exist_ok=True)
+        _k2 = tmp_path / "k1_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_prompts_chat_literal_and_checkpoint_lookup(tmp_path=_t2, kite_home=_k2)
+    finally:
+        _mp2.undo()
+

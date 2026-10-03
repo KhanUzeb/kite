@@ -53,7 +53,9 @@ DANGEROUS_BASH = (
     re.compile(r"(?i)FromBase64String.*\|\s*(iex|invoke-expression)\b"),
     re.compile(r"(?i)\binvoke-expression\s+\$env:"),
     re.compile(r"(?i)\binvoke-expression\b|\biex\s*\("),
-    re.compile(r"(?i)\bgit\s+(push|clone)\b"),
+    # Ordinary `git push`/`git clone` go through the approval flow (SERIOUS for
+    # remote writes); only destructive force-pushes stay hard-blocked here.
+    re.compile(r"(?i)\bgit\s+push\b.*(?:--force(?!-with-lease)|-f\b)"),
     re.compile(r"(?i)\bgit\s+clean\s+-[^\\n]*f"),
     re.compile(r"(?i)\bgit\s+reset\s+--hard\b"),
     re.compile(r"(?i)\bchmod\s+-R\s+/"),

@@ -27,7 +27,7 @@ from kite.ui.pick import numbered_pick
 from kite.ui.repl import ChatSession
 
 
-def test_apply_diff_and_pickers(tmp_path: Path) -> None:
+def _c_test_apply_diff_and_pickers(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
     sibling = tmp_path / "root2"
@@ -91,7 +91,7 @@ def test_apply_diff_and_pickers(tmp_path: Path) -> None:
     assert _posix_mouse("\x1b[<64;4;12M", drawn) == "up"
 
 
-def test_picker_filter_never_absorbs_escape_fragments() -> None:
+def _c_test_picker_filter_never_absorbs_escape_fragments() -> None:
     """A PTY relay can split one control sequence across reads.
 
     The tail (``[B``, ``<35;22;19M``) is all printable, so it used to land in
@@ -124,7 +124,7 @@ def test_picker_filter_never_absorbs_escape_fragments() -> None:
     assert _MAX_FILTER <= 128, "a stuck filter must not grow without bound"
 
 
-def test_win_click_release_selects() -> None:
+def _c_test_win_click_release_selects() -> None:
     """Windows press highlights, release confirms — same as the POSIX path."""
     from types import SimpleNamespace
 
@@ -149,7 +149,7 @@ def test_win_click_release_selects() -> None:
     assert _click(buttons=0x0, y=11) is None  # release without press: no-op
 
 
-def test_picker_terminal_type_and_relay_guards(monkeypatch) -> None:
+def _c_test_picker_terminal_type_and_relay_guards(monkeypatch) -> None:
     """A Windows relay is a PTY: never drive it with msvcrt, never ask for mouse."""
     import sys
 
@@ -195,7 +195,7 @@ def test_picker_terminal_type_and_relay_guards(monkeypatch) -> None:
     assert pick._screen_height() == 10
 
 
-def test_picker_multi_select_typed_fallback() -> None:
+def _c_test_picker_multi_select_typed_fallback() -> None:
     from kite.ui.pick import numbered_pick
 
     console = MagicMock()
@@ -218,7 +218,7 @@ def test_picker_multi_select_typed_fallback() -> None:
     assert pick_one(console, [("a", "alpha"), ("b", "beta")], title="t", noun="model") == "b"
 
 
-def test_render_pick_list_cursor_checkbox_and_details() -> None:
+def _c_test_render_pick_list_cursor_checkbox_and_details() -> None:
     from kite.ui.credentials import render_pick_list
 
     panel = render_pick_list(
@@ -235,7 +235,7 @@ def test_render_pick_list_cursor_checkbox_and_details() -> None:
     assert text.rstrip().endswith("↑/↓ move"), "explicit hint replaces the default footer"
 
 
-def test_theme_font_subcommands(kite_home) -> None:
+def _c_test_theme_font_subcommands(kite_home) -> None:
     from kite.cli.run import build_parser, cmd_font, cmd_theme
     from kite.ui.theme import current_font, reset_prefs, set_font, theme_label
 
@@ -255,7 +255,7 @@ def test_theme_font_subcommands(kite_home) -> None:
     reset_prefs(theme="auto", font="unicode")
 
 
-def test_theme_typed_picker_wiring(kite_home, monkeypatch) -> None:
+def _c_test_theme_typed_picker_wiring(kite_home, monkeypatch) -> None:
     """Bare `kite theme` uses the typed picker — never raw mouse mode."""
     from unittest.mock import MagicMock
 
@@ -286,7 +286,7 @@ def test_theme_typed_picker_wiring(kite_home, monkeypatch) -> None:
     reset_prefs(theme="auto", font="unicode")
 
 
-def test_variants_list_bounded_and_unknown(kite_home, monkeypatch) -> None:
+def _c_test_variants_list_bounded_and_unknown(kite_home, monkeypatch) -> None:
     """`kite variants --list` never hangs: slow detection → exit 1, fast."""
     import time
     from types import SimpleNamespace
@@ -324,7 +324,7 @@ def test_variants_list_bounded_and_unknown(kite_home, monkeypatch) -> None:
     assert info is not None and info.supported is False
 
 
-def test_slash_help_and_legacy_routing() -> None:
+def _c_test_slash_help_and_legacy_routing() -> None:
     assert parse_slash("/select groq").command == "select"
     assert parse_slash("/thinking").command == "thinking"
     assert parse_slash("/skill commit").command == "skill"
@@ -345,7 +345,7 @@ def test_slash_help_and_legacy_routing() -> None:
     assert "kite-system-design" not in text and "docs/memory.md" not in text
 
 
-def test_chat_resume_flags_transcript_and_context(monkeypatch, tmp_path: Path, kite_home) -> None:
+def _c_test_chat_resume_flags_transcript_and_context(monkeypatch, tmp_path: Path, kite_home) -> None:
     captured: dict = {}
 
     class FakeSession:
@@ -490,7 +490,7 @@ def test_chat_resume_flags_transcript_and_context(monkeypatch, tmp_path: Path, k
     assert seen.get("follow_up") == "continue"
 
 
-def test_headless_tasks_status_approval_and_parsing(monkeypatch, workspace, kite_home, capsys) -> None:
+def _c_test_headless_tasks_status_approval_and_parsing(monkeypatch, workspace, kite_home, capsys) -> None:
     task = parse_task_line("fix the tests", default_cwd="/tmp/ws")
     assert task and task.task == "fix the tests" and task.cwd == "/tmp/ws"
     json_task = parse_task_line('{"task": "scout auth", "label": "auth", "profile": "scout", "mode": "plan"}')
@@ -550,7 +550,7 @@ def test_headless_tasks_status_approval_and_parsing(monkeypatch, workspace, kite
         assert result.ok is True and observed == [expected]
 
 
-def test_ci_scripts_and_implicit_routing() -> None:
+def _c_test_ci_scripts_and_implicit_routing() -> None:
     root = Path(__file__).resolve().parents[1]
     tests_yml = (root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     release_yml = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
@@ -597,7 +597,7 @@ def test_ci_scripts_and_implicit_routing() -> None:
     assert rewrite_implicit_task(["fix", "--print"])[0] == "run"
 
 
-def test_update_uninstall_print_dispatch(monkeypatch, kite_home, capsys) -> None:
+def _c_test_update_uninstall_print_dispatch(monkeypatch, kite_home, capsys) -> None:
     import argparse
 
     from kite.cli.run import build_parser, cmd_print, main
@@ -653,7 +653,7 @@ def test_update_uninstall_print_dispatch(monkeypatch, kite_home, capsys) -> None
     assert seen["task"] == "hello world"
 
 
-def test_windows_update_handoff_script(monkeypatch, tmp_path, capsys) -> None:
+def _c_test_windows_update_handoff_script(monkeypatch, tmp_path, capsys) -> None:
     """Windows self-update must not touch the locked env: build + launch helper only."""
     from unittest.mock import MagicMock
 
@@ -693,7 +693,7 @@ def test_windows_update_handoff_script(monkeypatch, tmp_path, capsys) -> None:
     assert (tmp_path / "kite-update-helper.cmd").is_file()
 
 
-def test_gh_cli_dispatch(monkeypatch, kite_home, capsys) -> None:
+def _c_test_gh_cli_dispatch(monkeypatch, kite_home, capsys) -> None:
     from kite.cli.run import build_parser, main, rewrite_implicit_task
 
     parser = build_parser()
@@ -728,7 +728,7 @@ def test_gh_cli_dispatch(monkeypatch, kite_home, capsys) -> None:
     assert "OPENAI_API_KEY" not in seen["env"]
 
 
-def test_parser_env_purge_and_main_loading(monkeypatch, tmp_path) -> None:
+def _c_test_parser_env_purge_and_main_loading(monkeypatch, tmp_path) -> None:
     import os
     import sys
 
@@ -768,3 +768,118 @@ def test_parser_env_purge_and_main_loading(monkeypatch, tmp_path) -> None:
     assert calls == ["load", "load"]
     assert main(["--version"]) == 0
     assert calls == ["load", "load"]
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_apply_diff_and_pickers, test_picker_filter_never_absorbs_escape_fragments, test_win_click_release_selects."""
+    _t0 = tmp_path / "t0_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _c_test_apply_diff_and_pickers(tmp_path=_t0)
+    _c_test_picker_filter_never_absorbs_escape_fragments()
+    _c_test_win_click_release_selects()
+
+def test_batch_01() -> None:
+    """Consolidated (bodies unchanged): test_picker_terminal_type_and_relay_guards, test_picker_multi_select_typed_fallback, test_render_pick_list_cursor_checkbox_and_details."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _c_test_picker_terminal_type_and_relay_guards(monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _c_test_picker_multi_select_typed_fallback()
+    _c_test_render_pick_list_cursor_checkbox_and_details()
+
+def test_batch_02(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_theme_font_subcommands, test_theme_typed_picker_wiring, test_variants_list_bounded_and_unknown."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k2_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_theme_font_subcommands(kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k2_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_theme_typed_picker_wiring(kite_home=_k1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k2_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_variants_list_bounded_and_unknown(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_03(tmp_path, capsys) -> None:
+    """Consolidated (bodies unchanged): test_slash_help_and_legacy_routing, test_chat_resume_flags_transcript_and_context, test_headless_tasks_status_approval_and_parsing."""
+    _c_test_slash_help_and_legacy_routing()
+    capsys.readouterr()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t3_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k3_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_chat_resume_flags_transcript_and_context(tmp_path=_t1, kite_home=_k1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    capsys.readouterr()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k3_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _w2 = tmp_path / "w3_2"
+        (_w2 / "src").mkdir(parents=True, exist_ok=True)
+        (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_headless_tasks_status_approval_and_parsing(kite_home=_k2, workspace=_w2, capsys=capsys, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_04(tmp_path, capsys) -> None:
+    """Consolidated (bodies unchanged): test_ci_scripts_and_implicit_routing, test_update_uninstall_print_dispatch, test_windows_update_handoff_script."""
+    _c_test_ci_scripts_and_implicit_routing()
+    capsys.readouterr()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k4_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_update_uninstall_print_dispatch(kite_home=_k1, capsys=capsys, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    capsys.readouterr()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _t2 = tmp_path / "t4_2"
+        _t2.mkdir(parents=True, exist_ok=True)
+        _c_test_windows_update_handoff_script(tmp_path=_t2, capsys=capsys, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_05(tmp_path, capsys) -> None:
+    """Consolidated (bodies unchanged): test_gh_cli_dispatch, test_parser_env_purge_and_main_loading."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k5_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_gh_cli_dispatch(kite_home=_k0, capsys=capsys, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    capsys.readouterr()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t5_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_parser_env_purge_and_main_loading(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+

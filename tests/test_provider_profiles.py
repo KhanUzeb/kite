@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from kite.models.reasoning import (
     ReasoningSupport,
     apply_reasoning,
@@ -12,7 +14,7 @@ from kite.models.reasoning import (
 from kite.providers.profiles import get_profile, normalize_effort
 
 
-def test_nvidia_profile_concrete_wire() -> None:
+def _c_test_nvidia_profile_concrete_wire() -> None:
     prof = get_profile("nvidia")
     assert prof.reasoning_wire == "reasoning_effort"
     assert prof.allow_parallel_tools is False
@@ -21,7 +23,7 @@ def test_nvidia_profile_concrete_wire() -> None:
     assert get_profile("unknown-xyz").reasoning_wire == "reasoning_effort"
 
 
-def test_nvidia_kwargs_never_emit_extra_body() -> None:
+def _c_test_nvidia_kwargs_never_emit_extra_body() -> None:
     support = detect_reasoning(
         "nvidia",
         "deepseek-ai/deepseek-r1",
@@ -35,7 +37,7 @@ def test_nvidia_kwargs_never_emit_extra_body() -> None:
     assert off.get("reasoning_effort") == "none"
 
 
-def test_coerce_stale_thinking_on_model_switch() -> None:
+def _c_test_coerce_stale_thinking_on_model_switch() -> None:
     info = ReasoningSupport(
         supported=True,
         can_fast=True,
@@ -57,7 +59,7 @@ def test_coerce_stale_thinking_on_model_switch() -> None:
     assert coerce_reasoning_for_model("auto", info) == "auto"
 
 
-def test_approval_poll_idempotent_no_touch_storm(tmp_path, monkeypatch) -> None:
+def _c_test_approval_poll_idempotent_no_touch_storm(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "kite.providers.resolve.resolve_model",
         lambda **_: __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock(
@@ -73,3 +75,21 @@ def test_approval_poll_idempotent_no_touch_storm(tmp_path, monkeypatch) -> None:
     chat._poll_pending_approval()
     chat._poll_pending_approval()
     assert touches == []
+
+
+def test_batch_00() -> None:
+    """Consolidated (bodies unchanged): test_nvidia_profile_concrete_wire, test_nvidia_kwargs_never_emit_extra_body."""
+    _c_test_nvidia_profile_concrete_wire()
+    _c_test_nvidia_kwargs_never_emit_extra_body()
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_coerce_stale_thinking_on_model_switch, test_approval_poll_idempotent_no_touch_storm."""
+    _c_test_coerce_stale_thinking_on_model_switch()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t1_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_approval_poll_idempotent_no_touch_storm(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+

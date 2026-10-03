@@ -15,7 +15,7 @@ from kite.agent.orchestrator import (
 )
 
 
-def test_result_semantics_glyph_rubric_and_clamp() -> None:
+def _c_test_result_semantics_glyph_rubric_and_clamp() -> None:
     assert worker_glyph(1) == "◆"
     assert worker_glyph(2) == "●"
     assert worker_glyph(7) == worker_glyph(1)
@@ -53,7 +53,7 @@ def test_result_semantics_glyph_rubric_and_clamp() -> None:
     assert summarize_result("short") == "short"
 
 
-def test_handoff_usage_and_files_flow_to_parent() -> None:
+def _c_test_handoff_usage_and_files_flow_to_parent() -> None:
     """Worker cost/tokens/files must reach the payload (whole-tree accounting)."""
 
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
@@ -77,7 +77,7 @@ def test_handoff_usage_and_files_flow_to_parent() -> None:
     assert all(r["files_touched"] == ["src/a.py", "src/b.py"] for r in crew["results"])
 
 
-def test_legacy_cost_survives_projection() -> None:
+def _c_test_legacy_cost_survives_projection() -> None:
     from kite.application.cli import legacy_result_from_run
     from kite.application.contracts import RunResult
 
@@ -86,7 +86,7 @@ def test_legacy_cost_survives_projection() -> None:
     assert legacy["cost"] == 0.07 and legacy["tokens"] == 500 and legacy["calls"] == 2
 
 
-def test_run_one_events_view_and_thread_labels() -> None:
+def _c_test_run_one_events_view_and_thread_labels() -> None:
     events: list[tuple[str, dict]] = []
 
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
@@ -113,7 +113,7 @@ def test_run_one_events_view_and_thread_labels() -> None:
     assert "scout" in by_kind["subagent_end"]["thread"]
 
 
-def test_run_parallel_orders_counts_and_input_order() -> None:
+def _c_test_run_parallel_orders_counts_and_input_order() -> None:
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
         if "fail" in prompt:
             return {"exit_status": "Error", "error": "nope"}
@@ -151,7 +151,7 @@ def test_run_parallel_orders_counts_and_input_order() -> None:
     assert ordered["output"].index("alpha") < ordered["output"].index("beta")
 
 
-def test_dispatch_validation_async_depth_and_combos() -> None:
+def _c_test_dispatch_validation_async_depth_and_combos() -> None:
     orch = SubagentOrchestrator(runner=MagicMock())
     out = orch.dispatch({})
     assert out["ok"] is False
@@ -189,7 +189,7 @@ def test_dispatch_validation_async_depth_and_combos() -> None:
     assert nested_orch.dispatch({"prompt": "x"}, allow_nested=True)["ok"] is True
 
 
-def test_kill_cancels_running_tasks() -> None:
+def _c_test_kill_cancels_running_tasks() -> None:
     from kite.agent.orchestrator import SubagentTask
 
     token = CancelToken()
@@ -214,7 +214,7 @@ def test_kill_cancels_running_tasks() -> None:
     assert token_b.is_set()
 
 
-def test_background_spawn_and_collect() -> None:
+def _c_test_background_spawn_and_collect() -> None:
     def slow_runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
         time.sleep(0.3)
         return {"exit_status": "Submitted", "submission": "late"}
@@ -241,7 +241,7 @@ def test_background_spawn_and_collect() -> None:
     assert collected["results"][job_id]["ok"] is True
 
 
-def test_prune_and_context_compose() -> None:
+def _c_test_prune_and_context_compose() -> None:
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
         return {"exit_status": "Submitted", "submission": "ok"}
 
@@ -268,7 +268,7 @@ def test_prune_and_context_compose() -> None:
     assert len(capped) < len("y" * 5000)
 
 
-def test_revise_and_scope_gate() -> None:
+def _c_test_revise_and_scope_gate() -> None:
     calls: list[str] = []
 
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
@@ -291,7 +291,7 @@ def test_revise_and_scope_gate() -> None:
     assert gate_result(SubagentTask(id="t2", prompt="p", label="w"), {"files_touched": ["anywhere"]}) == ""
 
 
-def test_retry_policy_single_and_disabled() -> None:
+def _c_test_retry_policy_single_and_disabled() -> None:
     calls: list[str] = []
 
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
@@ -314,7 +314,7 @@ def test_retry_policy_single_and_disabled() -> None:
     assert len(fresh) == 1
 
 
-def test_registry_tracks_parent_children() -> None:
+def _c_test_registry_tracks_parent_children() -> None:
     from kite.agent.orchestrator import clear_registry, list_children
 
     clear_registry()
@@ -335,7 +335,7 @@ def test_registry_tracks_parent_children() -> None:
         clear_registry()
 
 
-def test_abort_and_sibling_results() -> None:
+def _c_test_abort_and_sibling_results() -> None:
     saw_cancel = False
 
     def runner(prompt: str, *, cancel: CancelToken | None = None, **_: object) -> dict:
@@ -367,7 +367,7 @@ def test_abort_and_sibling_results() -> None:
     assert kept["results"][1]["ok"] is True
 
 
-def test_per_worker_timeout_marks_failed() -> None:
+def _c_test_per_worker_timeout_marks_failed() -> None:
     def runner(prompt: str, *, cancel: CancelToken | None = None, **_: object) -> dict:
         time.sleep(0.5)
         return {"exit_status": "Submitted", "submission": "too late"}
@@ -380,7 +380,7 @@ def test_per_worker_timeout_marks_failed() -> None:
     assert orch.tasks[-1].quality == "failed"
 
 
-def test_profiles_tiers_scopes_and_allowlist() -> None:
+def _c_test_profiles_tiers_scopes_and_allowlist() -> None:
     from kite.agent.subagent_profiles import (
         ROLE_MODEL_TIERS,
         get_profile,
@@ -416,7 +416,7 @@ def test_profiles_tiers_scopes_and_allowlist() -> None:
     assert worker_tool_allowlist(None) is None
 
 
-def test_profile_file_scope_parsing(tmp_path) -> None:
+def _c_test_profile_file_scope_parsing(tmp_path) -> None:
     from kite.agent.subagent_profiles import _parse_profile_file
 
     messy = tmp_path / "messy.md"
@@ -436,7 +436,7 @@ def test_profile_file_scope_parsing(tmp_path) -> None:
     assert plain is not None and plain.tools == ()
 
 
-def test_spawn_budget_exceeded_errors() -> None:
+def _c_test_spawn_budget_exceeded_errors() -> None:
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
         return {"exit_status": "Submitted", "submission": "ok"}
 
@@ -458,7 +458,7 @@ def test_spawn_budget_exceeded_errors() -> None:
     assert "budget" in str(bg.get("error") or "")
 
 
-def test_dispatch_forwards_profile_allowlist() -> None:
+def _c_test_dispatch_forwards_profile_allowlist() -> None:
     seen: list[dict] = []
 
     def runner(prompt: str, **kwargs: object) -> dict:
@@ -477,3 +477,43 @@ def test_dispatch_forwards_profile_allowlist() -> None:
 
     orch.run_one("jit", label="j")  # no profile at all
     assert seen[-1]["allowed_tools"] is None
+
+
+def test_batch_00() -> None:
+    """Consolidated (bodies unchanged): test_result_semantics_glyph_rubric_and_clamp, test_handoff_usage_and_files_flow_to_parent, test_legacy_cost_survives_projection."""
+    _c_test_result_semantics_glyph_rubric_and_clamp()
+    _c_test_handoff_usage_and_files_flow_to_parent()
+    _c_test_legacy_cost_survives_projection()
+
+def test_batch_01() -> None:
+    """Consolidated (bodies unchanged): test_run_one_events_view_and_thread_labels, test_run_parallel_orders_counts_and_input_order, test_dispatch_validation_async_depth_and_combos."""
+    _c_test_run_one_events_view_and_thread_labels()
+    _c_test_run_parallel_orders_counts_and_input_order()
+    _c_test_dispatch_validation_async_depth_and_combos()
+
+def test_batch_02() -> None:
+    """Consolidated (bodies unchanged): test_kill_cancels_running_tasks, test_background_spawn_and_collect, test_prune_and_context_compose."""
+    _c_test_kill_cancels_running_tasks()
+    _c_test_background_spawn_and_collect()
+    _c_test_prune_and_context_compose()
+
+def test_batch_03() -> None:
+    """Consolidated (bodies unchanged): test_revise_and_scope_gate, test_retry_policy_single_and_disabled, test_registry_tracks_parent_children."""
+    _c_test_revise_and_scope_gate()
+    _c_test_retry_policy_single_and_disabled()
+    _c_test_registry_tracks_parent_children()
+
+def test_batch_04() -> None:
+    """Consolidated (bodies unchanged): test_abort_and_sibling_results, test_per_worker_timeout_marks_failed, test_profiles_tiers_scopes_and_allowlist."""
+    _c_test_abort_and_sibling_results()
+    _c_test_per_worker_timeout_marks_failed()
+    _c_test_profiles_tiers_scopes_and_allowlist()
+
+def test_batch_05(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_profile_file_scope_parsing, test_spawn_budget_exceeded_errors, test_dispatch_forwards_profile_allowlist."""
+    _t0 = tmp_path / "t5_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _c_test_profile_file_scope_parsing(tmp_path=_t0)
+    _c_test_spawn_budget_exceeded_errors()
+    _c_test_dispatch_forwards_profile_allowlist()
+

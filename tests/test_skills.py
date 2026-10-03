@@ -13,7 +13,7 @@ from kite.skills.install import _copy_skill_trees, _safe_extract_tar, parse_inst
 from kite.skills.loader import classify_skill_dir, invalidate_skills, load_skills
 
 
-def test_parse_install_specs_and_copy(tmp_path: Path) -> None:
+def _c_test_parse_install_specs_and_copy(tmp_path: Path) -> None:
     assert parse_install_spec("npx @scope/cool-skill") == ("npm", "@scope/cool-skill")
     assert parse_install_spec("npx skills add owner/repo") == ("git", "https://github.com/owner/repo.git")
     assert parse_install_spec("foo") == ("npm", "foo")
@@ -49,7 +49,7 @@ def test_parse_install_specs_and_copy(tmp_path: Path) -> None:
         write_plugin_stub(plugins, "../../my-plugin")
 
 
-def test_classify_and_load_user_skills(kite_home: Path, workspace: Path, tmp_path: Path, monkeypatch) -> None:
+def _c_test_classify_and_load_user_skills(kite_home: Path, workspace: Path, tmp_path: Path, monkeypatch) -> None:
     user_dir = kite_home / "skills"
     user_dir.mkdir()
     assert classify_skill_dir(user_dir, tmp_path) == "user"
@@ -72,7 +72,7 @@ def test_classify_and_load_user_skills(kite_home: Path, workspace: Path, tmp_pat
     assert classify_skill_dir(tmp_path / ".agents" / "skills", workspace) == "user"
 
 
-def test_frontmatter_lists_and_bom() -> None:
+def _c_test_frontmatter_lists_and_bom() -> None:
     from kite.skills.loader import _parse_frontmatter
 
     meta, body = _parse_frontmatter(
@@ -84,3 +84,26 @@ def test_frontmatter_lists_and_bom() -> None:
 
     meta2, body2 = _parse_frontmatter("\ufeff---\nname: bom\n---\ncontent\n")
     assert meta2["name"] == "bom" and "---" not in body2
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_parse_install_specs_and_copy, test_classify_and_load_user_skills, test_frontmatter_lists_and_bom."""
+    _t0 = tmp_path / "t0_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _c_test_parse_install_specs_and_copy(tmp_path=_t0)
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t0_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k0_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _w1 = tmp_path / "w0_1"
+        (_w1 / "src").mkdir(parents=True, exist_ok=True)
+        (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        _c_test_classify_and_load_user_skills(tmp_path=_t1, kite_home=_k1, workspace=_w1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _c_test_frontmatter_lists_and_bom()
+

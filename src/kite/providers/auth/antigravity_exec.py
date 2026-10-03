@@ -27,6 +27,8 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from kite.guardrails.env_filter import filtered_child_env
+
 _AGY_BIN = "agy"
 # Bound the flattened prompt: agy context is finite and smaller turns are
 # cheaper/faster. stdin has no OS length cap (unlike argv — WinError 206).
@@ -72,7 +74,12 @@ def flatten_prompt(messages: list[dict]) -> str:
     """Collapse system + turns into the single prompt `agy -p` accepts.
 
     Tool traffic is inlined as plain text (agy never sees Kite tool calls).
-    Oldest non-system history is dropped first to fit argv limits.
+    Oldest non-system history is dropped first, then a hard
+    ``_MAX_PROMPT_CHARS`` bound is enforced: the system block plus the
+    newest turn (the current request) are preserved and the middle is
+    dropped; if even that exceeds the bound, the oldest content is
+    truncated with a ``[truncated ...]`` marker. Output never exceeds
+    ``_MAX_PROMPT_CHARS`` chars.
     """
     system_bits: list[str] = []
     turns: list[str] = []
@@ -106,8 +113,27 @@ def flatten_prompt(messages: list[dict]) -> str:
         turns.pop(0)
     body = "\n\n".join(turns)
     if head and body:
-        return f"<system>\n{head}\n</system>\n\n{body}"
-    return head or body
+        prompt = f"<system>\n{head}\n</system>\n\n{body}"
+    else:
+        prompt = head or body
+    if len(prompt) <= _MAX_PROMPT_CHARS:
+        return prompt
+    # Hard bound: preserve the system block + newest turn (current request),
+    # drop the middle first.
+    middle_marker = "...[earlier history truncated to fit prompt limit]..."
+    tail_marker = "\n...[truncated to fit prompt limit]"
+    last = turns[-1] if turns else ""
+    sys_block = f"<system>\n{head}\n</system>\n\n" if head else ""
+    if last and len(sys_block) + len(last) + len(middle_marker) + 2 <= _MAX_PROMPT_CHARS:
+        return f"{sys_block}{middle_marker}\n\n{last}"
+    if last and sys_block and len(last) + len(tail_marker) + 2 < _MAX_PROMPT_CHARS:
+        budget_sys = _MAX_PROMPT_CHARS - len(last) - len(tail_marker) - 2
+        return f"{sys_block[:budget_sys]}{tail_marker}\n\n{last}"
+    # Even the newest turn alone (or a system-only prompt) exceeds the bound:
+    # head-truncate with a marker so output never exceeds _MAX_PROMPT_CHARS.
+    text = (sys_block + last) if last else prompt
+    budget = _MAX_PROMPT_CHARS - len(tail_marker)
+    return f"{text[:budget]}{tail_marker}" if len(text) > budget else text
 
 
 def build_agy_argv(*, model: str, with_model: bool = True) -> list[str]:
@@ -235,6 +261,9 @@ def _run_agy_process(
             encoding="utf-8",
             errors="replace",
             cwd=cwd,
+            # Strip credential-like keys; agy authenticates via the OS
+            # keyring, and non-sensitive AGY_* vars pass through untouched.
+            env=filtered_child_env(),
         )
     except OSError as exc:
         raise AntigravityExecError(f"could not start agy: {exc}") from None

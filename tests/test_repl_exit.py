@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import StringIO
 
+import pytest
 from rich.console import Console
 
 from kite.ui.repl import ChatSession
@@ -26,7 +27,7 @@ def _out(session: ChatSession) -> str:
     return strip_ansi(session._buf.getvalue())  # type: ignore[attr-defined]
 
 
-def test_resume_exe_ignores_generic_launchers(monkeypatch) -> None:
+def _c_test_resume_exe_ignores_generic_launchers(monkeypatch) -> None:
     import sys
 
     from kite.ui import repl as repl_mod
@@ -47,7 +48,7 @@ def test_resume_exe_ignores_generic_launchers(monkeypatch) -> None:
     assert repl_mod._resume_exe() == "kite"
 
 
-def test_print_resume_hint_states(tmp_path, kite_home, monkeypatch) -> None:
+def _c_test_print_resume_hint_states(tmp_path, kite_home, monkeypatch) -> None:
     from kite.memory.session import create_session
 
     created = create_session(task="demo", cwd=str(tmp_path), provider="p", model="m")
@@ -81,7 +82,7 @@ def test_print_resume_hint_states(tmp_path, kite_home, monkeypatch) -> None:
     assert secret not in secret_out
 
 
-def test_run_eof_and_quit_print_resume_hint(tmp_path, kite_home, monkeypatch) -> None:
+def _c_test_run_eof_and_quit_print_resume_hint(tmp_path, kite_home, monkeypatch) -> None:
     from kite.memory.session import create_session
     from kite.ui.complete import ComposerResult
 
@@ -103,3 +104,33 @@ def test_run_eof_and_quit_print_resume_hint(tmp_path, kite_home, monkeypatch) ->
     quit_out = _out(quit_session)
     assert "bye" in quit_out
     assert f"kite resume {quit_created.id}" in quit_out
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_resume_exe_ignores_generic_launchers, test_print_resume_hint_states, test_run_eof_and_quit_print_resume_hint."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _c_test_resume_exe_ignores_generic_launchers(monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t0_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k0_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_print_resume_hint_states(tmp_path=_t1, kite_home=_k1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _t2 = tmp_path / "t0_2"
+        _t2.mkdir(parents=True, exist_ok=True)
+        _k2 = tmp_path / "k0_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_run_eof_and_quit_print_resume_hint(tmp_path=_t2, kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+

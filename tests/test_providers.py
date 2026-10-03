@@ -44,7 +44,7 @@ from kite.providers.resolve import missing_credentials, resolve_model
 from kite.providers.select import _can_use_radiolist, _numbered_pick, select_model_interactive
 
 
-def test_api_key_store_and_env_placeholder_combined(tmp_path, monkeypatch) -> None:
+def _c_test_api_key_store_and_env_placeholder_combined(tmp_path, monkeypatch) -> None:
     # (merged from test_api_key_store_and_validation)
     env = tmp_path / ".env"
     env.write_text("OPENAI_API_KEY=old\nOTHER=1\n", encoding="utf-8")
@@ -89,7 +89,7 @@ def test_api_key_store_and_env_placeholder_combined(tmp_path, monkeypatch) -> No
     assert "NGC_API_KEY" not in env2.read_text(encoding="utf-8")
 
 
-def test_web_tool_keys_and_cli(tmp_path, monkeypatch) -> None:
+def _c_test_web_tool_keys_and_cli(tmp_path, monkeypatch) -> None:
     env = tmp_path / ".env"
     monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
     monkeypatch.setattr("kite.providers.credentials.read_secret", lambda _p: "tvly-test-key-abcdefgh")
@@ -114,7 +114,7 @@ def test_web_tool_keys_and_cli(tmp_path, monkeypatch) -> None:
     assert rows["tavily"] is True and rows["exa"] is False
 
 
-def test_claude_link_and_login_combined(monkeypatch, kite_home) -> None:
+def _c_test_claude_link_and_login_combined(monkeypatch, kite_home) -> None:
     # (merged from test_claude_linked_without_key_is_not_usable)
     from kite.config.readiness import assess_setup_status
     from kite.providers.credentials import configured_providers, inspect_provider_credentials
@@ -153,7 +153,7 @@ def test_claude_link_and_login_combined(monkeypatch, kite_home) -> None:
     assert "kite keys --set anthropic" in result.message
 
 
-def test_fast_setup_ready_with_key_but_no_saved_model(monkeypatch, kite_home, tmp_path) -> None:
+def _c_test_fast_setup_ready_with_key_but_no_saved_model(monkeypatch, kite_home, tmp_path) -> None:
     from pathlib import Path
 
     from kite.config.readiness import assess_setup_status_fast, format_setup_banner
@@ -178,7 +178,7 @@ def test_fast_setup_ready_with_key_but_no_saved_model(monkeypatch, kite_home, tm
     assert format_setup_banner(explicit) == ""
 
 
-def test_byos_oauth_session_login_and_hygiene_combined(kite_home: Path, tmp_path: Path, monkeypatch, caplog) -> None:
+def _c_test_byos_oauth_session_login_and_hygiene_combined(kite_home: Path, tmp_path: Path, monkeypatch, caplog) -> None:
     # (merged from test_byos_oauth_session_and_login_hints)
     auth = CodexAuthProvider()
     with patch.object(auth, "status", return_value=AuthStatus(True, "linked")):
@@ -295,7 +295,7 @@ def test_byos_oauth_session_login_and_hygiene_combined(kite_home: Path, tmp_path
     assert secret not in caplog.text
 
 
-def test_select_model_and_reasoning_combined(kite_home, monkeypatch) -> None:
+def _c_test_select_model_and_reasoning_combined(kite_home, monkeypatch) -> None:
     # (merged from test_select_model_byos_and_windows_picker)
     monkeypatch.setattr("kite.providers.select.sys.platform", "win32")
     assert _can_use_radiolist() is False
@@ -352,7 +352,7 @@ def test_select_model_and_reasoning_combined(kite_home, monkeypatch) -> None:
     assert "thinking" in names_off
 
 
-def test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _c_test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from kite.providers.auth import codex_litellm
     from kite.providers.auth.codex import CodexAuthProvider
     from kite.providers.auth.codex_litellm import CodexLitellmAuthError, flatten_codex_auth_record
@@ -377,7 +377,7 @@ def test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: py
         codex_litellm.materialize_litellm_chatgpt_auth()
 
 
-def test_oauth_status_cache_and_materialize_idempotence(
+def _c_test_oauth_status_cache_and_materialize_idempotence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Slow status probes run once per TTL; per-turn materialize skips identical writes."""
@@ -421,7 +421,7 @@ def test_oauth_status_cache_and_materialize_idempotence(
     assert dest.stat().st_mtime_ns == mtime  # identical content: no rewrite
 
 
-def test_resolve_stays_litellm_free(kite_home, monkeypatch) -> None:
+def _c_test_resolve_stays_litellm_free(kite_home, monkeypatch) -> None:
     """Startup/completer resolve must never import LiteLLM (cold import blocks the composer)."""
     from kite.providers import capabilities
     from kite.providers.resolve import resolve_model as _resolve_model
@@ -440,7 +440,7 @@ def test_resolve_stays_litellm_free(kite_home, monkeypatch) -> None:
     assert (resolved.provider, resolved.model) == ("groq", "llama-3.3-70b-versatile")
 
 
-def test_model_capabilities_and_default_resolution_combined(kite_home) -> None:
+def _c_test_model_capabilities_and_default_resolution_combined(kite_home) -> None:
     # (merged from test_model_tool_support_is_metadata_driven)
     assert agent_model_warning("") == "No model selected — agent mode requires a tool-capable chat model."
     # (merged from test_model_tool_support_is_metadata_driven)
@@ -471,7 +471,7 @@ def test_model_capabilities_and_default_resolution_combined(kite_home) -> None:
     assert openai.model != "llama-3.3-70b-versatile"
 
 
-def test_custom_gateway_api_key_fallbacks(monkeypatch) -> None:
+def _c_test_custom_gateway_api_key_fallbacks(monkeypatch) -> None:
     catalog = load_catalog()
     for name in ("OPENAI_API_KEY", "OPENAI_COMPATIBLE_API_KEY", "CUSTOM_API_KEY"):
         monkeypatch.delenv(name, raising=False)
@@ -479,7 +479,7 @@ def test_custom_gateway_api_key_fallbacks(monkeypatch) -> None:
     assert api_key_for(catalog.get("openai-compatible")) == "gateway-key"
 
 
-def test_nvidia_nim_request_compatibility(monkeypatch, kite_home) -> None:
+def _c_test_nvidia_nim_request_compatibility(monkeypatch, kite_home) -> None:
     from kite.config.user import UserConfig
     from kite.providers import capabilities
     from kite.providers.resolve import resolve_model as _resolve_model
@@ -519,7 +519,7 @@ def test_nvidia_nim_request_compatibility(monkeypatch, kite_home) -> None:
     assert resolved.api_key == "nvapi-test-key"
 
 
-def test_oauth_markers_fast_without_spawns(tmp_path, kite_home, monkeypatch) -> None:
+def _c_test_oauth_markers_fast_without_spawns(tmp_path, kite_home, monkeypatch) -> None:
     from pathlib import Path
 
     from kite.providers import byos
@@ -558,7 +558,7 @@ def test_oauth_markers_fast_without_spawns(tmp_path, kite_home, monkeypatch) -> 
     assert rows["antigravity"] is True
 
 
-def test_configured_providers_parallel_full_probes(kite_home, monkeypatch) -> None:
+def _c_test_configured_providers_parallel_full_probes(kite_home, monkeypatch) -> None:
     from kite.providers.credentials import configured_providers
 
     seen: list[str] = []
@@ -584,7 +584,7 @@ def test_configured_providers_parallel_full_probes(kite_home, monkeypatch) -> No
     assert elapsed < len(seen) * 0.05
 
 
-def test_antigravity_rides_on_gemini_key(kite_home, monkeypatch) -> None:
+def _c_test_antigravity_rides_on_gemini_key(kite_home, monkeypatch) -> None:
     """`kite login antigravity` + GEMINI_API_KEY must yield usable gemini access."""
     from kite.providers.byos import invalidate_auth_status_cache
     from kite.providers.catalog import load_catalog
@@ -614,3 +614,141 @@ def test_antigravity_rides_on_gemini_key(kite_home, monkeypatch) -> None:
     resolved = resolve_model(provider="antigravity", catalog=cat)
     assert resolved.api_key is None
     assert missing_credentials(resolved) is None
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_api_key_store_and_env_placeholder_combined, test_web_tool_keys_and_cli, test_claude_link_and_login_combined."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t0_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _c_test_api_key_store_and_env_placeholder_combined(tmp_path=_t0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t0_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_web_tool_keys_and_cli(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k0_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_claude_link_and_login_combined(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_01(tmp_path, caplog) -> None:
+    """Consolidated (bodies unchanged): test_fast_setup_ready_with_key_but_no_saved_model, test_byos_oauth_session_login_and_hygiene_combined, test_select_model_and_reasoning_combined."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t1_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k1_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_fast_setup_ready_with_key_but_no_saved_model(tmp_path=_t0, kite_home=_k0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    caplog.clear()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t1_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _k1 = tmp_path / "k1_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_byos_oauth_session_login_and_hygiene_combined(tmp_path=_t1, kite_home=_k1, caplog=caplog, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    caplog.clear()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k1_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_select_model_and_reasoning_combined(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_02(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_codex_litellm_flattens_and_materializes, test_oauth_status_cache_and_materialize_idempotence, test_resolve_stays_litellm_free."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t2_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _c_test_codex_litellm_flattens_and_materializes(tmp_path=_t0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _t1 = tmp_path / "t2_1"
+        _t1.mkdir(parents=True, exist_ok=True)
+        _c_test_oauth_status_cache_and_materialize_idempotence(tmp_path=_t1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k2_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_resolve_stays_litellm_free(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_03(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_model_capabilities_and_default_resolution_combined, test_custom_gateway_api_key_fallbacks, test_nvidia_nim_request_compatibility."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k3_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_model_capabilities_and_default_resolution_combined(kite_home=_k0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _c_test_custom_gateway_api_key_fallbacks(monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k3_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_nvidia_nim_request_compatibility(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
+def test_batch_04(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_oauth_markers_fast_without_spawns, test_configured_providers_parallel_full_probes, test_antigravity_rides_on_gemini_key."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _t0 = tmp_path / "t4_0"
+        _t0.mkdir(parents=True, exist_ok=True)
+        _k0 = tmp_path / "k4_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_oauth_markers_fast_without_spawns(tmp_path=_t0, kite_home=_k0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k4_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_configured_providers_parallel_full_probes(kite_home=_k1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k4_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_antigravity_rides_on_gemini_key(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+

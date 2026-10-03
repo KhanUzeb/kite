@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from kite.models.litellm_model import extract_reasoning_and_content
 from kite.ui.streaming import (
     ANSWER_PROFILE,
@@ -11,7 +13,7 @@ from kite.ui.streaming import (
 )
 
 
-def test_extract_reasoning_splits_channels() -> None:
+def _c_test_extract_reasoning_splits_channels() -> None:
     delta = {
         "reasoning_content": "think step",
         "content": "answer bit",
@@ -31,7 +33,7 @@ def test_extract_reasoning_splits_channels() -> None:
     assert answer == "hi"
 
 
-def test_coalescer_answer_thinking_and_latency(monkeypatch) -> None:
+def _c_test_coalescer_answer_thinking_and_latency(monkeypatch) -> None:
     answer = StreamCoalescer(profiles={"answer": ANSWER_PROFILE})
     assert answer.push("answer", "Hel") is None
     flushed = answer.push("answer", "lo.")
@@ -54,7 +56,7 @@ def test_coalescer_answer_thinking_and_latency(monkeypatch) -> None:
     assert latency.push("answer", "c") == "abc"
 
 
-def test_boundary_detector_and_stream_metrics() -> None:
+def _c_test_boundary_detector_and_stream_metrics() -> None:
     assert should_flush_on_boundary("done.\n", ANSWER_PROFILE)
     assert should_flush_on_boundary("wait", ANSWER_PROFILE) is False
 
@@ -64,3 +66,15 @@ def test_boundary_detector_and_stream_metrics() -> None:
     assert metrics.ttft_ms == 120
     assert metrics.stream_chars == 11
     assert metrics.tps > 0
+
+
+def test_batch_00() -> None:
+    """Consolidated (bodies unchanged): test_extract_reasoning_splits_channels, test_coalescer_answer_thinking_and_latency, test_boundary_detector_and_stream_metrics."""
+    _c_test_extract_reasoning_splits_channels()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _c_test_coalescer_answer_thinking_and_latency(monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _c_test_boundary_detector_and_stream_metrics()
+

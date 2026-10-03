@@ -134,7 +134,9 @@ class Harness:
         self._extensions_loaded = True
         from kite.plugins.extensions import load_extensions
 
-        load_extensions(self, self.config.cwd or ".")
+        # Fail-closed: project-local extensions only load when the workspace
+        # is trusted; headless runs never prompt, so they stay untrusted.
+        load_extensions(self, self.config.cwd or ".", require_trust=True)
         try:
             from kite.sol_pi.integration import attach_sol_pi
 

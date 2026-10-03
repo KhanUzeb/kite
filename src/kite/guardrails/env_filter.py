@@ -49,7 +49,7 @@ _SENSITIVE_SUFFIX = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIA
 
 
 # Single-purpose GitHub tokens the gh CLI consumes itself. Re-injected only
-# for children that drive gh (see invokes_gh_cli) so an exported GH_TOKEN
+# for a lone `gh ...` child (see is_single_gh_command) so an exported GH_TOKEN
 # works impromptu — no kite-side setup. Everything else stays stripped.
 _GH_TOKEN_KEYS = ("GH_TOKEN", "GITHUB_TOKEN")
 
@@ -84,6 +84,40 @@ def invokes_gh_cli(command: str | list[str] | None) -> bool:
         if _GH_HEAD.match(seg):
             return True
     return False
+
+
+def is_single_gh_command(command: str | list[str] | None) -> bool:
+    """True only when the child IS a lone ``gh ...`` invocation (no chaining).
+
+    Unlike :func:`invokes_gh_cli` (true for any chain segment), this gates
+    ambient ``GH_TOKEN``/``GITHUB_TOKEN`` injection: a compound shell such as
+    ``gh issue list; python -c ...`` shares one env across every segment, so
+    injecting there leaks the token to non-gh siblings. Only a single gh
+    command — whose whole process tree is gh — may receive the tokens.
+    """
+    if not command:
+        return False
+    if isinstance(command, list):
+        if not command:
+            return False
+        from pathlib import Path
+
+        return Path(str(command[0])).name.lower() in {"gh", "gh.exe"}
+    text = str(command).strip()
+    if not text:
+        return False
+    wrapped = _GH_PS_WRAP.match(text)
+    if wrapped and wrapped.group(1):
+        text = wrapped.group(1).strip()
+    if not _GH_HEAD.match(text):
+        return False
+    if re.search(r"&&|;|\|", text):
+        return False
+    if re.search(r"(?<!&)&(?!&)", text):
+        return False
+    if "\n" in text or "`" in text or "$(" in text or "<(" in text:
+        return False
+    return True
 
 
 def with_gh_tokens(env: dict[str, str]) -> dict[str, str]:

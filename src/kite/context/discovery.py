@@ -90,8 +90,7 @@ def find_project_root(cwd: Path) -> Path:
     return cwd
 
 
-def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
-    root = find_project_root(cwd)
+def _instruction_candidates(cwd: Path, root: Path) -> list[Path]:
     candidates = [
         root / "KITE.md",
         root / "AGENTS.md",
@@ -113,6 +112,12 @@ def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
             candidates.append(cur / "AGENTS.md")
     except ValueError:
         pass
+    return candidates
+
+
+def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
+    root = find_project_root(cwd)
+    candidates = _instruction_candidates(cwd, root)
 
     seen: set[Path] = set()
     files: list[ContextFile] = []
@@ -185,7 +190,44 @@ def tree_snippet(root: Path, *, max_entries: int = 80) -> str:
     return "\n".join(lines)
 
 
-_CTX_CACHE: TtlCache[tuple[str, bool, bool, bool, int], ProjectContext] = TtlCache(120.0, maxsize=8)
+def _instructions_fingerprint(cwd_path: Path) -> tuple[tuple[str, int, int], ...]:
+    """Cheap stat fingerprint of instruction files + git HEAD/index.
+
+    Used to invalidate the project-context cache when AGENTS.md/KITE.md (or
+    the checked-out commit) changes. Untracked/unstaged working-tree edits
+    do not move HEAD, so git status is additionally refreshed on cache hits.
+    """
+    try:
+        root = find_project_root(cwd_path)
+    except OSError:
+        return ()
+    seen: set[Path] = set()
+    fp: list[tuple[str, int, int]] = []
+    for path in _instruction_candidates(cwd_path, root):
+        try:
+            resolved = path.expanduser().resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        try:
+            st = resolved.stat()
+        except OSError:
+            continue
+        fp.append((str(resolved), st.st_mtime_ns, st.st_size))
+    for marker in (root / ".git" / "HEAD", root / ".git" / "index"):
+        try:
+            st = marker.stat()
+        except OSError:
+            continue
+        fp.append((str(marker), st.st_mtime_ns, st.st_size))
+    return tuple(sorted(fp))
+
+
+_CTX_CACHE: TtlCache[tuple[str, bool, bool, bool, int, tuple], ProjectContext] = TtlCache(
+    120.0, maxsize=8
+)
 
 
 def invalidate_project_context_cache() -> None:
@@ -201,7 +243,21 @@ def gather_project_context(
     tree_max_entries: int = 80,
 ) -> ProjectContext:
     cwd_path = Path(cwd).expanduser().resolve()
-    key = (str(cwd_path), include_git, include_tree, include_repo_map, tree_max_entries)
+    fingerprint = _instructions_fingerprint(cwd_path)
+    key = (str(cwd_path), include_git, include_tree, include_repo_map, tree_max_entries, fingerprint)
+
+    cached = _CTX_CACHE.get(key)
+    if cached is not None:
+        if include_git:
+            # Unstaged/working-tree edits do not move HEAD, so refresh the
+            # cheap status snippet instead of serving a stale one.
+            fresh_status = git_status_snippet(cwd_path)
+            if fresh_status != cached.git_status:
+                from dataclasses import replace
+
+                cached = replace(cached, git_status=fresh_status)
+                _CTX_CACHE.set(key, cached)
+        return cached
 
     def build() -> ProjectContext:
         from kite.context.verify_hint import resolve_verification_command
@@ -222,4 +278,6 @@ def gather_project_context(
             verification_source=verify_src,
         )
 
-    return _CTX_CACHE.get_or_set(key, build)
+    ctx = build()
+    _CTX_CACHE.set(key, ctx)
+    return ctx

@@ -9,6 +9,8 @@ import time
 import tomllib
 from pathlib import Path
 
+import pytest
+
 from kite.agent.exceptions import ProviderFault
 from kite.agent.tool_result import ToolResult
 from kite.config.runtime import load_runtime_config
@@ -27,7 +29,7 @@ from kite.util.cache import TtlCache
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_ttl_cache_and_runtime_catalog() -> None:
+def _c_test_ttl_cache_and_runtime_catalog() -> None:
     cache: TtlCache[str, list[int]] = TtlCache(60.0, maxsize=2)
     first = cache.get_or_set("k", lambda: [1])
     assert cache.get_or_set("k", lambda: [2]) is first
@@ -45,7 +47,7 @@ def test_ttl_cache_and_runtime_catalog() -> None:
     assert load_catalog() is load_catalog()
 
 
-def test_sync_version_markers_and_check() -> None:
+def _c_test_sync_version_markers_and_check() -> None:
     expected = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     marker = re.compile(r"^# kite-release-version: ([\d.]+)$", re.MULTILINE)
     for path in sorted((ROOT / "scripts").iterdir()):
@@ -61,7 +63,7 @@ def test_sync_version_markers_and_check() -> None:
     assert "already at" in sync.stdout or "updated" in sync.stdout
 
 
-def test_discovery_venv_and_compaction(tmp_path) -> None:
+def _c_test_discovery_venv_and_compaction(tmp_path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
     (root / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
@@ -93,7 +95,7 @@ def test_discovery_venv_and_compaction(tmp_path) -> None:
     assert should_compact(usage, ratio=0.80) and not should_compact(usage, ratio=0.85)
 
 
-def test_replay_retry_and_tool_metadata(tmp_path: Path, workspace: Path) -> None:
+def _c_test_replay_retry_and_tool_metadata(tmp_path: Path, workspace: Path) -> None:
     bundle = ReplayBundle(run_id="r1", prompt_hash="abc", context_snapshot_id="snap1", config_hash=config_hash({"model": "fake"}), model="fake", provider="fake", tool_catalog_hash="tools", workspace_fingerprint="ws", responses=[{"role": "assistant", "content": "replayed answer"}])
     path = tmp_path / "bundle.json"
     bundle.save(path)
@@ -124,7 +126,7 @@ def test_replay_retry_and_tool_metadata(tmp_path: Path, workspace: Path) -> None
     assert ToolRegistry([Tool("grep", "grep", {"type": "object", "properties": {}}, lambda _a: {"ok": True})]).get("grep").metadata.concurrency_safe
 
 
-def test_orca_relay_detection_and_width(monkeypatch) -> None:
+def _c_test_orca_relay_detection_and_width(monkeypatch) -> None:
     from kite.util.tty import ORCA_RELAY_MARKERS, RELAY_WIDTH, is_orca_relay, relay_width
 
     for var in (*ORCA_RELAY_MARKERS, "KITE_COMPACT_UI"):
@@ -144,7 +146,7 @@ def test_orca_relay_detection_and_width(monkeypatch) -> None:
     assert is_orca_relay() is True
 
 
-def test_relay_narrows_pick_list_and_status(monkeypatch) -> None:
+def _c_test_relay_narrows_pick_list_and_status(monkeypatch) -> None:
     from kite.ui.credentials import render_pick_list
     from kite.ui.state import SessionUiState
     from kite.ui.status import _terminal_compact, status_segments
@@ -163,3 +165,33 @@ def test_relay_narrows_pick_list_and_status(monkeypatch) -> None:
     state = SessionUiState(model="m", provider="p")
     texts = [text for text, _ in status_segments(state)]
     assert not any(t.startswith("ctx ") for t in texts)
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_ttl_cache_and_runtime_catalog, test_sync_version_markers_and_check, test_discovery_venv_and_compaction."""
+    _c_test_ttl_cache_and_runtime_catalog()
+    _c_test_sync_version_markers_and_check()
+    _t2 = tmp_path / "t0_2"
+    _t2.mkdir(parents=True, exist_ok=True)
+    _c_test_discovery_venv_and_compaction(tmp_path=_t2)
+
+def test_batch_01(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_replay_retry_and_tool_metadata, test_orca_relay_detection_and_width, test_relay_narrows_pick_list_and_status."""
+    _t0 = tmp_path / "t1_0"
+    _t0.mkdir(parents=True, exist_ok=True)
+    _w0 = tmp_path / "w1_0"
+    (_w0 / "src").mkdir(parents=True, exist_ok=True)
+    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    _c_test_replay_retry_and_tool_metadata(tmp_path=_t0, workspace=_w0)
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _c_test_orca_relay_detection_and_width(monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _c_test_relay_narrows_pick_list_and_status(monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+

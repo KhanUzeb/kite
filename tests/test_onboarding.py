@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from kite.config.onboarding import (
     mark_setup_complete,
     onboarding_marker_path,
@@ -12,7 +14,7 @@ from kite.config.onboarding import (
 from kite.config.readiness import offer_setup_interactive
 
 
-def test_auto_prompt_gating_fresh_headless_and_skip(kite_home, monkeypatch) -> None:
+def _c_test_auto_prompt_gating_fresh_headless_and_skip(kite_home, monkeypatch) -> None:
     monkeypatch.delenv("KITE_SKIP_SETUP", raising=False)
     monkeypatch.setattr("kite.config.onboarding.any_provider_connection", lambda: False)
     monkeypatch.setattr("kite.config.onboarding.onboarding_marker_exists", lambda: False)
@@ -34,7 +36,7 @@ def test_auto_prompt_gating_fresh_headless_and_skip(kite_home, monkeypatch) -> N
     assert offer_setup_interactive(MagicMock()) is False
 
 
-def test_no_prompt_after_connection_marker_or_byos(kite_home, monkeypatch) -> None:
+def _c_test_no_prompt_after_connection_marker_or_byos(kite_home, monkeypatch) -> None:
     from kite.providers.auth.base import AuthStatus
 
     # API key present: no prompt.
@@ -66,7 +68,7 @@ def test_no_prompt_after_connection_marker_or_byos(kite_home, monkeypatch) -> No
     assert should_auto_prompt_setup() is False
 
 
-def test_key_write_and_wizard_mark_complete(kite_home, monkeypatch) -> None:
+def _c_test_key_write_and_wizard_mark_complete(kite_home, monkeypatch) -> None:
     from kite.cli.setup import run_setup_wizard
     from kite.providers.credentials import write_api_key
 
@@ -86,3 +88,32 @@ def test_key_write_and_wizard_mark_complete(kite_home, monkeypatch) -> None:
     )
     assert run_setup_wizard(MagicMock()) == 0
     assert onboarding_marker_path().is_file()
+
+
+def test_batch_00(tmp_path) -> None:
+    """Consolidated (bodies unchanged): test_auto_prompt_gating_fresh_headless_and_skip, test_no_prompt_after_connection_marker_or_byos, test_key_write_and_wizard_mark_complete."""
+    _mp0 = pytest.MonkeyPatch()
+    try:
+        _k0 = tmp_path / "k0_0"
+        _k0.mkdir(parents=True, exist_ok=True)
+        _mp0.setenv("KITE_HOME", str(_k0))
+        _c_test_auto_prompt_gating_fresh_headless_and_skip(kite_home=_k0, monkeypatch=_mp0)
+    finally:
+        _mp0.undo()
+    _mp1 = pytest.MonkeyPatch()
+    try:
+        _k1 = tmp_path / "k0_1"
+        _k1.mkdir(parents=True, exist_ok=True)
+        _mp1.setenv("KITE_HOME", str(_k1))
+        _c_test_no_prompt_after_connection_marker_or_byos(kite_home=_k1, monkeypatch=_mp1)
+    finally:
+        _mp1.undo()
+    _mp2 = pytest.MonkeyPatch()
+    try:
+        _k2 = tmp_path / "k0_2"
+        _k2.mkdir(parents=True, exist_ok=True)
+        _mp2.setenv("KITE_HOME", str(_k2))
+        _c_test_key_write_and_wizard_mark_complete(kite_home=_k2, monkeypatch=_mp2)
+    finally:
+        _mp2.undo()
+
