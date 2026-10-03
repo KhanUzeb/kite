@@ -267,6 +267,48 @@ def _bench_subprocess_spawn() -> BenchmarkResult:
     return _sample("subprocess_spawn", "tools", sample, returncode=rc)
 
 
+def _bench_job_lifecycle() -> BenchmarkResult:
+    """Background-job spawn → drain → teardown cost (long-task exit path)."""
+    import time as _time
+
+    from kite.tools.jobs import JobRegistry
+
+    def _run():
+        reg = JobRegistry()
+        job = reg.spawn_bash("echo bench-ok", cwd=".", timeout_seconds=30.0)
+        deadline = _time.monotonic() + 10.0
+        while job.status == "running" and _time.monotonic() < deadline:
+            _time.sleep(0.02)
+        reg.kill_all()
+        return job.status
+
+    status, sample = measure_many("job_lifecycle", _run, iterations=3)
+    return _sample("job_lifecycle", "tools", sample, status=status)
+
+
+def _bench_checkpoint_roundtrip() -> BenchmarkResult:
+    """Phase-checkpoint save → load → delete cost (long-task persistence path)."""
+    from kite.memory.context_checkpoint import (
+        delete_checkpoint,
+        load_checkpoint,
+        save_checkpoint,
+    )
+
+    messages = [
+        {"role": "user", "content": "bench task: summarize the repo"},
+        {"role": "assistant", "content": "bench reply with findings"},
+    ]
+
+    def _run():
+        cp = save_checkpoint(session_id="bench-suite", messages=messages, cwd=".")
+        loaded = load_checkpoint("bench-suite", cp.id)
+        delete_checkpoint("bench-suite", cp.id)
+        return loaded.id == cp.id
+
+    matched, sample = measure_many("checkpoint_roundtrip", _run, iterations=3)
+    return _sample("checkpoint_roundtrip", "context", sample, roundtrip=matched)
+
+
 def _bench_repl_chat_init(cwd: Path) -> BenchmarkResult:
     def _run():
         from kite.ui.repl import ChatSession
@@ -346,6 +388,8 @@ def run_suite(*, cwd: str | Path | None = None) -> BenchmarkReport:
         lambda: _bench_bash_echo(root),
         lambda: _bench_prompt_assembly(root),
         _bench_subprocess_spawn,
+        _bench_job_lifecycle,
+        _bench_checkpoint_roundtrip,
     ]
 
     results = tuple(builder() for builder in builders)

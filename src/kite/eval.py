@@ -117,6 +117,26 @@ def _check_acceptance(bundle: ReplayBundle, result: dict[str, Any]) -> dict[str,
         else:
             passed.append("event_kinds")
 
+    if checks.get("requires_verified") or checks.get("require_verification"):
+        verified = False
+        for event in bundle.events:
+            kind = str(event.get("kind") or "")
+            payload = event.get("payload") or {}
+            if kind in ("verification_status", "verification", "artifact"):
+                status = str(payload.get("status") or "").lower() if isinstance(payload, dict) else ""
+                if status == "verified":
+                    verified = True
+                    break
+                if isinstance(payload, dict):
+                    summary = payload.get("summary") or {}
+                    if isinstance(summary, dict) and str(summary.get("status") or "").lower() == "verified":
+                        verified = True
+                        break
+        if verified:
+            passed.append("requires_verified")
+        else:
+            failures.append("expected verified verification_status event")
+
     return {"ok": not failures, "passed": passed, "failures": failures}
 
 

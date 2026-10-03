@@ -25,6 +25,8 @@ BUDGETS_MS: dict[str, float] = {
     "bash_echo": 1500.0,
     "prompt_assembly": 400.0,
     "subprocess_spawn": 2000.0,
+    "job_lifecycle": 2500.0,
+    "checkpoint_roundtrip": 1200.0,
 }
 
 CATEGORIES = ("startup", "context", "tools")

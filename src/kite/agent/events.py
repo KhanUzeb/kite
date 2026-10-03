@@ -14,6 +14,7 @@ EventKind = Literal[
     "stream_start",
     "stream_first_token",
     "stream_reasoning",
+    "stream_thinking_long",
     "stream_delta",
     "stream_tool",
     "stream_usage",

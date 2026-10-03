@@ -6,7 +6,7 @@ Instructions for coding agents (Cursor, Claude Code, Kite itself, etc.) hacking 
 
 ## What this repo is
 
-**Kite** v1.0.4 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
+**Kite** v1.0.5 — Python 3.11+ package (`src/kite/`). Slim hybrid harness:
 
 - **Engine:** mini-swe-agent style loop (`agent/loop.py`) — query → tools → observe → repeat
 - **Cockpit:** tau-inspired assembly — catalog providers, skills, guardrails, Rich TUI, JSONL sessions
@@ -151,7 +151,7 @@ Maintainer-only (requires `KITE_MAINTAINER_KEY` in `~/.kite/.env`): `kite mainta
 | [architecture.md](architecture.md) | Layers, lifecycle, extension points |
 | [kite_commands.md](kite_commands.md) | CLI/REPL command reference |
 | [CONTEXT.md](CONTEXT.md) | Term definitions |
-| [docs/RELEASE-1.0.4.md](docs/RELEASE-1.0.4.md) | Current version release notes |
+| [docs/RELEASE-1.0.5.md](docs/RELEASE-1.0.5.md) | Current version release notes |
 
 ---
 

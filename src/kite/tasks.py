@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,20 @@ from typing import Any
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode, parse_approval_mode
 from kite.util.tty import is_interactive_tty
+
+# Non-success exits that must end with a continuity brief + resume hint,
+# never a bare status line (long tasks stall silently otherwise).
+_LIMIT_BRIEF_EXITS = frozenset(
+    {
+        "LimitsExceeded",
+        "TimeExceeded",
+        "Stalled",
+        "ProviderFault",
+        "Interrupted",
+        "Error",
+        "RepeatedFormatError",
+    }
+)
 
 
 def is_headless_run(*, headless_flag: bool = False, quiet: bool = False) -> bool:
@@ -108,13 +123,28 @@ class HeadlessRunDisplay:
     def __init__(self, *, stream_tools: bool = True, verbose: bool = False) -> None:
         self.stream_tools = stream_tools
         self.verbose = verbose
+        self._t0 = time.monotonic()
         self._handlers: dict[str, Callable[[dict[str, Any]], None]] = {
             "agent_start": self._on_agent_start,
             "agent_end": self._on_agent_end,
+            "turn_end": self._on_turn_end,
             "tool_start": self._on_tool_start,
+            "tool_progress": self._on_tool_progress,
             "tool_end": self._on_tool_end,
             "tool_output": self._on_tool_output,
+            "job_start": self._on_job_start,
+            "job_end": self._on_job_end,
             "job_output": self._on_job_output,
+            "approval": self._on_approval,
+            "checkpoint": self._on_checkpoint,
+            "compact": self._on_compact,
+            "compaction_start": self._on_compaction_start,
+            "compaction_end": self._on_compaction_end,
+            "context": self._on_context,
+            "limits": self._on_limits,
+            "cost_warning": self._on_cost_warning,
+            "provider_retry": self._on_provider_retry,
+            "provider_fault": self._on_provider_fault,
             "subagent_start": self._on_subagent_start,
             "subagent_end": self._on_subagent_end,
             "orchestrator_start": self._on_orchestrator_start,
@@ -138,6 +168,9 @@ class HeadlessRunDisplay:
             return f"{glyph} {label}".strip() + " "
         return ""
 
+    def _elapsed(self) -> int:
+        return int(time.monotonic() - self._t0)
+
     def _on_agent_start(self, p: dict[str, Any]) -> None:
         label = str(p.get("label") or "").strip()
         suffix = f"  {label}" if label else ""
@@ -145,7 +178,12 @@ class HeadlessRunDisplay:
 
     def _on_agent_end(self, p: dict[str, Any]) -> None:
         status = str(p.get("exit_status") or p.get("status") or "done")
-        _log(f"[kite] end  {status}")
+        _log(f"[kite] end  {status}  +{self._elapsed()}s")
+
+    def _on_turn_end(self, p: dict[str, Any]) -> None:
+        tools = p.get("tools", "?")
+        dur = p.get("duration_ms", "?")
+        _log(f"[kite] turn  tools={tools} {dur}ms  run +{self._elapsed()}s")
 
     def _on_tool_start(self, p: dict[str, Any]) -> None:
         tool = str(p.get("tool") or "?")
@@ -169,6 +207,67 @@ class HeadlessRunDisplay:
         meta = str(p.get("summary") or p.get("preview") or "")[:120]
         tail = f"  {meta}" if meta else ""
         _log(f"[tool] {prefix}{tool}  {mark}{tail}")
+
+    def _on_tool_progress(self, p: dict[str, Any]) -> None:
+        tool = str(p.get("tool") or "?")
+        elapsed = p.get("elapsed_s", "?")
+        hint = str(p.get("hint") or "")
+        _log(f"[progress] {tool}  {elapsed}s (run +{self._elapsed()}s){hint}")
+
+    def _on_checkpoint(self, p: dict[str, Any]) -> None:
+        label = str(p.get("label") or p.get("id") or "checkpoint")
+        reason = str(p.get("reason") or "")
+        tokens = p.get("tokens")
+        suffix = f"  {tokens} tokens" if tokens else ""
+        _log(f"[kite] checkpoint  {label}  reason={reason}{suffix}")
+
+    def _on_compact(self, p: dict[str, Any]) -> None:
+        _log(f"[kite] compact  {p.get('before')}->{p.get('after')}  ratio={p.get('ratio', '?')}")
+
+    def _on_compaction_start(self, p: dict[str, Any]) -> None:
+        _log(f"[kite] compacting context  {p.get('total_tokens', '?')} tokens")
+
+    def _on_compaction_end(self, p: dict[str, Any]) -> None:
+        if p.get("compacted"):
+            _log(f"[kite] compacted  {p.get('before')}->{p.get('after')}")
+        else:
+            _log("[kite] compaction skipped")
+
+    def _on_context(self, p: dict[str, Any]) -> None:
+        total = p.get("total_tokens", "?")
+        window = p.get("window", "?")
+        ratio = p.get("ratio", "?")
+        _log(f"[kite] context  {total}/{window} ({ratio})  +{self._elapsed()}s")
+
+    def _on_limits(self, p: dict[str, Any]) -> None:
+        detail = p.get("detail") or p.get("message") or "budget exceeded"
+        _log(f"[kite] limits  {detail}")
+
+    def _on_cost_warning(self, p: dict[str, Any]) -> None:
+        _log(f"[kite] cost  {p.get('message') or p.get('cost')}")
+
+    def _on_approval(self, p: dict[str, Any]) -> None:
+        tool = str(p.get("tool") or "?")
+        args = p.get("arguments") if isinstance(p.get("arguments"), dict) else {}
+        target = str(args.get("path") or args.get("command") or "")[:120]
+        _log(f"[approval] {tool}" + (f"  {target}" if target else ""))
+
+    def _on_provider_retry(self, p: dict[str, Any]) -> None:
+        _log(f"[kite] provider retry  attempt {p.get('attempt')}/{p.get('max_attempts')}")
+
+    def _on_provider_fault(self, p: dict[str, Any]) -> None:
+        _log(f"[kite] provider fault  {str(p.get('error') or '')[:200]}")
+
+    def _on_job_start(self, p: dict[str, Any]) -> None:
+        label = str(p.get("label") or p.get("command") or p.get("id") or "job")
+        _log(f"[job] start  {label[:120]}")
+
+    def _on_job_end(self, p: dict[str, Any]) -> None:
+        label = str(p.get("label") or p.get("id") or "job")
+        status = str(p.get("status") or ("ok" if p.get("ok") else "fail"))
+        elapsed = p.get("elapsed_s")
+        suffix = f"  {elapsed}s" if elapsed is not None else ""
+        _log(f"[job] end  {label[:120]}  {status}{suffix}")
 
     def _on_tool_output(self, p: dict[str, Any]) -> None:
         if not self.stream_tools:
@@ -274,6 +373,69 @@ class HeadlessBatchResult:
         }
 
 
+def _headless_todos(harness: Any) -> list[dict[str, Any]]:
+    """Best-effort live todos for the continuity brief (runtime owns the store)."""
+    for obj in (getattr(harness, "_runtime", None), harness):
+        read = getattr(getattr(obj, "todos", None), "read", None)
+        if not callable(read):
+            continue
+        try:
+            rows = read()
+        except Exception:
+            continue
+        if isinstance(rows, list):
+            return [r for r in rows if isinstance(r, dict)]
+    return []
+
+
+def _emit_limit_brief(*, harness: Any, task_label: str, exit_status: str) -> str:
+    """Log mission/done/next/todos + resume hint for a non-success exit.
+
+    Returns the resume-hint string ("" when no session exists) so callers can
+    attach it to the result error. Never raises — briefs must not mask exits.
+    """
+    try:
+        session = getattr(harness, "last_session", None)
+        sid = str(getattr(session, "id", None) or getattr(session, "session_id", None) or "")
+    except Exception:
+        session, sid = None, ""
+    messages: list[dict[str, Any]] = []
+    if session is not None:
+        try:
+            raw = getattr(session, "messages", None) or []
+            messages = [m for m in list(raw) if isinstance(m, dict)]
+        except Exception:
+            messages = []
+    try:
+        from kite.memory.handoff import resume_command
+
+        hint = resume_command(sid, "continue from checkpoint") if sid else ""
+    except Exception:
+        hint = f'kite resume {sid} "continue from checkpoint"' if sid else ""
+    if not messages and not sid:
+        return hint
+    if exit_status in _LIMIT_BRIEF_EXITS and messages:
+        try:
+            from kite.memory.continuity import build_continuity_brief
+
+            brief = build_continuity_brief(
+                messages=messages, todos=_headless_todos(harness), task=task_label
+            )
+            for line in brief.to_markdown().strip().splitlines():
+                _log(f"[continuity] {line}")
+        except Exception:
+            pass
+    if hint:
+        _log(f"[kite] resume  {hint}")
+    return hint
+
+
+def _with_resume_hint(error: str, hint: str) -> str:
+    if not hint or hint in error:
+        return error
+    return f"{error}; resume: {hint}" if error else f"resume: {hint}"
+
+
 def resolve_headless_approval(raw: str | None, mode: AgentMode, *, headless: bool) -> ApprovalMode:
     """Pick approval for non-interactive runs without weakening user policy."""
     default = ApprovalMode.AUTO if mode is AgentMode.BUILD else ApprovalMode.READONLY
@@ -357,6 +519,9 @@ def run_headless_task(
     if legacy is None:
         extra = f"stopped {killed} leftover background job(s)" if killed else ""
         err = f"{error_text}; {extra}" if error_text and extra else (error_text or extra or "no result")
+        err = _with_resume_hint(
+            err, _emit_limit_brief(harness=harness, task_label=label, exit_status="Error")
+        )
         return HeadlessTaskResult(
             index=0,
             label=label,
@@ -371,6 +536,13 @@ def run_headless_task(
     if killed:
         extra = f"stopped {killed} leftover background job(s)"
         error = f"{error}; {extra}" if error else extra
+    if not ok:
+        # Budget/stall/fault exits end with mission/done/next/todos + resume
+        # hint on stderr so headless runs never go silent on long tasks.
+        error = _with_resume_hint(
+            error,
+            _emit_limit_brief(harness=harness, task_label=label, exit_status=exit_status),
+        )
     return HeadlessTaskResult(
         index=0,
         label=label,

@@ -2,6 +2,17 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-10-03
+
+### Fixed
+- Infinite-thinking hang: bounded cancel-responsive provider establishment (TimeoutError → retryable ProviderFault), loop-level watchdog, `agent_end` always fires, REPL busy/running reset in `finally`; `stream_thinking_long` live label, coalescer flush on `turn_end`, running cleared on interrupt/error.
+- Answer streaming: no split-style flicker, 4k streamed code-block cap with explicit marker, central 12k tool-output cap with spill pointers, `…` table truncation.
+- Long tasks: headless progress heartbeats/checkpoints/retries/approval gates with elapsed times, continuity brief + resume hint on every non-success exit, phantom running jobs eliminated.
+- Submit gate: Done/Changed (+ Verification with ✓ when checks exist) required for edited sessions; unrelated test passes no longer count; `py_compile` / `node --check` recognized.
+
+### Changed
+- Prompts require evidence citations and `submit`-tool finishes; casual chat stays literal.
+
 ## [1.0.4] - 2026-10-03
 
 ### Security

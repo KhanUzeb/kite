@@ -770,10 +770,19 @@ class DefaultAgent:
                     signal.signal(signal.SIGINT, old_sigint)
                 except ValueError:
                     pass
-            self.save(self.output_path)
-            vsum = self.verification.summary()
-            self._emit("artifact", **vsum)
-            self._flush_task_commit()
+            # agent_end below must always run (it clears the running/spinner
+            # state) — a save/artifact failure must not skip it.
+            vsum: dict = {}
+            try:
+                self.save(self.output_path)
+                vsum = self.verification.summary()
+                self._emit("artifact", **vsum)
+                self._flush_task_commit()
+            except Exception as exc:
+                if run_error is None:
+                    run_traceback = traceback.format_exc()
+                    run_error = str(exc) or type(exc).__name__
+                self._emit("error", error=run_error or "teardown failed", traceback=run_traceback or "")
 
         result = self.messages[-1].get("extra", {}) if self.messages else {}
         if provider_fault:
@@ -823,6 +832,51 @@ class DefaultAgent:
     def step(self) -> list[dict]:
         return self.execute_actions(self.query())
 
+    def _provider_watchdog_s(self) -> float:
+        """Hard bound for one provider attempt (watchdog).
+
+        The model wrapper already bounds LiteLLM calls, but a custom/slotted
+        model (or a transport that ignores every timeout) must still end the
+        turn as a timeout — never an infinite spin. Generous (2x the model's
+        own timeout + margin) so the inner stall→blocking fallback always wins.
+        """
+        inner = getattr(self.model, "timeout_seconds", 0) or 0
+        if inner and inner > 0:
+            return float(inner) * 2.0 + 60.0
+        return 420.0
+
+    def _call_model_bounded(self, messages: list[dict]) -> dict:
+        """Run one provider attempt with a hard wall-clock bound + prompt cancel."""
+        box: dict = {}
+        errors: list[BaseException] = []
+        done = threading.Event()
+
+        def _work() -> None:
+            try:
+                box["message"] = self.model.query(messages)
+            except BaseException as exc:  # noqa: BLE001 — re-raised on the joiner
+                errors.append(exc)
+            finally:
+                done.set()
+
+        threading.Thread(target=_work, daemon=True, name="kite-provider-call").start()
+        bound = self._provider_watchdog_s()
+        start = time.monotonic()
+        while not done.wait(timeout=0.1):
+            if self._interrupt:
+                raise _user_interrupt()
+            if time.monotonic() - start > bound:
+                raise TimeoutError(
+                    f"provider call timed out after {int(bound)}s without responding"
+                )
+        if errors:
+            exc = errors[0]
+            if isinstance(exc, KeyboardInterrupt):
+                self.request_interrupt()
+                raise _user_interrupt() from None
+            raise exc
+        return box["message"]
+
     def query(self) -> dict:
         hit = self._budget_exit()
         if hit is not None:
@@ -839,7 +893,7 @@ class DefaultAgent:
             while attempts < self.provider_max_retries:
                 attempts += 1
                 try:
-                    message = self.model.query(self.messages)
+                    message = self._call_model_bounded(messages)
                     if self.hooks is not None:
                         message = self.hooks.call("after_query", message)
                     last_error = None

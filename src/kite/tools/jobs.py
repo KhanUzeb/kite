@@ -191,12 +191,40 @@ class JobRegistry:
     def _job_tail(self, job: BackgroundJob, n: int = _KILL_TAIL_LINES) -> str:
         return job.log_text(tail=n)
 
+    def _job_elapsed_s(self, job: BackgroundJob) -> float:
+        try:
+            return round(time.time() - job.started_at, 1)
+        except Exception:
+            return 0.0
+
     def _drain_bash(self, job: BackgroundJob, timeout_seconds: float = 3600.0) -> None:
         from kite.env.shell import sanitize_shell_line
         from kite.guardrails.redact import redact_string
 
         proc = job.proc
         if proc is None or proc.stdout is None:
+            # Never leave a job "running" with no drain thread behind it —
+            # headless teardown would otherwise report a phantom leftover.
+            with self._lock:
+                if job.status == "running":
+                    job.status = "failed"
+                status = job.status
+            job.append_log("\n...[job failed: process unavailable]...\n")
+            self._emit(
+                "job_end",
+                id=job.id,
+                kind=job.kind,
+                ok=False,
+                status=status,
+                returncode=None,
+                label=job.display_label(),
+                active=self.active_count(),
+                elapsed_s=self._job_elapsed_s(job),
+                tail=self._job_tail(job),
+                output=self._job_tail(job),
+                error="job process unavailable",
+            )
+            self._prune_finished()
             return
         drained_bytes = 0
         max_bytes = 512_000
@@ -242,6 +270,7 @@ class JobRegistry:
             returncode=rc,
             label=job.display_label(),
             active=self.active_count(),
+            elapsed_s=self._job_elapsed_s(job),
             tail=tail,
             output=tail,
         )
@@ -316,6 +345,7 @@ class JobRegistry:
             status=status_value,
             label=label,
             active=self.active_count(),
+            elapsed_s=self._job_elapsed_s(job),
             tail=tail,
             output=tail,
         )
@@ -361,6 +391,7 @@ class JobRegistry:
             status="killed",
             label=job.display_label(),
             active=self.active_count(),
+            elapsed_s=self._job_elapsed_s(job),
             tail=tail,
             output=tail,
         )

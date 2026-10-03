@@ -49,6 +49,11 @@ def _context_section(messages: list[dict], *, max_chars: int = 12_000) -> str:
     return context_section(messages, max_chars=max_chars)
 
 
+def resume_command(session_id: str, message: str = "continue from handoff") -> str:
+    """Canonical resume CLI (single format point for handoffs + limit briefs)."""
+    return f'kite resume {session_id} "{message}"'
+
+
 def build_handoff_markdown(
     *,
     meta: SessionMeta,
@@ -75,7 +80,7 @@ Generated: {time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())}
 ## Resume command
 
 ```bash
-kite resume {meta.id} "continue from handoff"
+{resume_command(meta.id)}
 # or open REPL:
 kite chat --session {meta.id}
 ```

@@ -5,6 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+#: Central output budget: normalize() caps oversized output here so no caller
+#: silently drops context. Callers with a workspace (read/bash) may spill to
+#: `.kite/spills/` first; this cap is the backstop for everything else.
+MAX_OUTPUT_CHARS = 12_000
+HEAD_CHARS = 8_000
+TAIL_CHARS = 2_000
+
 
 @dataclass(slots=True)
 class ToolResult:
@@ -45,11 +52,33 @@ class ToolResult:
         )
 
     @classmethod
-    def normalize(cls, raw: dict[str, Any], *, tool: str | None = None, duration_ms: int | None = None) -> dict[str, Any]:
-        """Coerce a legacy tool dict into the standard observation shape."""
+    def normalize(cls, raw: dict[str, Any], *, tool: str | None = None, duration_ms: int | None = None, max_chars: int = MAX_OUTPUT_CHARS) -> dict[str, Any]:
+        """Coerce a legacy tool dict into the standard observation shape.
+
+        Oversized output is capped centrally (head + explicit marker + tail)
+        so the model never silently loses context. The short summary is
+        always kept visible alongside the cap.
+        """
         result = cls.from_dict(raw)
+        output = result.output or ""
+        if len(output) > max_chars and max_chars > 0:
+            head = max(0, min(HEAD_CHARS, max_chars - TAIL_CHARS - 200))
+            tail = output[-TAIL_CHARS:] if TAIL_CHARS > 0 else ""
+            omitted = len(output) - head - len(tail)
+            marker = (
+                f"\n...[truncated {omitted:,} of {len(output):,} chars; "
+                f"showing head {head:,} + tail {len(tail):,}; "
+                f"use read offset/limit or bash tail/grep for more]\n"
+            )
+            result.output = output[:head] + marker + tail
+            note = f"output truncated: {omitted:,} of {len(output):,} chars capped"
+            if note not in result.warnings:
+                result.warnings.append(note)
+            meta_trunc = dict(result.metadata)
+            meta_trunc["truncated"] = True
+            result.metadata = meta_trunc
         if not result.summary:
-            preview = (result.output or result.error or "").strip().replace("\n", " ")
+            preview = (output or result.error or "").strip().replace("\n", " ")
             result.summary = preview[:120]
         meta = dict(result.metadata)
         if tool and "tool" not in meta:

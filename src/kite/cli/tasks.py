@@ -94,6 +94,12 @@ def cmd_tasks(args) -> int:
                     f"[{'green' if row.ok else 'red'}]{mark}[/] "
                     f"{row.label}  exit={row.exit_status}  session={row.session_id or '—'}"
                 )
+                if row.error and not row.ok:
+                    console.print(f"[dim]{row.error[:300]}[/]")
+                if not row.ok and row.session_id:
+                    console.print(
+                        f"[dim]resume: kite resume {row.session_id} \"continue\"[/]"
+                    )
             console.print(
                 f"[dim]{batch.to_dict()['succeeded']}/{batch.to_dict()['total']} succeeded[/]"
             )

@@ -117,10 +117,12 @@ class VerificationCollector:
     def has_passing_tests(self) -> bool:
         from kite.application.verification import latest_test
 
+        plan = self.plan()
+        if self.has_edits() and plan.required_checks:
+            return plan_status(plan, self._records) == "verified"
         latest = latest_test(self.artifacts)
         if latest is not None and latest.ok:
             return True
-        plan = self.plan()
         if plan.required_checks:
             return plan_status(plan, self._records) == "verified"
         return False

@@ -245,6 +245,57 @@ class StreamStalledError(TimeoutError):
     pass
 
 
+def _bounded_completion_call(
+    call: Callable[[], Any],
+    *,
+    timeout_s: float,
+    should_stop: Callable[[], bool] | None = None,
+) -> Any:
+    """Run ``litellm.completion`` with a Kite-enforced bound.
+
+    LiteLLM's own ``timeout`` does not fire for every provider/transport while
+    the initial request is being established — without this, a held-open
+    connection hangs the turn (and swallows Esc) with no stream for the
+    stall detector to watch. Poll-joins so cancel requests abort promptly.
+    Raises ``InterruptedError`` on stop, ``TimeoutError`` past ``timeout_s``
+    (retryable → ProviderFault via the agent loop).
+    """
+    import queue as _queue
+
+    bound = float(timeout_s) if timeout_s and timeout_s > 0 else 180.0
+    box: _queue.Queue = _queue.Queue(maxsize=1)
+
+    def _run() -> None:
+        try:
+            box.put(("ok", call()))
+        except BaseException as exc:  # noqa: BLE001 — re-raised on the joiner
+            box.put(("err", exc))
+
+    worker = threading.Thread(target=_run, daemon=True, name="kite-completion-call")
+    worker.start()
+    deadline = time.monotonic() + max(1.0, bound)
+    while True:
+        try:
+            status, payload = box.get(timeout=0.1)
+        except _queue.Empty:
+            pass
+        else:
+            if status == "ok":
+                return payload
+            raise payload
+        stop = False
+        try:
+            stop = bool(should_stop()) if should_stop is not None else False
+        except Exception:
+            stop = False
+        if stop:
+            raise InterruptedError("interrupted")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"provider request timed out after {int(bound)}s without responding"
+            )
+
+
 class LitellmModel:
     def __init__(
         self,
@@ -366,6 +417,24 @@ class LitellmModel:
             api_messages.append(clean)
             api_messages.extend(paired_results)
         return api_messages
+
+    def _call_timeout_s(self) -> float:
+        timeout = getattr(self, "timeout_seconds", 0) or 0
+        return float(timeout) if timeout > 0 else 180.0
+
+    def _bounded_completion(self, *, stream: bool, messages: list[dict], overrides: dict[str, Any] | None = None) -> Any:
+        import litellm
+
+        stop = getattr(self, "should_stop", None)
+        if not callable(stop):
+            stop = None
+        return _bounded_completion_call(
+            lambda: litellm.completion(
+                **self._completion_kwargs(messages, stream=stream, overrides=overrides)
+            ),
+            timeout_s=self._call_timeout_s(),
+            should_stop=stop,
+        )
 
     def _completion_kwargs(
         self,
@@ -538,8 +607,6 @@ class LitellmModel:
         )
 
     def _query_stream(self, messages: list[dict], *, overrides: dict[str, Any] | None = None) -> dict:
-        import litellm
-
         self._emit(
             "stream_start",
             provider=self.resolved.provider,
@@ -575,7 +642,7 @@ class LitellmModel:
 
         try:
             with _quiet_litellm_usage_serialization():
-                stream = litellm.completion(**self._completion_kwargs(messages, stream=True, overrides=overrides))
+                stream = self._bounded_completion(messages=messages, stream=True, overrides=overrides)
                 chunks = _iter_stream_chunks(stream, should_stop=self.should_stop, poll=_check_timeouts)
                 for chunk in chunks:
                     _check_timeouts()
@@ -690,15 +757,13 @@ class LitellmModel:
         )
 
     def _query_blocking(self, messages: list[dict], *, overrides: dict[str, Any] | None = None) -> dict:
-        import litellm
-
         self._emit(
             "stream_start",
             provider=self.resolved.provider,
             model=self.resolved.model,
         )
         with _quiet_litellm_usage_serialization():
-            response = litellm.completion(**self._completion_kwargs(messages, stream=False, overrides=overrides))
+            response = self._bounded_completion(messages=messages, stream=False, overrides=overrides)
         choice = response.choices[0]
         message = choice.message
         usage = getattr(response, "usage", None)

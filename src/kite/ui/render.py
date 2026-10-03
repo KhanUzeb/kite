@@ -64,6 +64,11 @@ def _looks_like_turn_report(text: str) -> bool:
 #: Trailing answer text kept to decide whether a submit report is already shown.
 _STREAM_TAIL_CHARS = 1200
 
+#: Streamed code-fence budget: beyond this the middle of a fenced block is
+#: replaced by an explicit marker (path/size/tail pattern) instead of a raw
+#: dump that flickers and floods scrollback.
+_MAX_FENCE_STREAM_CHARS = 4_000
+
 
 def _already_shown(text: str, tail: str) -> bool:
     """True when `text` is already on screen (whole body, or its first section)."""
@@ -359,6 +364,7 @@ _RENDER_EVENT_KINDS = (
     "stream_start",
     "stream_first_token",
     "stream_reasoning",
+    "stream_thinking_long",
     "stream_delta",
     "stream_tool",
     "stream_usage",
@@ -440,6 +446,8 @@ class RunDisplay:
         self._parallel_batch: int = 0
         self._in_code_fence: bool = False
         self._fence_lang: str = ""
+        self._fence_chars: int = 0
+        self._fence_truncated: bool = False
         self._run_tools: int = 0
         self._run_t0: float | None = None
         self._transcript_buffer: list[Any] = []
@@ -574,13 +582,54 @@ class RunDisplay:
             line, text = text[:index], text[index + 1 :]
             self._write_answer_line(line)
 
+    def _emit_fence_truncated(self) -> None:
+        """Paint the explicit overflow marker once per fenced block."""
+        if self._fence_truncated:
+            return
+        self._fence_truncated = True
+        block = Text()
+        prefix = CHANNEL_PREFIX.get("answer", "  ")
+        indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
+        block.append(indent, style="kite.muted")
+        self._did_first_line = True
+        block.append(
+            f"...[truncated code block; showing first {_MAX_FENCE_STREAM_CHARS:,} chars; "
+            "remainder hidden — prefer path/size/tail over full dump]\n",
+            style="kite.muted italic",
+        )
+        self._need_prefix = True
+        self._streaming = True
+        self._print(block, end="", highlight=False, markup=False)
+
     def _write_answer_partial(self, fragment: str) -> None:
-        """Emit a fragment of an unfinished line — no newline, continued in place."""
+        """Emit a fragment of an unfinished line — no newline, continued in place.
+
+        Partials use the plain answer style: markdown cues (headings/bullets)
+        apply only when a full line closes, so a ``## `` or ``- `` prefix
+        split across chunk boundaries never flickers or splits styles mid-line.
+        """
         if not fragment:
             return
+        if self._in_code_fence:
+            if self._fence_truncated:
+                self._answer_line += fragment
+                self._answer_line_chars += len(fragment)
+                return
+            room = _MAX_FENCE_STREAM_CHARS - self._fence_chars
+            if room <= 0:
+                self._emit_fence_truncated()
+                self._answer_line += fragment
+                self._answer_line_chars += len(fragment)
+                return
+            if len(fragment) > room:
+                fragment = fragment[:room]
+                emit_after = True
+            else:
+                emit_after = False
+            self._fence_chars += len(fragment)
+        else:
+            emit_after = False
         style, body = self._answer_style(), fragment
-        if not self._answer_line_chars and not self._in_code_fence:
-            style, body = self._prose_line_style(self._answer_line + fragment)
         block = Text()
         prefix = CHANNEL_PREFIX.get("answer", "  ")
         if self._need_prefix and body:
@@ -593,12 +642,21 @@ class RunDisplay:
         self._answer_line_chars += len(fragment)
         self._streaming = True
         self._print(block, end="", highlight=False, markup=False)
+        if emit_after:
+            self._emit_fence_truncated()
 
     def _write_answer_line(self, line: str) -> None:
-        """Close a line — markdown/fence cues apply only when it was not streamed yet."""
+        """Close a line — markdown/fence cues apply only to whole lines."""
         block = Text()
         prefix = CHANNEL_PREFIX.get("answer", "  ")
         if self._answer_line_chars:
+            if self._in_code_fence and self._fence_truncated and not line.strip().startswith("```"):
+                self._fence_chars += len(line)
+                self._answer_line = ""
+                self._answer_line_chars = 0
+                self._need_prefix = True
+                self._streaming = True
+                return
             self._write_answer_partial(line)
         elif line:
             stripped = line.strip()
@@ -607,12 +665,45 @@ class RunDisplay:
                 opening = not self._in_code_fence
                 self._in_code_fence = not self._in_code_fence
                 self._fence_lang = stripped.lstrip("`").strip() if opening else ""
+                if opening:
+                    self._fence_chars = 0
+                    self._fence_truncated = False
+                else:
+                    self._fence_chars = 0
+                    self._fence_truncated = False
                 block.append(indent, style="kite.muted")
                 self._did_first_line = True
                 block.append(
                     f"```{self._fence_lang}" if opening else "```",
                     style="kite.muted italic",
                 )
+            elif self._in_code_fence:
+                if self._fence_truncated:
+                    self._fence_chars += len(line) + 1
+                    self._answer_line = ""
+                    self._answer_line_chars = 0
+                    self._need_prefix = True
+                    self._streaming = True
+                    return
+                if self._fence_chars + len(line) + 1 > _MAX_FENCE_STREAM_CHARS:
+                    room = max(0, _MAX_FENCE_STREAM_CHARS - self._fence_chars)
+                    if room:
+                        block.append(indent, style=self._answer_style())
+                        self._did_first_line = True
+                        block.append(line[:room], style=self._answer_style())
+                    self._fence_chars += len(line) + 1
+                    self._answer_line = ""
+                    self._answer_line_chars = 0
+                    self._need_prefix = True
+                    self._streaming = True
+                    block.append("\n")
+                    self._print(block, end="", highlight=False, markup=False)
+                    self._emit_fence_truncated()
+                    return
+                self._fence_chars += len(line) + 1
+                block.append(indent, style=self._answer_style())
+                self._did_first_line = True
+                block.append(line, style=self._answer_style())
             else:
                 style, body = self._prose_line_style(line)
                 if body:
@@ -815,6 +906,10 @@ class RunDisplay:
         self._deferred_agent_end = None
         self._run_tools = 0
         self._run_t0 = time.monotonic()
+        self._in_code_fence = False
+        self._fence_lang = ""
+        self._fence_chars = 0
+        self._fence_truncated = False
         self._spin(True, "thinking")
 
     def _on_stream_start(self, p: dict[str, Any]) -> None:
@@ -825,6 +920,10 @@ class RunDisplay:
         self.state.provider = str(p.get("provider") or self.state.provider)
         self._channel = None
         self._streaming = False
+        self._in_code_fence = False
+        self._fence_lang = ""
+        self._fence_chars = 0
+        self._fence_truncated = False
         self._spin(True, "thinking")
 
     def _on_stream_first_token(self, p: dict[str, Any]) -> None:
@@ -845,6 +944,17 @@ class RunDisplay:
             self._append_thinking(str(text))
         else:
             self._spin(True, "thinking")
+
+    def _on_stream_thinking_long(self, p: dict[str, Any]) -> None:
+        try:
+            chars = int(p.get("reasoning_chars") or 0)
+        except (TypeError, ValueError):
+            chars = 0
+        hint = str(p.get("hint") or "").strip()
+        label = f"thinking  {chars:,} chars" if chars else "thinking"
+        if hint:
+            label = f"{label}  ·  {hint}"
+        self._spin(True, label)
 
     def _on_stream_delta(self, p: dict[str, Any]) -> None:
         text = str(p.get("text") or "")
@@ -898,6 +1008,10 @@ class RunDisplay:
         self._touch_state()
 
     def _on_turn_end(self, p: dict[str, Any]) -> None:
+        # Flush here as well as on stream_end/agent_end: a short trailing
+        # chunk still under the coalescer threshold must paint at the turn
+        # boundary, not wait for the next turn's first token.
+        self._flush_stream_buffers()
         self._end_stream_line()
         self._spin(True, "thinking")
         self._touch_state()
@@ -1257,6 +1371,7 @@ class RunDisplay:
         self._flush_stream_buffers()
         self._end_stream_line()
         self._spin(False)
+        self.state.clear_running()
         # One line per turn: several cancel paths can emit this event and a
         # stack of identical "stopped" rows reads as a crash, not a stop.
         if self.state.interrupted:
@@ -1523,6 +1638,7 @@ class RunDisplay:
     def _on_error(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
         self._spin(False)
+        self.state.clear_running()
         msg = str(p.get("error") or "error")
         self.state.last_error = msg
         self.state.last_trace = str(p.get("traceback") or "")
@@ -1588,7 +1704,7 @@ class RunDisplay:
     def _render_subagent_board(self, manager: Any) -> None:
         if not isinstance(manager, list) or not manager:
             return
-        from kite.ui.tables import kite_table
+        from kite.ui.tables import kite_table, truncate_cell
 
         table = kite_table()
         table.add_column("", width=2)
@@ -1603,7 +1719,7 @@ class RunDisplay:
             quality = str(row.get("quality") or row.get("status") or "")
             elapsed = row.get("elapsed_ms")
             timing = str(elapsed) if elapsed else "—"
-            table.add_row(glyph, label[:28], quality, timing)
+            table.add_row(glyph, truncate_cell(label, 28), quality, timing)
         self._print(table)
 
     def _on_subagent_start(self, p: dict[str, Any]) -> None:

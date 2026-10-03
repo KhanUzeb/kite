@@ -2,6 +2,8 @@
 
 You are in **long-task mode** for multi-hour agentic work (Anthropic/OpenAI-style persistent sessions).
 
+Greetings and short questions still get a short text reply — no checklist, no tools.
+
 ## Work in phases
 1. **Plan the phase** — what you will verify before moving on.
 2. **Execute** — tools, edits, tests for this phase only.

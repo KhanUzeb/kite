@@ -3678,82 +3678,86 @@ class ChatSession:
                     break
             self._drain_ui_queue()
 
-        while True:
-            _spawn_and_wait(run_task)
-            self._bind_session(harness)
-            if box.get("err") is not None or box.get("interrupted"):
-                break
-            extra = box.get("result") or {}
-            exit_status = str(extra.get("exit_status") or "")
-            stats = extra.get("model_stats") if isinstance(extra.get("model_stats"), dict) else {}
-            tool_calls = int(stats.get("api_calls") or extra.get("api_calls") or 0)
-            goal_active = bool(self._goal and self._goal.active)
-            action = decide_recovery_continue(
-                exit_status=exit_status,
-                continues_used=continues_used,
-                max_continues=max_continues,
-                goal_active=goal_active,
-                goal_objective=self._goal_objective_for_harness(),
-                todos=self.todos.read(),
-                tool_call_count=tool_calls,
-                inbox_queued=bool(self._inbox),
-            )
-            if action != "continue":
-                break
-            continues_used += 1
-            messages: list[dict] = []
-            agent = getattr(harness, "_runtime", None)
-            if agent is not None and getattr(agent, "last_agent", None) is not None:
-                messages = list(agent.last_agent.messages)
-            elif self._session_id:
-                try:
-                    from kite.memory.session import load_session
-
-                    messages = load_session(self._session_id).messages
-                except (OSError, ValueError):
-                    messages = []
-            brief = build_continuity_brief(
-                messages=messages,
-                todos=self.todos.read(),
-                task=preview,
-            )
-            try:
-                from kite.memory.store import MemoryStore
-
-                save_continuity(
-                    store=MemoryStore.open(self.cwd),
-                    brief=brief,
-                    session_id=self._session_id or "",
-                    cwd=self.cwd,
+        # Busy/running state must reset even when the turn dies to an
+        # unexpected exception (or Ctrl-C on the main thread) — otherwise the
+        # footer keeps a stale "working" line forever.
+        try:
+            while True:
+                _spawn_and_wait(run_task)
+                self._bind_session(harness)
+                if box.get("err") is not None or box.get("interrupted"):
+                    break
+                extra = box.get("result") or {}
+                exit_status = str(extra.get("exit_status") or "")
+                stats = extra.get("model_stats") if isinstance(extra.get("model_stats"), dict) else {}
+                tool_calls = int(stats.get("api_calls") or extra.get("api_calls") or 0)
+                goal_active = bool(self._goal and self._goal.active)
+                action = decide_recovery_continue(
+                    exit_status=exit_status,
+                    continues_used=continues_used,
+                    max_continues=max_continues,
+                    goal_active=goal_active,
+                    goal_objective=self._goal_objective_for_harness(),
+                    todos=self.todos.read(),
+                    tool_call_count=tool_calls,
+                    inbox_queued=bool(self._inbox),
                 )
-            except Exception:
-                pass
-            run_task = build_recovery_follow_up(
-                exit_status=exit_status,
-                continuity_markdown=brief.to_markdown(),
-                goal_objective=self._goal_objective_for_harness(),
-            )
-            label = "goal continue" if goal_active else "recovery continue"
-            self.console.print(
-                f"[kite.muted]{label} {continues_used}/{max_continues} — resuming…[/]"
-            )
-            self.state.set_running(
-                label=f"{label} {continues_used}/{max_continues}",
-                kind="turn",
-            )
-            self.state.busy = True
-            self._busy = True
-            self.display._spin(False)
-            harness = self._make_harness(resume=True, follow_up=run_task)
-            harness.approver = self._approver()
-            harness.ask_user = self._ask_user_live
-            self._wire_harness_git(harness)
-            harness.todos = self.todos
+                if action != "continue":
+                    break
+                continues_used += 1
+                messages: list[dict] = []
+                agent = getattr(harness, "_runtime", None)
+                if agent is not None and getattr(agent, "last_agent", None) is not None:
+                    messages = list(agent.last_agent.messages)
+                elif self._session_id:
+                    try:
+                        from kite.memory.session import load_session
 
-        self._busy = False
-        self.state.busy = False
-        self.state.clear_running()
-        self.display.close()
+                        messages = load_session(self._session_id).messages
+                    except (OSError, ValueError):
+                        messages = []
+                brief = build_continuity_brief(
+                    messages=messages,
+                    todos=self.todos.read(),
+                    task=preview,
+                )
+                try:
+                    from kite.memory.store import MemoryStore
+
+                    save_continuity(
+                        store=MemoryStore.open(self.cwd),
+                        brief=brief,
+                        session_id=self._session_id or "",
+                        cwd=self.cwd,
+                    )
+                except Exception:
+                    pass
+                run_task = build_recovery_follow_up(
+                    exit_status=exit_status,
+                    continuity_markdown=brief.to_markdown(),
+                    goal_objective=self._goal_objective_for_harness(),
+                )
+                label = "goal continue" if goal_active else "recovery continue"
+                self.console.print(
+                    f"[kite.muted]{label} {continues_used}/{max_continues} — resuming…[/]"
+                )
+                self.state.set_running(
+                    label=f"{label} {continues_used}/{max_continues}",
+                    kind="turn",
+                )
+                self.state.busy = True
+                self._busy = True
+                self.display._spin(False)
+                harness = self._make_harness(resume=True, follow_up=run_task)
+                harness.approver = self._approver()
+                harness.ask_user = self._ask_user_live
+                self._wire_harness_git(harness)
+                harness.todos = self.todos
+        finally:
+            self._busy = False
+            self.state.busy = False
+            self.state.clear_running()
+            self.display.close()
         extra = box.get("result") or {}
         self.display.finish_composer_turn(extra)
         self._harness = None

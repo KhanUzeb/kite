@@ -11,6 +11,14 @@ if TYPE_CHECKING:
     from kite.memory.session import SessionMeta
 
 
+def truncate_cell(text: str, limit: int = 28) -> str:
+    """Shorten a table cell with an explicit marker (never a silent slice)."""
+    raw = text or ""
+    if len(raw) <= limit or limit <= 1:
+        return raw
+    return raw[: limit - 1] + "…"
+
+
 def kite_table(title: str = "") -> Table:
     return Table(
         title=title or None,

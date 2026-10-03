@@ -694,6 +694,8 @@ _TEST_HINTS = (
     "cargo test",
     "ruff check",
     "mypy",
+    "py_compile",
+    "node --check",
 )
 
 
@@ -797,6 +799,8 @@ _TEST_HINTS = (
     "mypy",
     "uv run pytest",
     "uv run ruff",
+    "py_compile",
+    "node --check",
 )
 _TEST_GAP_PREFIX = "test command failed"
 
@@ -1022,6 +1026,8 @@ def unfounded_claim_reason(collector: VerificationCollector, text: str) -> str |
     if not _DONE_CLAIM_RE.search(body):
         return None
     if not collector.has_edits():
+        if verified:
+            return None
         return (
             "Do not claim the task is done. No edits or verification were recorded this session. "
             "Use tools, then submit with evidence — do not narrate completion."
@@ -1040,8 +1046,18 @@ def unfounded_claim_reason(collector: VerificationCollector, text: str) -> str |
     )
 
 
-def _missing_verification_section(body: str) -> str | None:
-    if "## verification" not in body.lower():
+def _missing_verification_section(body: str, *, need_verification: bool = True) -> str | None:
+    lower = body.lower()
+    for header in ("## done", "## changed"):
+        if header not in lower:
+            return (
+                "Submit blocked: include ## Done, ## Changed, and ## Verification sections "
+                "(e.g. `## Done`, `## Changed`, `## Verification` with `- ✓ <command>`). "
+                "Do not claim done without checkable evidence."
+            )
+    if not need_verification:
+        return None
+    if "## verification" not in lower:
         return (
             "Submit blocked: include a ## Verification section listing commands you ran "
             "(e.g. `- ✓ pytest -q`). Do not claim done without checkable evidence."
@@ -1100,9 +1116,9 @@ def submit_block_reason(
     if claim:
         return claim
 
-    if not (require_verification_section and collector.has_edits() and body and plan.required_checks):
-        return None
-    return _missing_verification_section(body)
+    if require_verification_section and collector.has_edits() and body:
+        return _missing_verification_section(body, need_verification=bool(plan.required_checks))
+    return None
 
 
 def post_edit_nudge(collector: VerificationCollector) -> str | None:
