@@ -710,6 +710,11 @@ def _normalize_command(cmd: str) -> str:
     return re.sub(r"\s+", " ", cmd.strip().lower())
 
 
+def normalize_check_command(cmd: str) -> str:
+    """Whitespace/case-folded command key — pairs repeat runs with their failure."""
+    return _normalize_command(cmd)
+
+
 def is_check_command(command: str) -> bool:
     norm = _normalize_command(command)
     return any(h in norm for h in _TEST_HINTS)
@@ -806,6 +811,105 @@ _TEST_HINTS = (
     "node --check",
 )
 _TEST_GAP_PREFIX = "test command failed"
+
+# A failing check is not always a code defect. Knowing *which* kind of failure it
+# is decides block-vs-disclose: a missing runner or a timeout can never be fixed
+# by retrying, so blocking on it only burns the step and token budget.
+FailureClass = Literal["assertion", "collection", "runner_missing", "timeout", "environment"]
+UNFIXABLE_FAILURE_CLASSES: frozenset[str] = frozenset({"runner_missing", "timeout", "environment"})
+
+# How many times one submit may be blocked before the run stops instead of
+# retrying. The first blocks explain; the last one ends the run with the report.
+MAX_BLOCKED_SUBMITS = 3
+
+_RUNNER_MISSING_RE = re.compile(
+    r"(command not found"
+    r"|is not recognized as an internal or external command"
+    r"|no module named"
+    r"|module not found"
+    r"|unable to locate program"
+    r"|cannot find the path specified"
+    r"|executable file not found"
+    r"|no such file or directory: ['\"]?(pytest|npm|node|go|cargo|tox))",
+    re.IGNORECASE,
+)
+_TIMEOUT_RE = re.compile(r"(timed out|timeout|test timeout)", re.IGNORECASE)
+_ENVIRONMENT_RE = re.compile(
+    r"(permission denied|read-only file system|connection refused"
+    r"|network is unreachable|operation not permitted|device or resource busy)",
+    re.IGNORECASE,
+)
+_COLLECTION_RE = re.compile(
+    r"(importerror|modulenotfounderror|syntaxerror"
+    r"|importerror while importing"
+    r"|errors? (on|during) collection"
+    r"|error collecting)",
+    re.IGNORECASE,
+)
+
+
+def classify_failure(exit_code: int, output: str = "", error: str = "") -> FailureClass:
+    """Name the kind of failure a check produced."""
+    text = f"{output}\n{error}"
+    if exit_code in {127, 9009} or _RUNNER_MISSING_RE.search(text):
+        return "runner_missing"
+    if _TIMEOUT_RE.search(text):
+        return "timeout"
+    if _ENVIRONMENT_RE.search(text):
+        return "environment"
+    if _COLLECTION_RE.search(text):
+        return "collection"
+    return "assertion"
+
+
+@dataclass(frozen=True, slots=True)
+class CheckFailure:
+    """One failed verification check and why it failed."""
+
+    command: str = ""
+    exit_code: int | None = None
+    kind: str = "check"
+    failure_class: FailureClass = "assertion"
+    detail: str = ""
+
+    @property
+    def unfixable(self) -> bool:
+        """True when no amount of retrying can turn this check green."""
+        return self.failure_class in UNFIXABLE_FAILURE_CLASSES
+
+    @property
+    def text(self) -> str:
+        if self.command:
+            return f"{_TEST_GAP_PREFIX} (exit {self.exit_code}): {self.command[:80]}"
+        return self.detail or "verification check failed"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "command": self.command[:80],
+            "exit_code": self.exit_code,
+            "kind": self.kind,
+            "failure_class": self.failure_class,
+            "unfixable": self.unfixable,
+        }
+
+
+# Honest spellings the gate accepts instead of a green check: a report that says
+# what is broken is worth more than a loop that retries a command already known
+# to fail. `- ✗` marks a failed check; a `## Blocked` section names the blockers.
+_FAILED_MARKER_RE = re.compile(r"^\s*[-*]\s*[✗✘]", re.MULTILINE)
+_BLOCKED_SECTION_RE = re.compile(
+    r"^#{2,4}\s*(blocked|blocking|known\s+issues|not\s+verified|unverified|could\s+not\s+verify)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def discloses_failures(body: str) -> bool:
+    """True when a summary states its failures outright instead of claiming success."""
+    text = body or ""
+    if not text.strip():
+        return False
+    return bool(_FAILED_MARKER_RE.search(text) or _BLOCKED_SECTION_RE.search(text))
+
 
 _EVIDENCE_CLAIM_RE = re.compile(
     r"\b("
@@ -934,6 +1038,7 @@ def record_bash_check(
     exit_code: int,
     preview: str,
     add_artifact: Any,
+    output: str = "",
 ) -> None:
     if not looks_like_test(cmd):
         return
@@ -952,9 +1057,19 @@ def record_bash_check(
     collector._records.append(record)
     add_artifact("test", f"exit={exit_code}  {cmd[:80]}", ok=record.ok, detail=preview)
     if record.ok:
-        collector.gaps = [g for g in collector.gaps if not g.startswith(_TEST_GAP_PREFIX)]
+        collector.clear_failure(cmd)
     else:
-        collector.gaps.append(f"{_TEST_GAP_PREFIX} (exit {exit_code}): {cmd[:80]}")
+        # Classify from the full output, not the 200-char preview — "command not
+        # found" usually lands past the cut and would otherwise look fixable.
+        collector.record_failure(
+            CheckFailure(
+                command=cmd,
+                exit_code=exit_code,
+                kind=matched.kind if matched else "project_test",
+                failure_class=classify_failure(exit_code, output or preview, ""),
+                detail=preview,
+            )
+        )
 
 
 def apply_write_edit(
@@ -1004,7 +1119,8 @@ def apply_bash(
     if rc is not None:
         collector.last_bash_exit = int(rc)
     ok = bool(result.get("ok"))
-    preview = (str(result.get("output") or "")[:200]).replace("\n", " ")
+    raw = str(result.get("output") or "")
+    preview = raw[:200].replace("\n", " ")
     add_artifact("command", cmd[:120], ok=ok, detail=preview)
     record_bash_check(
         collector,
@@ -1013,6 +1129,7 @@ def apply_bash(
         exit_code=int(rc or (0 if ok else 1)),
         preview=preview,
         add_artifact=add_artifact,
+        output=raw[:4000],
     )
 
 
@@ -1021,7 +1138,10 @@ def unfounded_claim_reason(collector: VerificationCollector, text: str) -> str |
     if not body:
         return None
     verified = collector.has_passing_tests()
-    if _EVIDENCE_CLAIM_RE.search(body) and not verified:
+    # A report that spells out its failures is not making an unfounded claim —
+    # do not make it argue with the same blocker twice.
+    disclosed = discloses_failures(body)
+    if _EVIDENCE_CLAIM_RE.search(body) and not verified and not disclosed:
         return (
             "Submit blocked: summary claims tests/build passed but no passing verification command "
             "was recorded for the touched artifacts. Run the applicable check first."
@@ -1060,15 +1180,19 @@ def _missing_verification_section(body: str, *, need_verification: bool = True) 
             )
     if not need_verification:
         return None
-    if "## verification" not in lower:
+    # A `## Blocked` section (or a `- ✗ <command>` line) is the honest spelling of
+    # "this check did not pass" — it satisfies the section requirement on its own.
+    if "## verification" not in lower and not discloses_failures(body):
         return (
             "Submit blocked: include a ## Verification section listing commands you ran "
             "(e.g. `- ✓ pytest -q`). Do not claim done without checkable evidence."
         )
-    if not re.search(r"[-*]\s*✓", body):
+    # A `## Blocked` section already says what did not pass — it stands in for the
+    # checked item, so naming the blocker is enough.
+    if not re.search(r"[-*]\s*[✓✗]", body) and not _BLOCKED_SECTION_RE.search(body):
         return (
             "Submit blocked: ## Verification must list at least one checked item "
-            "(e.g. `- ✓ pytest -q — 42 passed`)."
+            "(e.g. `- ✓ pytest -q — 42 passed`), or name the blocker under `## Blocked`."
         )
     return None
 
@@ -1088,6 +1212,101 @@ def next_required_check_command(collector: VerificationCollector) -> str | None:
     return None
 
 
+def check_attempts(collector: VerificationCollector, command: str) -> int:
+    """How many times this exact command has already been run."""
+    norm = normalize_check_command(command)
+    if not norm:
+        return 0
+    return sum(1 for r in collector._records if normalize_check_command(r.command) == norm)
+
+
+def blocking_failures(collector: VerificationCollector) -> list[CheckFailure]:
+    """Failures the agent can actually act on."""
+    return [f for f in collector.failures if not f.unfixable]
+
+
+def unfixable_failures(collector: VerificationCollector) -> list[CheckFailure]:
+    """Failures no retry can fix — missing runner, timeout, sandbox, network."""
+    return [f for f in collector.failures if f.unfixable]
+
+
+def _honest_report_accepted(collector: VerificationCollector, attempt: int) -> bool:
+    """Whether a report naming its failures may go through on this attempt.
+
+    An unfixable failure is accepted straight away — retrying a command that
+    cannot exist only burns budget. A real failure, or a check that was never
+    run, is accepted once the retries are spent so the run ends on an honest
+    report instead of a budget error.
+    """
+    fixable = blocking_failures(collector)
+    if fixable:
+        return attempt >= MAX_BLOCKED_SUBMITS
+    if collector.failures:
+        return True
+    return attempt >= MAX_BLOCKED_SUBMITS
+
+
+def _escalate_submit_block(reason: str, attempt: int) -> str:
+    """Repeat blocks stop suggesting a retry — they name the way through."""
+    if attempt < 2:
+        return reason
+    if attempt < MAX_BLOCKED_SUBMITS:
+        return (
+            f"{reason}\n\nBlocked {attempt} of {MAX_BLOCKED_SUBMITS} attempts. Re-running the same "
+            "check will not clear this. Either fix the cause, or submit honestly with a "
+            "`## Blocked` section (or a `- ✗ <command>` line) naming what is still broken."
+        )
+    return (
+        f"{reason}\n\nBlocked {attempt} times — the run stops on the next attempt. Submit now with a "
+        "`## Blocked` section (or a `- ✗ <command>` line under `## Verification`) naming what is "
+        "still broken."
+    )
+
+
+def _evidence_block_reason(
+    collector: VerificationCollector,
+    plan: VerificationPlan,
+    st: VerificationTerminal,
+    body: str,
+) -> str | None:
+    """Stable, attempt-independent reason a submit cannot proceed yet."""
+    fixable = blocking_failures(collector)
+    if fixable:
+        reason = (
+            f"Submit blocked: {fixable[0].text}. "
+            "Fix the failure and re-run verification before submitting."
+        )
+        cmd = next_required_check_command(collector)
+        if cmd:
+            reason += f"\n\nSuggested command: `{cmd}`"
+        return reason
+
+    unfixable = unfixable_failures(collector)
+    if unfixable:
+        lines = "\n".join(f"- {f.text}" for f in unfixable[:3])
+        return (
+            "Submit blocked: verification could not complete.\n"
+            f"{lines}\n\nNo retry can fix this. Say so in the report — add a `## Blocked` section "
+            "(or a `- ✗ <command>` line under `## Verification`) naming what you could not verify."
+        )
+
+    if collector.gaps and st == "failed":
+        return f"Submit blocked: {collector.gaps[0]}. Fix the failure and re-run verification before submitting."
+
+    if collector.has_edits() and plan.required_checks and st != "verified":
+        kinds = ", ".join(sorted(plan.artifact_kinds))
+        reason = (
+            f"Submit blocked: workspace was edited ({kinds}) but required verification is incomplete. "
+            "Run the applicable check for the changed files, then submit again."
+        )
+        cmd = next_required_check_command(collector)
+        if cmd:
+            reason += f"\n\nSuggested command: `{cmd}`"
+        return reason
+
+    return unfounded_claim_reason(collector, body)
+
+
 def submit_block_reason(
     collector: VerificationCollector,
     submission: str = "",
@@ -1103,33 +1322,45 @@ def submit_block_reason(
     bash marker / prose path, which carries a free-form summary — there only
     the evidence itself is gated (checks complete, no false claims), never
     the section format.
+
+    Blocking is finite by design. Early blocks explain the failure and the
+    command to run; later ones escalate to the sanctioned honest report
+    (``## Blocked`` or a ``- ✗ <command>`` line). Once that report is on the
+    table the submit goes through — a check the agent cannot fix must not eat
+    the rest of the step and token budget.
     """
     if not require_verification:
+        collector.clear_submit_blocks()
         return None
+
     plan = collector.plan()
     st = plan_status(plan, collector._records)
-    if st == "failed" or collector.gaps:
-        gap = collector.gaps[0] if collector.gaps else "a verification check failed"
-        base = f"Submit blocked: {gap}. Fix the failure and re-run verification before submitting."
-        cmd = next_required_check_command(collector)
-        return f"{base}\n\nSuggested command: `{cmd}`" if cmd else base
-
     body = (submission or "").strip()
-    if collector.has_edits() and plan.required_checks and st != "verified":
-        kinds = ", ".join(sorted(plan.artifact_kinds))
-        base = (
-            f"Submit blocked: workspace was edited ({kinds}) but required verification is incomplete. "
-            "Run the applicable check for the changed files, then submit again."
-        )
-        cmd = next_required_check_command(collector)
-        return f"{base}\n\nSuggested command: `{cmd}`" if cmd else base
+    attempt = collector.blocked_submits + 1
+    accepted = discloses_failures(body) and _honest_report_accepted(collector, attempt)
 
-    claim = unfounded_claim_reason(collector, body)
-    if claim:
-        return claim
+    if not accepted:
+        reason = _evidence_block_reason(collector, plan, st, body)
+        if reason is not None:
+            streak = collector.note_submit_block(reason)
+            return _escalate_submit_block(reason, streak)
 
-    if require_verification_section and structured and collector.has_edits() and body and bool(plan.required_checks):
-        return _missing_verification_section(body, need_verification=True)
+    if (
+        require_verification_section
+        and structured
+        and collector.has_edits()
+        and body
+        and bool(plan.required_checks)
+    ):
+        section = _missing_verification_section(body, need_verification=True)
+        if section is not None:
+            streak = collector.note_submit_block(section)
+            return _escalate_submit_block(section, streak)
+
+    # An honest report is not a fix — keep the streak so the next attempt still
+    # knows the check never went green. Reset only once the evidence is clean.
+    if not collector.failures and st == "verified":
+        collector.clear_submit_blocks()
     return None
 
 

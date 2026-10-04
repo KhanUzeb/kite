@@ -408,6 +408,68 @@ def test_marker_and_prose_submit_skip_section_format(tmp_path) -> None:
     assert "Suggested command" in (bare.submit_block_reason("shipped", structured=False) or "")
 
 
+def test_failure_classification_and_bounded_submit_blocking() -> None:
+    """Failing checks are classified, and blocking is finite with an honest exit."""
+    from kite.agent.verification import VerificationCollector
+    from kite.application.verification import (
+        MAX_BLOCKED_SUBMITS,
+        classify_failure,
+        discloses_failures,
+    )
+
+    assert classify_failure(9009, "pytest : not recognized") == "runner_missing"
+    assert classify_failure(127, "") == "runner_missing"
+    assert classify_failure(1, "FAILED test_x - Timeout >30s") == "timeout"
+    assert classify_failure(1, "Permission denied: build/app.o") == "environment"
+    assert classify_failure(2, "ImportError while importing conftest") == "collection"
+    assert classify_failure(1, "assert 1 == 2") == "assertion"
+    assert discloses_failures("- ✗ pytest -q — 1 failed")
+    assert discloses_failures("## Blocked\n- runner missing")
+    assert not discloses_failures("- ✓ pytest -q — 1 passed")
+
+    def _failing(output: str, rc: int = 1) -> VerificationCollector:
+        vc = VerificationCollector(workspace_root=".")
+        vc.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+        vc.on_tool_end("bash", {"command": "pytest -q"}, {"ok": False, "returncode": rc, "output": output})
+        return vc
+
+    report = "## Done\n- x\n\n## Changed\n- `a.py`\n\n## Verification\n- ✓ pytest -q"
+    # A real assertion failure blocks, then reports why it will not clear.
+    vc = _failing("FAILED tests/test_a.py::test_x - AssertionError")
+    first = vc.submit_block_reason(report)
+    assert first and "Suggested command" in first
+    vc.begin_turn()
+    second = vc.submit_block_reason(report)
+    assert second and "Blocked 2 of" in second
+    # A later pass clears only that command's failure.
+    vc.begin_turn()
+    vc.on_tool_end("bash", {"command": "pytest -q"}, {"ok": True, "returncode": 0, "output": "1 passed"})
+    assert vc.failures == [] and vc.submit_block_reason(report) is None
+
+    # A missing runner cannot be fixed by retrying — one block, then honesty passes.
+    missing = _failing("pytest : The term 'pytest' is not recognized", rc=9009)
+    assert missing.failures[0].unfixable
+    assert missing.submit_block_reason(report) is not None
+    honest = ("## Done\n- x\n\n## Changed\n- `a.py`\n\n"
+              "## Blocked\n- pytest is not installed in this environment")
+    assert missing.submit_block_reason(honest) is None
+
+    # A fixable failure still gets the retries, then accepts the honest report.
+    stuck = _failing("FAILED tests/test_a.py::test_x - AssertionError")
+    blocked = []
+    for _ in range(MAX_BLOCKED_SUBMITS):
+        stuck.begin_turn()
+        blocked.append(stuck.submit_block_reason(report))
+    assert all(blocked), "an honesty-free report must not pass early"
+    assert stuck.submit_exhausted
+    assert stuck.submit_block_reason(honest) is None
+    # Re-gating inside one turn is one attempt, not two (loop + `submit` tool).
+    once = _failing("FAILED tests/test_a.py::test_x - AssertionError")
+    once.begin_turn()
+    assert once.submit_block_reason(report) and once.submit_block_reason(report)
+    assert once.blocked_submits == 1
+
+
 def test_batch_02(tmp_path) -> None:
     """Consolidated (bodies unchanged): test_verification_plans_replay_and_package_paths, test_effects_coordinator_runner_and_cli_result."""
     _t0 = tmp_path / "t2_0"

@@ -121,7 +121,7 @@ Do not repeat the same tool call with the same arguments. If stuck: change strat
 If you see a **loop detected** warning, stop repeating that call. Vary the command, path, or approach — identical retries waste tokens and user time.
 
 ## Evidence-first
-The harness records diffs and commands. **Submit is blocked** when you edited without a passing check, tests failed, or you claim success without command output.
+The harness records diffs and commands. **Submit is blocked** when you edited without a passing check, tests failed, or you claim success without command output. Blocking is finite — after a few attempts the run stops, so report the blocker (`## Blocked`) instead of retrying or rewording the same claim.
 
 Never report done without something checkable in ~30 seconds: a diff, test output, command result, or concrete change summary. For UI: say what you ran (or that you could not verify).
 
@@ -180,6 +180,18 @@ message (no verification demanded).
 ```
 submit(message="## Done\n- …\n\n## Changed\n- …\n\n## Verification\n- ✓ pytest -q")
 ```
+
+**When a check cannot pass, do not loop.** Submit is blocked a few times, then
+the run stops — retrying the same failing command, or rewording the same claim,
+only burns the budget. Name the blocker instead:
+
+```
+submit(message="## Done\n- …\n\n## Changed\n- …\n\n## Verification\n- ✗ pytest -q — 1 failed\n\n## Blocked\n- tests/test_x.py::test_y asserts the old value")
+```
+
+A `## Blocked` section (or a `- ✗ <command>` line) is an accepted finish. If a
+check cannot run at all — the runner is missing, the sandbox blocks it, it times
+out — say so rather than treating it as a code defect.
 
 Legacy bash marker (still supported) — this must be a **real tool call**, on its
 own, with no other command in the same bash call:

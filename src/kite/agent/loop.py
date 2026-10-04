@@ -107,6 +107,14 @@ _VERIFY_IDLE_NUDGE = (
     "Workspace has unverified edits. Run the applicable verification command, "
     "read the output, then submit with evidence."
 )
+# The verification-nudge branch sits above the idle counter, so it needs its own
+# budget — otherwise re-narrating unverified edits loops to step_limit.
+_MAX_VERIFY_NUDGE_TURNS = 2
+_VERIFY_IDLE_STALL = (
+    "Stopped after {turns} verification nudges with no check run — the edits are still "
+    "unverified. Run the check, or submit with an explicit `## Blocked` section naming what "
+    "could not be verified."
+)
 _TOOL_FAIL_STREAK_NUDGE_AFTER = 3
 _TOOL_FAIL_NUDGE = (
     "Last {n} tool calls failed. Read the errors. Do not claim the task is done. "
@@ -389,7 +397,7 @@ class DefaultAgent:
         self.n_consecutive_format_errors = 0
         self._consecutive_no_tool_turns = 0
         self._last_idle_content = ""
-        self._blocked_submission = ""
+        self._verify_nudge_turns = 0
         self._tool_fail_streak = 0
         self._awaiting_approval = False
         self._start_time = time.time()
@@ -883,6 +891,9 @@ class DefaultAgent:
             exc_cls, message = hit
             raise exc_cls(message)
         self.n_calls += 1
+        # Each model turn may spend at most one blocked-submit retry, however
+        # many times the loop and the `submit` tool consult the gate for it.
+        self.verification.begin_turn()
         last_error: BaseException | None = None
         attempts = 0
         try:
@@ -1056,6 +1067,22 @@ class DefaultAgent:
                 reason = self.verification.unfounded_claim_reason(content)
                 if reason:
                     return self.add_messages({"role": "user", "content": reason})
+            # This branch never increments the idle counter, so a model that only
+            # re-narrates unverified edits used to spin until step_limit. Count it
+            # here and stop instead of spending the remaining budget.
+            self._verify_nudge_turns += 1
+            if self._verify_nudge_turns >= _MAX_VERIFY_NUDGE_TURNS:
+                self.add_messages(
+                    _exit_msg(
+                        "Stalled",
+                        content=(
+                            f"{_VERIFY_IDLE_STALL.format(turns=self._verify_nudge_turns)}\n"
+                            + "\n".join(self.verification.render_lines())
+                        ),
+                        submission=content,
+                    )
+                )
+                return []
             nudge = self.verification.post_edit_nudge() or _VERIFY_IDLE_NUDGE
             from kite.application.verification import next_required_check_command
 
@@ -1102,20 +1129,18 @@ class DefaultAgent:
         )
         if reason:
             self._emit("submit_blocked", reason=reason, verification=self.verification.summary())
-            if submission == self._blocked_submission:
-                # Same report blocked twice — re-nudging cannot clear it. Stop, but
-                # hand the report back so the work stays visible.
+            if self.verification.submit_exhausted:
+                # The gate has spent every retry. Stop rather than hand back the
+                # same block again, but keep the report so the work stays visible.
                 self.add_messages(
                     _exit_msg(
                         "Stalled",
-                        content=f"{reason}\n\nStopped after the same submission was blocked twice.",
+                        content=f"{reason}\n\nStopped after {self.verification.blocked_submits} blocked submissions.",
                         submission=submission,
                     )
                 )
                 return []
-            self._blocked_submission = submission
             return self.add_messages({"role": "user", "content": reason})
-        self._blocked_submission = ""
         raise Submitted(_exit_msg("Submitted", content=submission, submission=submission))
 
     def _execute_parallel_actions(self, actions: list[dict], outputs: list[dict]) -> None:
@@ -1347,16 +1372,21 @@ class DefaultAgent:
                     f"Verification status: {self.verification.status()}\n"
                     + "\n".join(self.verification.render_lines())
                 )
-                if submission and submission == self._blocked_submission:
-                    # Same report blocked twice — resubmitting cannot clear
-                    # it. Give the exit ramp instead of another identical block.
-                    detail += (
-                        "\n\nDo not submit the same message again — it will keep being blocked. "
-                        "Either run the suggested check above, or use the question tool to ask "
-                        "the user whether to finish without verification."
+                if self.verification.submit_exhausted:
+                    # Every retry is spent on this gate. Ending with the report
+                    # beats another block the model will answer with the same
+                    # words until step_limit.
+                    raise Submitted(
+                        _exit_msg(
+                            "Stalled",
+                            content=(
+                                f"{detail}\n\nStopped after "
+                                f"{self.verification.blocked_submits} blocked submissions — "
+                                "retrying cannot clear this gate."
+                            ),
+                            submission=submission,
+                        )
                     )
-                else:
-                    self._blocked_submission = submission
                 return _blocked(reason, output=detail)
         try:
             return self._run_gated(tool, args, action)
@@ -1371,25 +1401,31 @@ class DefaultAgent:
                 structured=False,
             )
             if reason:
-                from kite.application.verification import next_required_check_command
-
-                cmd = next_required_check_command(self.verification)
-                detail = reason
-                if cmd:
-                    detail = f"{reason}\n\nSuggested command: `{cmd}`"
                 self._emit(
                     "submit_blocked",
                     reason=reason,
                     verification=self.verification.summary(),
                 )
-                return _blocked(
-                    reason,
-                    output=(
-                        f"{detail}\n\n"
-                        f"Verification status: {self.verification.status()}\n"
-                        + "\n".join(self.verification.render_lines())
-                    ),
+                detail = (
+                    f"{reason}\n\n"
+                    f"Verification status: {self.verification.status()}\n"
+                    + "\n".join(self.verification.render_lines())
                 )
+                if self.verification.submit_exhausted:
+                    # Every retry is spent. Stop the run instead of handing back
+                    # another block the model will answer with the same words.
+                    raise Submitted(
+                        _exit_msg(
+                            "Stalled",
+                            content=(
+                                f"{detail}\n\nStopped after "
+                                f"{self.verification.blocked_submits} blocked submissions — "
+                                "retrying cannot clear this gate."
+                            ),
+                            submission=submission,
+                        )
+                    ) from None
+                return _blocked(reason, output=detail)
             raise
 
     def _after_tool(
@@ -1449,6 +1485,10 @@ class DefaultAgent:
                 )
         if out.get("ok") and tool in {"write", "edit"} and out.get("path"):
             self._note_edit(str(out["path"]))
+        if out.get("ok") and tool == "bash":
+            # Running something is progress — refresh the verify-nudge budget so a
+            # later regression gets a fresh allowance instead of inheriting this one.
+            self._verify_nudge_turns = 0
         if tool == "subagent":
             # Whole-tree budget: worker spend counts against the parent limit.
             worker_cost = out.get("total_cost") or out.get("cost")

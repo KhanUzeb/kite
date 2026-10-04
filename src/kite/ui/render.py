@@ -33,7 +33,10 @@ from kite.ui.style import (
     SYMBOL_USER,
     SYMBOL_WARN,
     cell_continuation_indent,
+    last_line_width,
     make_console,
+    wrap_hanging,
+    wrap_hanging_parts,
 )
 from kite.ui.theme import glyph, user_surface_styles
 from kite.ui.tool_cards import (
@@ -440,6 +443,11 @@ class RunDisplay:
         self._thinking_open = False
         self._thinking_buf: list[str] = []
         self._stream_coalesce = StreamCoalescer()
+        self._answer_line = ""
+        self._answer_line_chars = 0
+        self._answer_col = 0
+        self._thinking_col = 0
+        self._answer_hold = ""
         self._pending_tool_name: str | None = None
         self._pending_tool_args: str = ""
         self._last_todo_key: str = ""
@@ -467,6 +475,62 @@ class RunDisplay:
         self.console.print(*args, **kwargs)
         self._flush_console()
 
+    def _wrap_width(self) -> int:
+        """Usable row width, or 0 when the width is unknown (defer to Rich)."""
+        try:
+            width = int(getattr(self.console, "width", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+        return width if width > 16 else 0
+
+    def _emit_cell_line(self, body: str, style: str, *, indent: str, cont: str, final: bool = False) -> bool:
+        """Print one logical cell line, wrapping so continuations keep ``cont``.
+
+        A streamed line is written with ``end=""``; if it outruns the row the
+        terminal wraps it at column 0, so the gutter is lost on every long
+        paragraph. Wrapping here keeps the left edge aligned. Room is measured
+        from ``self._answer_col`` so a line arriving in many small chunks wraps
+        on the same boundaries a single chunk would.
+
+        ``final`` flushes instead of holding the trailing word back — for a
+        closed line, or the end of the stream, where no more text is coming.
+
+        Returns False when the whole body was a still-growing word and nothing
+        was printed — the caller must not consume its one-shot prefix.
+        """
+        width = self._wrap_width()
+        col = self._answer_col
+        if width and body:
+            wrapped, held = wrap_hanging_parts(
+                body,
+                first_indent=" " * (col + len(indent)),
+                cont_indent=cont,
+                width=width,
+                # Hold the trailing word while more of it may still arrive;
+                # a held word plus the next fragment is one growing word.
+                defer_tail=not final,
+            )
+            self._answer_hold = held
+            if not wrapped:
+                # Everything is a still-growing word — print nothing yet rather
+                # than a bare gutter with no body.
+                return False
+            if "\n" in wrapped:
+                # The cursor now sits after the final continuation row, which
+                # starts at the continuation indent.
+                col = len(cont) + last_line_width(wrapped)
+            else:
+                col += len(wrapped)
+            body = wrapped
+        else:
+            col += len(body)
+        block = Text()
+        block.append(indent, style=style)
+        block.append(body, style=style)
+        self._answer_col = col + len(indent)
+        self._print(block, end="", highlight=False, markup=False)
+        return True
+
     def _flush_console(self) -> None:
         """Push buffered Rich output to the terminal promptly.
 
@@ -493,12 +557,27 @@ class RunDisplay:
         sys.stdout.flush()
 
     def _end_stream_line(self) -> None:
+        # A held word was waiting for the rest of itself. The stream is over, so
+        # flush it now — dropping it here would lose text.
+        if self._answer_hold:
+            held, self._answer_hold = self._answer_hold, ""
+            style = self._answer_style()
+            cont = cell_continuation_indent(CHANNEL_PREFIX.get("answer", "  "))
+            # A non-zero column means the row already carries text (and the gap
+            # that text left), so resume flush against it. At column 0 nothing
+            # was printed for this row and it still needs the cell indent.
+            fresh_row = self._answer_col == 0
+            indent = cont if (fresh_row and self._did_first_line) else ""
+            self._emit_cell_line(held, style, indent=indent, cont=cont, final=True)
+            self._streaming = True
         if self._streaming:
             self._print()
             self._streaming = False
         self._need_prefix = False
         self._answer_line = ""
         self._answer_line_chars = 0
+        self._answer_col = 0
+        self._thinking_col = 0
 
     def _ensure_channel(self, channel: str) -> None:
         if self._channel == channel:
@@ -512,6 +591,8 @@ class RunDisplay:
         self._did_first_line = False
         self._answer_line = ""
         self._answer_line_chars = 0
+        self._answer_col = 0
+        self._answer_hold = ""
 
     def _answer_style(self) -> str:
         return "kite.terminal" if self._in_code_fence else "kite.answer"
@@ -556,12 +637,29 @@ class RunDisplay:
         if text.lstrip().startswith("{") and text.rstrip().endswith("}"):
             chunk = format_thinking_text(text)
         block = Text()
+        width = self._wrap_width()
         parts = chunk.split("\n")
         for i, part in enumerate(parts):
             if i > 0:
                 block.append("\n")
                 self._need_prefix = True
+                self._thinking_col = 0
             if part:
+                # Thinking is full-width by design, but a long line still has to
+                # be broken here or the terminal wraps it to column 0.
+                if width:
+                    wrapped = wrap_hanging(
+                        part,
+                        first_indent=" " * self._thinking_col,
+                        cont_indent="",
+                        width=width,
+                    )
+                    # A wrapped fragment restarts at column 0; an unwrapped one
+                    # keeps growing the row it shares with earlier chunks.
+                    self._thinking_col = (
+                        last_line_width(wrapped) if "\n" in wrapped else self._thinking_col + len(part)
+                    )
+                    part = wrapped
                 block.append(part, style="kite.thinking")
                 self._need_prefix = False
                 self._did_first_line = True
@@ -601,12 +699,15 @@ class RunDisplay:
         self._streaming = True
         self._print(block, end="", highlight=False, markup=False)
 
-    def _write_answer_partial(self, fragment: str) -> None:
+    def _write_answer_partial(self, fragment: str, *, final: bool = False) -> None:
         """Emit a fragment of an unfinished line — no newline, continued in place.
 
         Partials use the plain answer style: markdown cues (headings/bullets)
         apply only when a full line closes, so a ``## `` or ``- `` prefix
         split across chunk boundaries never flickers or splits styles mid-line.
+
+        ``final`` means no more text is coming for this line (it is closing), so
+        the trailing word is emitted rather than held for a continuation.
         """
         if not fragment:
             return
@@ -629,19 +730,24 @@ class RunDisplay:
             self._fence_chars += len(fragment)
         else:
             emit_after = False
-        style, body = self._answer_style(), fragment
-        block = Text()
+        style = self._answer_style()
+        # A word held back last chunk (it was still mid-word) resumes here, so
+        # it is never split across two rows.
+        body = f"{self._answer_hold}{fragment}" if self._answer_hold else fragment
+        self._answer_hold = ""
         prefix = CHANNEL_PREFIX.get("answer", "  ")
+        cont = cell_continuation_indent(prefix)
         if self._need_prefix and body:
-            indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
-            block.append(indent, style=self._answer_style())
-            self._need_prefix = False
-            self._did_first_line = True
-        block.append(body, style=style)
+            indent = prefix if not self._did_first_line else cont
+            emitted = self._emit_cell_line(body, style, indent=indent, cont=cont, final=final)
+            if emitted:
+                self._need_prefix = False
+                self._did_first_line = True
+        else:
+            self._emit_cell_line(body, style, indent="", cont=cont, final=final)
         self._answer_line += fragment
         self._answer_line_chars += len(fragment)
         self._streaming = True
-        self._print(block, end="", highlight=False, markup=False)
         if emit_after:
             self._emit_fence_truncated()
 
@@ -649,6 +755,11 @@ class RunDisplay:
         """Close a line — markdown/fence cues apply only to whole lines."""
         block = Text()
         prefix = CHANNEL_PREFIX.get("answer", "  ")
+        if self._answer_hold:
+            # A held word belongs to the line being closed: emit it before the
+            # newline so it cannot be lost or pushed onto the next line.
+            line = f"{self._answer_hold}{line}"
+            self._answer_hold = ""
         if self._answer_line_chars:
             if self._in_code_fence and self._fence_truncated and not line.strip().startswith("```"):
                 self._fence_chars += len(line)
@@ -657,7 +768,8 @@ class RunDisplay:
                 self._need_prefix = True
                 self._streaming = True
                 return
-            self._write_answer_partial(line)
+            # This line is closing: flush the trailing word instead of holding it.
+            self._write_answer_partial(line, final=True)
         elif line:
             stripped = line.strip()
             indent = prefix if not self._did_first_line else cell_continuation_indent(prefix)
@@ -701,34 +813,83 @@ class RunDisplay:
                     self._emit_fence_truncated()
                     return
                 self._fence_chars += len(line) + 1
+                # Fence rows are usually narrow, but a long line still has to
+                # keep the gutter or the terminal wraps it back to column 0.
+                width = self._wrap_width()
+                shown = line
+                if width:
+                    shown = wrap_hanging(
+                        line,
+                        first_indent=indent,
+                        cont_indent=cell_continuation_indent(prefix),
+                        width=width,
+                    )
                 block.append(indent, style=self._answer_style())
                 self._did_first_line = True
-                block.append(line, style=self._answer_style())
+                block.append(shown, style=self._answer_style())
             else:
                 style, body = self._prose_line_style(line)
                 if body:
+                    width = self._wrap_width()
+                    if width:
+                        # Continuations align under this line's own text, so a
+                        # list item or an indented heading keeps its column
+                        # instead of snapping back to the cell gutter.
+                        body = wrap_hanging(
+                            body,
+                            first_indent=indent,
+                            cont_indent=" " * (len(indent) + self._body_text_offset(body)),
+                            width=width,
+                        )
                     block.append(indent, style=self._answer_style())
                     self._did_first_line = True
                     block.append(body, style=style)
         self._answer_line = ""
         self._answer_line_chars = 0
+        self._answer_col = 0
+        self._answer_hold = ""
         self._need_prefix = True
         self._streaming = True
         block.append("\n")
         self._print(block, end="", highlight=False, markup=False)
+        # A glyph or fence prefix was baked into `block`, not emitted through
+        # `_emit_cell_line`, so it never advanced the column tracker. Re-anchor
+        # on the final row so the next line's wrap measures from the real cursor.
+        self._answer_col = last_line_width(block.plain)
+
+    @staticmethod
+    def _leading_columns(row: str) -> int:
+        """Columns before the first non-blank cell — the row's left edge."""
+        from rich.cells import cell_len
+
+        stripped = row.lstrip(" ")
+        return cell_len(row[: len(row) - len(stripped)])
+
+    @staticmethod
+    def _body_text_offset(body: str) -> int:
+        """Columns a body uses before its first real character.
+
+        A list item renders as ``• item`` — the bullet is part of the body, so a
+        continuation must clear it. An indented heading keeps its own lead.
+        """
+        lead = len(body) - len(body.lstrip(" "))
+        rest = body[lead:]
+        if rest[:1] == "•":
+            return lead + 2
+        return lead
 
     def _prose_line_style(self, line: str) -> tuple[str, str]:
         """Lightweight markdown-ish cues for streamed prose (no full parser)."""
         stripped = line.lstrip()
+        lead = line[: len(line) - len(stripped)]
         if stripped.startswith("### "):
-            return "kite.highlight bold", stripped[4:]
+            return "kite.highlight bold", f"{lead}{stripped[4:]}"
         if stripped.startswith("## "):
-            return "kite.highlight bold", stripped[3:]
+            return "kite.highlight bold", f"{lead}{stripped[3:]}"
         if stripped.startswith("# "):
-            return "kite.highlight bold", stripped[2:]
+            return "kite.highlight bold", f"{lead}{stripped[2:]}"
         if stripped.startswith(("- ", "* ")):
-            indent = line[: len(line) - len(stripped)]
-            return "kite.answer", f"{indent}• {stripped[2:]}"
+            return "kite.answer", f"{lead}• {stripped[2:]}"
         return "kite.answer", line
 
     def _thinking_text(self) -> str:

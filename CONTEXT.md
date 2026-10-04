@@ -176,7 +176,11 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Text submit (casual chat)** — Harness rule in `DefaultAgent._allow_text_submit`: interactive build mode ends on prose without tools when `_is_casual_user_turn(last_user_message)` is true. Assistant content like `Hey! 👋` does not trigger submit on its own.
 
-**Stalled** — Exit status for a build turn that ended with no progress: `_MAX_IDLE_TURNS` idle nudges, two identical text-only replies in a row, or the same submission blocked by the submit gate twice. The exit message carries the model's last report in `submission` so the CLI/REPL shows what was produced instead of a bare "no progress".
+**Stalled** — Exit status for a build turn that ended with no progress: `_MAX_IDLE_TURNS` idle nudges, `_MAX_VERIFY_NUDGE_TURNS` verification nudges, two identical text-only replies in a row, or the submit gate spending all `MAX_BLOCKED_SUBMITS` retries. The exit message carries the model's last report in `submission` so the CLI/REPL shows what was produced instead of a bare "no progress".
+
+**CheckFailure** — One failed verification check plus its **FailureClass** (`assertion`, `collection`, `runner_missing`, `timeout`, `environment`). Classes in `UNFIXABLE_FAILURE_CLASSES` cannot be fixed by retrying, so the submit gate downgrades them from "block until green" to "disclose it" — this is what stops a missing test runner from looping the run. A later pass of the same command clears its failure.
+
+**Honest report** — A submission that names its own failures: a `## Blocked` section or a `- ✗ <command>` line. `discloses_failures()` recognizes both. It satisfies the report-format gate in place of a passing check, and once `MAX_BLOCKED_SUBMITS` retries are spent the gate accepts it — a check the agent cannot fix must not eat the remaining step and token budget. Counting is per **model turn**, since the loop and the `submit` tool both consult the gate for one attempt.
 
 **Interrupt** — User cancellation (Ctrl+C) propagates to the model stream and long-running bash; does not kill the REPL.
 

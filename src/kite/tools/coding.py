@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from kite.application.verification import MAX_BLOCKED_SUBMITS
 from kite.env.venv import prepare_child_env
 from kite.guardrails import GuardrailPolicy, redact_secrets
 from kite.memory.store import MemoryScope, MemoryStore
@@ -792,6 +793,7 @@ def make_coding_tools(
                 return {"ok": False, "blocked": True, "error": reason, "output": reason}
         return {"ok": True, "submitted": True, "submission": message, "output": message}
 
+
     def memory_op(args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "list").lower()
         scope_raw = str(args.get("scope") or "user").lower()
@@ -1329,6 +1331,9 @@ def make_coding_tools(
                 description=(
                     "Finish a build-mode task with a structured summary. "
                     "Use only after verification — include ## Done, ## Changed, and ## Verification sections. "
+                    "If a check cannot pass, say so instead of retrying: add a `## Blocked` section "
+                    "(or a `- ✗ <command>` line) naming what is broken. Blocking stops after "
+                    f"{MAX_BLOCKED_SUBMITS} attempts. "
                     "Preferred over `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`."
                 ),
                 parameters={

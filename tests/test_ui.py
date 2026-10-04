@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 from contextlib import nullcontext
 from dataclasses import dataclass
 from io import StringIO
@@ -630,6 +631,103 @@ def _c_test_stream_answer_styles_boundaries_and_coalescing() -> None:
     assert lines[1].strip() == "Second line"
 
 
+def _c_test_wrapped_answer_keeps_the_left_edge() -> None:
+    """A streamed line that outruns the row must not wrap back to column 0.
+
+    Streamed cells are written with ``end=""`` to a ``soft_wrap`` console, so
+    Rich hands the raw line to the terminal. Without in-harness wrapping every
+    continuation row after the first lands at column 0 — the ragged left edge.
+    """
+    from kite.ui.style import wrap_hanging
+
+    display = RunDisplay(Console(force_terminal=True, width=100, theme=KITE_THEME), state=SessionUiState())
+    long_para = (
+        "This is a long streamed paragraph that will certainly exceed the console "
+        "width so the terminal has to wrap it somewhere, and every continuation "
+        "row must keep the same left edge as the first one."
+    )
+
+    def rows_for(chunks, width, channel="answer"):
+        buf = StringIO()
+        console = Console(file=buf, width=width, theme=KITE_THEME, legacy_windows=False, soft_wrap=False)
+        display = RunDisplay(console, state=SessionUiState())
+        for chunk in chunks:
+            display._stream_write(chunk, channel=channel)
+        display._end_stream_line()
+        return [ln for ln in strip_ansi(buf.getvalue()).splitlines() if ln.strip()]
+
+    def lead(row):
+        return len(row) - len(row.lstrip(" "))
+
+    # One chunk and many small chunks must land on the same boundaries.
+    single = rows_for([long_para], 60)
+    chunked = rows_for([long_para[i:i + 7] for i in range(0, len(long_para), 7)], 60)
+    assert len(single) > 1 and len(chunked) > 1
+    assert [lead(r) for r in single[1:]] == [2] * (len(single) - 1)
+    assert [lead(r) for r in chunked[1:]] == [2] * (len(chunked) - 1)
+    def words(rows):
+        """Reassembled words, ignoring the leading cell glyph."""
+        joined = " ".join(rows).replace("•", " ", 1)
+        return joined.split()
+
+    # Wrapping must not lose or duplicate text: reassembling the rows recovers
+    # the original paragraph.
+    assert words(single) == long_para.split()
+    assert words(chunked) == long_para.split()
+
+    # A word is never split across rows when the chunks land inside it. The row
+    # near the edge defers its trailing token until the word is complete.
+    wordy = " ".join(["verification"] * 10)
+    for size in (3, 5, 8, 13):
+        rows = rows_for([wordy[i:i + size] for i in range(0, len(wordy), size)], 60)
+        joined = " ".join(rows).replace("•", " ", 1)
+        assert not re.search(r"[a-z]\n\s+[a-z]", "\n".join(rows)), f"split a word at chunk={size}"
+        assert joined.split() == wordy.split(), f"text lost at chunk={size}"
+
+    # An unbreakable token (long URL) must still wrap inside the cell.
+    url = "see " + "https://example.com/" + "a" * 90 + " for details"
+    url_rows = rows_for([url], 60)
+    assert len(url_rows) > 1
+    assert all(lead(r) == 2 for r in url_rows[1:])
+
+    # Short lines are untouched.
+    assert rows_for(["short one\nshort two"], 60) == ["• short one", "  short two"]
+
+    # An unusable width defers to Rich instead of guessing or crashing.
+    narrow = RunDisplay(Console(file=StringIO(), width=8, theme=KITE_THEME), state=SessionUiState())
+    assert narrow._wrap_width() == 0
+    narrow._stream_write_answer(long_para[:40])
+    assert narrow._answer_col > 0
+
+    # Thinking is full-width by design: it wraps, but keeps column 0.
+    think = rows_for([long_para[i:i + 20] for i in range(0, len(long_para), 20)], 60, channel="thinking")
+    assert len(think) > 1
+    assert all(lead(r) == 0 for r in think)
+
+    # A closed list item's continuation clears the bullet, not just the gutter.
+    # Markdown cues only apply to whole lines, so the line must be newline-ended.
+    bullets = rows_for(["- level one item that runs on and on and should wrap cleanly\n"], 60)
+    assert len(bullets) > 1
+    assert lead(bullets[1]) == 4
+
+    # An indented heading keeps its own lead instead of jumping left. The `##`
+    # markers are dropped and the lead preserved, so a 2-space indent still
+    # shows as 2 columns rather than snapping to the gutter.
+    assert display._prose_line_style("  ## Heading")[1] == "  Heading"
+    assert display._prose_line_style("## Heading")[1] == "Heading"
+    assert display._prose_line_style("  - item")[1] == "  • item"
+    heading = rows_for(["  ## Heading that is quite long and will need to wrap here\n"], 60)
+    assert "Heading" in heading[0] and "##" not in heading[0]
+    # lead() counts spaces only; the cell glyph occupies the first 2 columns.
+    assert heading[0].index("Heading") == 4
+
+    # The helper itself: fits unchanged, wraps with the continuation indent.
+    assert wrap_hanging("short", first_indent="  ", cont_indent="  ", width=40) == "short"
+    out = wrap_hanging("aaa bbb ccc", first_indent="  ", cont_indent="    ", width=9)
+    assert out == "aaa bbb\n    ccc"
+    assert wrap_hanging("a\tb", first_indent="", cont_indent="", width=4) == "a\tb"
+
+
 def _c_test_composer_turn_answer_lifecycle() -> None:
     from kite.ui.render import render_user_cell
 
@@ -1236,6 +1334,7 @@ def test_batch_05() -> None:
     finally:
         _mp1.undo()
     _c_test_stream_answer_styles_boundaries_and_coalescing()
+    _c_test_wrapped_answer_keeps_the_left_edge()
 
 def test_batch_06(tmp_path) -> None:
     """Consolidated (bodies unchanged): test_composer_turn_answer_lifecycle, test_repl_prints_each_submitted_prompt_once, test_approval_panels_render_once."""

@@ -446,6 +446,85 @@ def _c_test_submit_gate_and_verification(workspace: Path) -> None:
     assert clean.verification.submit_block_reason("hi") is None
 
 
+def test_submit_gate_stops_instead_of_looping() -> None:
+    _c_test_submit_gate_stops_instead_of_looping()
+
+
+def _c_test_submit_gate_stops_instead_of_looping() -> None:
+    # Regression: the agent writes its own test, that test fails, submit is blocked,
+    # and the model rewords its report each turn — so no dedupe caught it and the
+    # run burned the whole step budget before finally reporting.
+    from kite.agent.exceptions import Submitted as _Submitted
+    from kite.application.verification import MAX_BLOCKED_SUBMITS
+
+    passing = "## Done\n- x\n\n## Changed\n- `a.py`\n\n## Verification\n- ✓ pytest -q"
+    honest = (
+        "## Done\n- x\n\n## Changed\n- `a.py`\n\n"
+        "## Verification\n- ✗ pytest -q — my new test still fails\n\n"
+        "## Blocked\n- tests/test_a.py::test_x assertion fails"
+    )
+
+    class _Env:
+        def execute(self, action, cwd=""):
+            if action.get("tool") == "edit":
+                return {"ok": True, "path": "a.py", "diff": "d", "output": "edited"}
+            cmd = str((action.get("arguments") or {}).get("command") or "")
+            if "pytest" in cmd:
+                return {"ok": False, "returncode": 1,
+                        "output": "1 failed\nFAILED tests/test_a.py::test_x - AssertionError"}
+            msg = str((action.get("arguments") or {}).get("message") or "")
+            raise _Submitted({"role": "exit", "content": msg,
+                              "extra": {"exit_status": "Submitted", "submission": msg}})
+
+    def _model(report):
+        class _M:
+            def __init__(self) -> None:
+                self.turns = 0
+
+            def format_message(self, **kwargs):
+                return dict(kwargs)
+
+            def query(self, messages):
+                self.turns += 1
+                if self.turns == 1:
+                    return {"role": "assistant", "content": "", "extra": {"actions": [
+                        {"tool": "edit", "id": "e1",
+                         "arguments": {"path": "a.py", "old_string": "a", "new_string": "b"}}], "cost": 0.0}}
+                if self.turns == 2:
+                    return {"role": "assistant", "content": "", "extra": {"actions": [
+                        {"tool": "bash", "id": "b1",
+                         "arguments": {"command": "pytest -q tests/test_a.py"}}], "cost": 0.0}}
+                # Reworded every turn — no dedupe can catch this.
+                return {"role": "assistant", "content": "", "extra": {"actions": [
+                    {"tool": "submit", "id": f"s{self.turns}",
+                     "arguments": {"message": f"{report}\n<!-- {self.turns} -->"}}], "cost": 0.0}}
+
+            def format_observation_messages(self, message, outputs, template_vars=None):
+                return [{"role": "tool", "tool_call_id": "x",
+                         "content": str([dict(o) for o in outputs])[:2000]}]
+
+        return _M()
+
+    # Keeps claiming success: the run must stop on the last retry, not spin to step_limit.
+    model = _model(passing)
+    agent = DefaultAgent(model, _Env(), verify_before_submit=True, step_limit=40,
+                         interactive=False, approver=lambda *_a, **_k: "allow")
+    result = agent.run("add a feature and test it")
+    assert model.turns <= MAX_BLOCKED_SUBMITS + 2, f"looped {model.turns} turns"
+    assert result.get("exit_status") == "Stalled"
+    # The work and its gap stay visible instead of being thrown away.
+    assert result.get("submission")
+    assert (result.get("verification") or {}).get("gaps")
+
+    # Switches to an honest report: accepted, and the run ends Submitted.
+    model2 = _model(honest)
+    agent2 = DefaultAgent(model2, _Env(), verify_before_submit=True, step_limit=40,
+                          interactive=False, approver=lambda *_a, **_k: "allow")
+    result2 = agent2.run("add a feature and test it")
+    assert result2.get("exit_status") == "Submitted"
+    assert model2.turns <= MAX_BLOCKED_SUBMITS + 2, f"looped {model2.turns} turns"
+
+
 def _c_test_plan_tools_and_dispatch_mode(workspace: Path) -> None:
     # (merged from test_plan_build_tools_and_plan_submit_block)
     assert "write" not in PLAN_TOOLS and "edit" not in PLAN_TOOLS
@@ -707,6 +786,7 @@ def test_batch_01(tmp_path) -> None:
 
 def test_batch_02(tmp_path) -> None:
     """Consolidated (bodies unchanged): test_plan_tools_and_dispatch_mode, test_steer_follow_up_and_compaction_events, test_cancel_parallel_and_job_registry."""
+    _c_test_submit_gate_stops_instead_of_looping()
     _w0 = tmp_path / "w2_0"
     (_w0 / "src").mkdir(parents=True, exist_ok=True)
     (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
