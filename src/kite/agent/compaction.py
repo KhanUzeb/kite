@@ -11,6 +11,7 @@ from kite.context.window import (
     ContextUsage,
     estimate_tool_schema_tokens,
     estimate_usage,
+    scale_compaction_llm_ratio,
     should_compact,
 )
 from kite.memory.compaction_ops import run_compaction
@@ -20,10 +21,12 @@ from kite.memory.compaction_ops import run_compaction
 class CompactionConfig:
     enabled: bool = True
     window: int = 128_000
-    reserve_tokens: int = 12_288
+    # 0 = auto: scale with ``window`` (see context.window). A positive value is
+    # an explicit user override and wins over the scaling.
+    reserve_tokens: int = 0
     keep_recent_tokens: int = 12_000
-    compact_ratio: float = 0.75
-    compaction_llm_ratio: float = 0.92
+    compact_ratio: float = 0.0
+    compaction_llm_ratio: float = 0.0
 
 
 @dataclass
@@ -130,6 +133,11 @@ class LoopCompactor:
         ):
             return CompactionResult(messages=messages, usage=usage, compacted=False, before=before, after=before)
 
+        llm_ratio = scale_compaction_llm_ratio(
+            self.config.window,
+            self.config.compaction_llm_ratio,
+        )
+
         self._emit(
             "compaction_start",
             before=before,
@@ -140,7 +148,7 @@ class LoopCompactor:
         self._emit("tool_progress", tool="compact", elapsed_s=0, hint="")
 
         summarizer = self.summarizer
-        if summarizer and usage.ratio < self.config.compaction_llm_ratio:
+        if summarizer and usage.ratio < llm_ratio:
             summarizer = None
 
         result = run_compaction(
@@ -151,7 +159,9 @@ class LoopCompactor:
             reserve_tokens=self.config.reserve_tokens,
             keep_recent_tokens=self.config.keep_recent_tokens,
             compact_ratio=self.config.compact_ratio,
-            compaction_llm_ratio=self.config.compaction_llm_ratio,
+            # Already resolved against the window above; run_compaction would
+            # scale it again against its own window value.
+            compaction_llm_ratio=llm_ratio,
             summarizer=summarizer,
             force=force,
             enabled=self.config.enabled,

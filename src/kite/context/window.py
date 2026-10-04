@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -96,6 +97,48 @@ def scale_keep_recent_tokens(window: int, configured: int) -> int:
         return configured
     relative = max(4_000, int(window * 0.12))
     return min(configured, relative)
+
+
+def scale_reserve_tokens(window: int, configured: int) -> int:
+    """Safety margin kept free at the window edge, relative to the window.
+
+    Mirrors :func:`scale_keep_recent_tokens` but grows instead of shrinking: a
+    reserve is headroom, so a bigger window needs proportionally more of it. A
+    flat 12k reserve is generous against a 128k window and negligible against a
+    1M one. The direction is the opposite of ``scale_keep_recent_tokens`` on
+    purpose — capping a tail budget is safe, capping headroom is not.
+
+    ``configured`` of 0 (or less) means auto — the default is supplied here.
+    A larger ``configured`` is a user-set floor and wins.
+    """
+    if window <= 0:
+        return configured if configured > 0 else DEFAULT_RESERVE
+    relative = max(4_000, int(window * 0.06))
+    return max(relative, configured if configured > 0 else 0)
+
+
+# The LLM summarizer is the expensive path, so it only engages once the trigger
+# has already fired and the transcript is genuinely large. Like the trigger
+# itself, that point moves with the window: a flat 0.92 on a 1M window would hand
+# the summarizer a ~920k transcript.
+_LLM_RATIO_FLOOR = 0.70
+_LLM_RATIO_HEADROOM = 0.17
+
+
+def scale_compaction_llm_ratio(window: int, configured: float = 0.0) -> float:
+    """Window-relative threshold at which the LLM summarizer takes over.
+
+    Kept a bounded distance above the compaction trigger so the two stay coupled:
+    the summarizer engages after compaction is warranted, never before, whatever
+    the window size. ``configured`` of 0 means auto; a positive value is a
+    user-set TOML override and wins outright.
+    """
+    if configured is not None and configured > 0:
+        return configured
+    trigger = scale_compact_ratio(window)
+    # Rounded to keep the value a clean config-looking float rather than
+    # 0.65000000000000002, which would show up in emitted events and diffs.
+    return round(max(_LLM_RATIO_FLOOR, trigger + _LLM_RATIO_HEADROOM), 4)
 
 
 def _message_content_text(message: dict) -> str:
@@ -278,17 +321,60 @@ def estimate_usage(
 
 
 DEFAULT_COMPACT_RATIO = 0.75
+# The summarization call runs against the transcript it is summarizing, so the
+# trigger has to leave room for that call. On a flat 0.75 a 1M window compacts at
+# 750k tokens and then summarizes 750k — the cost the trigger was meant to avoid.
+# The effective ratio therefore drops as the window grows, keeping the trigger
+# roughly a bounded multiple of the reserve instead of a flat share of a number
+# that can grow 8x. See scale_compact_ratio.
+_COMPACT_RATIO_FLOOR = 0.55
+# Ratio reduction per doubling of the window beyond the reference size.
+_COMPACT_RATIO_STEP = 0.05
+_REFERENCE_WINDOW = 128_000
+
+
+def scale_compact_ratio(window: int, configured: float = 0.0) -> float:
+    """Lower the compaction trigger ratio as the context window grows.
+
+    Headroom for the summary call has to grow with the transcript it summarizes.
+    Holding the ratio flat means a 1M-window model compacts at 750k and pays for a
+    750k-token summarization call. Each doubling past the 128k reference drops the
+    ratio one step, so the trigger stays a bounded multiple of the reserve.
+
+    ``configured`` of 0 (or less) means auto: the default is used, then scaled.
+    A positive ``configured`` is a user-set TOML value and always wins — scaling
+    applies to the default only, never to an explicit override.
+    """
+    explicit = configured is not None and configured > 0
+    base = configured if explicit else DEFAULT_COMPACT_RATIO
+    if explicit or window <= _REFERENCE_WINDOW:
+        return base
+    # math.log2 keeps this exact at power-of-two boundaries, where a bit_length
+    # on the ratio would round the wrong way.
+    doublings = int(math.log2(window / _REFERENCE_WINDOW))
+    return max(_COMPACT_RATIO_FLOOR, base - doublings * _COMPACT_RATIO_STEP)
 
 
 def should_compact(
     usage: ContextUsage,
     *,
-    reserve: int = DEFAULT_RESERVE,
-    ratio: float = DEFAULT_COMPACT_RATIO,
+    reserve: int = 0,
+    ratio: float = 0.0,
 ) -> bool:
-    if usage.window > 0 and usage.ratio >= ratio:
+    """True when the transcript is large enough to be worth compacting.
+
+    Both clauses are window-relative. The ratio clause uses
+    :func:`scale_compact_ratio` so a big window triggers earlier; the reserve
+    clause uses :func:`scale_reserve_tokens` so the edge margin grows too. They
+    overlap by design: the ratio clause normally fires first, and the reserve
+    clause is the backstop for an unknown or misreported ratio.
+    """
+    if usage.window <= 0:
+        return False
+    if usage.ratio >= scale_compact_ratio(usage.window, ratio):
         return True
-    return usage.window > 0 and usage.total_tokens >= max(1, usage.window - reserve)
+    headroom = scale_reserve_tokens(usage.window, reserve)
+    return usage.total_tokens >= max(1, usage.window - headroom)
 
 
 def _message_segments(messages: list[dict]) -> list[list[dict]]:

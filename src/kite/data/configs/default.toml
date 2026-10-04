@@ -12,10 +12,14 @@ loop_hard_threshold = 7
 provider_max_retries = 4
 max_consecutive_format_errors = 3
 auto_compact = true
-compaction_ratio = 0.75
-compaction_llm_ratio = 0.92
+# 0 = auto: the trigger scales down as the model's context window grows, so a
+# 1M-window model does not compact at 750k and then summarize 750k tokens. Set a
+# flat value here to pin it (it wins over the scaling).
+compaction_ratio = 0
+compaction_llm_ratio = 0
 observation_max_chars = 5000
-compaction_reserve_tokens = 12288
+# 0 = auto: ~6% of the window, floor 4k. A flat value here wins.
+compaction_reserve_tokens = 0
 compaction_keep_recent_tokens = 12000
 interactive_step_limit = 80
 interactive_cost_limit = 10.0

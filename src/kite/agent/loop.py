@@ -322,10 +322,13 @@ class DefaultAgent:
         resume_messages: list[dict] | None = None,
         context_window: int = 128_000,
         auto_compact: bool = True,
-        compaction_reserve_tokens: int = 16_384,
+        # 0 = auto: these scale with ``context_window`` so a 1M-window model does
+        # not compact at 750k and then summarize 750k tokens. A positive value is
+        # an explicit user override and wins.
+        compaction_reserve_tokens: int = 0,
         compaction_keep_recent_tokens: int = 20_000,
-        compaction_ratio: float = 0.75,
-        compaction_llm_ratio: float = 0.92,
+        compaction_ratio: float = 0.0,
+        compaction_llm_ratio: float = 0.0,
         mode: AgentMode = AgentMode.BUILD,
         approval: ApprovalMode = ApprovalMode.AUTO,
         approver=None,

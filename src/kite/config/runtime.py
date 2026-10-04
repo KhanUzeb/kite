@@ -92,10 +92,12 @@ class AgentRuntimeConfig:
     wall_time_limit_seconds: int = 0
     max_consecutive_format_errors: int = 3
     auto_compact: bool = True
-    compaction_ratio: float = 0.75
-    compaction_llm_ratio: float = 0.92
+    # 0 = auto (scale with the model's context window). A positive value is an
+    # explicit user override and wins over the scaling.
+    compaction_ratio: float = 0.0
+    compaction_llm_ratio: float = 0.0
     observation_max_chars: int = 5_000
-    compaction_reserve_tokens: int = 12_288
+    compaction_reserve_tokens: int = 0
     compaction_keep_recent_tokens: int = 12_000
     interactive_step_limit: int = 80
     interactive_cost_limit: float = 10.0
@@ -149,10 +151,12 @@ def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:
         provider_max_retries=int(agent.get("provider_max_retries", 4)),
         max_consecutive_format_errors=int(agent.get("max_consecutive_format_errors", 3)),
         auto_compact=bool(agent.get("auto_compact", True)),
-        compaction_ratio=float(agent.get("compaction_ratio", 0.75)),
-        compaction_llm_ratio=float(agent.get("compaction_llm_ratio", 0.92)),
+        # 0 means "auto" — scale with the model's context window. A user-set
+        # non-zero value is an explicit override and wins.
+        compaction_ratio=float(agent.get("compaction_ratio", 0.0)),
+        compaction_llm_ratio=float(agent.get("compaction_llm_ratio", 0.0)),
         observation_max_chars=int(agent.get("observation_max_chars", 5_000)),
-        compaction_reserve_tokens=int(agent.get("compaction_reserve_tokens", 12_288)),
+        compaction_reserve_tokens=int(agent.get("compaction_reserve_tokens", 0)),
         compaction_keep_recent_tokens=int(agent.get("compaction_keep_recent_tokens", 12_000)),
         interactive_step_limit=int(agent.get("interactive_step_limit", 80)),
         interactive_cost_limit=float(agent.get("interactive_cost_limit", 10.0)),

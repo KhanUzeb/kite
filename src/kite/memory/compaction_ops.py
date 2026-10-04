@@ -8,7 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path as _Path
 from typing import Any
 
-from kite.context.window import ContextUsage, compact_messages, estimate_usage, should_compact, trim_stale_tool_messages
+from kite.context.window import (
+    ContextUsage,
+    compact_messages,
+    estimate_usage,
+    scale_compaction_llm_ratio,
+    should_compact,
+    trim_stale_tool_messages,
+)
 from kite.memory.context_checkpoint import ContextCheckpoint, save_checkpoint
 
 
@@ -63,7 +70,7 @@ def run_compaction(
     system: str = "",
     tool_schemas: list[dict] | None = None,
     window: int = 128_000,
-    reserve_tokens: int = 16_384,
+    reserve_tokens: int = 0,
     keep_recent_tokens: int = 20_000,
     summarizer: Callable[[list[dict]], str] | None = None,
     force: bool = False,
@@ -74,8 +81,9 @@ def run_compaction(
     meta: dict[str, Any] | None = None,
     checkpoint_before: bool = True,
     checkpoint_ratio: float = 0.72,
-    compact_ratio: float = 0.75,
-    compaction_llm_ratio: float = 0.92,
+    # 0 = auto: scale with ``window``. A positive value is an explicit override.
+    compact_ratio: float = 0.0,
+    compaction_llm_ratio: float = 0.0,
     extra_facts: list[str] | None = None,
 ) -> CompactionRunResult:
     usage = estimate_usage(system=system, messages=messages, tool_schemas=tool_schemas, window=window)
@@ -113,7 +121,7 @@ def run_compaction(
         )
 
     effective_summarizer = summarizer
-    if effective_summarizer and usage.ratio < compaction_llm_ratio:
+    if effective_summarizer and usage.ratio < scale_compaction_llm_ratio(window, compaction_llm_ratio):
         effective_summarizer = None
 
     compacted = compact_messages(

@@ -470,6 +470,72 @@ def test_failure_classification_and_bounded_submit_blocking() -> None:
     assert once.blocked_submits == 1
 
 
+def test_compaction_trigger_scales_with_window() -> None:
+    """The trigger and its reserve must scale with the model's context window.
+
+    A flat 0.75 on a 1M window compacts at 750k tokens and then runs the
+    summarization call against that same 750k transcript — the cost the trigger
+    exists to avoid. The ratio clause has to move down as the window grows, and
+    the edge reserve up, while an explicit TOML value still wins.
+    """
+    from kite.context.window import (
+        ContextUsage,
+        scale_compact_ratio,
+        scale_compaction_llm_ratio,
+        scale_reserve_tokens,
+        should_compact,
+    )
+
+    def usage_at(total: int, window: int) -> ContextUsage:
+        return ContextUsage(
+            total_tokens=total,
+            system_tokens=0,
+            message_tokens=total,
+            tool_tokens=0,
+            message_count=8,
+            window=window,
+        )
+
+    # Reserve: ~6% of the window, floor 4k. Small windows get the floor.
+    assert scale_reserve_tokens(32_000, 0) == 4_000
+    assert scale_reserve_tokens(128_000, 0) == 7_680
+    assert scale_reserve_tokens(1_000_000, 0) == 60_000
+    # A user-set floor is never reduced by scaling.
+    assert scale_reserve_tokens(1_000_000, 12_288) == 60_000
+    assert scale_reserve_tokens(32_000, 12_288) == 12_288
+
+    # Ratio: unchanged at and below the 128k reference, lower above it.
+    assert scale_compact_ratio(128_000, 0) == 0.75
+    assert scale_compact_ratio(256_000, 0) == 0.70
+    assert scale_compact_ratio(512_000, 0) == 0.65
+    assert scale_compact_ratio(1_000_000, 0) == 0.65
+    # Never below the floor, however large the window.
+    assert scale_compact_ratio(8_000_000, 0) >= 0.55
+    # A user's flat value is pinned regardless of window.
+    assert scale_compact_ratio(1_000_000, 0.75) == 0.75
+
+    # The reported bug: on 1M, auto triggers well before 750k.
+    first = next(t for t in range(0, 1_000_000, 5_000) if should_compact(usage_at(t, 1_000_000)))
+    assert first == 650_000, first
+    # Pinning the old flat ratio reproduces the old behaviour exactly.
+    assert not should_compact(usage_at(749_000, 1_000_000), ratio=0.75)
+    assert should_compact(usage_at(751_000, 1_000_000), ratio=0.75)
+
+    # The LLM summarizer threshold tracks the trigger instead of sitting at 0.92.
+    assert scale_compaction_llm_ratio(128_000, 0) == 0.92
+    assert scale_compaction_llm_ratio(1_000_000, 0) == 0.82
+    assert scale_compaction_llm_ratio(1_000_000, 0.92) == 0.92
+    # It must stay above the trigger, whatever the window.
+    for window in (32_000, 128_000, 256_000, 1_000_000, 4_000_000):
+        assert scale_compaction_llm_ratio(window, 0) > scale_compact_ratio(window, 0), window
+
+    # window=0 means unknown: never compact, never divide by zero.
+    assert should_compact(usage_at(999_999, 0)) is False
+    assert scale_compact_ratio(0, 0) == 0.75
+    assert scale_reserve_tokens(0, 0) == 12_288
+    assert scale_compaction_llm_ratio(0, 0) == 0.92
+
+
 def test_batch_02(tmp_path) -> None:
     """Consolidated (bodies unchanged): test_verification_plans_replay_and_package_paths, test_effects_coordinator_runner_and_cli_result."""
     _t0 = tmp_path / "t2_0"

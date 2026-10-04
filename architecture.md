@@ -121,10 +121,25 @@ Two separate systems:
 
 **Project context (once per run)** — Injected into the system prompt: repo tree, **repo map** (symbols; git-changed first), git status, `AGENTS.md` / `KITE.md`, plus **execution context** (`project_root`, `execution_cwd`, `execution_mode`). Cached briefly; not re-summarized each turn.
 
-**Transcript compaction (each turn)** — When estimated tokens ≥ `context_window - reserve` (default reserve 16k):
+**Transcript compaction (each turn)** — Two window-relative clauses, whichever fires first:
 
-1. **Soft checkpoint** (~72% context) — auto-save full transcript to `~/.kite/checkpoints/<session>/` (once per size).
-2. Keep the system message and a recent tail (~20k tokens from the end).
+1. **Ratio clause** — `usage.ratio >= scale_compact_ratio(window)`.
+2. **Reserve clause** (backstop) — `total_tokens >= window - scale_reserve_tokens(window)`.
+
+Both scale with the model's context window, because the summarization call runs against the transcript it summarizes. A flat ratio would compact a 1M-window model at 750k tokens and then pay to summarize 750k. The defaults:
+
+| Setting | 128k window | 1M window | Notes |
+|---|---|---|---|
+| `scale_compact_ratio` | 0.75 | 0.65 | −0.05 per doubling past 128k, floor 0.55 |
+| `scale_reserve_tokens` | 7,680 | 60,000 | ~6% of window, floor 4,000 |
+| `scale_compaction_llm_ratio` | 0.92 | 0.82 | trigger + 0.17, floor 0.70 |
+
+`compaction_ratio`, `compaction_reserve_tokens`, and `compaction_llm_ratio` default to **0 = auto**. A positive value in TOML is an explicit override and wins — scaling applies to the defaults only, never to a user-set number. The three scaling helpers live next to `scale_keep_recent_tokens` in `context/window.py`; note that the reserve grows with the window while the recent-tail budget shrinks with it (capping a tail is safe, capping headroom is not).
+
+Once triggered:
+
+1. **Soft checkpoint** (0.72 of the trigger ratio) — auto-save full transcript to `~/.kite/checkpoints/<session>/` (once per size).
+2. Keep the system message and a recent tail (`scale_keep_recent_tokens`: 12% of window, capped by config).
 3. Extract **preserved facts** (constraints, errors, paths, tools) from dropped turns.
 4. Summarize dropped middle turns (LLM via OpenRouter free tier, or deterministic fallback).
 5. Inject a synthetic user message: `Previous conversation summary:` + facts block + summary.
@@ -132,7 +147,7 @@ Two separate systems:
 
 **Manual:** `/compact` uses the same `run_compaction()` path as the loop. `/checkpoint save|restore` for named snapshots. `/handoff` exports `.kite/handoff-*` for another agent.
 
-Config: `~/.kite/config.toml` — `auto_compact`, `compaction_*`, `[guardrails] execution_mode = restricted|host`.
+Config: `~/.kite/config.toml` — `auto_compact`, `compaction_*` (`0` = auto, see the table above), `[guardrails] execution_mode = restricted|host`.
 
 ---
 
