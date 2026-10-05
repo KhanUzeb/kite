@@ -2,6 +2,32 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-10-05
+
+### Added
+- `/last` — re-print the previous tool call in full: the record is captured at tool-end (bounded at 200k chars per payload) and rendered through the existing formatters, uncollapsed and uncapped, so a truncated diff or output body is retrievable after the fact.
+- `/tasks` now prints the full itemized task checklist alongside the running turn and queued follow-ups (`commands.py` `BUILTINS` is the single source feeding both `/help` and completion).
+- `SessionUiState.active_flash` — flash expiry checked on read, not only inside `touch()`, so a flash set at an idle prompt still ages out.
+
+### Fixed
+- Scrollback density: the live task list is one line (`render_plan_tasks(compact=True)` by default) instead of one row per item.
+- `todo_write` / `todo_read` no longer echo their payload under the checklist that already shows it — no start card, no JSON body; status, timing and exit code still print.
+- Scroll-printed tool output, write/edit previews, bash blocks and diffs cap at `PREVIEW_LINES` (5) with an overflow marker naming a command that actually exists. Approval previews keep the 40-line window.
+- Overflow markers named a `/diff` command that does not exist; a regression test now cross-checks every marker against the registered command list.
+- `render_diff` `IndexError`: the leftover-pair index math walked past the line-number table whenever a cap cut a `-`/`+` run. Latent at the old 40-line cap, near-universal at 5.
+- Deleted sessions leaked their `.stats.json` sidecar forever; `delete_all_sessions` also sweeps sidecars orphaned by a crash between unlinks.
+- `list_sessions` parsed metadata for every session before applying `limit`; it now pre-ranks by transcript/sidecar mtime and parses a bounded head (sidecar matters — `note_runtime` bumps `updated_at` without touching the transcript).
+- Session crash tolerance: readers raised `AttributeError` on valid-JSON-non-object rows and let `UnicodeDecodeError` escape (not an `OSError`); `list_session_events` discarded *every* event on one torn line.
+- One saved checkpoint counted twice (`context_checkpoint` row + `checkpoint` event for the same id); deduplicated by id.
+- A turn ending within 125 ms of its last paint could freeze the footer on the final `working` line until the user typed — `clear_running()` now forces the repaint.
+- A flash set at an idle prompt outlived its 8 s TTL; the composer toolbar now reads `active_flash`.
+- `context_pct` divided by a negative context window, rendering `ctx -800%`.
+- `_trajectory_path` was duplicated byte-for-byte across two modules.
+- `scripts/bump_release.sh` passed an MSYS path to native Windows Python when splicing CHANGELOG.md, aborting the release mid-run.
+
+### Changed
+- Test suite 119 → 141 collected, still under the 150 CI budget. New: scrollback density, tool-output retrieval, session hygiene, analytics hygiene, footer throttle.
+
 ## [1.0.5] - 2026-10-03
 
 ### Fixed

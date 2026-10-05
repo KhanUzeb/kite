@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# kite-release-version: 1.0.5
+# kite-release-version: 1.0.6
 # Bump Kite version, sync stamped files, prepend CHANGELOG stub, tag, and push.
 #
 # Usage (after changes are merged to main):
-#   ./scripts/bump_release.sh 1.0.5
+#   ./scripts/bump_release.sh 1.0.6
 #
 # Then edit CHANGELOG.md and docs/RELEASE-X.Y.Z.md, commit if needed, push:
 #   git push origin main --tags
@@ -29,6 +29,14 @@ if [[ -z "${PYTHON:-}" ]]; then
   else
     PYTHON="python3"
   fi
+fi
+
+# Native Windows Python cannot open the MSYS path in $ROOT (/c/Users/...),
+# and the CHANGELOG splice passes it as an argument — translate to a native path.
+if command -v cygpath >/dev/null 2>&1; then
+  WIN_ROOT="$(cygpath -w "$ROOT")"
+else
+  WIN_ROOT="$ROOT"
 fi
 
 CURRENT="$("$PYTHON" -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
@@ -87,7 +95,7 @@ if ! grep -q "^## \[$NEW\]" "$CHANGELOG"; then
 -
 
 "
-  "$PYTHON" - "$CHANGELOG" "$STUB" <<'PY'
+  "$PYTHON" - "$WIN_ROOT/CHANGELOG.md" "$STUB" <<'PY'
 import sys
 from pathlib import Path
 

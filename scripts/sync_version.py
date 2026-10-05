@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# kite-release-version: 1.0.5
+# kite-release-version: 1.0.6
 """Keep Kite version stamps in sync with pyproject.toml.
 
 Usage:
   python scripts/sync_version.py              # sync all files to pyproject version
-  python scripts/sync_version.py 1.0.5        # set pyproject + all stamps to 1.0.5
+  python scripts/sync_version.py 1.0.6        # set pyproject + all stamps to 1.0.6
   python scripts/sync_version.py --check      # fast: stamps only (no release docs)
   python scripts/sync_version.py --check --release  # stamps + RELEASE doc + CHANGELOG
 
