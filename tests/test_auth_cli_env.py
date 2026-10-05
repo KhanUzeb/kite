@@ -95,6 +95,12 @@ def _record_popen(
 
 def _force_platform(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
     monkeypatch.setattr(cli_mod.sys, "platform", platform)
+    if platform == "win32" and not hasattr(cli_mod.subprocess, "CREATE_NO_WINDOW"):
+        # POSIX interpreters define no such constant, so faking win32 must fake
+        # it too — otherwise console_isolation_kwargs() (which reads it via
+        # getattr) takes its POSIX empty-dict branch and the assertions below
+        # fail anywhere but Windows. 0x08000000 is the real CREATE_NO_WINDOW.
+        monkeypatch.setattr(cli_mod.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
 
 
 def _c_test_run_cli_strips_session_identity_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -230,7 +236,9 @@ def _c_test_console_isolation_kwargs_never_raises_on_missing_constant(
     """subprocess.CREATE_NO_WINDOW only exists on win32 builds — never assume it."""
     monkeypatch.setattr(cli_mod.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     monkeypatch.delattr(cli_mod.subprocess, "CREATE_NO_WINDOW", raising=False)
-    _force_platform(monkeypatch, "win32")
+    # Raw platform patch on purpose: _force_platform("win32") would stub the
+    # constant back in, but here the point is a win32 *without* the constant.
+    monkeypatch.setattr(cli_mod.sys, "platform", "win32")
     assert console_isolation_kwargs() == {}
     _force_platform(monkeypatch, "linux")
     assert console_isolation_kwargs() == {}

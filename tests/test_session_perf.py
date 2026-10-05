@@ -31,7 +31,6 @@ from kite.memory.session import (
     prune_sessions,
     sessions_dir,
 )
-from kite.memory.session_analytics import SessionStats, save_session_stats
 
 _BULK = 200
 
