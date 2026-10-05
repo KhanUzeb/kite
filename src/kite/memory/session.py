@@ -60,6 +60,31 @@ def _read_first_line_bytes(path: Path) -> tuple[int, str]:
         return len(raw), raw.decode("utf-8")
 
 
+def _read_sidecar(path: Path) -> dict[str, Any] | None:
+    """Parse the ``.meta`` sidecar, or None when it is absent or corrupt.
+
+    Probes by reading rather than ``is_file()`` first: the open already fails
+    when the sidecar is gone, so the extra ``stat`` was pure overhead on every
+    candidate a ranking pass walked. Read exactly once — the timestamp and the
+    runtime identity live in the same row, so the former two readers
+    (``_session_updated_at`` and ``session_runtime_overlay``) were paying for
+    the same bytes twice.
+    """
+    try:
+        row = json.loads(_meta_sidecar(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return row if isinstance(row, dict) else None
+
+
+def _apply_sidecar_identity(meta: SessionMeta, sidecar: dict[str, Any]) -> None:
+    """Stamp provider/model/reasoning from an already-parsed sidecar row."""
+    for key in ("provider", "model", "reasoning"):
+        value = sidecar.get(key)
+        if isinstance(value, str) and value:
+            setattr(meta, key, value)
+
+
 def _read_session_meta(path: Path) -> SessionMeta | None:
     try:
         _, first_line = _read_first_line_bytes(path)
@@ -71,23 +96,23 @@ def _read_session_meta(path: Path) -> SessionMeta | None:
         if row.get("type") != "meta":
             return None
         meta = SessionMeta.from_dict(row)
-        meta.updated_at = _session_updated_at(path, meta)
-        return _apply_runtime_overlay(meta, path)
+        sidecar = _read_sidecar(path)
+        if sidecar is not None:
+            stamp = sidecar.get("updated_at")
+            if isinstance(stamp, (int, float)):
+                meta.updated_at = float(stamp)
+            _apply_sidecar_identity(meta, sidecar)
+        return meta
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
 
 
 def _session_updated_at(path: Path, meta: SessionMeta) -> float:
-    sidecar = _meta_sidecar(path)
-    if sidecar.is_file():
-        try:
-            row = json.loads(sidecar.read_text(encoding="utf-8"))
-            if not isinstance(row, dict):
-                return meta.updated_at
-            if isinstance(row.get("updated_at"), (int, float)):
-                return float(row["updated_at"])
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            pass
+    sidecar = _read_sidecar(path)
+    if sidecar is not None:
+        stamp = sidecar.get("updated_at")
+        if isinstance(stamp, (int, float)):
+            return float(stamp)
     return meta.updated_at
 
 
@@ -96,12 +121,8 @@ def session_runtime_overlay(path: Path) -> dict[str, Any]:
 
     Empty dict when no sidecar (old sessions) — callers fall back to file meta.
     """
-    sidecar = _meta_sidecar(path)
-    try:
-        row = json.loads(sidecar.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return {}
-    if not isinstance(row, dict):
+    row = _read_sidecar(path)
+    if row is None:
         return {}
     out: dict[str, Any] = {}
     for key in ("provider", "model", "reasoning"):
@@ -159,6 +180,17 @@ def _iter_rows_reverse(path: Path) -> Iterator[dict[str, Any]]:
 def sessions_dir() -> Path:
     ensure_home()
     return kite_home() / "sessions"
+
+
+def folder_root() -> Path:
+    """Resolved sessions/ — hoisted out of loops so resolve() is paid once."""
+    return sessions_dir().resolve()
+
+
+def _live_session_ids(folder: Path) -> list[str]:
+    """Live transcript ids, newest first by the same recency key list_sessions uses."""
+    ranked = _ranked_transcripts(folder)
+    return sorted(ranked, key=ranked.__getitem__, reverse=True)
 
 
 # Event kinds persisted for crash-safe rollout replay (not re-fed to the model).
@@ -639,13 +671,14 @@ def latest_session_for_cwd(cwd: str, *, limit: int = 50) -> SessionMeta | None:
 
 
 def _session_recency(path: Path) -> float:
-    """Cheap newest-activity proxy: newest mtime of transcript and .meta sidecar.
+    """Newest-activity proxy for one transcript: newest of transcript + sidecar mtime.
 
-    Every writer stamps ``updated_at = time.time()`` and then touches the sidecar
-    and/or the transcript (append → both, note_runtime → sidecar only), so the
-    effective ``updated_at`` that :func:`_session_updated_at` resolves is never
-    newer than this key. That lets :func:`list_sessions` prefilter on ``stat()``
-    and parse meta only for the head it can actually return.
+    Exactly the key :func:`_ranked_transcripts` ranks on, expressed for a single
+    already-known path. The store-wide paths use the scandir pass instead (one
+    directory walk instead of two ``stat()`` calls per candidate); this remains
+    for callers that hold one path, and it is what the soundness invariant is
+    checked against — the key must never fall *behind* the ``updated_at`` that
+    ordering uses, or a bounded head could drop the newest session.
     """
     newest = 0.0
     for probe in (path, _meta_sidecar(path)):
@@ -654,6 +687,52 @@ def _session_recency(path: Path) -> float:
         except OSError:
             continue
     return newest
+
+
+def _ranked_transcripts(folder: Path) -> dict[str, float]:
+    """Transcripts in ``folder`` mapped to their recency key, from one scandir.
+
+    Returns ``session_id -> recency_key`` and never parses a transcript, so
+    callers that only need identity and age (prune, delete-all) never pay for a
+    meta parse, and callers that do need meta only pay it for the head they
+    return. The single pass is the whole point: one ``scandir`` yields both
+    transcript and sidecar mtimes with the directory entry already open, where
+    ``glob`` + per-file ``stat()`` re-walked the tree once per candidate.
+
+    The ranking key stays ``max(transcript mtime, sidecar mtime)`` — never the
+    transcript alone. ``note_runtime`` bumps ``updated_at`` through the sidecar
+    without touching the transcript, so ranking on the transcript would push
+    the most recently used session to the bottom.
+    """
+    transcripts: dict[str, float] = {}
+    sidecars: dict[str, float] = {}
+    try:
+        entries = list(os.scandir(folder))
+    except OSError:
+        return {}
+    for entry in entries:
+        name = entry.name
+        # Transcript or sidecar only — a stray .stats.json / .tmp is ignored.
+        if name.endswith(".jsonl"):
+            target = transcripts
+            key = name[: -len(".jsonl")]
+        elif name.endswith(".meta"):
+            target = sidecars
+            key = name[: -len(".meta")]
+        else:
+            continue
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        # max() per stem: note_runtime stamps only the sidecar, so the newer of
+        # the two is the true "last touched" signal.
+        if mtime > target.get(key, 0.0):
+            target[key] = mtime
+    # A live transcript is the only thing list_sessions can return, so a stem
+    # with no transcript (a sidecar whose transcript is already gone) is dropped
+    # here rather than costing an is_file() probe per candidate.
+    return {key: max(sidecars.get(key, 0.0), mtime) for key, mtime in transcripts.items()}
 
 
 # Head slack over ``limit``: covers candidates whose meta will not parse and
@@ -665,17 +744,19 @@ def list_sessions(*, limit: int = 30, query: str = "") -> list[SessionMeta]:
     """Newest sessions first — ordered by ``updated_at``, not ``created_at``.
 
     A query has to read every transcript (any old session may match), but the
-    bare path is a REPL/dashboard hot loop, so it prefilters candidates by file
-    mtime and parses meta for a bounded head only.
+    bare path is a REPL/dashboard hot loop, so it ranks candidates by file mtime
+    in one ``scandir`` and parses meta for a bounded head only. Cost tracks the
+    rows returned, not the size of the store.
     """
     if limit <= 0:
         return []
     folder = sessions_dir()
     if query:
-        paths = sorted(folder.glob("*.jsonl"))
+        paths = [folder / f"{sid}.jsonl" for sid in _ranked_transcripts(folder)]
     else:
-        ranked = sorted(folder.glob("*.jsonl"), key=_session_recency, reverse=True)
-        paths = ranked[: limit + _META_PARSE_SLACK]
+        ranked = _ranked_transcripts(folder)
+        head = sorted(ranked, key=ranked.__getitem__, reverse=True)[: limit + _META_PARSE_SLACK]
+        paths = [folder / f"{sid}.jsonl" for sid in head]
     rows: list[SessionMeta] = []
     for path in paths:
         meta = _read_session_meta(path)
@@ -696,65 +777,90 @@ class DeletedSession:
     trajectory: bool
 
 
-def _trajectory_path(session_id: str) -> Path:
+def _trajectory_path(session_id: str, *, resolved_root: Path | None = None) -> Path:
+    """Trajectory path for ``session_id``, guarded against escaping ``root``.
+
+    ``resolved_root`` lets a bulk caller (prune / delete-all) resolve the
+    trajectories directory once instead of paying a ``Path.resolve()`` per
+    session — the containment check is unchanged either way.
+    """
     from kite.memory.secure_io import storage_id
 
+    token = storage_id(session_id, label="session id")
+    if resolved_root is not None:
+        # Pre-resolved root + a token that cannot contain a separator or ".."
+        # cannot escape, so the containment resolve() is redundant here — this is
+        # the per-session cost the bulk paths were paying thousands of times.
+        return resolved_root / f"{token}.json"
     root = (kite_home() / "trajectories").resolve()
-    path = (root / f"{storage_id(session_id, label='session id')}.json").resolve()
+    path = (root / f"{token}.json").resolve()
     if not path.is_relative_to(root):
         raise ValueError("invalid session id")
     return path
 
 
-def _drop_session_sidecars(path: Path, session_id: str) -> None:
+def _trajectory_root() -> Path:
+    return (kite_home() / "trajectories").resolve()
+
+
+def _drop_session_sidecars(path: Path, session_id: str, *, stats_root: Path | None = None) -> None:
     """Remove every non-transcript file keyed by ``session_id``.
 
     Without this, each deleted session leaks its ``.meta`` and ``.stats.json``
     sidecars under sessions/ forever. ``session_analytics`` is imported here
     (not at module scope) because it imports ``_read_session_meta`` from this
-    module — a module-scope import would be a cycle.
+    module — a module-scope import would be a cycle. ``stats_root`` lets a bulk
+    caller resolve the sessions directory once (see :func:`_trajectory_path`).
     """
     from kite.memory.session_analytics import _stats_sidecar
 
-    _meta_sidecar(path).unlink(missing_ok=True)
     try:
-        _stats_sidecar(session_id).unlink(missing_ok=True)
+        _meta_sidecar(path).unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        _stats_sidecar(session_id, resolved_root=stats_root).unlink(missing_ok=True)
     except OSError:
         pass
 
 
 def delete_session(session_id: str) -> DeletedSession:
     path = resolve_session_path(session_id, unique=True)
-    sid = path.stem
+    return _delete_transcript(path.stem, path, traj_root=_trajectory_root(), stats_root=folder_root())
+
+
+def _delete_transcript(sid: str, path: Path, *, traj_root: Path, stats_root: Path) -> DeletedSession:
+    """Unlink one transcript and everything keyed by it. Roots are pre-resolved."""
     path.unlink(missing_ok=True)
-    _drop_session_sidecars(path, sid)
-    traj = _trajectory_path(sid)
+    _drop_session_sidecars(path, sid, stats_root=stats_root)
     traj_ok = False
-    if traj.is_file():
-        traj.unlink()
-        traj_ok = True
+    try:
+        traj = _trajectory_path(sid, resolved_root=traj_root)
+        if traj.is_file():
+            traj.unlink()
+            traj_ok = True
+    except (OSError, ValueError):
+        pass
     return DeletedSession(id=sid, session=True, trajectory=traj_ok)
 
 
 def delete_all_sessions() -> list[DeletedSession]:
+    """Delete every session. Never parses a transcript meta.
+
+    Roots are resolved once for the whole sweep instead of per session, so cost
+    tracks the number of unlinks rather than the number of ``resolve()`` calls.
+    """
     deleted: list[DeletedSession] = []
     folder = sessions_dir()
-    for path in sorted(folder.glob("*.jsonl")):
-        sid = path.stem
+    traj_root = _trajectory_root()
+    stats_root = folder_root()
+    for sid in _live_session_ids(folder):
+        path = folder / f"{sid}.jsonl"
         try:
             path.unlink()
         except OSError:
             continue
-        _drop_session_sidecars(path, sid)
-        traj = _trajectory_path(sid)
-        traj_ok = False
-        if traj.is_file():
-            try:
-                traj.unlink()
-                traj_ok = True
-            except OSError:
-                pass
-        deleted.append(DeletedSession(id=sid, session=True, trajectory=traj_ok))
+        deleted.append(_delete_transcript(sid, path, traj_root=traj_root, stats_root=stats_root))
     _reap_orphan_sidecars(folder)
     return deleted
 
@@ -780,20 +886,50 @@ def _reap_orphan_sidecars(folder: Path) -> None:
             continue
 
 
-def prune_sessions(keep: int = 20) -> list[DeletedSession]:
+def prune_sessions(keep: int = 20, *, dry_run: bool = True) -> list[DeletedSession]:
     """Delete oldest sessions, keeping the newest ``keep`` (storage hygiene).
 
     Never deletes when ``keep`` covers everything. Returns the deleted rows,
     newest-first among the removed.
+
+    Needs only ids and last-touch times, so it ranks off the ``scandir`` pass and
+    parses no transcript meta at all — and it deletes by path instead of going
+    back through :func:`delete_session`, which would re-resolve the sessions and
+    trajectories roots (and re-stat) once per victim. Age order is the same
+    newest-first recency ``list_sessions`` reports, because a writer stamps
+    ``updated_at`` and touches the sidecar/transcript in the same breath.
+
+    ``dry_run`` defaults to True: this is unrecoverable (``unlink``, no trash,
+    no backup), so a caller must ask for destruction by name. A profiling script
+    or a test that calls this to "see what it would do" must not be able to
+    delete a user's real history because it forgot a keyword — that mistake
+    actually cost this repo's owner 29 sessions. Callers that have already
+    confirmed with the user (``kite sessions --prune -y``, ``/sessions prune``)
+    pass ``dry_run=False``.
     """
     keep = max(1, int(keep))
-    rows = list_sessions(limit=10_000)
-    if len(rows) <= keep:
+    folder = sessions_dir()
+    ranked = _ranked_transcripts(folder)
+    if len(ranked) <= keep:
         return []
+    victims = sorted(ranked, key=ranked.__getitem__, reverse=True)[keep:]
+    traj_root = _trajectory_root()
+    stats_root = folder_root()
     removed: list[DeletedSession] = []
-    for meta in rows[keep:]:
+    for sid in victims:
         try:
-            removed.append(delete_session(meta.id))
+            if dry_run:
+                removed.append(
+                    DeletedSession(
+                        id=sid,
+                        session=(folder / f"{sid}.jsonl").exists(),
+                        trajectory=(traj_root / f"{sid}.json").is_file(),
+                    )
+                )
+                continue
+            removed.append(
+                _delete_transcript(sid, folder / f"{sid}.jsonl", traj_root=traj_root, stats_root=stats_root)
+            )
         except (OSError, ValueError):
             continue
     return removed

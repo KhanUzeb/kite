@@ -34,7 +34,11 @@ _RUST_DEF = re.compile(r"^(?:pub\s+)?fn\s+(\w+)|^(?:pub\s+)?(?:struct|enum)\s+(\
 
 def git_changed_paths(root: Path) -> set[str]:
     """Paths changed vs HEAD, staged, or untracked — empty when not a git repo."""
-    root = root.expanduser().resolve()
+    return _git_changed_paths_resolved(root.expanduser().resolve())
+
+
+def _git_changed_paths_resolved(root: Path) -> set[str]:
+    """git_changed_paths() for a root the caller already resolved."""
     try:
         proc = subprocess.run(
             [
@@ -94,8 +98,27 @@ def _defs_for(path: Path, text: str, *, limit: int) -> list[str]:
     return names
 
 
+def _rel_posix(path: Path, root: Path, root_str: str) -> str:
+    """Path.relative_to(root).as_posix() without pathlib's per-call parts walk.
+
+    ``relative_to`` is comparatively expensive (it rebuilds and compares every
+    path part) and the repo map scores hundreds of candidates, so slicing the
+    already-resolved string prefix is ~100x cheaper. Falls back to the real
+    ``relative_to`` whenever the prefix is not a clean ancestor.
+    """
+    text = str(path)
+    if text.startswith(root_str) and len(text) > len(root_str):
+        # Require a separator at the boundary, else a sibling like "...\bc"
+        # would slice as if it lived under "...\b".
+        tail = text[len(root_str) :]
+        if tail[0] in ("\\", "/"):
+            return tail[1:].replace("\\", "/")
+    return path.relative_to(root).as_posix()
+
+
 def _score_path(path: Path, root: Path, changed: set[str]) -> tuple[int, str]:
-    rel = path.relative_to(root).as_posix()
+    root_str = str(root)
+    rel = _rel_posix(path, root, root_str)
     name = path.name
     depth = len(path.parts)
     score = 0
@@ -125,9 +148,12 @@ def _iter_source_files(root: Path) -> list[Path]:
         ]
         base = Path(dirpath)
         for name in filenames:
-            path = base / name
-            if path.suffix.lower() not in _SOURCE_EXTS:
+            # Extension check on the plain string first: building a Path and
+            # reading .suffix for every file in the tree cost more than the
+            # stat() this loop is trying to avoid.
+            if os.path.splitext(name)[1].lower() not in _SOURCE_EXTS:
                 continue
+            path = base / name
             try:
                 if path.stat().st_size > 120_000:
                     continue
@@ -149,7 +175,9 @@ def build_repo_map(
 ) -> str:
     """Return a compact symbol map for prompt injection."""
     root = root.expanduser().resolve()
-    changed = git_changed_paths(root) if prefer_git_changed else set()
+    # Root is already resolved here; git_changed_paths() would resolve it a
+    # second time (a few hundred syscalls) for a value that cannot have moved.
+    changed = _git_changed_paths_resolved(root) if prefer_git_changed else set()
     candidates = _iter_source_files(root)
     candidates.sort(key=lambda p: _score_path(p, root, changed))
     lines: list[str] = []

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -131,6 +133,12 @@ class AgentRuntime:
     message_queue: RunMessageQueue | None = None
     _last_setup: str = field(default="", init=False)
     _static_prepare_cache: tuple[Any, ...] | None = field(default=None, init=False)
+    #: Last event-listener exception, with traceback. Non-fatal by design (a
+    #: frontend must never break a run) but never discarded - this is what
+    #: `/trace` and a bug report read when a turn "just stops".
+    last_listener_error: str = field(default="", init=False)
+    _listener_errors: int = field(default=0, init=False)
+    _pending_listener_error: str = field(default="", init=False)
 
     def invalidate_prepare_cache(self) -> None:
         """Drop cached project context / skills / resolve (e.g. after /reload)."""
@@ -254,7 +262,48 @@ class AgentRuntime:
             try:
                 listener(event)
             except Exception:
-                continue
+                # A listener is a frontend (the REPL display, the audit log, the
+                # job ring). One of them raising must never break the run or
+                # starve the other listeners, so this stays non-fatal - but it
+                # must not be invisible either: a raised display listener is
+                # how "text came but the agent stopped" looked from the inside.
+                # Record it on the runtime for /trace-style diagnosis, and
+                # surface the first one of the turn as an event the UI can show.
+                self._record_listener_failure(listener, event)
+
+    def _record_listener_failure(
+        self, listener: Callable[[Event], None], event: Event
+    ) -> None:
+        exc = sys.exc_info()[1]
+        detail = f"{type(exc).__name__}: {exc}" if exc is not None else "unknown listener error"
+        label = getattr(listener, "__qualname__", None) or type(listener).__name__
+        record = (
+            f"event listener {label} failed on {event.kind}: {detail}\n"
+            + "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        )
+        self.last_listener_error = record
+        self._listener_errors += 1
+        # First failure of the turn only: a broken listener would otherwise
+        # re-notify on every event for the rest of the run.
+        if self._listener_errors == 1:
+            self._pending_listener_error = record
+
+    def take_listener_error(self) -> str:
+        """Consume the first listener failure of the turn (empty if none).
+
+        The runtime cannot print - it has no console, and the REPL is one of the
+        listeners that may be the thing that is broken. So it parks the record
+        and the frontend asks for it when the turn is over, which is the one
+        moment where printing cannot race the stream.
+        """
+        record = self._pending_listener_error
+        self._pending_listener_error = ""
+        return record
+
+    def begin_turn(self) -> None:
+        """Clear per-turn listener-failure state so notices do not accumulate."""
+        self._listener_errors = 0
+        self._pending_listener_error = ""
 
     def _persist_session_stats(self, session: Session, result: dict, *, agent: DefaultAgent | None) -> None:
         from kite.memory.session_analytics import SessionStats, save_session_stats
@@ -370,6 +419,11 @@ class AgentRuntime:
         return rcfg, resolved, system
 
     def run(self, task: str) -> dict:
+        # Fresh per-turn listener-failure budget. REPL turns share one Harness
+        # (and its runtime) across runs, so without this reset _listener_errors
+        # never returns to 0 and the first-failure notice stops being parked
+        # after the first turn that ever saw one.
+        self.begin_turn()
         ucfg = self.user_config or UserConfig.load()
         rcfg, resolved, system = self.prepare()
         if self.options.execution_mode in ("restricted", "host"):

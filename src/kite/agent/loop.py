@@ -718,6 +718,7 @@ class DefaultAgent:
         provider_fault: str | None = None
         run_error: str | None = None
         run_traceback: str | None = None
+        auth_login_hint: str = ""
         try:
             def _on_sigint(signum, frame):
                 self.request_interrupt()
@@ -767,7 +768,16 @@ class DefaultAgent:
                     break
                 except Exception as e:
                     run_traceback = traceback.format_exc()
-                    run_error = str(e) or type(e).__name__
+                    raw_error = str(e) or type(e).__name__
+                    # A dead OAuth grant (revoked/rotated refresh token) raises
+                    # like any other model error, but "type continue to resume"
+                    # is wrong for it — resuming fails identically. Swap the raw
+                    # provider payload for the re-login action; the full text
+                    # stays in run_traceback for /trace.
+                    from kite.providers.byos import expired_oauth_login_hint
+
+                    auth_login_hint = expired_oauth_login_hint(f"{type(e).__name__}: {raw_error}") or ""
+                    run_error = auth_login_hint or raw_error
                     if self.session is not None:
                         self.session.replace_messages(self.messages)
                     self._emit("error", error=run_error, traceback=run_traceback)
@@ -810,6 +820,7 @@ class DefaultAgent:
                 "exit_status": "Error",
                 "error": run_error,
                 "traceback": run_traceback or "",
+                "auth_login_hint": auth_login_hint,
                 "cost": self.cost,
             }
         elif result:
@@ -1140,6 +1151,7 @@ class DefaultAgent:
                         "Stalled",
                         content=f"{reason}\n\nStopped after {self.verification.blocked_submits} blocked submissions.",
                         submission=submission,
+                        blocked_reason=reason,
                     )
                 )
                 return []
@@ -1388,6 +1400,7 @@ class DefaultAgent:
                                 "retrying cannot clear this gate."
                             ),
                             submission=submission,
+                            blocked_reason=reason,
                         )
                     )
                 return _blocked(reason, output=detail)
@@ -1426,6 +1439,7 @@ class DefaultAgent:
                                 "retrying cannot clear this gate."
                             ),
                             submission=submission,
+                            blocked_reason=reason,
                         )
                     ) from None
                 return _blocked(reason, output=detail)

@@ -15,6 +15,12 @@ from kite.context.discovery import find_project_root
 
 MemoryScope = Literal["user", "project"]
 
+# Anything sqlite3 can raise for a file that is unreadable, not a database, or
+# locked by another process, plus OS errors from the path itself (perms,
+# missing parents past mkdir). The episodic log is a *cache* of what happened:
+# it must never be the reason a durable note or a prompt render fails.
+_DB_ERRORS = (sqlite3.Error, OSError)
+
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS episodes (
   id TEXT PRIMARY KEY,
@@ -49,13 +55,71 @@ class Episode:
 def _connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.executescript(_SCHEMA)
-    conn.commit()
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.executescript(_SCHEMA)
+        conn.commit()
+    except Exception:
+        # A failed open must not keep the OS handle: on Windows the file stays
+        # locked past refcount release, so the quarantiner's replace() would
+        # fail with WinError 32 and the corrupt DB could never be moved aside.
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise
     return conn
+
+
+def _quarantine(path: Path) -> None:
+    """Move an unreadable DB aside plus its WAL sidecars, with a unique name.
+
+    SQLite keeps `-wal`/`-shm` (`-journal` in rollback mode) next to the main
+    file. Moving only the main file leaves a stale WAL behind, and every fresh
+    reconnect then tries recovery against it and fails the same way — a sticky
+    failure no retry can clear (this is exactly the torn-WAL crash it guards).
+    May raise OSError, which the caller turns into "unavailable".
+    """
+    stem = f"{path.name}.corrupt-{int(time.time())}"
+    target = path.with_name(stem)
+    n = 0
+    while target.exists():
+        n += 1
+        target = path.with_name(f"{stem}-{n}")
+    path.replace(target)
+    for suffix in ("-wal", "-shm", "-journal"):
+        try:
+            path.with_name(path.name + suffix).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _connect_or_quarantine(path: Path) -> sqlite3.Connection | None:
+    """Open the episode DB, quarantining it if the file is unreadable.
+
+    A corrupt ``episodes.sqlite`` (torn WAL, partial disk write, or a non-sqlite
+    file dropped there by something else) used to raise ``DatabaseError`` out of
+    every ``remember()`` / ``retrieve_for_prompt()`` / ``render_for_prompt()``
+    call — permanently breaking the memory layer over a soft cache. The
+    unparseable file is moved aside (preserved, not deleted) and a fresh
+    database is created, so the episode log self-heals and durable markdown
+    notes keep working.
+    """
+    try:
+        return _connect(path)
+    except _DB_ERRORS:
+        pass
+    try:
+        _quarantine(path)
+    except OSError:
+        return None
+    try:
+        return _connect(path)
+    except _DB_ERRORS:
+        return None
 
 
 def _row(row: sqlite3.Row) -> Episode:
@@ -110,7 +174,11 @@ class EpisodicStore:
             cwd=cwd or str(self.cwd),
             scope=scope,
         )
-        conn = _connect(self.path_for(scope))
+        conn = _connect_or_quarantine(self.path_for(scope))
+        if conn is None:
+            # Unwritable/locked episode log: the episode is a soft cache entry,
+            # so skip it rather than failing the caller's durable write.
+            raise ValueError("episode log unavailable")
         try:
             conn.execute(
                 "INSERT INTO episodes (id, created, session_id, kind, summary, payload, cwd, scope) "
@@ -127,6 +195,10 @@ class EpisodicStore:
                 ),
             )
             conn.commit()
+        except _DB_ERRORS:
+            # Another process may hold the write lock past busy_timeout. Losing an
+            # episode row is acceptable; propagating would abort the caller.
+            raise ValueError("episode log unavailable") from None
         finally:
             conn.close()
         return episode
@@ -138,13 +210,17 @@ class EpisodicStore:
             path = self.path_for(sc)
             if not path.is_file():
                 continue
-            conn = _connect(path)
+            conn = _connect_or_quarantine(path)
+            if conn is None:
+                continue
             try:
                 cur = conn.execute(
                     "SELECT * FROM episodes ORDER BY created DESC LIMIT ?",
                     (max(1, limit),),
                 )
                 rows.extend(_row(r) for r in cur.fetchall())
+            except (_DB_ERRORS + (TypeError, ValueError, IndexError, KeyError)):
+                continue
             finally:
                 conn.close()
         rows.sort(key=lambda e: e.created, reverse=True)
@@ -160,7 +236,9 @@ class EpisodicStore:
             path = self.path_for(scope)
             if not path.is_file():
                 continue
-            conn = _connect(path)
+            conn = _connect_or_quarantine(path)
+            if conn is None:
+                continue
             try:
                 cur = conn.execute("SELECT * FROM episodes")
                 hits = [
@@ -174,6 +252,8 @@ class EpisodicStore:
                 conn.executemany("DELETE FROM episodes WHERE id = ?", [(i,) for i in ids])
                 conn.commit()
                 removed.extend(hits)
+            except (_DB_ERRORS + (TypeError, ValueError, IndexError, KeyError)):
+                continue
             finally:
                 conn.close()
         return removed

@@ -12,6 +12,11 @@ from kite.ui.style import SYMBOL_SEP
 from kite.ui.theme import glyph
 
 _CONTEXT_BAR_WIDTH = 8
+_BRAND = "kite"
+
+# Never truncate a field below this — a stub tells the reader nothing, and a
+# second column of wrap is worse than an honest short field.
+_MIN_FIELD_COLUMNS = 16
 
 
 def terminal_width(default: int = 120) -> int:
@@ -218,37 +223,132 @@ def _segment_style(text: str) -> str:
     return "kite.muted"
 
 
-def status_segments(state: SessionUiState) -> list[tuple[str, str]]:
-    """Ordered (text, rich_style) segments shown after the kite brand."""
+# What each status segment is worth when the row runs out of columns; lower is
+# kept longer. The fields a user actually scans the footer for — mode, model,
+# cost/context, error state, approval — must survive a 60-col window; the
+# background-work counts are the ones worth losing.
+_SEGMENT_RANK = {
+    "mode": 0,
+    "approval": 0,
+    "label": 0,
+    "error": 1,
+    "model": 1,
+    "cost": 2,
+    "ctx": 3,
+    "jobs": 4,
+    "agents": 4,
+}
+# Rank at or below this is never dropped: without these the line no longer says
+# what mode the agent is in or that it is waiting on the user.
+_RANK_FLOOR = 2
+
+
+def _sep_join() -> str:
+    """One separator between segments, read live so /font stays live."""
+    return f" {SYMBOL_SEP} "
+
+
+def _segments_columns(parts: list[tuple[str, str, str]]) -> int:
+    join = len(_sep_join())
+    return sum(len(text) for text, _, _ in parts) + join * max(0, len(parts) - 1)
+
+
+def _row_prefix_columns() -> int:
+    """Columns the Rich footer spends on ``kite · `` before the first segment.
+
+    ``format_status_tail`` is the same row without the brand and so has this
+    much slack; budgeting to the wider consumer keeps both inside the window.
+    """
+    return len(_BRAND) + len(_sep_join())
+
+
+def _shorten(text: str, limit: int) -> str:
+    """Cut to ``limit`` columns with an explicit ellipsis — never a silent slice."""
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)] + "…"
+
+
+def _fit_segments(
+    parts: list[tuple[str, str, str]], *, width: int
+) -> list[tuple[str, str, str]]:
+    """Drop, then shorten, segments until the row fits ``width`` columns.
+
+    Dropping is whole-segment only and stops at ``_RANK_FLOOR`` so the footer
+    never degrades into a bare cost figure. Truncation is a last resort and
+    stops at ``_MIN_FIELD_COLUMNS`` so a field stays recognisable instead of
+    turning the row into two ragged rows.
+    """
+    budget = max(_MIN_FIELD_COLUMNS * 2, width - _row_prefix_columns())
+    kept = list(parts)
+    while len(kept) > 2 and _segments_columns(kept) > budget:
+        # Worst = lowest rank, and among equals the rightmost (the newest
+        # background count) so dropping is stable frame to frame.
+        worst = max(range(len(kept)), key=lambda i: (_SEGMENT_RANK.get(kept[i][2], 9), i))
+        if _SEGMENT_RANK.get(kept[worst][2], 9) <= _RANK_FLOOR:
+            break
+        kept.pop(worst)
+    # Anything still over budget is shortened — longest first, and never below
+    # _MIN_FIELD_COLUMNS, so a field stays recognisable rather than splitting
+    # the row into two ragged ones.
+    while _segments_columns(kept) > budget:
+        optional = [
+            i for i, (_, _, key) in enumerate(kept) if key not in {"mode", "approval", "label"}
+        ]
+        movable = [i for i in optional if len(kept[i][0]) > _MIN_FIELD_COLUMNS]
+        if not movable:
+            break
+        target = max(movable, key=lambda i: len(kept[i][0]))
+        text, style, key = kept[target]
+        over = _segments_columns(kept) - budget
+        kept[target] = (_shorten(text, len(text) - over), style, key)
+    return kept
+
+
+def _status_parts(state: SessionUiState) -> list[tuple[str, str, str]]:
+    """(text, style, rank-key) segments after the brand, before width fitting."""
     if state.awaiting_approval:
         label = state.awaiting_approval or "tool"
-        return [("approval", "kite.pending"), (label, "kite.pending")]
+        return [("approval", "kite.pending", "approval"), (label, "kite.pending", "label")]
 
     mode_label = "plan" if state.mode is AgentMode.PLAN else state.mode.value
     model = format_model_label(state)
     cost = f"${state.cost:.3f}"
 
-    parts = [
-        (mode_label, mode_style(state)),
-        (model, "kite.muted"),
-        (cost, "kite.muted"),
+    parts: list[tuple[str, str, str]] = [
+        (mode_label, mode_style(state), "mode"),
+        (model, "kite.muted", "model"),
+        (cost, "kite.muted", "cost"),
     ]
     if not state.busy and state.window and state.tokens and not _terminal_compact():
         parts.append(
             (
-                f"ctx {state.context_pct:.0%}"
-                if state.context_pct is not None
-                else f"{state.tokens} tok",
+                (
+                    f"ctx {state.context_pct:.0%}"
+                    if state.context_pct is not None
+                    else f"{state.tokens} tok"
+                ),
                 "kite.muted",
+                "ctx",
             )
         )
     if state.active_jobs:
-        parts.append((f"{state.active_jobs} job{'s' if state.active_jobs != 1 else ''}", "kite.highlight"))
+        parts.append((f"{state.active_jobs} job{'s' if state.active_jobs != 1 else ''}", "kite.highlight", "jobs"))
     if state.active_subagents:
-        parts.append((f"{state.active_subagents} agent{'s' if state.active_subagents != 1 else ''}", "kite.highlight"))
+        parts.append((f"{state.active_subagents} agent{'s' if state.active_subagents != 1 else ''}", "kite.highlight", "agents"))
     if not state.busy and state.last_error.strip():
-        parts.append((f"err {_short_error(state.last_error)}", "kite.error"))
+        parts.append((f"err {_short_error(state.last_error)}", "kite.error", "error"))
     return parts
+
+
+def status_segments(state: SessionUiState) -> list[tuple[str, str]]:
+    """Ordered (text, rich_style) segments shown after the kite brand.
+
+    Width-aware: as the terminal narrows the optional segments go, then the
+    long ones shorten, so the footer stays one row instead of wrapping.
+    """
+    parts = _fit_segments(_status_parts(state), width=terminal_width())
+    return [(text, style) for text, style, _ in parts]
 
 
 def status_detail_lines(state: SessionUiState) -> list[str]:
@@ -269,15 +369,15 @@ def status_detail_lines(state: SessionUiState) -> list[str]:
 
 def format_status_tail(state: SessionUiState) -> str:
     parts = [text for text, _ in status_segments(state)]
-    return f" {SYMBOL_SEP} ".join(parts)
+    return _sep_join().join(parts)
 
 
 def render_status(state: SessionUiState) -> Text:
     """Rich status line — matches toolbar fields with semantic colors."""
     line = Text()
-    line.append("kite", style="kite.brand")
+    line.append(_BRAND, style="kite.brand")
     for text, style in status_segments(state):
-        line.append(f" {SYMBOL_SEP} ", style="kite.muted")
+        line.append(_sep_join(), style="kite.muted")
         line.append(text, style=style)
     return line
 

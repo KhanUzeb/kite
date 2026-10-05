@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from kite.memory.episodic import Episode, EpisodicStore
+from kite.memory.secure_io import clamp_memory_text
 from kite.memory.semantic import Note, SemanticStore
 
 MemoryScope = Literal["user", "project"]
@@ -59,13 +60,23 @@ def _migrate_jsonl(semantic: SemanticStore) -> None:
             if not text:
                 continue
             nid = str(row.get("id") or "")
-            if nid in existing_ids or text.lower() in existing_text:
+            # Compare on the *stored* form. ``remember`` clamps text to
+            # MAX_MEMORY_NOTE_CHARS, so matching the raw legacy string against
+            # the clamped note never matches its own copy: any note over the
+            # clamp was folded again on every launch while the legacy file
+            # survived a crash, silently duplicating it.
+            try:
+                folded = clamp_memory_text(text)
+            except ValueError:
+                continue
+            if nid in existing_ids or folded.lower() in existing_text:
                 continue
             try:
                 semantic.remember(text, scope=scope)
-                moved += 1
             except ValueError:
                 continue
+            existing_text.add(folded.lower())
+            moved += 1
         if moved or lines:
             try:
                 path.replace(bak)

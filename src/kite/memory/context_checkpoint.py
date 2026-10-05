@@ -114,23 +114,58 @@ def save_checkpoint(
     folder = checkpoints_dir(session_id)
     folder.mkdir(parents=True, exist_ok=True)
     path = _checkpoint_path(session_id, cp.id)
-    from kite.memory.session_policy import prepare_persisted_value, secure_session_file
+    from kite.memory.session_policy import prepare_persisted_value
 
     blob = prepare_persisted_value(cp.to_dict())
-    path.write_text(json.dumps(blob, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    secure_session_file(path)
+    # A checkpoint is the crash-recovery artifact, so it must land whole: a
+    # plain write_text can be torn by a crash or a concurrent writer, and every
+    # later load of a half-written checkpoint fails to parse — the safety net
+    # destroying the session it was meant to preserve.
+    secure_checkpoint_write(path, json.dumps(blob, indent=2, ensure_ascii=False) + "\n")
     _prune_checkpoints(session_id)
     return cp
 
 
+def secure_checkpoint_write(path: Path, text: str) -> None:
+    """Atomic + owner-only checkpoint write.
+
+    ``save_checkpoint`` is the crash-recovery artifact: a torn JSON file means
+    every later load of that checkpoint fails to parse, so the safety net would
+    destroy the session it was meant to preserve.
+    """
+    from kite.memory.session_policy import secure_session_file
+    from kite.util.atomic import atomic_write_text
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, text)
+    secure_session_file(path)
+
+
 _MAX_CHECKPOINTS_PER_SESSION = 5
+
+
+def _sorted_by_mtime(paths: Any) -> list[Path]:
+    """Newest-first sort that survives files vanishing mid-prune.
+
+    The mtime key runs after the glob, so a concurrent delete (or a dangling
+    symlink) makes a bare ``p.stat()`` key raise OSError out of
+    save/list/prune. Missing files sort last so they are pruned first.
+    """
+    with_mtime: list[tuple[float, Path]] = []
+    for path in paths:
+        try:
+            with_mtime.append((path.stat().st_mtime, path))
+        except OSError:
+            with_mtime.append((0.0, path))
+    with_mtime.sort(key=lambda kv: kv[0], reverse=True)
+    return [path for _, path in with_mtime]
 
 
 def _prune_checkpoints(session_id: str, keep: int = _MAX_CHECKPOINTS_PER_SESSION) -> None:
     folder = checkpoints_dir(session_id)
     if not folder.is_dir():
         return
-    paths = sorted(folder.glob("cp-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    paths = _sorted_by_mtime(folder.glob("cp-*.json"))
     for path in paths[keep:]:
         try:
             path.unlink()
@@ -155,18 +190,32 @@ def load_checkpoint(session_id: str, checkpoint_id: str) -> ContextCheckpoint:
         if not matches:
             raise FileNotFoundError(f"no checkpoint '{checkpoint_id}' for session {session_id}")
         path = matches[-1]
-    return ContextCheckpoint.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    try:
+        row = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        # A torn checkpoint is the normal post-crash state. Say so plainly
+        # instead of leaking a JSONDecodeError with no indication of which
+        # file is damaged.
+        raise ValueError(f"checkpoint '{checkpoint_id}' is corrupt or unreadable: {path}") from exc
+    if not isinstance(row, dict):
+        raise ValueError(f"checkpoint '{checkpoint_id}' is corrupt or unreadable: {path}")
+    try:
+        return ContextCheckpoint.from_dict(row)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"checkpoint '{checkpoint_id}' is corrupt or unreadable: {path}") from exc
 
 
 def list_checkpoints(session_id: str, *, limit: int = 20) -> list[ContextCheckpoint]:
     folder = checkpoints_dir(session_id)
+    if limit <= 0:
+        return []
     if not folder.is_dir():
         return []
     rows: list[ContextCheckpoint] = []
-    for path in sorted(folder.glob("cp-*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for path in _sorted_by_mtime(folder.glob("cp-*.json")):
         try:
             rows.append(ContextCheckpoint.from_dict(json.loads(path.read_text(encoding="utf-8"))))
-        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
             continue
         if len(rows) >= limit:
             break

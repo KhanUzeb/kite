@@ -149,7 +149,7 @@ class SessionUiState:
         self.maybe_clear_flash(ttl)
         return self.flash
 
-    def set_running(self, *, label: str, kind: str = "tool") -> None:
+    def set_running(self, *, label: str, kind: str = "tool", touch: bool = True) -> None:
         from datetime import datetime
 
         label = label.strip()
@@ -158,7 +158,8 @@ class SessionUiState:
         self.running_label = label
         self.running_kind = kind
         self.running_since = datetime.now().strftime("%H:%M:%S")
-        self.touch()
+        if touch:
+            self.touch()
 
     def clear_running(self) -> None:
         self.running_label = ""
@@ -172,14 +173,15 @@ class SessionUiState:
         # user types something.
         self.touch(force=True)
 
-    def set_activity_preview(self, line: str) -> None:
+    def set_activity_preview(self, line: str, *, touch: bool = True) -> None:
         from kite.ui.status import sanitize_status_text
 
         clean = sanitize_status_text(line)
         if not clean or clean == self.activity_preview:
             return
         self.activity_preview = clean
-        self.touch()
+        if touch:
+            self.touch()
 
     def reset_stream_stats(self) -> None:
         self.stream_chars = 0
@@ -196,7 +198,7 @@ class SessionUiState:
             self.ttft_ms = ttft_ms
             self.touch()
 
-    def note_stream_delta(self, text: str, *, tokens: int | None = None) -> None:
+    def note_stream_delta(self, text: str, *, tokens: int | None = None, touch: bool = True) -> None:
         import time
 
         if not text:
@@ -214,7 +216,12 @@ class SessionUiState:
         # Busy turns own the footer via the composer toolbar — without a touch
         # here the running line sits silent through a long generation and reads
         # as frozen. touch() throttles (0.15s busy), so this stays bounded.
-        self.touch()
+        # Callers pass touch=False while the pinned composer owns the bottom:
+        # every touch() invalidates the prompt app, and each repaint reclaims
+        # the patch_stdout region — erasing the end="" partials just painted.
+        # Stats still update; the toolbar picks them up on its own 0.25s poll.
+        if touch:
+            self.touch()
 
     def note_stream_usage(self, usage: dict) -> None:
         completion = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)

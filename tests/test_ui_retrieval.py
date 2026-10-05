@@ -68,7 +68,7 @@ def _big_diff(rows: int = 60) -> str:
     return make_unified_diff("src/app.py", before, after)
 
 
-def test_last_reprints_every_row_a_capped_body_hid() -> None:
+def _c_test_last_reprints_every_row_a_capped_body_hid() -> None:
     """A 30-line body prints 5 on scroll; /last gives back all 30."""
     assert PREVIEW_LINES == 5
     display, buf = _display()
@@ -96,7 +96,7 @@ def test_last_reprints_every_row_a_capped_body_hid() -> None:
     assert "bash" in plain and "ok" in plain
 
 
-def test_last_renders_the_diff_uncollapsed_and_read_only() -> None:
+def _c_test_last_renders_the_diff_uncollapsed_and_read_only() -> None:
     """A capped diff comes back whole, and nothing about the state moves."""
     assert PREVIEW_LINES == 5
     diff = _big_diff()
@@ -127,7 +127,7 @@ def test_last_renders_the_diff_uncollapsed_and_read_only() -> None:
     assert format_viewable_output("a\nb\n") .strip() == "a\nb"
 
 
-def test_overflow_markers_only_name_registered_commands() -> None:
+def _c_test_overflow_markers_only_name_registered_commands() -> None:
     """The regression guard: a marker may never name a command that is absent.
 
     This is what let `/diff` ship — the hint read well and resolved to
@@ -166,7 +166,7 @@ def test_overflow_markers_only_name_registered_commands() -> None:
     assert commands_mod.parse_slash("/last").command == "last"
 
 
-def test_last_with_nothing_captured_says_so() -> None:
+def _c_test_last_with_nothing_captured_says_so() -> None:
     """Nothing has run yet: one clear line, not a crash or a blank screen."""
     display, buf = _display()
     repl = _Repl(display, buf)
@@ -179,7 +179,7 @@ def test_last_with_nothing_captured_says_so() -> None:
     assert "no tool output yet" in strip_ansi(buf.getvalue())
 
 
-def test_last_reports_failures_and_bounds_the_payload() -> None:
+def _c_test_last_reports_failures_and_bounds_the_payload() -> None:
     """A failed call is retrievable, and a runaway body cannot pin memory."""
     display, buf = _display()
     display(
@@ -206,3 +206,12 @@ def test_last_reports_failures_and_bounds_the_payload() -> None:
     assert len(big._last_tool_view.output) == _LAST_TOOL_CHARS
     assert big._last_tool_view.truncated is True
     assert "payload capped" in _retrieved(big, big_buf)
+
+
+def test_batch_00() -> None:
+    """Consolidated (bodies unchanged): all retrieval helpers in one batch."""
+    _c_test_last_reprints_every_row_a_capped_body_hid()
+    _c_test_last_renders_the_diff_uncollapsed_and_read_only()
+    _c_test_overflow_markers_only_name_registered_commands()
+    _c_test_last_with_nothing_captured_says_so()
+    _c_test_last_reports_failures_and_bounds_the_payload()

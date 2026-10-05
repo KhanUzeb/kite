@@ -35,7 +35,7 @@ def _read(path: Path) -> str:
         return ""
     try:
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ""
 
 
@@ -173,6 +173,26 @@ def record_style_observations(
     return added
 
 
+def _as_count(value: Any) -> int:
+    """Coerce a provider-reported counter to a non-negative int.
+
+    ``model_stats`` reaches us straight from a provider/transport payload, so
+    ``api_calls`` can be a string, a float, or missing. ``observe_session_turn``
+    runs at the end of every REPL turn purely to record a soft signal, so an
+    ``int("abc")`` escaping here aborted the turn on nothing but a cosmetic
+    observation.
+    """
+    if isinstance(value, bool):
+        return 0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if number != number or number in (float("inf"), float("-inf")):  # NaN / inf
+        return 0
+    return max(0, int(number))
+
+
 def observe_session_turn(
     store: MemoryStore,
     *,
@@ -189,11 +209,11 @@ def observe_session_turn(
     signals = infer_style_signals(
         mode=mode,
         approval=approval,
-        tool_calls=int(stats.get("api_calls") or payload.get("api_calls") or 0),
-        write_edits=int(stats.get("write_edits") or 0),
-        bash_calls=int(stats.get("bash_calls") or 0),
-        compaction_count=int(stats.get("compaction_count") or 0),
-        subagent_runs=int(stats.get("subagent_runs") or 0),
+        tool_calls=_as_count(stats.get("api_calls") or payload.get("api_calls")),
+        write_edits=_as_count(stats.get("write_edits")),
+        bash_calls=_as_count(stats.get("bash_calls")),
+        compaction_count=_as_count(stats.get("compaction_count")),
+        subagent_runs=_as_count(stats.get("subagent_runs")),
         interrupted=interrupted,
         exit_status=exit_status,
     )

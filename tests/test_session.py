@@ -192,7 +192,8 @@ def _c_test_prune_keeps_newest(kite_home) -> None:
         s.append({"role": "user", "content": f"msg {i}"})
         ids.append(s.id)
     assert prune_sessions(10) == []
-    removed = prune_sessions(2)
+    # dry_run=False: this asserts real deletion, so it must say so explicitly.
+    removed = prune_sessions(2, dry_run=False)
     assert [d.id for d in removed] == [ids[2], ids[1], ids[0]]
     assert sorted(m.id for m in list_sessions(limit=10)) == sorted(ids[3:])
 

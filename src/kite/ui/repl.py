@@ -6,6 +6,7 @@ import queue
 import sys
 import threading
 import time
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,7 @@ from kite.ui.inbox import MessageInbox
 from kite.ui.render import RunDisplay, render_compact_boundary, render_startup_card
 from kite.ui.state import SessionUiState
 from kite.ui.status import render_status
-from kite.ui.style import GUTTER, SYMBOL_FAIL, SYMBOL_PROMPT, make_console
+from kite.ui.style import GUTTER, SYMBOL_FAIL, SYMBOL_PROMPT, SYMBOL_WARN, make_console
 from kite.ui.tables import kite_table
 
 _GENERIC_LAUNCHERS = ("__main__", "pytest", "python", "uv", "_pytest", "-c")
@@ -113,9 +114,14 @@ class ChatSession:
         self.no_guardrails = no_guardrails
         self.role = role or "auto"
         self.long_task = long_task
-        # prompt_toolkit's patch_stdout owns stdout while the composer redraws.
-        # Sending transcript output there prevents later redraws from erasing it.
-        self.console = make_console()
+        # prompt_toolkit's patch_stdout owns the screen for the whole turn while
+        # the composer is pinned, and every state.touch() invalidates the app
+        # so the next repaint reclaims the region it owns. Per-token touches
+        # therefore erased the end="" partials as fast as they painted. The
+        # transcript console stays on stderr (stdout stays clean for piping),
+        # but survival comes from throttling: the render loop skips touch()
+        # while the composer owns the bottom and the toolbar polls instead.
+        self.console = make_console(stderr=True)
         self.state = SessionUiState(
             mode=mode,
             approval=approval or default_approval(mode),
@@ -160,6 +166,9 @@ class ChatSession:
         self._approval_panel_id: str | None = None
         self._composer_wake = False
         self._ui_queue: queue.SimpleQueue = queue.SimpleQueue()
+        # Render failures seen this turn. First one prints a line, the rest are
+        # counted only - see _report_ui_failure.
+        self._ui_failures: int = 0
         from kite.tools.jobs import JobRegistry
 
         self.jobs = JobRegistry(on_event=self._ui_event_handler)
@@ -503,14 +512,90 @@ class ChatSession:
                 break
             try:
                 self._apply_ui_event(event)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._report_ui_failure("event", exc)
         try:
             self.display.flush_due_streams()
-        except Exception:
-            pass
+        except Exception as exc:
+            self._report_ui_failure("stream flush", exc)
         self._sync_queue_count()
         self.state.flush_pending_touch()
+
+    def _report_ui_failure(self, where: str, exc: BaseException) -> None:
+        """Keep the swallow non-fatal, but stop it being invisible.
+
+        A UI bug must never kill a run, so the exception is still caught at the
+        drain site. What used to make that undebuggable was that the event was
+        already popped by ``get_nowait`` (so it was gone for good), the partial
+        write could leave the cursor mid-row, and nothing was recorded anywhere
+        - the turn just went quiet, which is exactly "text came but is not
+        showing and the agent stopped".
+
+        So: record the traceback where ``/trace`` reads it, end any half-written
+        line, and print ONE muted line naming the failure and how to see it.
+        Repeat failures are counted, not reprinted - a per-token bug would
+        otherwise scroll hundreds of identical notices.
+        """
+        trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        self.state.last_error = f"ui {where} failed: {type(exc).__name__}: {exc}".strip()[:240]
+        self.state.last_trace = trace
+        self._ui_failures += 1
+        seen = self._ui_failures > 1
+        # The row has to close even when the failure came from the flush path:
+        # a half-written line with no newline is what renders as a blank screen.
+        try:
+            self.display._abandon_stream_line()  # noqa: SLF001
+        except Exception:
+            pass
+        if seen:
+            # Already told the user once. Keep it to a flash so a repeated
+            # failure cannot bury the answer it is corrupting.
+            self._flash_note(f"ui error again ({self._ui_failures}x) — /trace for detail")
+            return
+        try:
+            self.console.print(
+                Text(
+                    f"{GUTTER}{SYMBOL_FAIL} ui {where} failed — output may be incomplete"
+                    f"  ·  {self._ui_failures}x  ·  /trace for detail",
+                    style="kite.muted",
+                )
+            )
+        except Exception:
+            pass
+
+    def _report_listener_failure(self, harness: Any) -> None:
+        """Surface the first event-listener failure of a finished turn.
+
+        The runtime catches these so a broken frontend cannot kill a run, and it
+        parks the traceback. Here, after the turn, is the first moment printing
+        is safe - so the failure becomes visible instead of just having made the
+        turn look like it stopped. Never raises: a reporting bug must not undo
+        a completed turn.
+        """
+        runtime = getattr(harness, "_runtime", None)
+        take = getattr(runtime, "take_listener_error", None)
+        if take is None:
+            return
+        try:
+            record = take()
+        except Exception:
+            return
+        if not record:
+            return
+        # Only overwrite a real agent error: an Error/ProviderFault status line
+        # has already stored its own trace, which is the more useful one.
+        if not self.state.last_trace:
+            self.state.last_trace = record
+        try:
+            self.console.print(
+                Text(
+                    f"{GUTTER}{SYMBOL_WARN} an event listener failed this turn"
+                    "  ·  output may be incomplete  ·  /trace for detail",
+                    style="kite.muted",
+                )
+            )
+        except Exception:
+            pass
 
     def _busy_tick(self) -> None:
         self._drain_ui_queue()
@@ -3211,7 +3296,8 @@ class ChatSession:
             if not confirm(self.console, f"Delete all but the newest {keep} sessions?", default=False):
                 self.console.print("[kite.muted]cancelled[/]")
                 return
-            gone = prune_sessions(keep)
+            # Confirmed above, so destruction is allowed here (dry_run=False).
+            gone = prune_sessions(keep, dry_run=False)
             if self._session_id and any(g.id == self._session_id for g in gone):
                 self._reset_chat()
             self.console.print(
@@ -3616,6 +3702,9 @@ class ChatSession:
         """Reset per-turn UI state: stale errors clear so the footer never lies."""
         self.state.last_error = ""
         self.state.last_trace = ""
+        # Per-turn render-failure budget too: the notice prints once per turn,
+        # so a new turn gets a fresh one instead of only a flash.
+        self._ui_failures = 0
         self.state.set_running(label=preview[:80] or "working", kind="turn")
 
     def _run_task(self, task: str) -> None:
@@ -3826,6 +3915,7 @@ class ChatSession:
             self.display.close()
         extra = box.get("result") or {}
         self.display.finish_composer_turn(extra)
+        self._report_listener_failure(harness)
         self._harness = None
         self._bind_session(harness)
         if box.get("err") is not None:

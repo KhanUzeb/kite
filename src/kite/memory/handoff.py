@@ -121,6 +121,16 @@ kite chat --session {meta.id}
 """
 
 
+def secure_handoff_write(path: Path, text: str) -> None:
+    """Atomic + owner-only handoff file write."""
+    from kite.memory.session_policy import secure_session_file
+    from kite.util.atomic import atomic_write_text
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, text)
+    secure_session_file(path)
+
+
 def write_handoff(
     *,
     session: Session,
@@ -134,7 +144,10 @@ def write_handoff(
     system: str = "",
 ) -> HandoffBundle:
     """Save checkpoint + markdown + JSON handoff bundle."""
-    from kite.memory.session_policy import prepare_persisted_value, secure_session_file
+    from kite.memory.secure_io import storage_id
+    from kite.memory.session_policy import prepare_persisted_value
+
+    sid = storage_id(session.id, label="session id")
 
     safe_messages = prepare_persisted_value(list(session.messages))
     if not isinstance(safe_messages, list):
@@ -162,10 +175,12 @@ def write_handoff(
     base = Path(out_dir or cwd).expanduser().resolve()
     kite_dir = base / ".kite"
     kite_dir.mkdir(parents=True, exist_ok=True)
-    md_path = kite_dir / f"handoff-{session.id}.md"
-    json_path = kite_dir / f"handoff-{session.id}.json"
-    md_path.write_text(md, encoding="utf-8")
-    secure_session_file(md_path)
+    md_path = kite_dir / f"handoff-{sid}.md"
+    json_path = kite_dir / f"handoff-{sid}.json"
+    # A handoff is read by another agent (often after this process is gone), so
+    # both files must land whole: a torn write leaves a half-parsed bundle that
+    # cannot be restored from at all.
+    secure_handoff_write(md_path, md)
     payload = prepare_persisted_value({
         "format": "kite-handoff-v1",
         "generated_at": time.time(),
@@ -178,8 +193,7 @@ def write_handoff(
         },
         "markdown_excerpt": md[:8000],
     })
-    json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    secure_session_file(json_path)
+    secure_handoff_write(json_path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
     return HandoffBundle(
         session_id=session.id,
         markdown=md,

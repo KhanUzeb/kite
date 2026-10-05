@@ -388,6 +388,52 @@ def credential_label(spec: ProviderSpec) -> str:
     return spec.api_key_env or "—"
 
 
+# Markers that mean "the stored OAuth grant is dead", not the network.
+# invalid_grant / unknown refresh token is what xAI, Google and ChatGPT return
+# when the refresh token was revoked or rotated elsewhere — retrying (or typing
+# `continue`) fails identically, only a fresh `kite login` helps. Deliberately
+# narrow: a bad API key ("invalid_api_key", 401) needs `kite keys --set`, not a
+# login, so those must NOT match here.
+_EXPIRED_GRANT_MARKERS = (
+    "invalid_grant",
+    "unknown refresh token",
+    "invalid refresh token",
+    "refresh token expired",
+    "refresh token is expired",
+    "refresh token has expired",
+    "refresh token revoked",
+    "reauthenticat",
+    "re-authenticat",
+    "login required",
+)
+
+# Provider markers → (display name, `kite login` argument).
+_EXPIRED_GRANT_PROVIDERS = (
+    (("xai", "grok"), ("Grok", "grok")),
+    (("chatgpt", "codex", "openai"), ("ChatGPT", "codex")),
+    (("anthropic", "claude"), ("Claude", "claude")),
+    (("antigravity", "gemini", "agy"), ("Antigravity", "antigravity")),
+)
+
+
+def expired_oauth_login_hint(error_text: str) -> str | None:
+    """Friendly re-login hint when an OAuth grant died, else None.
+
+    Turn-time LiteLLM errors carry the raw provider payload
+    ("xAI OAuth token request failed: 400 invalid_grant ..."), which reads as
+    an internal crash. This maps the dead-grant family to the one action that
+    fixes it. Returns None for anything else (API-key, network, model errors)
+    so those keep their existing messages.
+    """
+    text = (error_text or "").lower()
+    if not any(m in text for m in _EXPIRED_GRANT_MARKERS):
+        return None
+    for markers, (label, login) in _EXPIRED_GRANT_PROVIDERS:
+        if any(m in text for m in markers):
+            return f"{label} login expired or missing — run: kite login {login}"
+    return "Subscription login expired or missing — re-run `kite login` for that provider"
+
+
 def subscription_login_hint(spec: ProviderSpec) -> str:
     auth = _auth(spec)
     if auth is not None:

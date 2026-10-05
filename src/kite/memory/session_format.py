@@ -30,9 +30,32 @@ def session_status(meta: SessionMeta) -> str:
     return (meta.exit_status or "open").strip() or "open"
 
 
+def _safe_timestamp(ts: float) -> float:
+    """Coerce a persisted timestamp into something ``datetime`` accepts.
+
+    ``json.loads`` parses the bare tokens ``NaN`` / ``Infinity`` (both valid
+    JavaScript), so a truncated or hand-edited ``.meta`` sidecar can hand a
+    non-finite ``updated_at`` here. ``datetime.fromtimestamp`` then raises
+    ValueError/OverflowError, and because this runs while rendering *every*
+    listed session, one bad row crashes the whole session picker.
+    """
+    try:
+        value = float(ts)
+    except (TypeError, ValueError):
+        return 0.0
+    if value != value or value in (float("inf"), float("-inf")):
+        return 0.0
+    try:
+        datetime.fromtimestamp(value)
+    except (OSError, OverflowError, ValueError):
+        return 0.0
+    return value
+
+
 def format_session_when(ts: float, *, now: float | None = None) -> tuple[str, str, str]:
     """Return (date, time, relative) for a unix timestamp."""
     now = now if now is not None else time.time()
+    ts = _safe_timestamp(ts)
     dt = datetime.fromtimestamp(ts)
     date_s = dt.strftime("%Y-%m-%d")
     time_s = dt.strftime("%H:%M")

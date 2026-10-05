@@ -144,11 +144,21 @@ class SessionStats:
         }
 
 
-def _stats_sidecar(session_id: str) -> Path:
+def _stats_sidecar(session_id: str, *, resolved_root: Path | None = None) -> Path:
+    """Stats sidecar path for ``session_id``, guarded against escaping ``root``.
+
+    ``resolved_root`` lets a bulk caller (delete / prune) resolve sessions/ once
+    instead of once per session. Containment check is unchanged either way.
+    """
     from kite.memory.secure_io import storage_id
 
+    token = storage_id(session_id, label="session id")
+    if resolved_root is not None:
+        # See _trajectory_path: a pre-resolved root plus a separator-free token
+        # cannot escape, so the redundant resolve() is skipped in bulk paths.
+        return resolved_root / f"{token}.stats.json"
     root = sessions_dir().resolve()
-    path = (root / f"{storage_id(session_id, label='session id')}.stats.json").resolve()
+    path = (root / f"{token}.stats.json").resolve()
     if not path.is_relative_to(root):
         raise ValueError("invalid session id")
     return path
@@ -401,14 +411,22 @@ def list_session_events(path: Path, *, limit: int = 20) -> list[dict[str, Any]]:
 
 
 def list_session_stats(*, limit: int = 500) -> list[SessionStats]:
+    """Newest-first session stats, stopping at ``limit`` rows returned.
+
+    Ranked off the shared ``_ranked_transcripts`` scandir pass (sidecar-aware
+    recency, one directory walk) instead of a glob plus a ``stat()`` per file.
+    Unparseable transcripts are scanned past without counting toward ``limit``,
+    so more than ``limit`` files may be read on a store with misses. Each hit
+    is a full transcript scan, so stopping early still matters.
+    """
+    from kite.memory.session import _ranked_transcripts
+
     rows: list[SessionStats] = []
     directory = sessions_dir()
     if not directory.is_dir():
         return rows
-    for path in sorted(directory.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
-        if path.name.endswith(".stats.json"):
-            continue
-        row = scan_session_file(path)
+    for sid, _ in sorted(_ranked_transcripts(directory).items(), key=lambda kv: kv[1], reverse=True):
+        row = scan_session_file(directory / f"{sid}.jsonl")
         if row is not None:
             rows.append(row)
         if len(rows) >= limit:

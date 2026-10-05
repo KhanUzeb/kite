@@ -121,8 +121,12 @@ def _build_run_result(
     changed = tuple(str(p) for p in legacy.get("changed_paths") or ())
     verification_status = str(legacy.get("verification_status") or verification.get("status") or "")
     evidence_summary = dict(verification) if verification else {}
-    approval_reason = str(legacy.get("approval_reason") or legacy.get("blocked_reason") or "")
-    blocked_reason = str(legacy.get("submit_blocked") or legacy.get("blocked_reason") or "")
+    # approval vs submit-gate are distinct: a verification block (blocked_reason)
+    # is not an approval denial, so approval_reason has no blocked fallback
+    # (see test_run_result_surfaces_the_gate_reason). blocked_reason prefers the
+    # canonical key, then the legacy submit_blocked alias.
+    approval_reason = str(legacy.get("approval_reason") or "")
+    blocked_reason = str(legacy.get("blocked_reason") or legacy.get("submit_blocked") or "")
 
     return RunResult(
         status=status,

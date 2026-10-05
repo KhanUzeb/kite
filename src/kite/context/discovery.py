@@ -118,20 +118,33 @@ def _instruction_candidates(cwd: Path, root: Path) -> list[Path]:
     return candidates
 
 
-def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
-    root = find_project_root(cwd)
-    candidates = _instruction_candidates(cwd, root)
+def _resolved_instruction_paths(cwd: Path, root: Path) -> list[Path]:
+    """Deduplicated, resolved instruction-file paths in candidate order.
 
+    resolve() is a few hundred syscalls on Windows, and both the read pass and
+    the cache fingerprint need the same resolved list — resolve once per
+    operation and share it instead of resolving every candidate twice.
+    """
     seen: set[Path] = set()
-    files: list[ContextFile] = []
-    for path in candidates:
+    out: list[Path] = []
+    for path in _instruction_candidates(cwd, root):
         try:
             resolved = path.expanduser().resolve()
         except OSError:
             continue
-        if resolved in seen or not resolved.is_file():
+        if resolved in seen:
             continue
         seen.add(resolved)
+        out.append(resolved)
+    return out
+
+
+def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
+    root = find_project_root(cwd)
+    files: list[ContextFile] = []
+    for resolved in _resolved_instruction_paths(cwd, root):
+        if not resolved.is_file():
+            continue
         try:
             content = resolved.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -204,16 +217,8 @@ def _instructions_fingerprint(cwd_path: Path) -> tuple[tuple[str, int, int], ...
         root = find_project_root(cwd_path)
     except OSError:
         return ()
-    seen: set[Path] = set()
     fp: list[tuple[str, int, int]] = []
-    for path in _instruction_candidates(cwd_path, root):
-        try:
-            resolved = path.expanduser().resolve()
-        except OSError:
-            continue
-        if resolved in seen:
-            continue
-        seen.add(resolved)
+    for resolved in _resolved_instruction_paths(cwd_path, root):
         try:
             st = resolved.stat()
         except OSError:

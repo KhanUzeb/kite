@@ -562,9 +562,16 @@ class RunDisplay:
                 defer_tail=not final,
             )
             self._answer_hold = held
-            if not wrapped:
+            if not wrapped or not wrapped.strip():
                 # Everything is a still-growing word — print nothing yet rather
-                # than a bare gutter with no body.
+                # than a bare gutter with no body. The answer path never
+                # ellipsizes (unlike the tool _clip paths): a bare "…" stub
+                # names nothing, so a fragment that would collapse to one is
+                # held the same way until more of its word arrives.
+                if held:
+                    return False
+                # No pending tail either (e.g. whitespace-only body): nothing
+                # to emit, but the prefix was not consumed so the row stays.
                 return False
             if "\n" in wrapped:
                 # The cursor now sits after the final continuation row, which
@@ -609,9 +616,11 @@ class RunDisplay:
 
     def _end_stream_line(self) -> None:
         # A held word was waiting for the rest of itself. The stream is over, so
-        # flush it now — dropping it here would lose text.
+        # flush it now — dropping it here would lose text. The hold clears only
+        # after a successful emit: if the flush raises, the word stays held so
+        # the abandon path (or the next line) can still resume it.
         if self._answer_hold:
-            held, self._answer_hold = self._answer_hold, ""
+            held = self._answer_hold
             style = self._answer_style()
             cont = cell_continuation_indent(CHANNEL_PREFIX.get("answer", "  "))
             # A non-zero column means the row already carries text (and the gap
@@ -619,7 +628,12 @@ class RunDisplay:
             # was printed for this row and it still needs the cell indent.
             fresh_row = self._answer_col == 0
             indent = cont if (fresh_row and self._did_first_line) else ""
-            self._emit_cell_line(held, style, indent=indent, cont=cont, final=True)
+            try:
+                self._emit_cell_line(held, style, indent=indent, cont=cont, final=True)
+            except Exception:
+                self._answer_hold = held
+                raise
+            self._answer_hold = ""
             self._streaming = True
         if self._streaming:
             self._print()
@@ -990,11 +1004,19 @@ class RunDisplay:
 
     def _write_stream_chunk(self, chunk: str, *, channel: str) -> None:
         """Single commit path for coalesced text: stats + footer + paint + flush."""
-        self.state.note_stream_delta(chunk)
+        # While the pinned composer owns the bottom, printing here is fatal:
+        # _toolbar_poll drains from inside the toolbar renderer (re-entrant
+        # mid-render), and patch_stdout erases end="" partials on the next
+        # repaint / when the busy prompt exits. So buffer only: stats and the
+        # footer preview stay live, and finish_composer_turn repaints the full
+        # deferred answer once the prompt is gone. No text is lost — the
+        # _on_stream_delta entry already appended this chunk to deferred.
         if _composer_owns_bottom(self.state):
-            self._spin(True, "streaming" if channel == "answer" else "thinking")
-        else:
-            self._spin(False)
+            self.state.note_stream_delta(chunk, touch=False)
+            self.state.set_activity_preview(chunk.rsplit("\n", 1)[-1].strip() or self.state.activity_preview, touch=False)
+            return
+        self.state.note_stream_delta(chunk, touch=True)
+        self._spin(False)
         self._stream_write(chunk, channel=channel)
         if channel == "answer":
             # Bounded tail: enough to tell whether the final submit report
@@ -1032,7 +1054,10 @@ class RunDisplay:
                 if self._spinner_on:
                     self._spinner.stop()
                     self._spinner_on = False
-                self.state.set_running(label=label, kind="model")
+                # Silent while pinned: a touch() here invalidates the prompt
+                # app on every token and the repaint erases end="" partials.
+                # Stats already updated; the toolbar polls on its own timer.
+                self.state.set_running(label=label, kind="model", touch=False)
                 return
             fast = label.startswith(("working", "subagent", "preparing"))
             if not self._spinner_on:
@@ -1077,8 +1102,54 @@ class RunDisplay:
         if self.quiet:
             return
         handler = self._event_handlers.get(event.kind)
-        if handler is not None:
+        if handler is None:
+            return
+        try:
             handler(event.payload)
+        except Exception:
+            # A render bug must not kill the run, so this is never swallowed
+            # here silently — but one malformed event must not CASCADE either.
+            # A handler that dies mid-stream leaves the row open (a partial
+            # ``end=""`` write, so the cursor sits mid-line and the next line
+            # paints on top of it) with _answer_col / _channel / _streaming
+            # describing a cursor that no longer exists; every later line then
+            # wraps and indents against that phantom and the screen reads
+            # blank. Clear the row first, then re-raise so the caller records
+            # the failure where it can be surfaced (/trace).
+            self._abandon_stream_line()
+            raise
+
+    def _abandon_stream_line(self) -> None:
+        """Terminate an open stream row and zero the per-row CURSOR state.
+
+        The failure path for a half-written line. ``_end_stream_line`` does the
+        normal job (flush a held word, print the closing newline); if even that
+        raises, the flags are still cleared in ``finally`` so the next event
+        starts from a clean row instead of inheriting a broken one.
+
+        Only the cursor state is reset - ``_answer_col`` / ``_thinking_col`` are
+        what make the next line wrap and indent against a row that is gone.
+        ``_channel`` and ``_did_first_line`` are deliberately KEPT: they record
+        where this answer is in the transcript, and clearing them would re-arm
+        the ``•`` first-line marker in the middle of an answer (the same
+        "continuation lost its cell indent" bug this file exists to lock).
+        ``_need_prefix`` goes on so the next fragment writes its own indent.
+        ``_answer_hold`` is deliberately NOT blanked here: ``_end_stream_line``
+        clears it only after its flush emit succeeds, so an exception mid-flush
+        leaves the word held and the next fragment resumes it instead of
+        dropping it.
+        """
+        try:
+            self._end_stream_line()
+        except Exception:
+            pass
+        finally:
+            self._streaming = False
+            self._need_prefix = True
+            self._answer_line = ""
+            self._answer_line_chars = 0
+            self._answer_col = 0
+            self._thinking_col = 0
 
     def _on_attach(self, p: dict[str, Any]) -> None:
         name = str(p.get("name") or "")
@@ -1176,9 +1247,23 @@ class RunDisplay:
             return
         if self._thinking_buf:
             self._finalize_thinking()
+        # Deferred replay buffer when the composer owns the bottom (live prints
+        # during the turn are erased on repaint/exit). Bounded so a huge
+        # generation cannot grow memory without limit. Live runs paint
+        # directly and leave this empty so finish skips the repaint.
+        if _composer_owns_bottom(self.state):
+            self._deferred_answer_parts.append(text)
+            if len(self._deferred_answer_parts) > 2000:
+                del self._deferred_answer_parts[:500]
         # Mirror the answer tail into the running line so the footer stays
         # live through a long generation instead of reading as frozen.
         self._note_answer_tail(text)
+        if _composer_owns_bottom(self.state):
+            # Suppressed live print (see _write_stream_chunk): the footer
+            # preview above is the live signal; the full text paints once the
+            # prompt is gone. Still update the tail used for dedup decisions.
+            self._stream_tail = (self._stream_tail + text)[-_STREAM_TAIL_CHARS:]
+            return
         # patch_stdout is held for the whole turn when the composer is pinned,
         # so writing here renders above it as text arrives. Always commit —
         # dropping here (composer-less runs) silently loses the answer.
@@ -1188,7 +1273,13 @@ class RunDisplay:
         """Feed the last partial line to the footer as the live activity line."""
         tail = text.rsplit("\n", 1)[-1].strip()
         if not tail:
-            self.state.set_activity_preview("")
+            return
+        if _composer_owns_bottom(self.state):
+            # Same vanish as _write_stream_chunk: a per-token touch() here
+            # invalidates the pinned composer on every delta, and the repaint
+            # erases the partial row. Update the preview silently — the toolbar
+            # reads it on its next poll — and skip the invalidate entirely.
+            self.state.set_activity_preview(tail, touch=False)
             return
         self.state.set_activity_preview(tail)
         self._touch_state()
@@ -1506,6 +1597,13 @@ class RunDisplay:
         self._print(render_loop_warning(str(p.get("message") or "")))
 
     def _on_todo(self, p: dict[str, Any]) -> None:
+        # End the open stream row first. The checklist is scrollback output, so
+        # painting it while a streamed line is still open appends the plan to
+        # that line mid-sentence and the continuation loses its cell indent.
+        # This is the one scroll-printing handler with no other work that ends
+        # the line, so the ending belongs here rather than in print_plan - which
+        # is also called from _on_agent_start, before any stream is open.
+        self._end_stream_line()
         self.state.set_todos(p.get("items") or [])
         self.print_plan()
 
@@ -1775,15 +1873,24 @@ class RunDisplay:
         if status == "Error":
             err = str(p.get("error") or "unexpected error")
             trace = str(p.get("traceback") or "")
+            auth_hint = str(p.get("auth_login_hint") or "")
             self.state.last_error = err
             self.state.last_trace = trace
             self._print(render_error(err, traceback_text=trace))
             line = Text()
             line.append(f"{GUTTER}{SYMBOL_OK} ", style="kite.success")
-            line.append(
-                f"stopped: {err[:120]} — type continue to resume",
-                style="kite.success",
-            )
+            if auth_hint:
+                # Resuming replays the same dead grant and fails identically —
+                # say the fix (re-login), not "continue".
+                line.append(
+                    "session saved — re-login above, then send another message to continue",
+                    style="kite.success",
+                )
+            else:
+                line.append(
+                    f"stopped: {err[:120]} — type continue to resume",
+                    style="kite.success",
+                )
             line.append("\n")
             self._print(line)
             return
@@ -1831,6 +1938,8 @@ class RunDisplay:
 
     def finish_composer_turn(self, result: dict[str, Any] | None = None) -> None:
         """Commit the final answer after prompt_toolkit has erased the busy UI."""
+        # The pinned prompt is gone, so prints survive again from here on.
+        self.composer_owns_input = False
         payload = self._deferred_agent_end or dict(result or {})
         self._deferred_agent_end = None
         if not payload:
@@ -1838,19 +1947,36 @@ class RunDisplay:
             return
         submission = str(payload.get("submission") or payload.get("content") or "").strip()
         streamed = "".join(self._deferred_answer_parts).strip()
-        # Live streaming already painted the answer above the composer. Do not
-        # repaint it, but do surface a structured turn report the model added at
-        # submit time when it is not already on screen.
+        # Live streaming is suppressed while the composer owns the bottom
+        # (re-entrant prints from the toolbar poll are erased on repaint), so
+        # nothing painted live during a busy turn — repaint the deferred
+        # answer here. Composer-less runs paint live (_streamed_answer True,
+        # deferred empty) and skip the repaint, as before.
         painted = self._streamed_answer
         status = str(payload.get("exit_status") or "Submitted")
         if status == "Submitted":
             if not painted:
+                # Suppressed-live path: nothing painted during the turn, so the
+                # deferred stream IS the transcript and must print. The old
+                # `submission or streamed` belonged to live painting (where the
+                # stream was already on screen and only the submission was new).
+                # Dedup: a chat submission usually repeats the streamed answer
+                # verbatim — print once, not twice.
                 vsum = payload.get("verification") if isinstance(payload.get("verification"), dict) else {}
                 had_work = bool(vsum.get("artifact_count") or vsum.get("diff_count"))
                 if submission and streamed and _looks_like_turn_report(submission):
                     answer = streamed if not had_work else f"{streamed}\n\n{submission}"
                 else:
-                    answer = submission or streamed
+                    parts = [streamed] if streamed else []
+                    if submission and (
+                        not streamed
+                        or (
+                            submission.strip() not in streamed
+                            and not _already_shown(submission, self._stream_tail)
+                        )
+                    ):
+                        parts.append(submission)
+                    answer = "\n\n".join(parts)
                 if answer:
                     self._stream_write(answer, channel="answer")
                     self._end_stream_line()

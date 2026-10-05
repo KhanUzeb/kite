@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from kite.context.discovery import PROJECT_MARKERS, SKIP_DIRS, find_project_root
+from kite.util.cache import TtlCache
 
 _AGENTS_FILENAME = "AGENTS.md"
 _KITE_FILENAME = "KITE.md"
@@ -89,7 +91,79 @@ def agent_nudges_markdown(root: Path) -> str:
     return "\n\n".join(parts)
 
 
+def _default_branch_inputs(root: Path) -> tuple[tuple[str, int, int] | None, ...]:
+    """mtime/size fingerprint of everything `git` reads to answer the branch question.
+
+    default_branch() shells out twice (~40ms each on Windows), and it is called
+    on every prompt assembly via agent_nudges_markdown. Fingerprinting the git
+    config files and the origin/HEAD ref means a changed default branch (new
+    origin, changed init.defaultBranch, re-pointed HEAD) invalidates the memo,
+    while a missing file is recorded as None so its *creation* also invalidates.
+    """
+    candidates: list[Path] = [
+        root / ".git",
+        root / ".git" / "config",
+        root / ".git" / "HEAD",
+        root / ".git" / "refs" / "remotes" / "origin" / "HEAD",
+        root / ".git" / "packed-refs",
+    ]
+    # Which config files git actually reads depends on the environment, so
+    # fingerprint the same files git would consult — not a guess at the
+    # defaults. Missing GIT_CONFIG_GLOBAL still means ~/.gitconfig on POSIX and
+    # %USERPROFILE%/.gitconfig on Windows.
+    override = os.environ.get("GIT_CONFIG_GLOBAL")
+    if override:
+        candidates.append(Path(override).expanduser())
+    else:
+        try:
+            candidates.append(Path.home() / ".gitconfig")
+        except (OSError, RuntimeError):
+            pass
+        xdg = os.environ.get("XDG_CONFIG_HOME")
+        if xdg:
+            candidates.append(Path(xdg).expanduser() / "git" / "config")
+    if os.environ.get("GIT_CONFIG_SYSTEM"):
+        candidates.append(Path(os.environ["GIT_CONFIG_SYSTEM"]).expanduser())
+    else:
+        candidates.append(Path(os.environ.get("PROGRAMDATA", "")) / "Git" / "config")
+    out: list[tuple[str, int, int] | None] = []
+    for path in candidates:
+        try:
+            st = path.stat()
+        except OSError:
+            out.append(None)
+            continue
+        out.append((str(path), st.st_mtime_ns, st.st_size))
+    return tuple(out)
+
+
+# Git config location can be redirected by env, and those are part of the
+# answer `git config` would give — keep them in the key so changing one
+# re-probes instead of serving a memo built from different inputs.
+_BRANCH_ENV_KEYS = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_DIR")
+_BRANCH_CACHE: TtlCache[tuple[str, str, tuple, tuple], str] = TtlCache(600.0, maxsize=8)
+
+
+def invalidate_default_branch_cache() -> None:
+    """Drop memoized git default-branch lookups (branch/config changed)."""
+    _BRANCH_CACHE.clear()
+
+
 def default_branch(root: Path) -> str:
+    # A relative root means the repo depends on the process cwd, so that has to
+    # be part of the key too or two different repos could share a memo entry.
+    cwd_key = "" if root.is_absolute() else os.getcwd()
+    env_key = tuple(os.environ.get(k, "") for k in _BRANCH_ENV_KEYS)
+    key = (str(root), cwd_key, _default_branch_inputs(root), env_key)
+    cached = _BRANCH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    branch = _probe_default_branch(root)
+    _BRANCH_CACHE.set(key, branch)
+    return branch
+
+
+def _probe_default_branch(root: Path) -> str:
     for cmd in (
         ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
         ["git", "config", "init.defaultBranch"],
@@ -119,7 +193,7 @@ def default_branch(root: Path) -> str:
 def _read_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
         return {}
 
 
@@ -142,7 +216,11 @@ def _one_line_description(root: Path) -> str:
             return desc.strip()
     cargo = root / "Cargo.toml"
     if cargo.is_file():
-        for line in cargo.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            cargo_lines = cargo.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            cargo_lines = []
+        for line in cargo_lines:
             if line.strip().startswith("description"):
                 _, _, val = line.partition("=")
                 val = val.strip().strip("\"'")
@@ -150,7 +228,11 @@ def _one_line_description(root: Path) -> str:
                     return val
     readme = root / "README.md"
     if readme.is_file():
-        for line in readme.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            readme_lines = readme.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            readme_lines = []
+        for line in readme_lines:
             text = line.strip()
             if text and not text.startswith("#"):
                 return text[:200]

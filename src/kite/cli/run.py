@@ -176,6 +176,26 @@ def _wire_display(harness, console, args: argparse.Namespace):
     return None
 
 
+def _report_listener_failure(harness, console) -> None:
+    """Surface a parked event-listener failure after a headless run.
+
+    The runtime catches listener exceptions so a broken display can never kill
+    a run; it parks the first traceback of the turn. The REPL reads it
+    post-turn — headless runs have no REPL, so drain it here onto stderr
+    (console is stderr). Never raises: reporting must not undo a completed run.
+    """
+    runtime = getattr(harness, "_runtime", None)
+    take = getattr(runtime, "take_listener_error", None)
+    if not callable(take):
+        return
+    try:
+        record = take()
+    except Exception:
+        return
+    if record:
+        console.print("[kite.muted]an event listener failed this turn — output may be incomplete[/]")
+
+
 def _resolve_mode_approval(args: argparse.Namespace) -> tuple:
     """Shared mode/approval preamble for run + resume (headless retry included)."""
     mode = _parse_mode(getattr(args, "mode", None))
@@ -301,6 +321,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     sid = harness.last_session.id if harness.last_session else ""
     exit_status = str(result.get("exit_status") or "")
     ok = exit_status == "Submitted" and killed == 0
+    _report_listener_failure(harness, console)
     if getattr(args, "json", False):
         data = {
             "ok": ok,
@@ -308,6 +329,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             "submission": result.get("submission"),
             "session_id": sid,
             "verification": result.get("verification"),
+            "blocked_reason": run_result.blocked_reason or "",
             "status": cli_result.status,
             "orphaned_jobs": killed,
         }
@@ -325,6 +347,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     if killed:
         console.print(f"[yellow]stopped {killed} leftover background job(s)[/]")
+    if run_result.blocked_reason:
+        console.print(f"[kite.muted]blocked — {run_result.blocked_reason}[/]")
     if result.get("exit_status") == "ProviderFault":
         console.print(
             f"[kite.pending]provider fault[/] — session saved. "
@@ -520,6 +544,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         harness.teardown_jobs()
     sid = args.session
     exit_status = str(result.get("exit_status") or "")
+    _report_listener_failure(harness, console)
     if getattr(args, "json", False):
         print(
             json.dumps(
@@ -529,12 +554,15 @@ def cmd_resume(args: argparse.Namespace) -> int:
                     "session_id": sid,
                     "submission": result.get("submission"),
                     "error": result.get("error"),
+                    "blocked_reason": run_result.blocked_reason or "",
                 },
                 indent=2,
             )
         )
         return 0 if exit_status == "Submitted" else 1
     console.print(f"[bold]exit[/]={result.get('exit_status')}  session={args.session}")
+    if run_result.blocked_reason:
+        console.print(f"[kite.muted]blocked — {run_result.blocked_reason}[/]")
     if exit_status == "ProviderFault":
         console.print(
             "[kite.pending]provider fault[/] — session saved. "
@@ -603,7 +631,9 @@ def cmd_sessions(args: argparse.Namespace) -> int:
             else:
                 console.print(f"[red]prune to {keep} sessions? pass -y to confirm[/]")
                 return 1
-        pruned = prune_sessions(keep)
+        # Already confirmed above (--yes / an interactive yes), so destruction
+        # is allowed here — the caller asked for it by name (dry_run=False).
+        pruned = prune_sessions(keep, dry_run=False)
         console.print(
             f"pruned {len(pruned)} session{'s' if len(pruned) != 1 else ''}  ·  kept newest {keep}"
         )

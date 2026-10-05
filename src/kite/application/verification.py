@@ -1030,6 +1030,86 @@ def _match_bash_check(cmd: str, plan) -> CheckSpec | None:
     return None
 
 
+#: Suffixes that make a bare token a specific file in a check command.
+_FILE_EXTS = (
+    ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".rs", ".go", ".html", ".css",
+)
+
+#: Shell control operators. A command built from these cannot be read as a plain
+#: argument list — `cd pkg && pytest -q` (which the planner itself emits) moves
+#: the base directory mid-command — so its scope is left alone. `&` covers
+#: backgrounding, `<` input redirection, `>` output redirection.
+_SHELL_OPS = ("&&", "||", ";", "|", "`", "$(", ">", "<", "&")
+
+
+def _file_targets(cmd: str) -> tuple[str, ...]:
+    """Tokens naming a specific file — `tests/test_a.py` as much as `test_a.py`.
+
+    Only a known file suffix qualifies. A bare directory (`docs`) or a flag value
+    is deliberately dropped: it cannot prove what was skipped, and guessing at it
+    would narrow evidence on a misreading. Glob tokens (`tests/*.py`) are also
+    dropped: they name a set, not a file, and treating the pattern as one file
+    would narrow coverage to nothing. When any token is dropped the command
+    may still be whole-package, so nothing is narrowed (see `_covered_paths`).
+    """
+    targets: list[str] = []
+    for raw in (cmd or "").split():
+        token = raw.strip("'\"").rstrip(",")
+        if token.startswith("-"):
+            continue
+        if "*" in token or "?" in token or "[" in token:
+            continue
+        if token.lower().endswith(_FILE_EXTS):
+            targets.append(token)
+    return tuple(targets)
+
+
+def _runs_the_edit(affected: str, target: str, pkg_root: Path) -> bool:
+    """Whether running `target` exercises the edited `affected` file."""
+    rel = affected.replace("\\", "/")
+    name = PurePosixPath(rel).name
+    norm = target.replace("\\", "/")
+    # Running the edited file itself is the most direct evidence there is.
+    if norm in {rel, name}:
+        return True
+    # A relative test path that ends at the edited file's name (`src/../tests/
+    # test_app.py` aside) is still that file's own test.
+    if norm.endswith("/" + name):
+        return True
+    # The planner derives these test files from the edited path, so running one
+    # is evidence for that path; running some other test file is not.
+    return norm in _infer_python_test_targets(pkg_root, pkg_root, rel)
+
+
+def _covered_paths(check: CheckSpec, cmd: str, workspace_root: str) -> tuple[str, ...]:
+    """Paths this command really covered: the check's, minus what it skipped.
+
+    A record that inherits its check's paths wholesale makes the path
+    intersection in `record_satisfies_check` vacuous, which is how a green run
+    of an unrelated test file ends up vouching for a file it never touched.
+
+    Only a provable exclusion narrows anything: a command must be a plain
+    argument list that names at least one specific file, and every one of those
+    files must be unrelated to the edited path. Anything ambiguous keeps full
+    coverage, so this can only ever hold the gate to a higher bar than before.
+    """
+    cmd = cmd or ""
+    if not workspace_root or any(op in cmd for op in _SHELL_OPS):
+        return check.affected_paths
+    targets = _file_targets(cmd)
+    if not targets:
+        return check.affected_paths
+    pkg_root = Path(workspace_root)
+    if check.package_root:
+        pkg_root = pkg_root / check.package_root
+    return tuple(
+        path
+        for path in check.affected_paths
+        if any(_runs_the_edit(path, target, pkg_root) for target in targets)
+    )
+
+
 def record_bash_check(
     collector: VerificationCollector,
     cmd: str,
@@ -1044,15 +1124,16 @@ def record_bash_check(
         return
     plan = collector.plan()
     matched = _match_bash_check(cmd, plan)
+    covered = _covered_paths(matched, cmd, collector.workspace_root) if matched else ()
     record = VerificationRecord(
         check=matched
         or CheckSpec(kind="project_test", command=cmd, affected_paths=(), artifact_kind="python"),
         command=cmd,
-        affected_paths=matched.affected_paths if matched else (),
+        affected_paths=covered,
         exit_status=exit_code,
         ok=ok and exit_code == 0,
         output_summary=preview,
-        satisfies=tuple(matched.affected_paths) if matched else (),
+        satisfies=covered,
     )
     collector._records.append(record)
     add_artifact("test", f"exit={exit_code}  {cmd[:80]}", ok=record.ok, detail=preview)

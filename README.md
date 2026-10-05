@@ -342,5 +342,5 @@ src/kite/
   eval.py                  # ReplayBundle + acceptance criteria (no live LLM)
   tasks.py                 # kite tasks / --headless batches
 scripts/                   # install + download (unix/win), sync_version.py, bump_release.sh
-tests/                     # pytest suite (~210 tests, no live LLM)
+tests/                     # pytest suite (no live LLM)
 ```

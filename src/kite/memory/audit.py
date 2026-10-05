@@ -42,13 +42,27 @@ class AuditLog:
         self.append("run", session_id=session_id, exit_status=exit_status, **extra)
 
     def tail(self, n: int = 20) -> list[dict[str, Any]]:
+        """Last ``n`` rows. A non-positive ``n`` means 'none'.
+
+        ``lines[-n:]`` treated ``n=0`` as "everything" and a negative ``n`` as a
+        slice that silently *drops* leading rows instead of returning nothing —
+        so a caller computing ``limit = len(rows) - n`` got an off-by-n log
+        window rather than an empty one.
+        """
+        if n <= 0:
+            return []
         if not self.path.is_file():
             return []
-        lines = self.path.read_text(encoding="utf-8").splitlines()
+        try:
+            lines = self.path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            return []
         out: list[dict[str, Any]] = []
         for line in lines[-n:]:
             try:
-                out.append(json.loads(line))
+                row = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if isinstance(row, dict):
+                out.append(row)
         return out

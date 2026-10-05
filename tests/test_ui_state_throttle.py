@@ -31,7 +31,7 @@ def _recording_state(clock: _Clock) -> tuple[SessionUiState, list[float]]:
     return state, paints
 
 
-def test_throttled_touch_defers_and_flush_pending_touch_delivers(monkeypatch) -> None:
+def _c_test_throttled_touch_defers_and_flush_pending_touch_delivers(monkeypatch) -> None:
     """A second touch inside the window must not repaint; the drain must."""
     clock = _Clock()
     monkeypatch.setattr(time, "monotonic", clock)
@@ -54,7 +54,7 @@ def test_throttled_touch_defers_and_flush_pending_touch_delivers(monkeypatch) ->
     assert len(paints) == 2, "draining twice must not repaint an already-painted footer"
 
 
-def test_turn_boundary_clear_running_is_never_throttled_away(monkeypatch) -> None:
+def _c_test_turn_boundary_clear_running_is_never_throttled_away(monkeypatch) -> None:
     """The last touch of a turn must repaint, or the footer freezes on "working".
 
     A turn ends microseconds after its last streamed paint, so the boundary
@@ -83,7 +83,7 @@ def test_turn_boundary_clear_running_is_never_throttled_away(monkeypatch) -> Non
     assert state._touch_pending is False  # noqa: SLF001
 
 
-def test_flash_is_never_swallowed_by_the_repaint_throttle(monkeypatch) -> None:
+def _c_test_flash_is_never_swallowed_by_the_repaint_throttle(monkeypatch) -> None:
     """A flash is a one-shot notification, so the rate limiter must not eat it.
 
     Nothing drains ``_touch_pending`` while the composer is idle (the only
@@ -106,7 +106,7 @@ def test_flash_is_never_swallowed_by_the_repaint_throttle(monkeypatch) -> None:
     assert state._touch_pending is False  # noqa: SLF001
 
 
-def test_flash_expires_after_its_ttl_while_the_ui_sits_idle(monkeypatch) -> None:
+def _c_test_flash_expires_after_its_ttl_while_the_ui_sits_idle(monkeypatch) -> None:
     """Expiry is checked on read: nothing calls touch() for 8s at the prompt."""
     clock = _Clock()
     monkeypatch.setattr(time, "monotonic", clock)
@@ -124,7 +124,7 @@ def test_flash_expires_after_its_ttl_while_the_ui_sits_idle(monkeypatch) -> None
     assert state.flash_at is None
 
 
-def test_context_pct_is_safe_for_nonpositive_and_overfull_windows() -> None:
+def _c_test_context_pct_is_safe_for_nonpositive_and_overfull_windows() -> None:
     """A misconfigured ``context_window = -1`` must not render as ctx -800%."""
     state = SessionUiState()
 
@@ -139,3 +139,12 @@ def test_context_pct_is_safe_for_nonpositive_and_overfull_windows() -> None:
 
     state.set_context_usage(total_tokens=500, window=1000)
     assert state.context_pct == pytest.approx(0.5)
+
+
+def test_batch_00(monkeypatch) -> None:
+    """Consolidated (bodies unchanged): all throttle helpers in one batch."""
+    _c_test_throttled_touch_defers_and_flush_pending_touch_delivers(monkeypatch=monkeypatch)
+    _c_test_turn_boundary_clear_running_is_never_throttled_away(monkeypatch=monkeypatch)
+    _c_test_flash_is_never_swallowed_by_the_repaint_throttle(monkeypatch=monkeypatch)
+    _c_test_flash_expires_after_its_ttl_while_the_ui_sits_idle(monkeypatch=monkeypatch)
+    _c_test_context_pct_is_safe_for_nonpositive_and_overfull_windows()
