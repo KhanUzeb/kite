@@ -417,8 +417,17 @@ def render_diff(
                     new_no=numbers[end_del + offset][1],
                     widths=widths,
                 )
-            for offset, rest in enumerate((*dels[pairs:], *adds[pairs:])):
-                base = idx + (end_del - idx - pairs) + offset
+            # Leftovers keep their own source rows: dels[pairs:] runs from
+            # idx + pairs and adds[pairs:] from end_del + pairs. Deriving the
+            # index from the leftovers themselves is what keeps this in range
+            # when the cap cuts a -/+ pair and leaves no adds to pair against.
+            leftover_bases = [
+                *(idx + pairs + o for o in range(len(dels) - pairs)),
+                *(end_del + pairs + o for o in range(len(adds) - pairs)),
+            ]
+            for base, rest in zip(
+                leftover_bases, (*dels[pairs:], *adds[pairs:]), strict=True
+            ):
                 _append_plain_line(
                     body,
                     rest,

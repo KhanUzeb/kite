@@ -7,6 +7,8 @@ from typing import Any
 
 from rich.text import Text
 
+from kite.ui.style import PREVIEW_LINES
+
 _ENVELOPE_KEYS = frozenset(
     {
         "ok",
@@ -105,8 +107,12 @@ def render_thinking_block(text: str) -> Text:
     return out
 
 
-def render_output_block(text: str, *, expanded: bool, limit: int = 12) -> Text:
-    """Full-width body — no extra gutter so drag-select and wrap stay even."""
+def render_output_block(text: str, *, expanded: bool, limit: int = PREVIEW_LINES) -> Text:
+    """Full-width body — no extra gutter so drag-select and wrap stay even.
+
+    The collapsed default is PREVIEW_LINES so a chatty tool does not bury the
+    reply; the marker names the command that brings the rest back.
+    """
     raw = format_viewable_output(text).rstrip("\n")
     if not raw:
         return Text()

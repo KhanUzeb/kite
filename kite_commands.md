@@ -274,7 +274,7 @@ These never go to the model.
 | `/cost` | Legacy alias → `/status` (includes cost) |
 | `/stop` | Stop the current turn; session stays open |
 | `/steer text` | Inject `text` into the running turn (queues when idle); the turn continues with the correction |
-| `/tasks` | Show the running turn and queued follow-ups |
+| `/tasks` | Show the running turn and queued follow-ups, plus the full itemized task checklist (the live line shows one compact row) |
 | `/goal [text]` | Persistent long-horizon objective (survives provider errors) |
 | `/goal` | View current goal status |
 | `/goal pause` / `/goal resume` / `/goal clear` | Pause, reactivate, or remove goal |

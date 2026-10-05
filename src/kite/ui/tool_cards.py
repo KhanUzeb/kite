@@ -10,7 +10,7 @@ from rich.text import Text
 
 from kite.tools.cues import tool_cue
 from kite.ui.diff import render_diff_stat
-from kite.ui.style import GUTTER, PANEL_BAR
+from kite.ui.style import GUTTER, PANEL_BAR, PREVIEW_LINES
 from kite.ui.theme import glyph
 
 
@@ -35,9 +35,14 @@ def render_code_edit_preview(
     tool: str,
     args: dict[str, Any],
     *,
-    max_lines: int = 16,
+    max_lines: int = PREVIEW_LINES,
 ) -> Text | None:
-    """Preview write/edit patches at tool start."""
+    """Preview write/edit patches at tool start.
+
+    The path + diff-stat header is metadata, so it always prints; only the body
+    honours ``max_lines``. A truncated body names ``/diff`` so the user knows
+    the rest is one command away instead of simply missing.
+    """
     path = str(args.get("path") or args.get("file_path") or "")
     if not path:
         return None
@@ -65,8 +70,11 @@ def render_code_edit_preview(
             block.append(f"{GUTTER}{TOOL_BAR}+ ", style="kite.diff.add")
             block.append(line + "\n", style="kite.diff.add")
         if len(lines) > max_lines:
+            # One printed row per raw content line, so the overflow is
+            # len(lines) - max_lines: the unfiltered count, matching the rows
+            # the loop above skipped.
             block.append(
-                f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines\n",
+                f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines  /diff\n",
                 style="kite.muted",
             )
         return block
@@ -88,15 +96,24 @@ def render_code_edit_preview(
             block.append(f"{GUTTER}{TOOL_BAR}+ ", style="kite.diff.add")
             block.append(line + "\n", style="kite.diff.add")
             shown += 1
+        # The budget spans both sides: `shown` filled from old then new, so the
+        # hidden count is the combined old+new total minus the rows printed.
         total = len(old_lines) + len(new_lines)
         if total > max_lines:
-            block.append(f"{GUTTER}{TOOL_BAR}… +{total - max_lines} lines\n", style="kite.muted")
+            block.append(
+                f"{GUTTER}{TOOL_BAR}… +{total - max_lines} lines  /diff\n",
+                style="kite.muted",
+            )
         return block
     return None
 
 
-def render_bash_command_block(command: str, *, max_lines: int = 8) -> Text:
-    """Terminal-style command preview for tool_start / approval."""
+def render_bash_command_block(command: str, *, max_lines: int = PREVIEW_LINES) -> Text:
+    """Terminal-style command preview for tool_start / approval.
+
+    Truncating a multi-line command is safe: the full text already lives in the
+    tool args the model sees, so these rows only need to orient the human.
+    """
     block = Text()
     lines = (command or "").strip().splitlines() or [""]
     shown = lines[:max_lines]
@@ -105,7 +122,10 @@ def render_bash_command_block(command: str, *, max_lines: int = 8) -> Text:
         block.append("$ ", style="kite.tool bold")
         block.append(cmd_line + "\n", style="kite.terminal")
     if len(lines) > max_lines:
-        block.append(f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines\n", style="kite.muted")
+        block.append(
+            f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines  /expand\n",
+            style="kite.muted",
+        )
     return block
 
 

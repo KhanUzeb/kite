@@ -2531,6 +2531,8 @@ class ChatSession:
             self._run_task(text)
 
     def _slash_tasks(self, _arg: str) -> None:
+        # Read-only: reports what is running and what the plan says, never mutates.
+        from kite.ui.chips import render_plan_tasks
         from kite.ui.status import active_task_count, format_running_status
 
         if self._busy:
@@ -2538,6 +2540,14 @@ class ChatSession:
             self.console.print(f"[kite.pending]running[/]  {running}")
         else:
             self.console.print("[kite.muted]nothing running[/]  — session stays open")
+        # The live line collapses the checklist to one row, so /tasks is the only
+        # way back to every item. chips names the count + progress bar already —
+        # no second summary line here or the count reads twice.
+        todos = self.state.todos
+        if todos:
+            self.console.print(render_plan_tasks(todos, compact=False))
+        else:
+            self.console.print("[kite.muted]no tasks[/]  ·  the model writes them with todo_write")
         if not self._inbox:
             from kite.ui.complete import busy_enter_queues_followup
 

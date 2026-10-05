@@ -40,7 +40,7 @@ Spacing
 -------
   gutter        2 spaces before body text
   cell indent   subsequent lines of a cell align under the glyph
-  collapse      first 4 lines, then dim "+N lines  /expand"
+  collapse      first 5 lines, then dim "+N lines  /expand"
   footer        one line, never wraps if terminal ≥ 80 cols
 """
 
@@ -108,7 +108,13 @@ SYMBOL_REASON = _Glyph("reason")
 
 CHANNEL_PREFIX = _ChannelPrefix()
 
-COLLAPSE_LINES = 12
+# Scroll-print budget per tool body. A turn that edits a big file used to paint
+# 16 preview lines at start and 40 diff rows at end; /diff or /expand shows the
+# rest, so the scrollback only needs enough to recognise what happened.
+PREVIEW_LINES = 5
+COLLAPSE_LINES = PREVIEW_LINES
+# Approval previews are a deliberate pause, not scrollback: keep the wider
+# window there so the user can judge the patch before answering.
 DIFF_PREVIEW_LINES = 40
 PREVIEW_FILE_MAX_BYTES = 64_000
 PREVIEW_CHUNK_BYTES = 65_536

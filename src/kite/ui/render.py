@@ -24,6 +24,7 @@ from kite.ui.style import (
     CHANNEL_PREFIX,
     COLLAPSE_LINES,
     GUTTER,
+    PREVIEW_LINES,
     SYMBOL_COLLAPSE,
     SYMBOL_COMPACT,
     SYMBOL_FAIL,
@@ -55,7 +56,17 @@ from kite.ui.tool_cards import (
     render_tool_summary,
 )
 
-_QUIET_START_TOOLS = frozenset({"read", "grep", "glob", "ls"})
+#: Tools whose start card carries no information the user acts on: the reads are
+#: implied by the answer, and the todo tools have the plan checklist as their UI.
+_QUIET_START_TOOLS = frozenset(
+    {"read", "grep", "glob", "ls", "todo_write", "todo_read"}
+)
+
+#: Tools whose payload is the plan checklist itself. ``todo_write`` and
+#: ``todo_read`` return the whole item list as their output body, so echoing it
+#: under the already-painted checklist prints the task list a second time (and
+#: the JSON again). The checklist IS the UI for these tools.
+_PLAN_ECHO_TOOLS = frozenset({"todo_write", "todo_read"})
 
 
 def _looks_like_turn_report(text: str) -> bool:
@@ -1012,7 +1023,8 @@ class RunDisplay:
         if key == self._last_todo_key:
             return
         self._last_todo_key = key
-        self._print()
+        # No leading blank row: the checklist is one compact line, so the gap
+        # would read as a section break the plan does not have.
         self._print(render_plan_tasks(self.state.todos, tick=self._anim_tick))
 
     def print_user_turn(self, task: str) -> None:
@@ -1301,6 +1313,11 @@ class RunDisplay:
             counted = count_diff_lines(diff)
             if counted[0] or counted[1]:
                 added, deleted = counted
+        # The plan tools return the checklist as their body, and their preview and
+        # summary are cut from it, so painting any of it here reprints the task list
+        # under the checklist that already shows it. The done card still paints, with
+        # the note withheld: status, timing, and exit code are what the user needs.
+        echo_plan = tool in _PLAN_ECHO_TOOLS
         self._print(
             render_tool_card_done(
                 tool,
@@ -1309,8 +1326,8 @@ class RunDisplay:
                 meta=meta,
                 added=added,
                 deleted=deleted,
-                preview=preview,
-                summary=summary,
+                preview="" if echo_plan else preview,
+                summary="" if echo_plan else summary,
             )
         )
         output = str(p.get("output") or "")
@@ -1319,12 +1336,19 @@ class RunDisplay:
             summary=summary,
             line_count=line_count_from_output(output) if tool == "read" else None,
         )
-        if summary_line is not None and (added is None and deleted is None):
+        if not echo_plan and summary_line is not None and (added is None and deleted is None):
             self._print(summary_line)
 
         if isinstance(diff, str) and diff.strip():
-
-            self._print(render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all)))
+            # Scroll-print budget, not the 40-line approval budget: a full diff in
+            # scrollback pushes every earlier cell out of view.
+            self._print(
+                render_diff(
+                    diff,
+                    collapsed=not (self.verbose or self.state.expanded_all),
+                    max_lines=PREVIEW_LINES,
+                )
+            )
         elif not ok:
             err = str(p.get("error") or p.get("output") or "")
             if err:
@@ -1337,9 +1361,11 @@ class RunDisplay:
         else:
             redacted = p.get("secrets_redacted")
             expanded = self.verbose or self.state.expanded_all
-            collapsed = _collapse_text(output, expanded=expanded)
-            if collapsed.plain:
-                self._print(collapsed)
+            # echo_plan has no body worth showing: the checklist is already on screen.
+            if not echo_plan:
+                collapsed = _collapse_text(output, expanded=expanded)
+                if collapsed.plain:
+                    self._print(collapsed)
             if redacted:
                 self._print(Text(f"{GUTTER}{GUTTER}· {redacted} secret(s) hidden", style="kite.muted"))
         # The next model call starts here — hand the spinner straight over so the
@@ -1435,8 +1461,14 @@ class RunDisplay:
         if path:
             self._print(Text(f"{GUTTER}{path}", style="kite.muted"))
         if diff:
+            # Same scroll-print budget as tool_end: a diff event is not an
+            # approval preview, so it gets PREVIEW_LINES and not DIFF_PREVIEW_LINES.
             self._print(
-                render_diff(diff, collapsed=not (self.verbose or self.state.expanded_all))
+                render_diff(
+                    diff,
+                    collapsed=not (self.verbose or self.state.expanded_all),
+                    max_lines=PREVIEW_LINES,
+                )
             )
 
     def _on_context(self, p: dict[str, Any]) -> None:
