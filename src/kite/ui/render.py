@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from rich.console import Console
@@ -82,6 +83,42 @@ _STREAM_TAIL_CHARS = 1200
 #: replaced by an explicit marker (path/size/tail pattern) instead of a raw
 #: dump that flickers and floods scrollback.
 _MAX_FENCE_STREAM_CHARS = 4_000
+
+
+#: Hard cap on the payload /last will hold for one tool call. The record is
+#: kept for the whole session (there is exactly one), so a runaway tool must
+#: not be able to pin a multi-megabyte string in memory indefinitely. Anything
+#: past the cap is dropped from the tail and noted in the retrieval header.
+_LAST_TOOL_CHARS = 200_000
+
+
+@dataclass(frozen=True, slots=True)
+class LastToolView:
+    """Full record of the most recent tool call, for ``/last``.
+
+    The scroll path prints only PREVIEW_LINES rows, so the rest of a big body
+    or diff is gone from the terminal by the time the user notices it. This
+    keeps the untruncated payloads so ``/last`` can re-print them through the
+    same renderers at full size. Read-only: nothing here feeds the agent.
+    """
+
+    tool: str = ""
+    ok: bool = True
+    warn: bool = False
+    output: str = ""
+    diff: str = ""
+    error: str = ""
+    duration_ms: int | None = None
+    exit_code: int | None = None
+    truncated: bool = False
+
+
+def _bound_payload(text: str) -> tuple[str, bool]:
+    """Clamp a tool payload to :data:`_LAST_TOOL_CHARS`, keeping the head."""
+    raw = text or ""
+    if len(raw) <= _LAST_TOOL_CHARS:
+        return raw, False
+    return raw[:_LAST_TOOL_CHARS], True
 
 
 def _already_shown(text: str, tail: str) -> bool:
@@ -459,6 +496,9 @@ class RunDisplay:
         self._answer_col = 0
         self._thinking_col = 0
         self._answer_hold = ""
+        # One record only, overwritten per tool_end: the retrieval target for
+        # /last. See LastToolView for why the payload is bounded.
+        self._last_tool_view: LastToolView | None = None
         self._pending_tool_name: str | None = None
         self._pending_tool_args: str = ""
         self._last_todo_key: str = ""
@@ -1368,6 +1408,22 @@ class RunDisplay:
                     self._print(collapsed)
             if redacted:
                 self._print(Text(f"{GUTTER}{GUTTER}· {redacted} secret(s) hidden", style="kite.muted"))
+        # Keep the full payload for /last: the scroll path above just truncated
+        # it to PREVIEW_LINES, and /expand only affects FUTURE calls, so without
+        # this the hidden rows are unrecoverable from the terminal.
+        output_full, out_cut = _bound_payload(output)
+        diff_full, diff_cut = _bound_payload(str(diff) if isinstance(diff, str) else "")
+        self._last_tool_view = LastToolView(
+            tool=tool,
+            ok=bool(ok),
+            warn=blocked,
+            output=output_full,
+            diff=diff_full,
+            error=str(p.get("error") or ""),
+            duration_ms=p.get("duration_ms"),
+            exit_code=exit_code,
+            truncated=out_cut or diff_cut,
+        )
         # The next model call starts here — hand the spinner straight over so the
         # UI never sits dead between a finished tool and the next generation.
         # _spin routes by ownership: footer label when busy, thread otherwise.

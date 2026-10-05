@@ -791,9 +791,12 @@ def _toolbar_html(state: SessionUiState) -> Any:
 
     tail = format_status_tail(state)
     flash = ""
-    if state.flash:
+    # active_flash expires on read: this toolbar renders per keystroke, so a
+    # flash set at an idle prompt still ages out instead of lingering forever.
+    flash_text = state.active_flash
+    if flash_text:
         flash = (
-            f"  {glyph('sep')} <style fg='{ui.accent}'><b>{_escape_html(state.flash)}</b></style>"
+            f"  {glyph('sep')} <style fg='{ui.accent}'><b>{_escape_html(flash_text)}</b></style>"
         )
     hints = _toolbar_hint_line(_toolbar_busy_bits(state)) if state.busy else ""
     main = (

@@ -36,7 +36,7 @@ from kite.ui.inbox import MessageInbox
 from kite.ui.render import RunDisplay, render_compact_boundary, render_startup_card
 from kite.ui.state import SessionUiState
 from kite.ui.status import render_status
-from kite.ui.style import SYMBOL_FAIL, SYMBOL_PROMPT, make_console
+from kite.ui.style import GUTTER, SYMBOL_FAIL, SYMBOL_PROMPT, make_console
 from kite.ui.tables import kite_table
 
 _GENERIC_LAUNCHERS = ("__main__", "pytest", "python", "uv", "_pytest", "-c")
@@ -1680,6 +1680,7 @@ class ChatSession:
             "approve": self._slash_approve,
             "restricted": self._slash_restricted,
             "expand": self._slash_expand,
+            "last": self._slash_last,
             "live": self._slash_live,
             "expand-thinking": self._slash_expand_thinking,
             "collapse": self._slash_collapse,
@@ -1898,6 +1899,61 @@ class ChatSession:
         self.state.expanded_all = not self.state.expanded_all
         mode = "expanded" if self.state.expanded_all else "collapsed"
         self.console.print(f"[kite.muted]tool output {mode}[/]  (/expand to toggle)")
+
+    def _slash_last(self, _arg: str) -> None:
+        """Re-print the last tool call's full body or diff.
+
+        The scroll path truncates every tool payload to PREVIEW_LINES rows, and
+        /expand only changes what FUTURE calls look like — so a body cut three
+        turns ago cannot come back from the terminal on its own. This reads the
+        record RunDisplay kept at tool_end and paints it through the same
+        renderers at full size (no collapse, no line cap). Strictly read-only:
+        no state mutation, no provider call.
+        """
+        from kite.ui.diff import render_diff
+        from kite.ui.output_view import format_viewable_output
+        from kite.ui.render import _tool_meta
+
+        record = getattr(self.display, "_last_tool_view", None)
+        if record is None:
+            self.console.print("[kite.muted]no tool output yet[/]")
+            return
+
+        status = "warn" if record.warn else ("ok" if record.ok else "failed")
+        header = f"{GUTTER}{escape(str(record.tool or 'tool'))}  ·  {status}"
+        meta = _tool_meta(record.duration_ms, record.exit_code)
+        if meta:
+            header += f"  ·  {meta}"
+        if record.truncated:
+            header += "  ·  [payload capped]"
+        self.console.print(
+            Text(header, style="kite.muted"), highlight=False, markup=False
+        )
+
+        painted = False
+        if record.diff.strip():
+            # collapsed=False and no max_lines: the whole patch is the point.
+            self.console.print(render_diff(record.diff, collapsed=False))
+            painted = True
+        if record.output.strip():
+            # format_viewable_output, not render_output_block: the block caps at
+            # PREVIEW_LINES and appends a /expand marker, which is what /last
+            # exists to avoid.
+            body = format_viewable_output(record.output).rstrip("\n")
+            if body:
+                self.console.print(
+                    Text(body, style="kite.terminal"), highlight=False, markup=False
+                )
+                painted = True
+        if not painted:
+            err = (record.error or "").strip()
+            if err:
+                self.console.print(
+                    Text(err, style="kite.error"), highlight=False, markup=False
+                )
+                painted = True
+        if not painted:
+            self.console.print("[kite.muted](no output recorded)[/]")
 
     def _slash_live(self, arg: str) -> None:
         parts = (arg or "").strip().lower().split()

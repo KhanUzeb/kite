@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from kite.config import UserConfig, kite_home
-from kite.memory.session import _read_session_meta, sessions_dir
+from kite.memory.session import _read_session_meta, _trajectory_path, sessions_dir
 
 _FAILED_STATUSES = frozenset(
     {
@@ -242,16 +242,6 @@ def _merge_sidecar(stats: SessionStats, sidecar: SessionStats) -> None:
             setattr(stats, attr, val)
 
 
-def _trajectory_path(session_id: str) -> Path:
-    from kite.memory.secure_io import storage_id
-
-    root = (kite_home() / "trajectories").resolve()
-    path = (root / f"{storage_id(session_id, label='session id')}.json").resolve()
-    if not path.is_relative_to(root):
-        raise ValueError("invalid session id")
-    return path
-
-
 def _merge_trajectory(stats: SessionStats) -> None:
     path = _trajectory_path(stats.session_id)
     if not path.is_file():
@@ -269,7 +259,14 @@ def _merge_trajectory(stats: SessionStats) -> None:
         return
 
 
-def _apply_event(stats: SessionStats, kind: str, payload: dict[str, Any]) -> None:
+def _apply_event(
+    stats: SessionStats,
+    kind: str,
+    payload: dict[str, Any],
+    *,
+    seen_checkpoints: set[str] | None = None,
+) -> None:
+    seen = seen_checkpoints if seen_checkpoints is not None else set()
     if kind == "tool_end":
         stats.tool_calls += 1
         tool = str(payload.get("tool") or "unknown")
@@ -310,6 +307,15 @@ def _apply_event(stats: SessionStats, kind: str, payload: dict[str, Any]) -> Non
     elif kind == "subagent_start":
         stats.subagent_runs += 1
     elif kind == "checkpoint":
+        # The production save path writes one checkpoint twice: a
+        # context_checkpoint row and a checkpoint event carrying the same id.
+        # Count the id once so the dashboard does not double-report; an event with
+        # no matching row still counts, so no checkpoint silently disappears.
+        cp_id = str(payload.get("id") or payload.get("checkpoint_id") or "")
+        if cp_id:
+            if cp_id in seen:
+                return
+            seen.add(cp_id)
         stats.checkpoints += 1
     elif kind == "approval":
         stats.approvals += 1
@@ -331,22 +337,34 @@ def scan_session_file(path: Path) -> SessionStats | None:
         cwd=meta.cwd,
         exit_status=meta.exit_status,
     )
+    seen_checkpoints: set[str] = set()
     try:
-        with path.open(encoding="utf-8") as f:
+        with path.open(encoding="utf-8", errors="replace") as f:
             for line in f:
                 if not line.strip():
                     continue
-                row = json.loads(line)
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    # Torn final line from a crash mid-append — keep the prefix.
+                    continue
+                if not isinstance(row, dict):
+                    # Valid JSON but not a row (e.g. a stray array); skip it the
+                    # way session.py's loader does instead of raising on .get().
+                    continue
                 rtype = row.get("type")
                 if rtype == "message":
                     stats.message_count += 1
                 elif rtype == "context_checkpoint":
+                    cp_id = str(row.get("checkpoint_id") or "")
+                    if cp_id:
+                        seen_checkpoints.add(cp_id)
                     stats.checkpoints += 1
                 elif rtype == "event":
                     kind = str(row.get("kind") or "")
                     payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-                    _apply_event(stats, kind, payload)
-    except (OSError, json.JSONDecodeError):
+                    _apply_event(stats, kind, payload, seen_checkpoints=seen_checkpoints)
+    except OSError:
         pass
 
     sidecar = load_session_stats(meta.id)
@@ -360,12 +378,15 @@ def list_session_events(path: Path, *, limit: int = 20) -> list[dict[str, Any]]:
     """Recent durable events for session drill-down."""
     rows: list[dict[str, Any]] = []
     try:
-        with path.open(encoding="utf-8") as f:
+        with path.open(encoding="utf-8", errors="replace") as f:
             for line in f:
                 if not line.strip():
                     continue
-                row = json.loads(line)
-                if row.get("type") != "event":
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict) or row.get("type") != "event":
                     continue
                 rows.append(
                     {
@@ -374,7 +395,7 @@ def list_session_events(path: Path, *, limit: int = 20) -> list[dict[str, Any]]:
                         "payload": row.get("payload") if isinstance(row.get("payload"), dict) else {},
                     }
                 )
-    except (OSError, json.JSONDecodeError):
+    except OSError:
         return []
     return rows[-limit:]
 

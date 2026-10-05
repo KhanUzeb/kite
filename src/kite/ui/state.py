@@ -10,6 +10,9 @@ from kite.agent.mode import AgentMode, ApprovalMode
 
 TodoStatus = Literal["pending", "in_progress", "completed"]
 
+# One TTL for the read-path and the touch-path check so the two cannot drift.
+_FLASH_TTL_S = 8.0
+
 
 @dataclass
 class TodoItem:
@@ -120,8 +123,12 @@ class SessionUiState:
         else:
             self.flash = ""
             self.flash_at = None
+        # Forced: a flash is a one-shot notification, not a stream sample. At
+        # the prompt the repaint throttle can swallow it — nothing drains
+        # _touch_pending while idle — so the footer would never show it.
+        self.touch(force=True)
 
-    def maybe_clear_flash(self, ttl: float = 8.0) -> None:
+    def maybe_clear_flash(self, ttl: float = _FLASH_TTL_S) -> None:
         if not self.flash or self.flash_at is None:
             return
         import time
@@ -129,6 +136,18 @@ class SessionUiState:
         if time.monotonic() - self.flash_at > ttl:
             self.flash = ""
             self.flash_at = None
+
+    @property
+    def active_flash(self, ttl: float = _FLASH_TTL_S) -> str:
+        """Live flash for renderers — expiry checked on read, not just on touch.
+
+        ``touch()`` only runs while something is painting, so a flash set at an
+        idle prompt outlived its TTL and stayed on the footer indefinitely. The
+        toolbar renders on every keystroke, so checking here expires it the
+        moment it is actually looked at.
+        """
+        self.maybe_clear_flash(ttl)
+        return self.flash
 
     def set_running(self, *, label: str, kind: str = "tool") -> None:
         from datetime import datetime
@@ -146,7 +165,12 @@ class SessionUiState:
         self.running_since = ""
         self.running_kind = ""
         self.activity_preview = ""
-        self.touch()
+        # Forced: this is a turn/idle boundary, not a stream sample. The only
+        # flush_pending_touch() call lives in the busy-turn pollers, which have
+        # already stopped by the time the boundary runs — a throttled touch
+        # here leaves the footer frozen on the last "working" line until the
+        # user types something.
+        self.touch(force=True)
 
     def set_activity_preview(self, line: str) -> None:
         from kite.ui.status import sanitize_status_text
@@ -232,7 +256,10 @@ class SessionUiState:
 
     @property
     def context_pct(self) -> float | None:
-        if not self.window:
+        # Non-positive, not just zero: a misconfigured context_window must read
+        # as "unknown" — dividing by it yields ctx -800%, and negative totals
+        # would put the meter's fill count below zero.
+        if self.window <= 0 or self.tokens < 0:
             return None
         return min(1.0, self.tokens / self.window)
 

@@ -638,9 +638,46 @@ def latest_session_for_cwd(cwd: str, *, limit: int = 50) -> SessionMeta | None:
     return rows[0] if rows else None
 
 
+def _session_recency(path: Path) -> float:
+    """Cheap newest-activity proxy: newest mtime of transcript and .meta sidecar.
+
+    Every writer stamps ``updated_at = time.time()`` and then touches the sidecar
+    and/or the transcript (append → both, note_runtime → sidecar only), so the
+    effective ``updated_at`` that :func:`_session_updated_at` resolves is never
+    newer than this key. That lets :func:`list_sessions` prefilter on ``stat()``
+    and parse meta only for the head it can actually return.
+    """
+    newest = 0.0
+    for probe in (path, _meta_sidecar(path)):
+        try:
+            newest = max(newest, probe.stat().st_mtime)
+        except OSError:
+            continue
+    return newest
+
+
+# Head slack over ``limit``: covers candidates whose meta will not parse and
+# coarse-filesystem mtime ties at the cut, so the head can never come up short.
+_META_PARSE_SLACK = 32
+
+
 def list_sessions(*, limit: int = 30, query: str = "") -> list[SessionMeta]:
+    """Newest sessions first — ordered by ``updated_at``, not ``created_at``.
+
+    A query has to read every transcript (any old session may match), but the
+    bare path is a REPL/dashboard hot loop, so it prefilters candidates by file
+    mtime and parses meta for a bounded head only.
+    """
+    if limit <= 0:
+        return []
+    folder = sessions_dir()
+    if query:
+        paths = sorted(folder.glob("*.jsonl"))
+    else:
+        ranked = sorted(folder.glob("*.jsonl"), key=_session_recency, reverse=True)
+        paths = ranked[: limit + _META_PARSE_SLACK]
     rows: list[SessionMeta] = []
-    for path in sessions_dir().glob("*.jsonl"):
+    for path in paths:
         meta = _read_session_meta(path)
         if meta is not None:
             rows.append(meta)
@@ -669,11 +706,28 @@ def _trajectory_path(session_id: str) -> Path:
     return path
 
 
+def _drop_session_sidecars(path: Path, session_id: str) -> None:
+    """Remove every non-transcript file keyed by ``session_id``.
+
+    Without this, each deleted session leaks its ``.meta`` and ``.stats.json``
+    sidecars under sessions/ forever. ``session_analytics`` is imported here
+    (not at module scope) because it imports ``_read_session_meta`` from this
+    module — a module-scope import would be a cycle.
+    """
+    from kite.memory.session_analytics import _stats_sidecar
+
+    _meta_sidecar(path).unlink(missing_ok=True)
+    try:
+        _stats_sidecar(session_id).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def delete_session(session_id: str) -> DeletedSession:
     path = resolve_session_path(session_id, unique=True)
     sid = path.stem
     path.unlink(missing_ok=True)
-    _meta_sidecar(path).unlink(missing_ok=True)
+    _drop_session_sidecars(path, sid)
     traj = _trajectory_path(sid)
     traj_ok = False
     if traj.is_file():
@@ -684,13 +738,14 @@ def delete_session(session_id: str) -> DeletedSession:
 
 def delete_all_sessions() -> list[DeletedSession]:
     deleted: list[DeletedSession] = []
-    for path in sorted(sessions_dir().glob("*.jsonl")):
+    folder = sessions_dir()
+    for path in sorted(folder.glob("*.jsonl")):
         sid = path.stem
         try:
             path.unlink()
-            _meta_sidecar(path).unlink(missing_ok=True)
         except OSError:
             continue
+        _drop_session_sidecars(path, sid)
         traj = _trajectory_path(sid)
         traj_ok = False
         if traj.is_file():
@@ -700,7 +755,29 @@ def delete_all_sessions() -> list[DeletedSession]:
             except OSError:
                 pass
         deleted.append(DeletedSession(id=sid, session=True, trajectory=traj_ok))
+    _reap_orphan_sidecars(folder)
     return deleted
+
+
+def _reap_orphan_sidecars(folder: Path) -> None:
+    """Drop ``.meta`` / ``.stats.json`` files whose transcript is already gone.
+
+    Pre-fix deletes (and crashes between unlinks) left these behind, and the
+    ``*.jsonl`` glob above can never reach them. Sidecar names are derived from
+    live stems rather than stripped off, so an id that itself ends in ``.meta``
+    cannot make its own live sidecar look orphaned.
+    """
+    keep: set[str] = set()
+    for stem in (p.stem for p in folder.glob("*.jsonl")):
+        keep.add(_meta_sidecar(folder / f"{stem}.jsonl").name)
+        keep.add(f"{stem}.stats.json")
+    for side in (*folder.glob("*.meta"), *folder.glob("*.stats.json")):
+        if side.name in keep:
+            continue
+        try:
+            side.unlink(missing_ok=True)
+        except OSError:
+            continue
 
 
 def prune_sessions(keep: int = 20) -> list[DeletedSession]:

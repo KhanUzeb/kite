@@ -109,8 +109,9 @@ SYMBOL_REASON = _Glyph("reason")
 CHANNEL_PREFIX = _ChannelPrefix()
 
 # Scroll-print budget per tool body. A turn that edits a big file used to paint
-# 16 preview lines at start and 40 diff rows at end; /diff or /expand shows the
-# rest, so the scrollback only needs enough to recognise what happened.
+# 16 preview lines at start and 40 diff rows at end; /last re-prints the last
+# tool call in full and /expand widens later ones, so the scrollback only needs
+# enough to recognise what happened.
 PREVIEW_LINES = 5
 COLLAPSE_LINES = PREVIEW_LINES
 # Approval previews are a deliberate pause, not scrollback: keep the wider

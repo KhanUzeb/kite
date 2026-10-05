@@ -40,7 +40,7 @@ def render_code_edit_preview(
     """Preview write/edit patches at tool start.
 
     The path + diff-stat header is metadata, so it always prints; only the body
-    honours ``max_lines``. A truncated body names ``/diff`` so the user knows
+    honours ``max_lines``. A truncated body names ``/last`` so the user knows
     the rest is one command away instead of simply missing.
     """
     path = str(args.get("path") or args.get("file_path") or "")
@@ -74,7 +74,7 @@ def render_code_edit_preview(
             # len(lines) - max_lines: the unfiltered count, matching the rows
             # the loop above skipped.
             block.append(
-                f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines  /diff\n",
+                f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines  /last\n",
                 style="kite.muted",
             )
         return block
@@ -101,7 +101,7 @@ def render_code_edit_preview(
         total = len(old_lines) + len(new_lines)
         if total > max_lines:
             block.append(
-                f"{GUTTER}{TOOL_BAR}… +{total - max_lines} lines  /diff\n",
+                f"{GUTTER}{TOOL_BAR}… +{total - max_lines} lines  /last\n",
                 style="kite.muted",
             )
         return block
@@ -123,7 +123,7 @@ def render_bash_command_block(command: str, *, max_lines: int = PREVIEW_LINES) -
         block.append(cmd_line + "\n", style="kite.terminal")
     if len(lines) > max_lines:
         block.append(
-            f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines  /expand\n",
+            f"{GUTTER}{TOOL_BAR}… +{len(lines) - max_lines} lines  /last\n",
             style="kite.muted",
         )
     return block
