@@ -85,6 +85,28 @@ def _apply_sidecar_identity(meta: SessionMeta, sidecar: dict[str, Any]) -> None:
             setattr(meta, key, value)
 
 
+def _clamp_updated_to_recency(path: Path, updated_at: float) -> float:
+    """Cap a resolved ``updated_at`` at the file-mtime recency key.
+
+    Writers stamp ``time.time()`` and *then* touch the transcript/sidecar, so
+    on coarse filesystems (Windows truncates) the stamp can read a fraction of
+    a microsecond newer than its own files. Every store-wide ranking
+    (``_ranked_transcripts``, ``_session_recency``) keys on mtimes, so an
+    unclamped stamp breaks the "rank never falls behind ordering" invariant
+    and a bounded head can drop the newest session. Clamping keeps one
+    consistent recency everywhere meta is resolved.
+    """
+    try:
+        recency = _session_recency(path)
+    except OSError:
+        return updated_at
+    # recency is 0.0 (not an error) when both files are gone mid-read — keep
+    # the stamp rather than zeroing it on a TOCTOU race.
+    if recency > 0.0 and updated_at > recency:
+        return recency
+    return updated_at
+
+
 def _read_session_meta(path: Path) -> SessionMeta | None:
     try:
         _, first_line = _read_first_line_bytes(path)
@@ -102,6 +124,7 @@ def _read_session_meta(path: Path) -> SessionMeta | None:
             if isinstance(stamp, (int, float)):
                 meta.updated_at = float(stamp)
             _apply_sidecar_identity(meta, sidecar)
+        meta.updated_at = _clamp_updated_to_recency(path, meta.updated_at)
         return meta
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
@@ -112,8 +135,8 @@ def _session_updated_at(path: Path, meta: SessionMeta) -> float:
     if sidecar is not None:
         stamp = sidecar.get("updated_at")
         if isinstance(stamp, (int, float)):
-            return float(stamp)
-    return meta.updated_at
+            return _clamp_updated_to_recency(path, float(stamp))
+    return _clamp_updated_to_recency(path, meta.updated_at)
 
 
 def session_runtime_overlay(path: Path) -> dict[str, Any]:
