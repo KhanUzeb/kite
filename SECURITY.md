@@ -65,6 +65,14 @@ session_persistence = "redacted"  # full | redacted | disabled (default: redacte
 
 Redaction uses the same recursive sanitizer as audit logs and event persistence. Sensitive key names (token, password, authorization, etc.) and inline patterns (Bearer tokens, cookies, PKCE verifiers) are replaced with `[REDACTED]`.
 
+### Atomic writes
+
+Secure replacement writes (sessions, sidecars, and memory) create a temporary file in the destination directory with mode `0600` **from creation**, write and flush it, `fsync` the file, then atomically replace the destination. A failed write, flush, sync, or replace attempts to remove the temporary file and propagates the error; `fsync` failure is not reported as a successful save. The old destination remains intact before replacement. This is file-content synchronization, not a guarantee that the parent directory has been fsynced.
+
+## Runtime trace files
+
+Opt-in trace files are opened for append with mode `0600`, including tightening an existing file's permissions. Payloads use recursive secret redaction **before** the 4,096-character per-field cap; oversized structured fields become bounded JSON previews. Traces remain pattern-redacted diagnostics, not a safe channel for arbitrary confidential data. They are line-buffered live logs, not atomic replacements or per-event fsync writes. See [`KITE_TRACE_JSONL`](kite_commands.md#runtime-event-tracing) for usage and failure handling.
+
 ## Skill trust model
 
 Skills are model instructions — treat them as a supply-chain / prompt-injection boundary.
@@ -97,7 +105,7 @@ Files under `~/.kite/memory/` (`USER.md`, `PROFILE.md`, `WORKING.md`, `MEMORY.md
 | Nested tools | No `subagent` recursion; no `memory` writes from nested workers |
 | Live crew UI | `/live agents` redacts streamed output and prompt previews |
 
-Background job output (`job_output`) is redacted before display, matching foreground bash streaming.
+Background job output follows the [bounded output capture](#bounded-output-capture) rules below.
 
 ## Project trust
 
@@ -114,6 +122,13 @@ Trusted projects skip nested-agent approval prompts in `auto`, `trust`, and `yol
 ## Child process environment
 
 Before spawning subprocesses, Kite filters credential-like keys from the parent environment. Keys passed via `extra` env overrides that match sensitive patterns (e.g. `OPENAI_API_KEY`, `GITHUB_TOKEN`) are **refused** — they cannot reintroduce secrets after filtering.
+
+## Bounded output capture
+
+- `ProcessRunner` drains stdout and stderr concurrently, retaining at most `max_output_bytes` per stream (default 256,000 bytes), plus an explicit truncation notice. It keeps draining after the cap so a full pipe cannot deadlock the child.
+- Foreground shell and background-job capture are bounded too: newline-free output cannot bypass the cap. Oversized lines are omitted **whole** with an omitted-line notice, rather than exposing a partial unredacted secret. Accepted lines are redacted before byte truncation, streaming, or retention; clipped output carries a truncation notice.
+- `grep` filters sensitive-file matches **and context**, and redacts snippets before truncation. Redaction's literal prefilters skip irrelevant pattern scans without weakening the matching rules.
+
 
 ## Subprocess teardown
 

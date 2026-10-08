@@ -59,6 +59,8 @@ Deeper references: [kite_commands.md](kite_commands.md) (CLI/REPL) · [CONTEXT.m
 
 **Layer rule:** `agent/` must not import Rich or prompt_toolkit. `ui/` subscribes to events; `ApplicationRunService` (0.9) or `AgentRuntime` wires everything.
 
+`kite.ui` is a lightweight package, not a renderer facade: it no longer re-exports `RunDisplay`, `make_run_display`, `SessionUiState`, or `make_console`. The `make_run_display` factory is removed; construct `RunDisplay` from `kite.ui.render` directly. Import state from `kite.ui.state` and consoles from `kite.ui.style`. REPL startup defers prompt_toolkit/composer imports until needed.
+
 ---
 
 ## Request lifecycle
@@ -74,6 +76,13 @@ Deeper references: [kite_commands.md](kite_commands.md) (CLI/REPL) · [CONTEXT.m
 6. **Render** — `RunDisplay` in `ui/render.py` maps events to chips, diffs, spinner, footer meter.
 
 Exit paths: **`submit`** tool or bash submit marker, step/cost/time limits, user interrupt (Ctrl+C), submit blocked (verification), or unrecoverable format errors.
+
+### Startup and request work
+
+- Model resolution checks the configured default before probing subscription CLIs. `LitellmModel` construction does no capability-metadata lookup or network work; reasoning and parallel-tool capabilities are detected on the first relevant request and cached per instance. LiteLLM prewarming runs in the background while project context is assembled.
+- Append-only history uses incremental token accounting. Prompt-cache preparation no longer memoizes whole transcripts with a lossy key: repeated tool output must not resend stale or missing turns, even when prompt caching is disabled.
+- UI stream accumulation avoids repeated whole-buffer joins. Path completion uses `scandir` and a bounded top-40 selection; pickers cache filtered rows.
+
 
 ---
 
@@ -121,6 +130,8 @@ Two separate systems:
 
 **Project context (once per run)** — Injected into the system prompt: repo tree, **repo map** (symbols; git-changed first), git status, `AGENTS.md` / `KITE.md`, plus **execution context** (`project_root`, `execution_cwd`, `execution_mode`). Cached briefly; not re-summarized each turn.
 
+Repo maps and directory sketches use bounded `scandir` walks (6,000 entries / 600 source candidates), prune ignored directories, and never follow directory symlinks. Discovery includes the symbol map directly; the former circular import no longer silently disables it. Toolchain detection preserves the project's virtualenv interpreter path rather than dereferencing it to the base Python.
+
 **Transcript compaction (each turn)** — Two window-relative clauses, whichever fires first:
 
 1. **Ratio clause** — `usage.ratio >= scale_compact_ratio(window)`.
@@ -148,6 +159,8 @@ Once triggered:
 **Manual:** `/compact` uses the same `run_compaction()` path as the loop. `/checkpoint save|restore` for named snapshots. `/handoff` exports `.kite/handoff-*` for another agent.
 
 Config: `~/.kite/config.toml` — `auto_compact`, `compaction_*` (`0` = auto, see the table above), `[guardrails] execution_mode = restricted|host`.
+
+Session appends leave the JSONL header alone; the `.meta` sidecar is authoritative for update timestamps and runtime identity. Tail resume avoids loading a whole oversized row, recent events are read in reverse, and semantic-memory prompt rendering is lazy. Episodic SQLite lock contention is not corruption: only genuine corruption quarantines the database. Recovery behavior is documented in [the session commands](kite_commands.md#1-cli).
 
 ---
 
@@ -185,11 +198,17 @@ Single slash registry: `ui/commands.py` (`BUILTINS` / `ALIASES` / `LEGACY_ALIASE
 
 **User context** — `USER.md` + `PROFILE.md` + `WORKING.md` under `~/.kite/memory/` only; injected as untrusted soft context on the main agent, skipped for nested subagents.
 
+`grep` streams ripgrep output instead of capturing it all; its Python fallback prunes cache directories and honors context. See [tool behavior](kite_commands.md#4-agent-tools-model-called-not-typed-by-you) and [capture security](SECURITY.md#bounded-output-capture).
+
+Shell/job completion is event-driven. `BackgroundJob.wait(timeout) -> bool` waits for terminal status and output, returning `False` on timeout rather than polling. User-facing job behavior is documented in [the tool reference](kite_commands.md#4-agent-tools-model-called-not-typed-by-you).
+
 ---
 
 ## Event-driven UI
 
 The agent emits events; the UI never polls internal state. Event sequencing and in-memory sinks are synchronized, and observer failures are isolated from the control loop. High-frequency stream text is coalesced by the UI; the canonical final submission replaces provisional output to prevent duplicate or contradictory answers.
+
+The optional JSONL trace sink attaches to `AgentRuntime`'s existing event fan-out, before UI coalescing, for REPL, one-shot, and task runs. `KITE_TRACE_JSONL` is read once at runtime construction; disabled tracing installs no listener and adds no per-event environment lookup. See [trace usage and record format](kite_commands.md#runtime-event-tracing) and [privacy guarantees](SECURITY.md#runtime-trace-files).
 
 | Event | UI effect |
 |-------|-----------|
@@ -227,7 +246,7 @@ Streaming uses stderr for loaders; stdout stays clean for copy/paste.
 
 ## Testing & CI
 
-- **Local:** `pytest` from repo root (~210 tests, no live LLM; `KITE_HOME` isolated in fixtures). Layout: `tests/README.md`.
+- **Local:** `pytest` from repo root; see the [test policy](AGENTS.md#tests--ci) and [suite layout](tests/README.md).
 - **CI:** `.github/workflows/tests.yml` — Linux and Windows × Python 3.11/3.12: `sync_version --check`, `ruff check src tests`, `pytest -q`, `kite bench --check`.
 
 Focus areas: guardrails/SSRF, approval, agent loop, sessions, CLI/REPL, credentials/BYOS.

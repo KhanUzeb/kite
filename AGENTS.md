@@ -39,9 +39,9 @@ src/kite/
   commands/       Markdown slash prompt loader
   plugins/        .kite/plugins discovery + extensions loader (register_tool → Harness.extra_tools)
   data/           Bundled catalog.toml, prompts, skills, commands
-tests/            compact pytest suite (~114 tests, no live LLM; see tests/README.md)
+tests/            named behavioral pytest tests (no live LLM; see tests/README.md)
 docs/             current RELEASE notes only (`docs/RELEASE-X.Y.Z.md`)
-scripts/          install.sh, install.ps1, download.sh, download.ps1, sync_version.py, bump_release.sh
+scripts/          install/download (sh+ps1), ci_check (+ --fast via ci_fast.py), e2e_smoke.py, worktree.sh, profile_cli.py, sync_version.py, bump_release.sh
 ```
 
 **Layer rule:** CLI/UI subscribe to events; `ApplicationRunService` (0.9) or `AgentRuntime` assembles; `DefaultAgent` loops; tools/guardrails execute. Do not import UI from `agent/` or call LiteLLM from `ui/repl.py` directly.
@@ -51,14 +51,14 @@ scripts/          install.sh, install.ps1, download.sh, download.ps1, sync_versi
 ## Dev setup
 
 ```bash
-./scripts/install.sh --dev    # macOS/Linux editable checkout
-# .\scripts\install.ps1 -Dev  # Windows
+./scripts/install.sh --dev --local  # macOS/Linux isolated editable checkout
+# .\scripts\install.ps1 -Dev -Local  # Windows
 # curl …/install.sh | bash    # end-user: global CLI via uv tool (any dir)
 pytest                        # always run before PRs
 pytest -v tests/test_foo.py   # single file
 ```
 
-Editable install: `uv pip install -e ".[dev]"` (or `./scripts/install.sh --dev`). End-user global CLI: `uv tool install "git+…"`. Config and keys live in **`~/.kite/`** (not this repo). Never commit `.env` or real API keys.
+Activate `.venv` before invoking `kite` or `pytest`; installation options and isolated homes are documented in [CONTRIBUTING.md](CONTRIBUTING.md#how-to-set-up). Never commit `.env` or real API keys.
 
 ---
 
@@ -67,7 +67,14 @@ Editable install: `uv pip install -e ".[dev]"` (or `./scripts/install.sh --dev`)
 - **Local:** `pytest` from repo root (uses `tests/`, `conftest.py` isolates `KITE_HOME`).
 - **CI:** `.github/workflows/tests.yml` runs pytest on every push and PR to `main` (Python 3.11 + 3.12). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Add tests for real behavior in the matching `tests/test_*.py` domain module. Combine related asserts; skip one-assert slop. No live provider calls. Target size is under 150 collected tests.
+Add real, named behavioral tests with fixtures in the matching `tests/test_*.py` domain module. No `test_batch_NN` wrappers or artificial collection-count cap; no one-assert, wiring-only, or source-text slop. Keep the full suite under roughly **15 seconds**: use fake clocks, stub DNS/network and provider dependencies, and avoid real sleeps, network calls, or importing LiteLLM just to test a wrapper.
+
+Dev loop (full gates before merging):
+
+- [`scripts/ci_check.sh --fast [--base REF | --files …]` and `scripts/worktree.sh <name>`](CONTRIBUTING.md#fast-isolated-agent-loops) — focused feedback and isolated checkouts.
+- [`scripts/e2e_smoke.py` and `scripts/profile_cli.py`](CONTRIBUTING.md#offline-end-to-end-qa-and-debugging) — offline CLI QA and profiling.
+- [`kite bench --suite full --save PATH` / `--compare PATH`](kite_commands.md#harness-timing-kite-bench) — performance evidence.
+- [`KITE_TRACE_JSONL`](kite_commands.md#runtime-event-tracing) — opt-in runtime diagnostics.
 
 ---
 

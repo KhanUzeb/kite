@@ -2,6 +2,31 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Full benchmark baselines/comparison and runtime tracing: see [`kite bench`](kite_commands.md#harness-timing-kite-bench) and [`KITE_TRACE_JSONL`](kite_commands.md#runtime-event-tracing).
+- Isolated worktrees, fast gates, offline end-to-end QA, and CLI profiling: see [contributor workflows](CONTRIBUTING.md#fast-isolated-agent-loops).
+
+### Changed
+Representative before/after measurements from controlled optimization runs (not portable timing guarantees):
+- Streaming answer processing ~13 → 4.6 µs/chunk; reasoning accumulation 119 → 0.42 µs/chunk at 80k events.
+- `import kite.ui` 30 → 0.2 ms; configured model resolution 546 → 72 ms cold; `LitellmModel` construction 1.15 s → approximately zero; headless time-to-first-query ~1.9 → 0.6 s.
+- Path completion on 10k files 34 → 4 ms; picker on 10k options 166 → 35 ms; directory sketch on 20k files 68 → 4 ms; grep benchmark ~26 → 7 ms.
+- Redaction of 5 MB plain text 300 → 30 ms; `ProcessRunner` peak memory for 200 MiB of output 525 → 1.3 MB.
+- Agent-loop accounting at 200 turns 0.39 → 0.27 ms/turn.
+- Session tail resume with a single 50 MB row 7.4 s → 75 ms; recent-event reads 41 → 0.05 ms; semantic-memory rendering 16 → 2 ms.
+- Warm development install 0.77 → 0.12 s; see [locked development installs](CONTRIBUTING.md#how-to-set-up).
+- Startup/import boundaries, model capabilities, context/history processing, and session internals: see [architecture.md](architecture.md).
+- Named behavioral tests replace count-driven batching; see the [test policy and dev loop](AGENTS.md#tests--ci).
+
+### Fixed
+- CLI/REPL rendering, completion, jobs, session recovery, and verification behavior: see [kite_commands.md](kite_commands.md).
+- Prompt-history correctness and episodic-store lock handling: see [architecture.md](architecture.md#startup-and-request-work) and [context & memory](architecture.md#context--memory).
+
+### Security
+- Bounded output capture, redaction-before-truncation, private trace files, and durable atomic writes: see [SECURITY.md](SECURITY.md).
+
 ## [1.0.6] - 2026-10-05
 
 ### Added
