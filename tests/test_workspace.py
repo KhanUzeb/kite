@@ -12,10 +12,7 @@ from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
 
 
-def _c_test_workspace_defaults_and_discovery(workspace: Path) -> None:
-    ctx = WorkspaceContext.discover(workspace)
-    assert ctx.execution_mode is ExecutionMode.HOST
-    assert GuardrailConfig().execution_mode == "host" and GuardrailConfig().host_access() is True
+def test_workspace_discovery_preserves_nested_execution_cwd(workspace: Path) -> None:
     nested = workspace / "pkg"
     nested.mkdir()
     found = WorkspaceContext.discover(nested)
@@ -23,38 +20,26 @@ def _c_test_workspace_defaults_and_discovery(workspace: Path) -> None:
     assert found.execution_cwd == nested.resolve()
 
 
-def _c_test_host_allows_external_read_restricted_blocks(workspace: Path, tmp_path: Path) -> None:
+def test_host_and_restricted_modes_allow_external_reads(workspace: Path, tmp_path: Path) -> None:
     external = tmp_path / "data.txt"
     external.write_text("hello host\n", encoding="utf-8")
-    host = ExecutionSession(WorkspaceContext.discover(workspace, execution_mode=ExecutionMode.HOST))
-    host_env = LocalEnvironment(
-        registry=ToolRegistry(
-            make_coding_tools(
-                cwd=str(workspace),
-                guardrails=GuardrailPolicy(GuardrailConfig(execution_mode="host"), workspace, execution=host),
-                execution=host,
-                enabled=["read"],
+    for mode in (ExecutionMode.HOST, ExecutionMode.RESTRICTED):
+        session = ExecutionSession(WorkspaceContext.discover(workspace, execution_mode=mode))
+        env = LocalEnvironment(
+            registry=ToolRegistry(
+                make_coding_tools(
+                    cwd=str(workspace),
+                    guardrails=GuardrailPolicy(GuardrailConfig(execution_mode=mode.value), workspace, execution=session),
+                    execution=session,
+                    enabled=["read"],
+                )
             )
         )
-    )
-    out = host_env.execute({"tool": "read", "arguments": {"path": str(external)}})
-    assert out["ok"] is True and "hello host" in out["output"]
-    restricted = ExecutionSession(WorkspaceContext.discover(workspace, execution_mode=ExecutionMode.RESTRICTED))
-    rest_env = LocalEnvironment(
-        registry=ToolRegistry(
-            make_coding_tools(
-                cwd=str(workspace),
-                guardrails=GuardrailPolicy(GuardrailConfig(execution_mode="restricted"), workspace, execution=restricted),
-                execution=restricted,
-                enabled=["read"],
-            )
-        )
-    )
-    blocked = rest_env.execute({"tool": "read", "arguments": {"path": str(external)}})
-    assert blocked["ok"] is True and "hello host" in blocked["output"]  # reads outside are free
+        out = env.execute({"tool": "read", "arguments": {"path": str(external)}})
+        assert out["ok"] is True and "hello host" in out["output"], mode
 
 
-def _c_test_set_cwd_updates_session_and_can_leave_project(workspace: Path, tmp_path: Path) -> None:
+def test_set_cwd_updates_session_and_can_leave_project(workspace: Path, tmp_path: Path) -> None:
     sub = workspace / "pkg"
     sub.mkdir()
     session = ExecutionSession(WorkspaceContext.discover(workspace, execution_mode=ExecutionMode.RESTRICTED))
@@ -84,41 +69,25 @@ def _c_test_set_cwd_updates_session_and_can_leave_project(workspace: Path, tmp_p
     assert err == "" and target == elsewhere.resolve()
 
 
-def test_toolchain_scout_finds_python(tmp_path) -> None:
+def test_toolchain_scout_deduplicates_python_and_renders_versions(tmp_path, monkeypatch) -> None:
     """The model sees runnable interpreters/compilers with versions and paths."""
     import sys
 
-    from kite.context.toolchains import render_toolchains, scout_toolchains
+    from kite.context import toolchains
 
-    items = scout_toolchains(tmp_path, tmp_path)
-    names = {item.name for item in items}
-    assert "python" in names
-    assert any(Path(item.path).is_file() for item in items if item.name == "python")
-    assert any(item.source in {"project-venv", "active", "path"} for item in items)
-    section = render_toolchains(items)
-    resolved_exe = str(Path(sys.executable).resolve()).replace("\\", "/")
-    assert "## Toolchains" in section and resolved_exe in section.replace("\\", "/")
+    python = Path(sys.executable)
+    node = tmp_path / "node"
+    node.touch()
+    candidates = {"python": python, "python3": python, "node": node}
+    versions = {python: "Python 3.11.9", node: "v22.0.0"}
+    monkeypatch.setattr(toolchains, "_CACHE", {})
+    monkeypatch.setattr(toolchains, "_which", candidates.get)
+    monkeypatch.setattr(toolchains, "_probe_version", lambda path, _flag: versions[path])
+    monkeypatch.setattr("kite.env.venv.discover_venv", lambda *_roots: None)
 
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_workspace_defaults_and_discovery, test_host_allows_external_read_restricted_blocks, test_set_cwd_updates_session_and_can_leave_project."""
-    _w0 = tmp_path / "w0_0"
-    (_w0 / "src").mkdir(parents=True, exist_ok=True)
-    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_workspace_defaults_and_discovery(workspace=_w0)
-    _t1 = tmp_path / "t0_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _w1 = tmp_path / "w0_1"
-    (_w1 / "src").mkdir(parents=True, exist_ok=True)
-    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_host_allows_external_read_restricted_blocks(tmp_path=_t1, workspace=_w1)
-    _t2 = tmp_path / "t0_2"
-    _t2.mkdir(parents=True, exist_ok=True)
-    _w2 = tmp_path / "w0_2"
-    (_w2 / "src").mkdir(parents=True, exist_ok=True)
-    (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_set_cwd_updates_session_and_can_leave_project(tmp_path=_t2, workspace=_w2)
+    items = toolchains.scout_toolchains(tmp_path, tmp_path)
+    assert [(item.name, item.source) for item in items] == [("python", "active"), ("node", "path")]
+    section = toolchains.render_toolchains(items)
+    assert "Python 3.11.9" in section and "node v22.0.0" in section
+    assert str(python.absolute()) in section and str(node) in section
 

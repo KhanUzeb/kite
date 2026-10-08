@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from pathlib import Path
 
-from kite.context.discovery import SKIP_DIRS
+from kite.context.discovery import MAX_SCAN_ENTRIES, SKIP_DIRS
 
 _SOURCE_EXTS = frozenset({".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs"})
 _ENTRY_NAMES = frozenset(
@@ -32,37 +31,16 @@ _GO_DEF = re.compile(r"^func\s+(\w+)|^type\s+(\w+)\s+struct", re.MULTILINE)
 _RUST_DEF = re.compile(r"^(?:pub\s+)?fn\s+(\w+)|^(?:pub\s+)?(?:struct|enum)\s+(\w+)", re.MULTILINE)
 
 
-def git_changed_paths(root: Path) -> set[str]:
-    """Paths changed vs HEAD, staged, or untracked — empty when not a git repo."""
-    return _git_changed_paths_resolved(root.expanduser().resolve())
+def git_changed_paths(root: Path, *, status: str | None = None) -> set[str]:
+    """Paths changed vs HEAD, staged, or untracked; reuse an existing status when available."""
+    if status is None:
+        from kite.context.discovery import git_status_snippet
 
-
-def _git_changed_paths_resolved(root: Path) -> set[str]:
-    """git_changed_paths() for a root the caller already resolved."""
-    try:
-        proc = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "-c",
-                "core.quotePath=false",
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=normal",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return set()
-    if proc.returncode != 0:
-        return set()
+        status = git_status_snippet(root, max_chars=0)
     changed: set[str] = set()
-    for line in (proc.stdout or "").splitlines():
+    for line in status.splitlines():
+        if line.startswith("##"):
+            continue
         if len(line) < 4:
             continue
         rel = line[3:].strip()
@@ -99,13 +77,7 @@ def _defs_for(path: Path, text: str, *, limit: int) -> list[str]:
 
 
 def _rel_posix(path: Path, root: Path, root_str: str) -> str:
-    """Path.relative_to(root).as_posix() without pathlib's per-call parts walk.
-
-    ``relative_to`` is comparatively expensive (it rebuilds and compares every
-    path part) and the repo map scores hundreds of candidates, so slicing the
-    already-resolved string prefix is ~100x cheaper. Falls back to the real
-    ``relative_to`` whenever the prefix is not a clean ancestor.
-    """
+    """Use the resolved ancestor prefix, falling back to pathlib for other paths."""
     text = str(path)
     if text.startswith(root_str) and len(text) > len(root_str):
         # Require a separator at the boundary, else a sibling like "...\bc"
@@ -137,31 +109,35 @@ _MAX_REPO_SCAN_FILES = 600
 
 
 def _iter_source_files(root: Path) -> list[Path]:
-    """Walk the tree with skip dirs — capped to avoid stat storms on huge repos."""
-    root = root.expanduser().resolve()
+    """Bound source candidates and total entries, pruning ignored/symlink directories."""
     candidates: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [
-            name
-            for name in dirnames
-            if name not in SKIP_DIRS and not name.startswith(".")
-        ]
-        base = Path(dirpath)
-        for name in filenames:
-            # Extension check on the plain string first: building a Path and
-            # reading .suffix for every file in the tree cost more than the
-            # stat() this loop is trying to avoid.
-            if os.path.splitext(name)[1].lower() not in _SOURCE_EXTS:
-                continue
-            path = base / name
-            try:
-                if path.stat().st_size > 120_000:
-                    continue
-            except OSError:
-                continue
-            candidates.append(path)
-            if len(candidates) >= _MAX_REPO_SCAN_FILES:
-                return candidates
+    pending = [root]
+    scanned = 0
+    while pending and scanned < MAX_SCAN_ENTRIES:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    scanned += 1
+                    if scanned > MAX_SCAN_ENTRIES:
+                        return candidates
+                    if entry.name in SKIP_DIRS or entry.name.startswith("."):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                        continue
+                    if os.path.splitext(entry.name)[1].lower() not in _SOURCE_EXTS:
+                        continue
+                    try:
+                        if entry.stat().st_size > 120_000:
+                            continue
+                    except OSError:
+                        continue
+                    candidates.append(Path(entry.path))
+                    if len(candidates) >= _MAX_REPO_SCAN_FILES:
+                        return candidates
+        except OSError:
+            continue
     return candidates
 
 
@@ -172,12 +148,13 @@ def build_repo_map(
     max_defs_per_file: int = 6,
     max_chars: int = 6_000,
     prefer_git_changed: bool = True,
+    changed_paths: set[str] | None = None,
 ) -> str:
     """Return a compact symbol map for prompt injection."""
     root = root.expanduser().resolve()
-    # Root is already resolved here; git_changed_paths() would resolve it a
-    # second time (a few hundred syscalls) for a value that cannot have moved.
-    changed = _git_changed_paths_resolved(root) if prefer_git_changed else set()
+    changed = changed_paths
+    if changed is None:
+        changed = git_changed_paths(root) if prefer_git_changed else set()
     candidates = _iter_source_files(root)
     candidates.sort(key=lambda p: _score_path(p, root, changed))
     lines: list[str] = []

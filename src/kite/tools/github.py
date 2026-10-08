@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 from typing import Any
 
+from kite.env.shell import iter_bounded_lines
+from kite.guardrails.redact import redact_string
 from kite.tools import Tool
 
 # Tokens gh accepts itself — re-injected past the child-env secret filter so
@@ -54,16 +57,25 @@ def _run_gh(args: list[str], *, timeout: int = 30) -> dict[str, Any]:
         }
     cmd = ["gh", *args]
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            env=_gh_env(),
-        )
-        output = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as captured:
+            proc = subprocess.run(
+                cmd,
+                stdout=captured,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+                env=_gh_env(),
+            )
+            captured.seek(0)
+            parts: list[str] = []
+            remaining = 256_000
+            for line in iter_bounded_lines(captured, max_chars=256_000):
+                safe = redact_string(line)
+                parts.append(safe[:remaining])
+                remaining -= min(remaining, len(safe))
+                if remaining == 0:
+                    parts.append("\n...[GitHub output truncated]...\n")
+                    break
+            output = "".join(parts)
         text = output.strip() or "(empty)"
         if proc.returncode != 0:
             hint = _auth_hint(text)

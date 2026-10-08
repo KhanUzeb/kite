@@ -278,16 +278,20 @@ def _raw_pick(
         state["cursor"] = ids.index(current)
     drawn: dict[str, Any] = {"lines": 0, "n_view": 0, "item_y0": None}
     show = max(1, min(show, _screen_height() - 6))
+    filter_key = ""
+    filter_rows = pool
 
     def filtered() -> list[tuple[str, str]]:
+        nonlocal filter_key, filter_rows
         needle = state["filter"].lower()
-        if not needle:
-            return pool
-        return [
-            (item_id, label)
-            for item_id, label in pool
-            if needle in item_id.lower() or needle in label.lower()
-        ]
+        if needle != filter_key:
+            filter_rows = [
+                (item_id, label)
+                for item_id, label in pool
+                if needle in item_id.lower() or needle in label.lower()
+            ] if needle else pool
+            filter_key = needle
+        return filter_rows
 
     def clamp() -> list[tuple[str, str]]:
         rows = filtered()
@@ -376,7 +380,7 @@ def _raw_pick(
                     state["cursor"] = state["offset"] + vis
                     if ev.startswith("pick:"):
                         if multiple:
-                            return _finish_multi(rows, state, checked)
+                            return _finish_multi(pool, checked)
                         return rows[state["cursor"]][0]
                     paint()
                 continue
@@ -416,7 +420,7 @@ def _raw_pick(
                         paint()
                         continue
                 if multiple:
-                    return _finish_multi(rows, state, checked)
+                    return _finish_multi(pool, checked)
                 return rows[state["cursor"]][0]
             if ev == "up":
                 move(-1)
@@ -453,10 +457,9 @@ def _raw_pick(
             close()
 
 
-def _finish_multi(rows: list[tuple[str, str]], state: dict, checked: set[str]) -> list[str]:
-    """Enter in multi-select: the checked ids in list order (empty = skip)."""
-    order = [item_id for item_id, _ in rows]
-    return [item_id for item_id in order if item_id in checked]
+def _finish_multi(rows: list[tuple[str, str]], checked: set[str]) -> list[str]:
+    """Keep checked ids in original order, including ones hidden by a filter."""
+    return [item_id for item_id, _ in rows if item_id in checked]
 
 
 def view_index_from_mouse(*, mouse_y: int, item_y0: int, n_view: int) -> int | None:

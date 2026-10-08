@@ -20,7 +20,6 @@ from kite.agent.events import Event
 from kite.ui import commands as commands_mod
 from kite.ui.commands import BUILTINS
 from kite.ui.diff import make_unified_diff
-from kite.ui.output_view import format_viewable_output
 from kite.ui.render import RunDisplay
 from kite.ui.state import SessionUiState
 from kite.ui.style import KITE_THEME, PREVIEW_LINES
@@ -41,7 +40,7 @@ def _display(width: int = 120) -> tuple[RunDisplay, StringIO]:
 class _Repl:
     """The one method /last needs from the REPL, without building the real one."""
 
-    def __init__(self, display: RunDisplay, buf: StringIO) -> None:
+    def __init__(self, display: RunDisplay) -> None:
         from kite.ui.repl import ChatSession
 
         self.display = display
@@ -58,7 +57,7 @@ def _retrieved(display: RunDisplay, buf: StringIO) -> str:
     """
     buf.truncate(0)
     buf.seek(0)
-    _Repl(display, buf)._slash_last("")
+    _Repl(display)._slash_last("")
     return strip_ansi(buf.getvalue())
 
 
@@ -68,9 +67,8 @@ def _big_diff(rows: int = 60) -> str:
     return make_unified_diff("src/app.py", before, after)
 
 
-def _c_test_last_reprints_every_row_a_capped_body_hid() -> None:
-    """A 30-line body prints 5 on scroll; /last gives back all 30."""
-    assert PREVIEW_LINES == 5
+def test_last_reprints_every_row_a_capped_body_hid() -> None:
+    """A capped body is available in full through /last."""
     display, buf = _display()
     display.state.expanded_all = False  # the capped-scroll path (default is expanded)
     output = "\n".join(f"result line {i:02d}" for i in range(30))
@@ -82,12 +80,7 @@ def _c_test_last_reprints_every_row_a_capped_body_hid() -> None:
     assert len(rows) == PREVIEW_LINES, rows
     assert "result line 29" not in scrolled, "the tail must be hidden on the scroll path"
 
-    # The retrieval half: same record, printed through /last.
-    again, again_buf = _display()
-    again.state.expanded_all = False
-    again(Event("tool_end", payload={"tool": "bash", "ok": True, "output": output}))
-    again.close()
-    plain = _retrieved(again, again_buf)
+    plain = _retrieved(display, buf)
 
     got = [ln for ln in plain.splitlines() if "result line" in ln]
     assert len(got) == 30, got
@@ -96,9 +89,8 @@ def _c_test_last_reprints_every_row_a_capped_body_hid() -> None:
     assert "bash" in plain and "ok" in plain
 
 
-def _c_test_last_renders_the_diff_uncollapsed_and_read_only() -> None:
+def test_last_renders_the_diff_uncollapsed_and_read_only() -> None:
     """A capped diff comes back whole, and nothing about the state moves."""
-    assert PREVIEW_LINES == 5
     diff = _big_diff()
     display, buf = _display()
     display.state.expanded_all = False
@@ -109,25 +101,18 @@ def _c_test_last_renders_the_diff_uncollapsed_and_read_only() -> None:
     assert "line 50" not in scrolled, "the scroll path must stay capped"
     assert "+60,-60" in scrolled
 
-    again, again_buf = _display()
-    again.state.expanded_all = False
-    again(Event("tool_end", payload={"tool": "edit", "ok": True, "diff": diff}))
-    before = (again.state.expanded_all, again.state.todos, again.state.cost)
-    again.close()
-    plain = _retrieved(again, again_buf)
+    before = (display.state.expanded_all, list(display.state.todos), display.state.cost)
+    plain = _retrieved(display, buf)
 
     # Uncollapsed: rows past the cap are present, which is the whole point.
     assert "line 50" in plain and "line 59" in plain, "the diff must come back whole"
     assert "+60,-60" in plain and "src/app.py" in plain
     # Read-only: no state mutation, and no /expand-style cap marker.
-    assert (again.state.expanded_all, again.state.todos, again.state.cost) == before
+    assert (display.state.expanded_all, display.state.todos, display.state.cost) == before
     assert "+25 lines" not in plain
 
-    # A body is rendered through the existing formatter, not a second path.
-    assert format_viewable_output("a\nb\n") .strip() == "a\nb"
 
-
-def _c_test_overflow_markers_only_name_registered_commands() -> None:
+def test_overflow_markers_only_name_registered_commands() -> None:
     """The regression guard: a marker may never name a command that is absent.
 
     This is what let `/diff` ship — the hint read well and resolved to
@@ -166,10 +151,10 @@ def _c_test_overflow_markers_only_name_registered_commands() -> None:
     assert commands_mod.parse_slash("/last").command == "last"
 
 
-def _c_test_last_with_nothing_captured_says_so() -> None:
+def test_last_with_nothing_captured_says_so() -> None:
     """Nothing has run yet: one clear line, not a crash or a blank screen."""
     display, buf = _display()
-    repl = _Repl(display, buf)
+    repl = _Repl(display)
     display(Event("agent_start", payload={"task": "hi"}))
     repl._slash_last("")
     plain = strip_ansi(buf.getvalue())
@@ -177,9 +162,10 @@ def _c_test_last_with_nothing_captured_says_so() -> None:
     # An argument is accepted and ignored — /last takes none.
     repl._slash_last("ignored")
     assert "no tool output yet" in strip_ansi(buf.getvalue())
+    display.close()
 
 
-def _c_test_last_reports_failures_and_bounds_the_payload() -> None:
+def test_last_reports_failures_and_bounds_the_payload() -> None:
     """A failed call is retrievable, and a runaway body cannot pin memory."""
     display, buf = _display()
     display(
@@ -206,12 +192,3 @@ def _c_test_last_reports_failures_and_bounds_the_payload() -> None:
     assert len(big._last_tool_view.output) == _LAST_TOOL_CHARS
     assert big._last_tool_view.truncated is True
     assert "payload capped" in _retrieved(big, big_buf)
-
-
-def test_batch_00() -> None:
-    """Consolidated (bodies unchanged): all retrieval helpers in one batch."""
-    _c_test_last_reprints_every_row_a_capped_body_hid()
-    _c_test_last_renders_the_diff_uncollapsed_and_read_only()
-    _c_test_overflow_markers_only_name_registered_commands()
-    _c_test_last_with_nothing_captured_says_so()
-    _c_test_last_reports_failures_and_bounds_the_payload()

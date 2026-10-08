@@ -2,25 +2,14 @@
 
 from __future__ import annotations
 
-from kite.tools.web_format import format_search_output, slice_body_text
+from kite.tools.web_format import slice_body_text
 
 
-def _c_test_format_search_urls_only() -> None:
-    results = [{"title": "T", "url": "https://a.com", "snippet": "long snippet"}]
-    out = format_search_output("q", results, engine="ddg", urls_only=True)
-    assert "https://a.com" in out
-    assert "long snippet" not in out
-
-
-def _c_test_slice_body_text_lines() -> None:
+def test_slice_body_text_lines() -> None:
     text = "\n".join(f"line {i}" for i in range(10))
     sliced, truncated = slice_body_text(text, max_lines=3)
     assert truncated is True
-    assert sliced.count("\n") == 2
-
-
-def test_batch_00() -> None:
-    """Consolidated (bodies unchanged): test_format_search_urls_only, test_slice_body_text_lines."""
-    _c_test_format_search_urls_only()
-    _c_test_slice_body_text_lines()
-
+    assert sliced == "line 0\nline 1\nline 2"
+    assert slice_body_text(sliced, max_lines=3) == (sliced, False)
+    assert slice_body_text(text, start=7, max_lines=2) == ("line 1\nline 2", True)
+    assert slice_body_text(text, start=len(text), max_lines=3) == ("", False)

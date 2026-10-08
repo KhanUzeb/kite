@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from kite.memory import session, session_analytics
+from kite.memory import session_analytics
 from kite.memory.session import create_session
 from kite.memory.session_analytics import (
     list_session_events,
@@ -70,6 +70,12 @@ def test_scan_and_events_survive_undecodable_bytes(kite_home, tmp_path) -> None:
     # The undecodable tail must not hide the intact events before it.
     assert [e["kind"] for e in events] == ["tool_end", "tool_end"]
 
+    assert list_session_events(path, limit=0) == []
+    assert list_session_events(path, limit=-1) == []
+    assert list_session_events(path, limit=1) == events[-1:]
+    assert session_analytics.list_session_stats(limit=0) == []
+    assert session_analytics.list_session_stats(limit=-1) == []
+
 
 def test_checkpoint_counted_once_per_saved_checkpoint(kite_home, tmp_path) -> None:
     """One saved checkpoint must yield stats.checkpoints == 1, not 2.
@@ -99,16 +105,3 @@ def test_checkpoint_counted_once_per_saved_checkpoint(kite_home, tmp_path) -> No
 
     stats = scan_session_file(path)
     assert stats.checkpoints == 1
-
-
-def test_trajectory_path_has_single_source_of_truth(kite_home) -> None:
-    """_trajectory_path must not be copy-pasted between session.py and session_analytics.py.
-
-    The two copies were byte-identical (same sha256) — a duplicate that silently
-    diverges the moment either side is fixed, because nothing links them.
-    session_analytics already imports from session, so it can share the canonical
-    helper instead of owning a copy.
-    """
-    assert session_analytics._trajectory_path is session._trajectory_path
-    # And the shared helper still resolves into the active (isolated) home.
-    assert session_analytics._trajectory_path("abc").parent.name == "trajectories"

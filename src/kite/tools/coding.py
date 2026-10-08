@@ -11,9 +11,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+from kite.agent.cancel import CancelToken
+from kite.agent.events import Event
 from kite.application.verification import MAX_BLOCKED_SUBMITS
+from kite.context.workspace import ExecutionSession
 from kite.env.venv import prepare_child_env
 from kite.guardrails import GuardrailPolicy, redact_secrets
+from kite.guardrails.sandbox import resolve_in_workspace
 from kite.memory.store import MemoryScope, MemoryStore
 from kite.skills.loader import Skill, format_skill_invocation
 from kite.tools import Tool
@@ -21,23 +25,10 @@ from kite.tools.search import glob_search, grep_search, ls_search
 from kite.tools.store import TodoStore
 from kite.tools.web import webcrawl, websearch
 from kite.tools.web import webfetch as fetch_url
-
-try:
-    from kite.context.workspace import ExecutionSession
-except ImportError:  # pragma: no cover
-    ExecutionSession = None  # type: ignore[misc, assignment]
-
-try:
-    from kite.agent.cancel import CancelToken
-    from kite.agent.events import Event
-except ImportError:  # pragma: no cover
-    CancelToken = None  # type: ignore[misc, assignment]
-    Event = None  # type: ignore[misc, assignment]
-
+from kite.util import bounded_int
 
 _SKIP_NAMES = frozenset({".git", ".venv", "node_modules", "__pycache__"})
 _BASH_MAX_OUTPUT_BYTES = 256_000
-_STDIN_MAX_BYTES = 2_000_000
 _READ_MAX_BYTES = 256_000
 _READ_MAX_LINES = 400
 
@@ -45,34 +36,9 @@ _READ_MAX_LINES = 400
 def _read_text_bounded(path: Path, *, max_bytes: int = _READ_MAX_BYTES) -> tuple[str, bool]:
     with path.open("rb") as handle:
         data = handle.read(max_bytes + 1)
-    if len(data) > max_bytes:
-        data = data[:max_bytes]
-        text = data.decode("utf-8", errors="replace")
-        return text.replace("\r\n", "\n").replace("\r", "\n"), True
-    text = data.decode("utf-8", errors="replace")
-    # Normalize line endings so read output is byte-identical across
-    # platforms (Windows text-mode writes would otherwise leak \r\n into
-    # every later request and break the stable cache prefix).
-    return text.replace("\r\n", "\n").replace("\r", "\n"), False
-
-
-def _safe_int(value: Any, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return default
-    if n < minimum:
-        return minimum
-    if maximum is not None and n > maximum:
-        return maximum
-    return n
-
-
-def _resolve(path: str, cwd: str) -> Path:
-    p = Path(path)
-    if not p.is_absolute():
-        p = Path(cwd) / p
-    return p.resolve()
+    truncated = len(data) > max_bytes
+    text = data[:max_bytes].decode("utf-8", errors="replace")
+    return text.replace("\r\n", "\n").replace("\r", "\n"), truncated
 
 
 def _io_fail(path: Path, exc: BaseException) -> dict[str, Any]:
@@ -192,7 +158,6 @@ def make_coding_tools(
             return str(execution.execution_cwd)
         return cwd or os.getcwd()
 
-    _root()
     project_root = str(execution.project_root) if execution is not None else (cwd or os.getcwd())
 
     def _child_env(workdir: str, command: str | None = None) -> dict[str, str]:
@@ -213,10 +178,6 @@ def make_coding_tools(
                 env = with_gh_tokens(env)
         return env
 
-    def _emit_bash_line(line: str) -> None:
-        if on_event is None or Event is None:
-            return
-        on_event(Event(kind="tool_output", payload={"line": line, "tool": "bash"}))
     allow = set(
         enabled
         or [
@@ -258,7 +219,7 @@ def make_coding_tools(
         return result
 
     def read_file(args: dict[str, Any]) -> dict[str, Any]:
-        path = _resolve(str(args["path"]), _root())
+        path = resolve_in_workspace(str(args["path"]), _root())
         if not path.exists():
             msg = f"not found: {path}"
             return {"ok": False, "error": msg, "path": str(path), "output": msg}
@@ -276,9 +237,9 @@ def make_coding_tools(
             text, file_truncated = _read_text_bounded(path)
         except OSError as e:
             return _io_fail(path, e)
-        start = _safe_int(args.get("offset"), 1, minimum=1)
+        start = bounded_int(args.get("offset"), 1, minimum=1)
         limit_raw = args.get("limit")
-        limit = _safe_int(limit_raw, 0, minimum=0) if limit_raw is not None else None
+        limit = bounded_int(limit_raw, 0, minimum=0) if limit_raw is not None else None
         numbered = bool(args.get("numbered"))
         lines = text.splitlines(keepends=True)
         chunk = lines[start - 1 :] if start > 1 else lines
@@ -310,7 +271,7 @@ def make_coding_tools(
         return {"ok": True, "path": str(path), "output": body, "truncated": truncated}
 
     def write_file(args: dict[str, Any]) -> dict[str, Any]:
-        path = _resolve(str(args["path"]), _root())
+        path = resolve_in_workspace(str(args["path"]), _root())
         if guardrails is not None:
             verdict = guardrails.check_path(str(path), for_write=True)
             if not verdict.allowed:
@@ -339,7 +300,7 @@ def make_coding_tools(
         }
 
     def edit_file(args: dict[str, Any]) -> dict[str, Any]:
-        path = _resolve(str(args["path"]), _root())
+        path = resolve_in_workspace(str(args["path"]), _root())
         if guardrails is not None:
             verdict = guardrails.check_path(str(path), for_write=True)
             if not verdict.allowed:
@@ -403,7 +364,7 @@ def make_coding_tools(
         except Exception as e:
             reason = f"cwd sandbox check failed: {e}"
             return {"ok": False, "error": reason, "output": reason, "blocked": True}
-        limit = _safe_int(args.get("timeout"), timeout, minimum=1, maximum=3600)
+        limit = bounded_int(args.get("timeout"), timeout, minimum=1, maximum=3600)
         if background:
             if jobs is None:
                 return {
@@ -459,10 +420,12 @@ def make_coding_tools(
 
                 safe, n = redact_secrets(sanitize_shell_line(raw_line) + ("\n" if raw_line.endswith("\n") else ""))
                 stream_redactions += n
+                encoded = safe.encode("utf-8", errors="replace")[: _BASH_MAX_OUTPUT_BYTES - output_bytes]
+                safe = encoded.decode("utf-8", errors="ignore")
                 output_parts.append(safe)
-                output_bytes += len(safe.encode("utf-8", errors="replace"))
+                output_bytes += len(encoded)
                 if on_event is not None:
-                    _emit_bash_line(safe)
+                    on_event(Event(kind="tool_output", payload={"line": safe, "tool": "bash"}))
                 else:
                     try:
                         sys.stderr.write(safe)
@@ -470,10 +433,14 @@ def make_coding_tools(
                     except OSError:
                         pass
 
+            finished = threading.Event()
+
             def _drain() -> None:
                 assert proc.stdout is not None
                 try:
-                    for line in iter(proc.stdout.readline, ""):
+                    from kite.env.shell import iter_bounded_lines
+
+                    for line in iter_bounded_lines(proc.stdout):
                         _emit_line(line)
                 except OSError:
                     pass
@@ -482,6 +449,10 @@ def make_coding_tools(
                         proc.stdout.close()
                     except OSError:
                         pass
+                    try:
+                        proc.wait()
+                    finally:
+                        finished.set()
 
             reader = threading.Thread(target=_drain, daemon=True)
             reader.start()
@@ -519,7 +490,9 @@ def make_coding_tools(
                             "cancelled": True,
                         }
                     try:
-                        rc = proc.wait(timeout=0.15)
+                        if not finished.wait(timeout=min(0.15, max(0.0, deadline - time.monotonic()))):
+                            raise subprocess.TimeoutExpired(command, limit)
+                        rc = proc.returncode
                     except subprocess.TimeoutExpired:
                         if time.monotonic() >= deadline:
                             terminate_process_tree(proc)
@@ -599,39 +572,39 @@ def make_coding_tools(
             return {"ok": False, "returncode": -1, "output": "", "error": str(e)}
 
     def grep_files(args: dict[str, Any]) -> dict[str, Any]:
-        root_path = _resolve(str(args.get("path") or "."), _root())
+        root_path = resolve_in_workspace(str(args.get("path") or "."), _root())
         return grep_search(
             pattern=str(args["pattern"]),
             root=root_path,
             cwd=_root(),
             glob_pat=str(args.get("glob") or ""),
-            max_hits=_safe_int(args.get("max_hits"), 40, minimum=1, maximum=500),
-            max_files=_safe_int(args.get("max_files"), 30, minimum=1, maximum=200),
+            max_hits=args.get("max_hits", 40),
+            max_files=args.get("max_files", 30),
             ignore_case=bool(args.get("ignore_case")),
             fixed=bool(args.get("fixed")),
             files_only=bool(args.get("files_only")),
             count_only=bool(args.get("count_only")),
-            context=_safe_int(args.get("context"), 0, minimum=0, maximum=5),
+            context=args.get("context", 0),
             child_env=_child_env,
         )
 
     def glob_files(args: dict[str, Any]) -> dict[str, Any]:
-        root_path = _resolve(str(args.get("root") or "."), _root())
+        root_path = resolve_in_workspace(str(args.get("root") or "."), _root())
         return glob_search(
             pattern=str(args["pattern"]),
             root=root_path,
-            max_matches=_safe_int(args.get("max"), 120, minimum=1, maximum=2000),
+            max_matches=args.get("max", 120),
             files_only=not bool(args.get("dirs_only")),
             dirs_only=bool(args.get("dirs_only")),
             sort=str(args.get("sort") or "name"),
         )
 
     def ls_dir(args: dict[str, Any]) -> dict[str, Any]:
-        path = _resolve(str(args.get("path") or "."), _root())
+        path = resolve_in_workspace(str(args.get("path") or "."), _root())
         return ls_search(
             path=path,
             glob_pat=str(args.get("glob") or ""),
-            max_entries=_safe_int(args.get("max"), 200, minimum=1, maximum=1000),
+            max_entries=args.get("max", 200),
         )
 
     def load_skill(args: dict[str, Any]) -> dict[str, Any]:
@@ -702,7 +675,7 @@ def make_coding_tools(
 
         glob_pat = str(args.get("glob") or "**/*.{py,ts,tsx,js,go,rs,md}")
         pattern = args.get("pattern")
-        root_path = _resolve(str(args.get("path") or "."), _root())
+        root_path = resolve_in_workspace(str(args.get("path") or "."), _root())
         prompts = args.get("prompts") or args.get("tasks")
         if isinstance(prompts, list) and prompts:
             sections: list[str] = [f"parallel tasks: {len(prompts)}"]

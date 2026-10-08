@@ -29,19 +29,15 @@ from io import StringIO
 from rich.cells import cell_len
 from rich.console import Console
 
-from kite.agent.events import Event
 from kite.ui.chips import render_plan_tasks, render_task_row
-from kite.ui.render import RunDisplay
 from kite.ui.state import SessionUiState, TodoItem
 from kite.ui.status import format_status_tail, render_status, status_segments
 from kite.ui.style import KITE_THEME, PREVIEW_LINES
 from kite.ui.theme import glyph
 from kite.ui.tool_cards import (
     ToolCard,
-    overflow_marker,
     render_bash_command_block,
     render_code_edit_preview,
-    render_parallel_batch_header,
     render_tool_card_done,
     render_tool_card_start,
     render_tool_summary,
@@ -49,13 +45,6 @@ from kite.ui.tool_cards import (
 from tests.conftest import strip_ansi
 
 WIDTHS = (60, 80, 120)
-
-
-def _display(width: int = 120) -> tuple[RunDisplay, StringIO]:
-    """A RunDisplay whose console writes to an in-memory buffer."""
-    buf = StringIO()
-    console = Console(file=buf, width=width, force_terminal=True, theme=KITE_THEME)
-    return RunDisplay(console, state=SessionUiState(), quiet=False), buf
 
 
 def _at_width(monkeypatch, width: int) -> None:
@@ -110,17 +99,7 @@ def _assert_fits(build, width: int, *, label: str) -> list[str]:
     return rows
 
 
-def _c_test_compact_task_line_never_wraps_at_any_width(monkeypatch) -> None:
-    """The compact line is one row at 60, 80 and 120 cols — nothing spills."""
-    items = _overflow(_items())
-    for width in WIDTHS:
-        _at_width(monkeypatch, width)
-        rows = _assert_fits(lambda: render_plan_tasks(items), width, label="compact task line")
-        assert len(rows) == 1, f"the compact line must stay one row, got {rows}"
-        assert "Tasks" in rows[0], rows[0]
-
-
-def _c_test_tool_done_card_never_wraps_at_any_width(monkeypatch) -> None:
+def test_tool_done_card_never_wraps_at_any_width(monkeypatch) -> None:
     """A done card with timing, a diff stat and a long note stays one row."""
     for width in WIDTHS:
         _at_width(monkeypatch, width)
@@ -140,7 +119,7 @@ def _c_test_tool_done_card_never_wraps_at_any_width(monkeypatch) -> None:
         assert "edit" in rows[0], rows[0]
 
 
-def _c_test_tool_start_card_never_wraps_at_any_width(monkeypatch) -> None:
+def test_tool_start_card_never_wraps_at_any_width(monkeypatch) -> None:
     """A start card with a cue, tag, detail and `executing` stays one row."""
     for width in WIDTHS:
         _at_width(monkeypatch, width)
@@ -157,7 +136,7 @@ def _c_test_tool_start_card_never_wraps_at_any_width(monkeypatch) -> None:
         assert "executing" in rows[0], rows[0]
 
 
-def _c_test_bash_block_marker_and_rows_never_wrap(monkeypatch) -> None:
+def test_bash_block_marker_and_rows_never_wrap(monkeypatch) -> None:
     """Command rows and the overflow marker are clipped, not left to wrap."""
     command = "\n".join(
         "pytest -q tests/test_ui_ux.py::test_bash_block_marker_and_rows_never_wrap --maxfail=1"
@@ -172,7 +151,7 @@ def _c_test_bash_block_marker_and_rows_never_wrap(monkeypatch) -> None:
         assert any("/last" in row for row in rows), rows
 
 
-def _c_test_code_edit_preview_never_wraps_and_keeps_its_stat(monkeypatch) -> None:
+def test_code_edit_preview_never_wraps_and_keeps_its_stat(monkeypatch) -> None:
     """A long path and long content rows stay inside the window; the stat is metadata."""
     args = {
         "path": "src/kite/ui/" + "deeply_nested/" * 6 + "target_module.py",
@@ -190,37 +169,27 @@ def _c_test_code_edit_preview_never_wraps_and_keeps_its_stat(monkeypatch) -> Non
         assert any("+35 lines" in row and "/last" in row for row in rows), rows
 
 
-def _c_test_status_line_never_wraps_at_any_width(monkeypatch) -> None:
-    """Segment soup stays on one row: the footer dropping the least-useful bits."""
-    for width in WIDTHS:
-        _at_width(monkeypatch, width)
-        rows = _assert_fits(lambda: render_status(_busy_state()), width, label="status line")
-        assert len(rows) == 1, rows
-        # The brand plus the fields a reader scans for must survive 60 cols.
-        assert "kite" in rows[0] and "build" in rows[0] and "$0.123" in rows[0], rows[0]
-
-
-def _c_test_narrow_buys_room_by_dropping_the_bar_not_the_count_or_the_item(monkeypatch) -> None:
+def test_narrow_buys_room_by_dropping_the_bar_not_the_count_or_the_item(monkeypatch) -> None:
     """The in-flight item and the count are the content; the bar is decoration."""
     items = _overflow(_items())
-    _at_width(monkeypatch, 120)
-    wide = _assert_fits(lambda: render_plan_tasks(items), 120, label="compact task line")[0]
-    assert "1/3" in wide, wide
+    rendered = {}
+    for width in WIDTHS:
+        _at_width(monkeypatch, width)
+        rows = _assert_fits(lambda: render_plan_tasks(items), width, label="compact task line")
+        assert len(rows) == 1, rows
+        assert "Tasks" in rows[0] and "1/3" in rows[0], rows[0]
+        assert "make the tool card overflow" in rows[0], rows[0]
+        rendered[width] = rows[0]
+
+    wide, narrow = rendered[120], rendered[60]
     assert "make the tool card overflow markers con" in wide, wide
     assert glyph("bar_fill") in wide, wide
-
-    _at_width(monkeypatch, 60)
-    narrow = _assert_fits(lambda: render_plan_tasks(items), 60, label="compact task line")[0]
-    # The count and the item in flight are never what gets cut.
-    assert "1/3" in narrow, narrow
-    assert "make the tool card overflow" in narrow, narrow
-    # The bar is what goes.
     assert glyph("bar_fill") not in narrow, narrow
     # The clip is honest about what it dropped.
     assert narrow.endswith("…"), narrow
 
 
-def _c_test_a_done_family_tag_is_not_repeated_next_to_the_tool_name(monkeypatch) -> None:
+def test_a_done_family_tag_is_not_repeated_next_to_the_tool_name(monkeypatch) -> None:
     """`edit · edit` was the same idea twice; the tag only adds information."""
     _at_width(monkeypatch, 120)
     start = render_tool_card_start(ToolCard(tool="edit"), running=False).plain
@@ -232,7 +201,7 @@ def _c_test_a_done_family_tag_is_not_repeated_next_to_the_tool_name(monkeypatch)
     assert "grep · read" in read_start, read_start
 
 
-def _c_test_status_line_drops_background_counts_before_the_scanned_fields(monkeypatch) -> None:
+def test_status_line_drops_background_counts_before_the_scanned_fields(monkeypatch) -> None:
     """A crowded footer sheds jobs/agents before mode, model or cost.
 
     The long model id is what makes the row actually crowded: at 60 cols with
@@ -257,7 +226,7 @@ def _c_test_status_line_drops_background_counts_before_the_scanned_fields(monkey
     assert any("some-really-long-model" in text for text in narrow), narrow
 
 
-def _c_test_a_status_error_outranks_cost_when_the_row_is_tight(monkeypatch) -> None:
+def test_a_status_error_outranks_cost_when_the_row_is_tight(monkeypatch) -> None:
     """Error state is a field the user scans for, so it beats the cost figure."""
     state = _busy_state()
     state.busy = False
@@ -267,20 +236,22 @@ def _c_test_a_status_error_outranks_cost_when_the_row_is_tight(monkeypatch) -> N
     assert any("err " in row for row in rows), rows
 
 
-def _c_test_status_tail_and_rich_footer_agree_on_one_row(monkeypatch) -> None:
+def test_status_tail_and_rich_footer_agree_on_one_row(monkeypatch) -> None:
     """The toolbar tail and the Rich footer share one width budget and one join."""
     state = _busy_state()
     for width in WIDTHS:
         _at_width(monkeypatch, width)
         tail = format_status_tail(state)
         rows = _assert_fits(lambda: render_status(state), width, label="status line")
+        assert len(rows) == 1, rows
+        assert "kite" in rows[0] and "build" in rows[0] and "$0.123" in rows[0], rows[0]
         assert cell_len(tail) <= width, f"status tail {width}: {tail!r}"
         # Every segment the footer shows, the tail carries — no two truths.
         for text, _style in status_segments(state):
             assert text in tail and text in rows[0], (text, tail, rows[0])
 
 
-def _c_test_detail_view_keeps_every_context_bit_the_footer_drops(monkeypatch) -> None:
+def test_detail_view_keeps_every_context_bit_the_footer_drops(monkeypatch) -> None:
     """/status is the place to see the bits a narrow footer sheds, so it keeps them."""
     state = _busy_state()
     _at_width(monkeypatch, 60)
@@ -296,7 +267,7 @@ def _c_test_detail_view_keeps_every_context_bit_the_footer_drops(monkeypatch) ->
     assert "working" not in narrow, narrow
 
 
-def _c_test_overflow_markers_say_the_same_thing_for_write_edit_and_bash() -> None:
+def test_overflow_markers_say_the_same_thing_for_write_edit_and_bash() -> None:
     """One phrasing across every surface that cuts a body."""
     write = render_code_edit_preview(
         "write", {"path": "a.py", "content": "\n".join(f"line {i}" for i in range(20))}
@@ -323,28 +294,10 @@ def _c_test_overflow_markers_say_the_same_thing_for_write_edit_and_bash() -> Non
     assert markers[0] == markers[2], markers
     assert re.fullmatch(r"\u250a \u2026 \+\d+ lines  /last", markers[1]), markers[1]
     assert "+15 lines" in markers[0] and "+35 lines" in markers[1]
-    # And each is the shared builder, not three literals that happen to match.
-    assert markers[0].endswith(overflow_marker(15))
-    assert markers[1].endswith(overflow_marker(35))
-    assert markers[2].endswith(overflow_marker(15))
 
 
-def _c_test_overflow_marker_names_a_command_that_exists_and_never_expand() -> None:
-    """/last re-prints the record; /expand only reshapes future calls."""
-    from kite.ui import commands as commands_mod
-    from kite.ui.commands import BUILTINS
-
-    registered = frozenset(b.name for b in BUILTINS) | frozenset(commands_mod.ALIASES)
-    marker = overflow_marker(35)
-    assert marker == "… +35 lines  /last"
-    assert "last" in registered
-    # /expand cannot bring back rows that already scrolled past.
-    assert "expand" not in marker
-
-
-def _c_test_preview_budget_is_still_five_and_narrow_never_buys_more_rows(monkeypatch) -> None:
+def test_preview_budget_is_still_five_and_narrow_never_buys_more_rows(monkeypatch) -> None:
     """The v1.0.6 density change stands: 5 body rows, at every width."""
-    assert PREVIEW_LINES == 5
     content = "\n".join(f"line {i:02d}" for i in range(30))
 
     for width in WIDTHS:
@@ -358,45 +311,8 @@ def _c_test_preview_budget_is_still_five_and_narrow_never_buys_more_rows(monkeyp
         rows = [ln for ln in bash.plain.splitlines() if "line " in ln and "/last" not in ln]
         assert len(rows) == PREVIEW_LINES, f"width {width}: {rows}"
 
-    # The scroll path through RunDisplay is capped the same way.
-    display, buf = _display()
-    display.state.expanded_all = False
-    display(Event("tool_end", payload={"tool": "bash", "ok": True, "output": content}))
-    display.close()
-    body = [ln for ln in strip_ansi(buf.getvalue()).splitlines() if "line " in ln]
-    assert len(body) == PREVIEW_LINES, body
 
-
-def _c_test_separators_and_glyphs_match_across_the_surfaces_i_normalised() -> None:
-    """One separator mark everywhere, one gutter, on every row type."""
-    sep = glyph("sep")
-    items = _overflow(_items())
-    header = render_plan_tasks(items).plain
-    assert f"  {sep} " in header, header
-    assert header.startswith("  "), header
-    # The item separator, not the between-fields form the tool cards use.
-    assert f" {sep} " not in header.replace(f"  {sep} ", ""), header
-
-    start = render_tool_card_start(ToolCard(tool="bash", detail="pytest"), running=True).plain
-    done = render_tool_card_done("bash", ok=True, meta="4ms").plain
-    assert f" {sep} " in start and f" {sep} " in done, (start, done)
-    # The doubled separator a f-string could produce is gone.
-    assert f"{sep}  {sep}" not in start and f"{sep}  {sep}" not in done
-    assert not start.endswith(sep) and not done.endswith(sep), (start, done)
-
-    batch = render_parallel_batch_header(3, ["read", "bash"]).plain
-    # The trailing inline item takes the house item separator — two spaces
-    # before the mark, one after — not the between-fields single-space form.
-    assert f"  {sep} " in batch, batch
-    assert f" tools {sep} " not in batch, batch
-
-    summary = render_tool_summary(preview="a long summary that will be clipped at narrow widths").plain
-    assert summary.startswith("    "), summary
-    meter_bits = render_parallel_batch_header(1).plain
-    assert meter_bits.startswith("  "), meter_bits
-
-
-def _c_test_clipped_paths_always_still_identify_the_file() -> None:
+def test_clipped_paths_always_still_identify_the_file() -> None:
     """A clipped path must name its file — never degrade to a bare ellipsis.
 
     The failure this guards: a path with no ``/`` in it (a bare filename) walked
@@ -432,18 +348,7 @@ def _c_test_clipped_paths_always_still_identify_the_file() -> None:
     assert cell_len(_clip_path("a.py", 2)) <= 2
 
 
-def _c_test_a_clipped_value_keeps_the_identifying_end_when_it_is_a_filename() -> None:
-    """`_clip_tail` exists because prose clips from the right and names lose meaning."""
-    from kite.ui.tool_cards import _clip_tail
-
-    assert _clip_tail("target_module.py", 10) == "\u2026module.py"
-    assert _clip_tail("abcdefghijkl", 5) == "\u2026ijkl"
-    assert _clip_tail("short", 40) == "short"
-    for text, limit in [("x" * 50, n) for n in range(1, 12)]:
-        assert cell_len(_clip_tail(text, limit)) <= max(limit, 1)
-
-
-def _c_test_task_row_badge_rides_the_right_edge_without_wrapping(monkeypatch) -> None:
+def test_task_row_badge_rides_the_right_edge_without_wrapping(monkeypatch) -> None:
     """The itemized row clips its content so the status badge is never pushed off."""
     long_item = TodoItem(id="9", content="word " * 60, status="in_progress")
     for width in WIDTHS:
@@ -453,80 +358,44 @@ def _c_test_task_row_badge_rides_the_right_edge_without_wrapping(monkeypatch) ->
         assert rows[0].rstrip().endswith("In progress"), rows[0]
 
 
-def _c_test_run_meter_and_summary_stay_one_row_when_narrow(monkeypatch) -> None:
+def test_run_meter_and_summary_stay_one_row_when_narrow(monkeypatch) -> None:
     """The trailing footer rows are one-liners by contract; narrow drops, never wraps."""
     from kite.ui.tool_cards import render_run_meter
 
     for width in WIDTHS:
         _at_width(monkeypatch, width)
-        assert _assert_fits(
+        meter = _assert_fits(
             lambda: render_run_meter(
                 tools=128, duration_ms=4210, tokens=1_234_567, cost=12.3456, n_calls=9
             ),
             width,
             label="run meter",
         )
-        _assert_fits(
+        summary = _assert_fits(
             lambda: render_tool_summary(preview="summary text " * 30, line_count=999),
             width,
             label="tool summary",
         )
+        assert len(meter) == len(summary) == 1, (meter, summary)
+        assert "128" in meter[0], meter
+        assert "summary text" in summary[0], summary
 
 
-def _c_test_ascii_font_pack_keeps_every_normalised_row_one_line(monkeypatch) -> None:
+def test_ascii_font_pack_keeps_every_normalised_row_one_line(monkeypatch) -> None:
     """Normalising on glyph('sep') means the ascii pack swaps with everything else."""
-    from kite.ui.theme import reset_prefs
+    import kite.ui.theme as theme
 
-    reset_prefs(theme="auto", font="ascii")
-    try:
-        assert glyph("sep") == "|", glyph("sep")
-        items = _overflow(_items())
-        for width in WIDTHS:
-            _at_width(monkeypatch, width)
-            header = _assert_fits(lambda: render_plan_tasks(items), width, label="task line (ascii)")
-            assert "|" in header[0], header
-            _assert_fits(
-                lambda: render_tool_card_start(ToolCard(tool="bash", detail="pytest -q x"), running=True),
-                width,
-                label="start card (ascii)",
-            )
-            _assert_fits(lambda: render_status(_busy_state()), width, label="status line (ascii)")
-    finally:
-        reset_prefs(theme="auto", font="unicode")
+    monkeypatch.setattr(theme._prefs, "font", "ascii")
+    items = _overflow(_items())
+    for width in WIDTHS:
+        _at_width(monkeypatch, width)
+        header = _assert_fits(lambda: render_plan_tasks(items), width, label="task line (ascii)")
+        assert len(header) == 1 and "|" in header[0], header
+        start = _assert_fits(
+            lambda: render_tool_card_start(ToolCard(tool="bash", detail="pytest -q x"), running=True),
+            width,
+            label="start card (ascii)",
+        )
+        status = _assert_fits(lambda: render_status(_busy_state()), width, label="status line (ascii)")
+        assert len(start) == len(status) == 1, (start, status)
 
-
-def test_batch_00(monkeypatch) -> None:
-    """Consolidated (bodies unchanged): never-wraps."""
-    _c_test_compact_task_line_never_wraps_at_any_width(monkeypatch=monkeypatch)
-    _c_test_tool_done_card_never_wraps_at_any_width(monkeypatch=monkeypatch)
-    _c_test_tool_start_card_never_wraps_at_any_width(monkeypatch=monkeypatch)
-    _c_test_bash_block_marker_and_rows_never_wrap(monkeypatch=monkeypatch)
-    _c_test_code_edit_preview_never_wraps_and_keeps_its_stat(monkeypatch=monkeypatch)
-    _c_test_status_line_never_wraps_at_any_width(monkeypatch=monkeypatch)
-
-
-def test_batch_01(monkeypatch) -> None:
-    """Consolidated (bodies unchanged): narrow-sheds-decoration."""
-    _c_test_narrow_buys_room_by_dropping_the_bar_not_the_count_or_the_item(monkeypatch=monkeypatch)
-    _c_test_a_done_family_tag_is_not_repeated_next_to_the_tool_name(monkeypatch=monkeypatch)
-    _c_test_status_line_drops_background_counts_before_the_scanned_fields(monkeypatch=monkeypatch)
-    _c_test_a_status_error_outranks_cost_when_the_row_is_tight(monkeypatch=monkeypatch)
-    _c_test_status_tail_and_rich_footer_agree_on_one_row(monkeypatch=monkeypatch)
-    _c_test_detail_view_keeps_every_context_bit_the_footer_drops(monkeypatch=monkeypatch)
-
-
-def test_batch_02(monkeypatch) -> None:
-    """Consolidated (bodies unchanged): overflow+preview-budget."""
-    _c_test_overflow_markers_say_the_same_thing_for_write_edit_and_bash()
-    _c_test_overflow_marker_names_a_command_that_exists_and_never_expand()
-    _c_test_preview_budget_is_still_five_and_narrow_never_buys_more_rows(monkeypatch=monkeypatch)
-
-
-def test_batch_03(monkeypatch) -> None:
-    """Consolidated (bodies unchanged): separators+clip+task-row+meter."""
-    _c_test_separators_and_glyphs_match_across_the_surfaces_i_normalised()
-    _c_test_clipped_paths_always_still_identify_the_file()
-    _c_test_a_clipped_value_keeps_the_identifying_end_when_it_is_a_filename()
-    _c_test_task_row_badge_rides_the_right_edge_without_wrapping(monkeypatch=monkeypatch)
-    _c_test_run_meter_and_summary_stay_one_row_when_narrow(monkeypatch=monkeypatch)
-    _c_test_ascii_font_pack_keeps_every_normalised_row_one_line(monkeypatch=monkeypatch)

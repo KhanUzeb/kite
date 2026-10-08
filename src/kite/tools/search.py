@@ -2,35 +2,25 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
+import tempfile
+import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+from kite.env.shell import iter_bounded_lines
+from kite.guardrails.redact import redact_string
+from kite.guardrails.sandbox import is_protected
+from kite.util import bounded_int
+
 _SKIP_PARTS = frozenset({".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"})
 _GREP_MAX_FILE_BYTES = 1_000_000
-_RG_DENY_GLOBS = (
-    "!.env",
-    "!.env.*",
-    "!**/.env",
-    "!**/.env.*",
-    "!*.env",
-    "!**/*.env",
-)
-
-
-def _safe_int(value: Any, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return default
-    if n < minimum:
-        return minimum
-    if maximum is not None and n > maximum:
-        return maximum
-    return n
+_RG_DENY_GLOBS = ("!.env", "!.env.*", "!*.env")
+_RG_LINE = re.compile(r"^(\d+)([:-])(.*)$")
 
 
 def _skip_path(path: Path) -> bool:
@@ -97,37 +87,18 @@ def _format_grouped_hits(rows: list[tuple[str, int, str]], *, max_files: int) ->
     return body, len(rows), total_files
 
 
-def _parse_rg_count(raw: str) -> int | None:
-    """Parse ripgrep ``--count`` output ``path:count`` (Windows drive letters safe)."""
-    if not raw.strip() or ":" not in raw:
-        return None
-    try:
-        return int(raw.rsplit(":", 1)[-1])
-    except ValueError:
-        return None
-
-
-def _parse_rg_line(raw: str, root: Path) -> tuple[str, int, str] | None:
-    """Parse ``path:line:content`` or ``path:line:col:content`` (Windows drive letters safe)."""
-    if not raw.strip() or ":" not in raw:
-        return None
-    for n in (2, 3):
-        parts = raw.rsplit(":", n)
-        if len(parts) != n + 1:
-            continue
-        file_path, line_s = parts[0], parts[1]
-        text = parts[-1]
-        try:
-            line_no = int(line_s)
-        except ValueError:
-            continue
-        rel = file_path
-        try:
-            rel = _rel(Path(file_path).resolve(), root.resolve())
-        except OSError:
-            rel = file_path
-        return rel, line_no, text.rstrip()
-    return None
+def _search_paths(root: Path, glob_pat: str) -> Iterator[Path]:
+    if _is_file_safe(root):
+        yield root
+        return
+    for directory, dirs, files in os.walk(root):
+        # Prune before descending, rather than walking caches only to discard
+        # every file afterwards. Never follow directory symlinks.
+        dirs[:] = sorted(name for name in dirs if name not in _SKIP_PARTS)
+        for name in sorted(files):
+            path = Path(directory) / name
+            if not glob_pat or path.relative_to(root).match(glob_pat):
+                yield path
 
 
 def grep_search(
@@ -146,36 +117,27 @@ def grep_search(
     child_env: Callable[[str], dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Search file contents — ripgrep when available, Python fallback otherwise."""
-    max_hits = _safe_int(max_hits, 40, minimum=1, maximum=500)
-    max_files = _safe_int(max_files, 30, minimum=1, maximum=200)
-    context = _safe_int(context, 0, minimum=0, maximum=5)
-    env = child_env(cwd) if child_env else None
+    max_hits = bounded_int(max_hits, 40, minimum=1, maximum=500)
+    max_files = bounded_int(max_files, 30, minimum=1, maximum=200)
+    context = bounded_int(context, 0, minimum=0, maximum=5)
+    if _sensitive_file(root) or (root.is_symlink() and is_protected(root)):
+        return {"ok": True, "output": "(no matches)", "hits": 0, "files": 0,
+                "summary": "0 hit(s) in 0 file(s)"}
 
     rg = shutil.which("rg")
     if rg:
+        env = child_env(cwd) if child_env else None
         cmd = [
-            rg,
-            "--color",
-            "never",
-            "--no-heading",
-            "-g",
-            "!.git",
-            "-g",
-            "!node_modules",
-            "-g",
-            "!.venv",
-            "-g",
-            "!__pycache__",
+            rg, "--color", "never", "--no-heading", "--with-filename",
+            "--max-filesize", str(_GREP_MAX_FILE_BYTES),
         ]
-        for glob in _RG_DENY_GLOBS:
-            cmd.extend(["-g", glob])
         if files_only:
             cmd.append("--files-with-matches")
         elif count_only:
-            cmd.append("--count")
+            cmd.extend(["--count", "--null"])
         else:
-            cmd.append("--line-number")
-            if context > 0:
+            cmd.extend(["--line-number", "--null", "--max-count", str(max_hits)])
+            if context:
                 cmd.extend(["-C", str(context)])
         if ignore_case:
             cmd.append("-i")
@@ -183,96 +145,112 @@ def grep_search(
             cmd.append("-F")
         if glob_pat:
             cmd.extend(["--glob", glob_pat])
-        if not files_only and not count_only:
-            cmd.extend(["--max-count", str(max_hits)])
+        for glob in (*_RG_DENY_GLOBS, *("!" + part for part in _SKIP_PARTS)):
+            cmd.extend(["-g", glob])
         cmd.extend(["-e", pattern, str(root)])
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=25,
-                cwd=cwd,
-                env=env,
-            )
-        except (OSError, subprocess.TimeoutExpired) as e:
-            return {"ok": False, "error": str(e), "output": str(e)}
-        if proc.returncode not in (0, 1):
-            err = (proc.stderr or "ripgrep failed").strip() or f"ripgrep exited {proc.returncode}"
-            return {"ok": False, "error": err, "output": err}
-        lines = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
-        if files_only:
-            lines = [ln for ln in lines if not _sensitive_file(Path(ln))]
-            rels = []
-            for ln in lines[:max_files]:
-                try:
-                    rels.append(_rel(Path(ln).resolve(), root.resolve()))
-                except OSError:
-                    rels.append(ln)
-            body = "\n".join(rels) if rels else "(no matches)"
-            extra = max(0, len(lines) - len(rels))
-            summary = f"{len(lines)} file(s) matched"
-            if extra:
-                body += f"\n… +{extra} more files (raise max_files) …"
-                summary += f", showing {len(rels)}"
-            return {
-                "ok": True,
-                "output": body,
-                "hits": len(lines),
-                "files": len(lines),
-                "engine": "rg",
-                "summary": summary,
-            }
-        if count_only:
-            lines = [ln for ln in lines if not _sensitive_file(Path(ln.rsplit(":", 1)[0]))]
-            body = "\n".join(lines[:max_files]) if lines else "(no matches)"
-            total = sum(c for ln in lines if (c := _parse_rg_count(ln)) is not None) if lines else 0
-            return {
-                "ok": True,
-                "output": body,
-                "hits": total,
-                "files": len(lines),
-                "engine": "rg",
-                "summary": f"{len(lines)} file(s), {total} match(es)",
-            }
-
+        lines: list[str] = []
         parsed: list[tuple[str, int, str]] = []
-        for ln in lines:
-            row = _parse_rg_line(ln, root)
-            if row and not _sensitive_file(Path(row[0])):
-                parsed.append(row)
-        if context > 0:
-            body = "\n".join(lines[: max_hits * (1 + context * 2)]) or "(no matches)"
-            truncated = len(lines) > max_hits
-            if truncated:
-                body += "\n… truncated …"
-            return {
-                "ok": True,
-                "output": body,
-                "hits": len(parsed),
-                "engine": "rg",
-                "summary": f"{len(parsed)} line hit(s)",
-            }
+        total_hits = total_files = 0
+        timed_out = threading.Event()
+        limited = False
+        after_limit = 0
+        limit_path = ""
+        relative_root = root if root.is_dir() else root.parent
+        try:
+            with tempfile.TemporaryFile() as errors:
+                with subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=errors, text=True,
+                    encoding="utf-8", errors="replace", cwd=cwd, env=env,
+                ) as proc:
+                    def expire() -> None:
+                        timed_out.set()
+                        proc.kill()
 
+                    timer = threading.Timer(25, expire)
+                    timer.daemon = True
+                    timer.start()
+                    try:
+                        assert proc.stdout is not None
+                        for raw in iter_bounded_lines(proc.stdout, max_chars=_GREP_MAX_FILE_BYTES + 4096):
+                            raw = raw.rstrip("\n")
+                            if not raw or raw == "--":
+                                if context and raw and not after_limit:
+                                    lines.append(raw)
+                                continue
+                            path_text, _, content = raw.partition("\0") if not files_only else (raw, "", "")
+                            path = Path(path_text)
+                            if after_limit and path_text != limit_path:
+                                proc.terminate()
+                                break
+                            if _sensitive_file(path):
+                                continue
+                            rel = _rel(path, relative_root)
+                            if files_only:
+                                total_files += 1
+                                if len(lines) < max_files:
+                                    lines.append(rel)
+                                continue
+                            if count_only:
+                                total_files += 1
+                                total_hits += int(content)
+                                if len(lines) < max_files:
+                                    lines.append(f"{path_text}:{content}")
+                                continue
+                            match = _RG_LINE.match(content)
+                            if match is None:
+                                continue
+                            number, separator, text = match.groups()
+                            text = redact_string(text)
+                            if separator == ":" and total_hits < max_hits:
+                                total_hits += 1
+                                parsed.append((rel, int(number), text[:240].rstrip()))
+                            if context:
+                                lines.append(f"{path_text}{separator}{number}{separator}{text[:240]}")
+                            if total_hits >= max_hits:
+                                limited = True
+                                limit_path = path_text
+                                after_limit += 1
+                                if after_limit > context:
+                                    proc.terminate()
+                                    break
+                    finally:
+                        timer.cancel()
+                    rc = proc.wait()
+                if timed_out.is_set():
+                    err = "ripgrep timed out after 25s"
+                    return {"ok": False, "error": err, "output": err}
+                if rc not in (0, 1) and not limited:
+                    errors.seek(0)
+                    err = errors.read(16_000).decode("utf-8", errors="replace").strip() or f"ripgrep exited {rc}"
+                    return {"ok": False, "error": err, "output": err}
+        except OSError as e:
+            return {"ok": False, "error": str(e), "output": str(e)}
+        if files_only:
+            body = "\n".join(lines) or "(no matches)"
+            summary = f"{total_files} file(s) matched"
+            if total_files > len(lines):
+                body += f"\n… +{total_files - len(lines)} more files (raise max_files) …"
+                summary += f", showing {len(lines)}"
+            return {"ok": True, "output": body, "hits": total_files, "files": total_files,
+                    "engine": "rg", "summary": summary}
+        if count_only:
+            return {"ok": True, "output": "\n".join(lines) or "(no matches)", "hits": total_hits,
+                    "files": total_files, "engine": "rg", "summary": f"{total_files} file(s), {total_hits} match(es)"}
+        if context:
+            body = "\n".join(lines) or "(no matches)"
+            if limited:
+                body += "\n… truncated …"
+            return {"ok": True, "output": body, "hits": total_hits, "engine": "rg",
+                    "summary": f"{total_hits} line hit(s)"}
         body, hit_count, file_count = _format_grouped_hits(parsed, max_files=max_files)
-        if not body:
-            body = "(no matches)"
-        truncated = hit_count >= max_hits
-        if truncated:
+        body = body or "(no matches)"
+        if limited:
             body += "\n… hit limit reached (raise max_hits or narrow search) …"
-        return {
-            "ok": True,
-            "output": body,
-            "hits": hit_count,
-            "files": file_count,
-            "engine": "rg",
-            "summary": f"{hit_count} hit(s) in {file_count} file(s)",
-        }
+        return {"ok": True, "output": body, "hits": hit_count, "files": file_count,
+                "engine": "rg", "summary": f"{hit_count} hit(s) in {file_count} file(s)"}
 
     # Python fallback
-    needle = pattern
+    needle = pattern.lower() if ignore_case else pattern
     rx = None
     if not fixed:
         try:
@@ -282,73 +260,99 @@ def grep_search(
 
     def _match(line: str) -> bool:
         if fixed:
-            return needle in line if not ignore_case else needle.lower() in line.lower()
+            return needle in (line.lower() if ignore_case else line)
         return rx.search(line) is not None if rx is not None else False
 
     hits: list[tuple[str, int, str]] = []
+    context_lines: list[str] = []
+    total_hits = total_files = 0
     file_hits: dict[str, int] = {}
-    if _is_file_safe(root):
-        paths = [root]
-    elif glob_pat:
-        glob_use = glob_pat
-        paths = sorted(root.rglob(glob_use) if "**" in glob_use else root.glob(glob_use))
-    else:
-        paths = sorted(p for p in root.rglob("*") if _is_file_safe(p) and not _skip_path(p))
-    for p in paths:
+    relative_root = root if _is_dir_safe(root) else root.parent
+    for p in _search_paths(root, glob_pat):
         if not _is_file_safe(p) or _skip_path(p) or _sensitive_file(p):
             continue
-        rel = _rel(p, root if _is_dir_safe(root) else p.parent)
+        rel = _rel(p, relative_root)
         try:
             if p.stat().st_size > _GREP_MAX_FILE_BYTES:
                 continue
-            text = p.read_text(encoding="utf-8", errors="replace")
+            if p.is_symlink() and is_protected(p):
+                continue
+            with p.open("r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read(_GREP_MAX_FILE_BYTES + 1)
+            if len(text) > _GREP_MAX_FILE_BYTES or "\0" in text:
+                continue
         except OSError:
             continue
-        local = 0
-        for i, line in enumerate(text.splitlines(), 1):
-            if _match(line):
-                local += 1
-                if files_only:
-                    file_hits[rel] = file_hits.get(rel, 0) + 1
-                    break
-                if count_only:
-                    file_hits[rel] = file_hits.get(rel, 0) + 1
-                    continue
-                hits.append((rel, i, line[:240]))
-                if len(hits) >= max_hits:
-                    break
+        source_lines = text.splitlines()
+        local_hits = 0
+        shown_until = 0
+        for i, line in enumerate(source_lines, 1):
+            if not _match(line):
+                continue
+            local_hits += 1
+            if files_only:
+                break
+            if count_only:
+                continue
+            hits.append((rel, i, redact_string(line)[:240]))
+            if context:
+                start = max(shown_until, i - 1 - context)
+                end = min(len(source_lines), i + context)
+                if context_lines and start > shown_until:
+                    context_lines.append("--")
+                for index in range(start, end):
+                    separator = ":" if _match(source_lines[index]) else "-"
+                    safe = redact_string(source_lines[index])[:240]
+                    context_lines.append(f"{p}{separator}{index + 1}{separator}{safe}")
+                shown_until = end
+            if len(hits) >= max_hits:
+                break
+        if local_hits:
+            total_files += 1
+            total_hits += local_hits
+            if len(file_hits) < max_files:
+                file_hits[rel] = local_hits
         if not files_only and not count_only and len(hits) >= max_hits:
-            break
-        if files_only and len(file_hits) >= max_files:
             break
 
     if files_only:
-        rels = list(file_hits.keys())[:max_files]
-        body = "\n".join(rels) if rels else "(no matches)"
+        body = "\n".join(file_hits) or "(no matches)"
+        summary = f"{total_files} file(s) matched"
+        if total_files > len(file_hits):
+            body += f"\n… +{total_files - len(file_hits)} more files (raise max_files) …"
+            summary += f", showing {len(file_hits)}"
         return {
             "ok": True,
             "output": body,
-            "hits": sum(file_hits.values()),
-            "files": len(file_hits),
+            "hits": total_files,
+            "files": total_files,
             "engine": "python",
-            "summary": f"{len(file_hits)} file(s) matched",
+            "summary": summary,
         }
     if count_only:
         lines = [f"{k}:{v}" for k, v in list(file_hits.items())[:max_files]]
         body = "\n".join(lines) if lines else "(no matches)"
-        total = sum(file_hits.values())
         return {
             "ok": True,
             "output": body,
-            "hits": total,
-            "files": len(file_hits),
+            "hits": total_hits,
+            "files": total_files,
             "engine": "python",
-            "summary": f"{len(file_hits)} file(s), {total} match(es)",
+            "summary": f"{total_files} file(s), {total_hits} match(es)",
         }
+
+    if context:
+        body = "\n".join(context_lines) or "(no matches)"
+        if len(hits) >= max_hits:
+            body += "\n… truncated …"
+        return {"ok": True, "output": body, "hits": len(hits), "engine": "python",
+                "summary": f"{len(hits)} line hit(s)"}
 
     body, hit_count, file_count = _format_grouped_hits(hits, max_files=max_files)
     if not body:
         body = "(no matches)"
+    if hit_count >= max_hits:
+        body += "\n… hit limit reached (raise max_hits or narrow search) …"
     return {
         "ok": True,
         "output": body,
@@ -369,7 +373,7 @@ def glob_search(
     sort: str = "name",
 ) -> dict[str, Any]:
     """Match paths under root — recursive when pattern contains ``**``."""
-    max_matches = _safe_int(max_matches, 120, minimum=1, maximum=2000)
+    max_matches = bounded_int(max_matches, 120, minimum=1, maximum=2000)
     if "**" in pattern:
         candidates = root.rglob(pattern.removeprefix("**/").lstrip("/"))
     else:
@@ -414,7 +418,7 @@ def ls_search(
     max_entries: int = 200,
 ) -> dict[str, Any]:
     """List one directory level — optional glob filter."""
-    max_entries = _safe_int(max_entries, 200, minimum=1, maximum=1000)
+    max_entries = bounded_int(max_entries, 200, minimum=1, maximum=1000)
     if not path.exists():
         return {"ok": False, "error": f"not found: {path}", "output": f"not found: {path}"}
     if _is_file_safe(path):

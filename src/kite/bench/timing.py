@@ -16,6 +16,7 @@ class TimingSample:
     name: str
     seconds: float
     iterations: int = 1
+    samples: tuple[float, ...] = ()
 
     @property
     def ms(self) -> float:
@@ -43,4 +44,4 @@ def measure_many(name: str, fn: Callable[[], T], *, iterations: int = 5) -> tupl
         result = fn()
         samples.append(time.perf_counter() - start)
     median = statistics.median(samples)
-    return result, TimingSample(name=name, seconds=median, iterations=n)
+    return result, TimingSample(name=name, seconds=median, iterations=n, samples=tuple(samples))

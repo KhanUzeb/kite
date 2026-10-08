@@ -127,11 +127,6 @@ _THINKING_EFFORTS = frozenset({"medium", "high", "xhigh", "max"})
 _FAST_EFFORTS = frozenset({"minimal", "min", "low"})
 
 
-def parse_mode(raw: str | None) -> ReasoningMode:
-    mode, _effort = split_reasoning(raw)
-    return mode
-
-
 def split_reasoning(raw: str | None) -> tuple[ReasoningMode, str]:
     """`thinking:high` → ('thinking', 'high'). Bare `high` is thinking at that level."""
     text = (raw or "auto").strip().lower()

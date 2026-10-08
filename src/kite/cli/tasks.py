@@ -43,9 +43,6 @@ def cmd_tasks(args) -> int:
         return 0
 
     if action == "run":
-        from kite.models.litellm_model import prewarm_litellm
-
-        prewarm_litellm()  # ~7s cold import overlaps task-file parsing
         default_cwd = str(Path(getattr(args, "cwd", ".") or ".").resolve())
         use_stdin = bool(getattr(args, "stdin", False) or str(getattr(args, "file", "") or "") == "-")
         if not use_stdin and not getattr(args, "file", None):
@@ -69,6 +66,10 @@ def cmd_tasks(args) -> int:
                 label = task.label or task.task[:48]
                 console.print(f"  {i + 1}. [{task.mode}/{task.approval}] {label}")
             return 0
+
+        from kite.models.litellm_model import prewarm_litellm
+
+        prewarm_litellm()  # overlaps harness/context setup; skipped for bad args and --dry-run
 
         batch = run_headless_batch(
             tasks,

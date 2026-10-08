@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from kite.config import UserConfig, kite_home
-from kite.memory.session import _read_session_meta, _trajectory_path, sessions_dir
+from kite.memory.session import (
+    _iter_rows_reverse,
+    _iter_session_rows,
+    _read_session_meta,
+    _trajectory_path,
+    sessions_dir,
+)
 
 _FAILED_STATUSES = frozenset(
     {
@@ -349,31 +355,19 @@ def scan_session_file(path: Path) -> SessionStats | None:
     )
     seen_checkpoints: set[str] = set()
     try:
-        with path.open(encoding="utf-8", errors="replace") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    # Torn final line from a crash mid-append — keep the prefix.
-                    continue
-                if not isinstance(row, dict):
-                    # Valid JSON but not a row (e.g. a stray array); skip it the
-                    # way session.py's loader does instead of raising on .get().
-                    continue
-                rtype = row.get("type")
-                if rtype == "message":
-                    stats.message_count += 1
-                elif rtype == "context_checkpoint":
-                    cp_id = str(row.get("checkpoint_id") or "")
-                    if cp_id:
-                        seen_checkpoints.add(cp_id)
-                    stats.checkpoints += 1
-                elif rtype == "event":
-                    kind = str(row.get("kind") or "")
-                    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-                    _apply_event(stats, kind, payload, seen_checkpoints=seen_checkpoints)
+        for row in _iter_session_rows(path):
+            rtype = row.get("type")
+            if rtype == "message":
+                stats.message_count += 1
+            elif rtype == "context_checkpoint":
+                cp_id = str(row.get("checkpoint_id") or "")
+                if cp_id:
+                    seen_checkpoints.add(cp_id)
+                stats.checkpoints += 1
+            elif rtype == "event":
+                kind = str(row.get("kind") or "")
+                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+                _apply_event(stats, kind, payload, seen_checkpoints=seen_checkpoints)
     except OSError:
         pass
 
@@ -385,29 +379,27 @@ def scan_session_file(path: Path) -> SessionStats | None:
 
 
 def list_session_events(path: Path, *, limit: int = 20) -> list[dict[str, Any]]:
-    """Recent durable events for session drill-down."""
+    """Read recent durable events newest-first, then return chronological order."""
+    if limit <= 0:
+        return []
     rows: list[dict[str, Any]] = []
     try:
-        with path.open(encoding="utf-8", errors="replace") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(row, dict) or row.get("type") != "event":
-                    continue
-                rows.append(
-                    {
-                        "ts": float(row.get("ts") or 0),
-                        "kind": str(row.get("kind") or ""),
-                        "payload": row.get("payload") if isinstance(row.get("payload"), dict) else {},
-                    }
-                )
+        for row in _iter_rows_reverse(path):
+            if row.get("type") != "event":
+                continue
+            rows.append(
+                {
+                    "ts": float(row.get("ts") or 0),
+                    "kind": str(row.get("kind") or ""),
+                    "payload": row.get("payload") if isinstance(row.get("payload"), dict) else {},
+                }
+            )
+            if len(rows) >= limit:
+                break
     except OSError:
         return []
-    return rows[-limit:]
+    rows.reverse()
+    return rows
 
 
 def list_session_stats(*, limit: int = 500) -> list[SessionStats]:
@@ -420,6 +412,9 @@ def list_session_stats(*, limit: int = 500) -> list[SessionStats]:
     is a full transcript scan, so stopping early still matters.
     """
     from kite.memory.session import _ranked_transcripts
+
+    if limit <= 0:
+        return []
 
     rows: list[SessionStats] = []
     directory = sessions_dir()

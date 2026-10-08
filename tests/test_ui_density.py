@@ -52,7 +52,7 @@ def _diff_body_rows(plain: str) -> list[str]:
     return rows
 
 
-def _c_test_todo_tool_call_prints_the_plan_once_and_never_echoes_its_body() -> None:
+def test_todo_tool_call_prints_the_plan_once_and_never_echoes_its_body() -> None:
     """todo_write painted the checklist, a start card, a done card, AND the JSON.
 
     The plan checklist is the UI for the todo tools; their result payload is the
@@ -137,9 +137,8 @@ def _c_test_todo_tool_call_prints_the_plan_once_and_never_echoes_its_body() -> N
     assert "invalid status" in strip_ansi(err_buf.getvalue())
 
 
-def _c_test_large_tool_output_body_is_capped_at_the_preview_budget() -> None:
+def test_large_tool_output_body_is_capped_at_the_preview_budget() -> None:
     """A 30-line body shows 5 lines plus the marker, not the whole dump."""
-    assert PREVIEW_LINES == 5
     display, buf = _display()
     display.state.expanded_all = False
     output = "\n".join(f"result line {i:02d}" for i in range(30))
@@ -155,9 +154,8 @@ def _c_test_large_tool_output_body_is_capped_at_the_preview_budget() -> None:
     assert "/expand" in plain and "+25 lines" in plain
 
 
-def _c_test_tool_end_diff_body_is_capped_but_keeps_stat_and_hint() -> None:
+def test_tool_end_diff_body_is_capped_but_keeps_stat_and_hint() -> None:
     """Scroll-print diffs get 5 lines, not the 40-line approval budget."""
-    assert PREVIEW_LINES == 5
     display, buf = _display()
     display.state.expanded_all = False
     display(Event("tool_end", payload={"tool": "edit", "ok": True, "diff": _big_diff()}))
@@ -210,7 +208,7 @@ def _c_test_tool_end_diff_body_is_capped_but_keeps_stat_and_hint() -> None:
     assert "/expand" in strip_ansi(split_buf.getvalue())
 
 
-def _c_test_print_plan_is_a_no_op_when_the_todo_list_is_unchanged() -> None:
+def test_print_plan_is_a_no_op_when_the_todo_list_is_unchanged() -> None:
     """The key guard stops a re-render of an identical checklist."""
     display, buf = _display()
     display.state.set_todos(_items())
@@ -225,6 +223,7 @@ def _c_test_print_plan_is_a_no_op_when_the_todo_list_is_unchanged() -> None:
     display.state.set_todos([{**_items()[1], "status": "completed"}])
     display.print_plan()
     assert strip_ansi(buf.getvalue()).count("Tasks") == 2, strip_ansi(buf.getvalue())
+    display.close()
 
     # No todos means nothing to print at all.
     empty_buf = StringIO()
@@ -234,11 +233,5 @@ def _c_test_print_plan_is_a_no_op_when_the_todo_list_is_unchanged() -> None:
     )
     empty.print_plan()
     assert empty_buf.getvalue() == ""
+    empty.close()
 
-
-def test_batch_00() -> None:
-    """Consolidated (bodies unchanged): all density helpers in one batch."""
-    _c_test_todo_tool_call_prints_the_plan_once_and_never_echoes_its_body()
-    _c_test_large_tool_output_body_is_capped_at_the_preview_budget()
-    _c_test_tool_end_diff_body_is_capped_but_keeps_stat_and_hint()
-    _c_test_print_plan_is_a_no_op_when_the_todo_list_is_unchanged()

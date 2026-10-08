@@ -8,6 +8,7 @@ import time
 import warnings
 from collections.abc import Callable
 from contextlib import contextmanager
+from functools import cached_property
 from typing import Any
 
 from kite.agent.events import Event
@@ -15,6 +16,7 @@ from kite.agent.exceptions import FormatError, ProviderFault
 from kite.context.observation import observation_content
 from kite.models.cache import PromptCacheManager, parse_cache_usage
 from kite.models.reasoning import (
+    ReasoningSupport,
     apply_reasoning,
     detect_reasoning,
     looks_like_reasoning_error,
@@ -302,7 +304,6 @@ class LitellmModel:
         resolved: ResolvedModel,
         registry: ToolRegistry | None = None,
         temperature: float | None = None,
-        max_retries: int = 3,
         on_event: Callable[[Event], None] | None = None,
         stream: bool = True,
         reasoning: str = "auto",
@@ -314,27 +315,9 @@ class LitellmModel:
         self.model_name = resolved.litellm_model
         self.registry = registry
         self.temperature = temperature
-        self.max_retries = max_retries
         self.on_event = on_event
         self.stream = stream
         self.reasoning_mode, self.reasoning_effort = split_reasoning(reasoning)
-        remote = None
-        if resolved.raw:
-            from kite.providers.list_models import RemoteModel
-
-            remote = RemoteModel(id=resolved.model, raw=resolved.raw)
-        self.reasoning_support = detect_reasoning(
-            resolved.provider,
-            resolved.model,
-            litellm_model=resolved.litellm_model,
-            remote=remote,
-        )
-        self._parallel_tool_calls = model_supports_parallel_tool_calls(
-            provider=resolved.provider,
-            model=resolved.model,
-            litellm_model=resolved.litellm_model,
-            raw=resolved.raw,
-        )
         self._drop_reasoning = False
         self._thinking_warned = False
         self.cost = 0.0
@@ -343,6 +326,37 @@ class LitellmModel:
         self.timeout_seconds = timeout_seconds
         self.observation_max_chars = observation_max_chars
         self.should_stop = lambda: False
+
+    @cached_property
+    def reasoning_support(self) -> ReasoningSupport:
+        """Detect on first request, after context assembly can overlap prewarming.
+
+        Startup UI uses ``peek_reasoning`` instead: accessing this property
+        can import LiteLLM and query the cached live provider model list.
+        """
+        resolved = self.resolved
+        remote = None
+        if resolved.raw:
+            from kite.providers.list_models import RemoteModel
+
+            remote = RemoteModel(id=resolved.model, raw=resolved.raw)
+        return detect_reasoning(
+            resolved.provider,
+            resolved.model,
+            litellm_model=resolved.litellm_model,
+            remote=remote,
+        )
+
+    @cached_property
+    def _parallel_tool_calls(self) -> bool:
+        """Resolve tool capabilities only when a request actually uses tools."""
+        resolved = self.resolved
+        return model_supports_parallel_tool_calls(
+            provider=resolved.provider,
+            model=resolved.model,
+            litellm_model=resolved.litellm_model,
+            raw=resolved.raw,
+        )
 
     def _emit(self, kind: str, **payload: Any) -> None:
         if self.on_event:

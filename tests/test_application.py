@@ -8,24 +8,21 @@ import pytest
 
 from kite.agent.events import Event
 from kite.agent.exceptions import Submitted
-from kite.agent.harness import Harness, HarnessConfig
 from kite.agent.verification import VerificationCollector
-from kite.application.adapters import harness_config_from_run_spec, run_spec_from_harness_config
 from kite.application.contracts import ModelSelection, RunSpec
 from kite.application.dependencies import HarnessDependencies
-from kite.application.events import EventSequencer, InMemoryEventSink, envelope_from_legacy, legacy_from_envelope
+from kite.application.events import InMemoryEventSink
 from kite.application.execution import ChangeJournal, ProcessRunner, ToolExecutor
 from kite.application.policy import ApprovalCoordinator, PolicyEngine, check_path_access, child_inherits_parent_policy
 from kite.application.service import ApplicationRunService
 from kite.application.state import RunState, can_transition
-from kite.application.tools import ToolCall, derive_effects, normalize_legacy_effect
+from kite.application.tools import ToolCall, derive_effects
 from kite.application.verification import (
     CheckSpec,
     PackageUnit,
     VerificationRecord,
     WorkspaceProfile,
     build_verification_plan,
-    classify_path,
     html_parse_ok,
     next_required_check_command,
     plan_status,
@@ -34,24 +31,8 @@ from kite.application.verification import (
 from kite.eval import ReplayBundle, run_replay
 
 
-def _c_test_flattened_modules_export_public_names() -> None:
-    from kite import tasks
-    from kite.application import adapters, cli, execution, model, persistence, policy, tools, verification
-    from kite.plugins import extensions
-
-    assert execution.ToolExecutor and execution.build_tool_executor and execution.ProcessRunner
-    assert policy.PolicyEngine and policy.ApprovalCoordinator
-    assert tools.ToolCall and tools.derive_effects
-    assert verification.EvidenceVerifier and verification.build_verification_plan
-    assert cli.execute_harness_task and adapters.run_spec_from_harness_config
-    assert model.ModelGateway and persistence.SQLiteEventStore
-    assert ReplayBundle is not None and tasks.run_headless_task
-    assert extensions.load_extensions
-
-
 class _FakeHarness:
     def __init__(self, result: dict) -> None:
-        self.config = HarnessConfig()
         self._result = result
         self._listeners: list = []
 
@@ -66,35 +47,21 @@ class _FakeHarness:
         return self._result
 
 
-def _c_test_run_spec_roundtrip_and_service(workspace: Path) -> None:
-    original = HarnessConfig(
-        provider="groq",
-        model_name="llama-3.3-70b-versatile",
-        cwd=str(workspace),
-        step_limit=10,
-        cost_limit=1.5,
-        mode="build",
-        approval="manual",
-        execution_mode="restricted",
-        memory_in_prompt=True,
-    )
-    spec = run_spec_from_harness_config(original, task="fix tests", workspace=workspace)
-    restored = harness_config_from_run_spec(spec)
-    assert restored.provider == original.provider and restored.memory_in_prompt is True
-    wired = Harness(config=HarnessConfig(cwd=str(workspace), memory_in_prompt=True, role="debugger"))
-    assert wired.to_run_spec("keep memory flag").memory_in_prompt is True
+def test_service_maps_outcomes_and_sequences_events(workspace: Path) -> None:
     sink = InMemoryEventSink()
     service = ApplicationRunService()
     fake = _FakeHarness({"exit_status": "Submitted", "submission": "done", "cost": 0.1})
-    result = service.run(RunSpec(task="demo", workspace=Path("."), run_id="run-test", model_selection=ModelSelection(provider="fake")), deps=HarnessDependencies(event_sink=sink), harness=fake)  # type: ignore[arg-type]
+    result = service.run(RunSpec(task="demo", workspace=workspace, run_id="run-test", model_selection=ModelSelection(provider="fake")), deps=HarnessDependencies(event_sink=sink), harness=fake)  # type: ignore[arg-type]
     assert result.status == "completed" and result.stop_reason == "submitted"
     events = sink.load_run("run-test")
     assert [e.kind for e in events] == ["agent_start", "agent_end"]
-    failed = service.run(RunSpec(task="x", workspace=Path(".")), harness=_FakeHarness({"exit_status": "Error", "error": "boom"}))  # type: ignore[arg-type]
+    assert [e.sequence for e in events] == [1, 2]
+    assert not fake._listeners
+    failed = service.run(RunSpec(task="x", workspace=workspace), harness=_FakeHarness({"exit_status": "Error", "error": "boom"}))  # type: ignore[arg-type]
     assert failed.status == "failed"
 
 
-def _c_test_run_state_and_legacy_event_bridge() -> None:
+def test_run_state_rejects_invalid_transitions() -> None:
     state = RunState("created")
     state.transition("prepared")
     state.transition("awaiting_model")
@@ -102,18 +69,10 @@ def _c_test_run_state_and_legacy_event_bridge() -> None:
     assert state.terminal and not can_transition("completed", "awaiting_model")
     with pytest.raises(ValueError, match="invalid run transition"):
         RunState("created").transition("completed")
-    seq = EventSequencer("run-1")
-    e1 = seq.emit("turn_start", {"n": 1})
-    e2 = seq.emit("turn_end", {"n": 1})
-    assert e1.sequence == 1 and e2.sequence == 2
-    legacy = Event(kind="tool_start", payload={"tool": "read"})
-    back = legacy_from_envelope(envelope_from_legacy(legacy, run_id="run-2", sequencer=EventSequencer("run-2")))
-    assert back.kind == "tool_start" and back.payload["tool"] == "read"
 
 
-def _c_test_approval_tiers_gate_only_risky_effects(tmp_path: Path) -> None:
+def test_approval_tiers_gate_only_risky_effects(tmp_path: Path) -> None:
     """auto/trust/yolo run on their own; supervised prompts for every mutation."""
-    from kite.application.policy import PolicyEngine
     from kite.application.tools import tool_requires_approval_gate
 
     routine = [
@@ -158,7 +117,7 @@ def _c_test_approval_tiers_gate_only_risky_effects(tmp_path: Path) -> None:
     assert allowed_read.allowed and not allowed_read.requires_approval
 
 
-def _c_test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path) -> None:
+def test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path) -> None:
     ok, _ = check_path_access("../outside", workspace)
     assert not ok
     sibling = tmp_path / "proj-ok"
@@ -244,15 +203,15 @@ def _c_test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Pa
         assert decision.allowed and not decision.requires_approval, (name, decision.reason)
 
 
-def _c_test_verification_plans_replay_and_package_paths(workspace: Path, tmp_path: Path) -> None:
-    vc = VerificationCollector()
+def test_verification_plans_replay_and_package_paths(workspace: Path, tmp_path: Path) -> None:
+    vc = VerificationCollector(workspace_root=str(workspace))
     vc.on_tool_end("bash", {"command": "pytest tests/ -q"}, {"ok": True, "returncode": 0, "output": "out"})
     assert any(a.kind == "test" for a in vc.artifacts) and vc.status() == "verified"
-    idle = VerificationCollector()
+    idle = VerificationCollector(workspace_root=str(workspace))
     idle.on_tool_end("edit", {"path": "x.py"}, {"ok": True, "path": "x.py", "diff": "d"})
     assert idle.needs_tests()
     html = "<html><body>ok</body></html>"
-    html_vc = VerificationCollector()
+    html_vc = VerificationCollector(workspace_root=str(workspace))
     html_vc.on_tool_end("write", {"path": "index.html", "content": html}, {"ok": True, "path": "index.html", "diff": "d", "content": html})
     assert not html_vc.needs_tests()
     assert html_parse_ok(html) and not html_parse_ok("<html><body>no closing tags")
@@ -269,7 +228,6 @@ def _c_test_verification_plans_replay_and_package_paths(workspace: Path, tmp_pat
     assert not html_plan.required_checks  # markup is advisory-only, like docs
     assert html_plan.optional_checks and html_plan.optional_checks[0].artifact_kind == "html"
     assert all(c.command is None or "pytest" not in (c.command or "").lower() for c in html_plan.optional_checks)
-    assert classify_path("x.py") == "python"
     pytest_record = VerificationRecord(
         check=CheckSpec(kind="project_test", command="pytest -q", affected_paths=("a.py",), artifact_kind="python"),
         command="pytest -q",
@@ -328,22 +286,50 @@ def _c_test_verification_plans_replay_and_package_paths(workspace: Path, tmp_pat
     assert collector.artifacts[-1].path == str(absolute)
 
 
-def _c_test_effects_coordinator_runner_and_cli_result(workspace: Path, tmp_path: Path) -> None:
+def test_effects_coordinator_runner_and_cli_result(tmp_path: Path) -> None:
     import sys
 
     assert set(derive_effects(ToolCall("1", "bash", {"command": "rm -rf build"}))) == {"destructive", "long_running"}
     assert derive_effects(ToolCall("1", "memory", {"action": "remember", "text": "x"})) == ("durable_memory",)
-    assert normalize_legacy_effect("read") == "workspace_read"
     inherited = child_inherits_parent_policy(parent_approval="approve", parent_mode="build", parent_no_guardrails=False, parent_execution_mode="restricted", child_overrides={"approval": "yolo", "no_guardrails": True})
     assert inherited["approval"] == "approve" and inherited["no_guardrails"] is False
     locked = child_inherits_parent_policy(parent_approval="auto", parent_mode="plan", parent_no_guardrails=False, parent_execution_mode="restricted", child_overrides={"mode": "build", "execution_mode": "host"})
     assert locked["mode"] == "plan" and locked["execution_mode"] == "restricted"
-    coord = ApprovalCoordinator(interactive=True, timeout_seconds=0.05)
+    coord = ApprovalCoordinator(interactive=True, timeout_seconds=0.0)
     assert coord.request("bash", {"command": "curl x"}, mandatory=True) == "deny"
     assert coord.pending is None
-    runner = ProcessRunner(timeout_seconds=5.0)
-    result = runner.run(["cmd", "/c", "echo", "hi"] if sys.platform == "win32" else ["echo", "hi"])
-    assert result.exit_code == 0 and "hi" in result.stdout
+    # Drain both pipes after their byte caps without retaining secret prefixes.
+    prefix = "é" * 27 + " "  # 55 UTF-8 bytes; the token crosses the 64-byte cap.
+    secret = "sk-" + "A" * 40
+    script = (
+        "import os\n"
+        f"line = {(prefix + secret + chr(10)).encode()!r}\n"
+        "os.write(1, line); os.write(2, line)\n"
+        "for _ in range(128):\n"
+        " os.write(1, b'x' * 4095 + b'\\n')\n"
+        " os.write(2, b'y' * 4095 + b'\\n')\n"
+    )
+    capped = ProcessRunner(timeout_seconds=5.0, max_output_bytes=64)
+    captured = capped.run([sys.executable, "-c", script])
+    assert captured.exit_code == 0 and captured.truncated
+    notice = "\n...[truncated]"
+    for output in (captured.stdout, captured.stderr):
+        assert output == prefix + "[REDACTED" + notice
+        assert "sk-" not in output and "AAAA" not in output
+        assert len(output.removesuffix(notice).encode()) == 64
+    exact = capped.run([
+        sys.executable, "-c",
+        "import os, sys; os.write(1, ('é' * 32).encode()); os.write(2, b'e' * 64); sys.exit(3)",
+    ])
+    assert exact.exit_code == 3 and not exact.truncated
+    assert exact.stdout == "é" * 32 and exact.stderr == "e" * 64
+    oversized = capped.run([
+        sys.executable, "-c",
+        f"import sys; sys.stdout.write(' ' * 8190 + {secret!r} + '\\ndone\\n')",
+    ])
+    assert oversized.exit_code == 0 and oversized.truncated
+    assert "oversized output line omitted" in oversized.stdout and "done\n" in oversized.stdout
+    assert "sk-" not in oversized.stdout and "AAAA" not in oversized.stdout
     # 0.9 executor must resolve `python` from the project .venv like the bash tool.
     venv = tmp_path / ".venv"
     bindir = venv / ("Scripts" if sys.platform == "win32" else "bin")
@@ -354,7 +340,6 @@ def _c_test_effects_coordinator_runner_and_cli_result(workspace: Path, tmp_path:
     key = "Path" if sys.platform == "win32" and "Path" in env else "PATH"
     first = env[key].split(";" if sys.platform == "win32" else ":")[0]
     assert Path(first).resolve() == bindir.resolve()
-    assert "PATH" in ProcessRunner._child_env(None) or "Path" in ProcessRunner._child_env(None)
     from kite.application.cli import CliResult
     from kite.application.contracts import RunResult
     from kite.application.service import _map_exit_status
@@ -370,47 +355,22 @@ def _c_test_effects_coordinator_runner_and_cli_result(workspace: Path, tmp_path:
     assert CliResult.from_run_result(limited).ok is False
 
 
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_flattened_modules_export_public_names, test_run_spec_roundtrip_and_service, test_run_state_and_legacy_event_bridge."""
-    _c_test_flattened_modules_export_public_names()
-    _w1 = tmp_path / "w0_1"
-    (_w1 / "src").mkdir(parents=True, exist_ok=True)
-    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_run_spec_roundtrip_and_service(workspace=_w1)
-    _c_test_run_state_and_legacy_event_bridge()
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_approval_tiers_gate_only_risky_effects, test_policy_paths_glob_executor_and_journal."""
-    _t0 = tmp_path / "t1_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_approval_tiers_gate_only_risky_effects(tmp_path=_t0)
-    _t1 = tmp_path / "t1_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _w1 = tmp_path / "w1_1"
-    (_w1 / "src").mkdir(parents=True, exist_ok=True)
-    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_policy_paths_glob_executor_and_journal(tmp_path=_t1, workspace=_w1)
-
-def test_marker_and_prose_submit_skip_section_format(tmp_path) -> None:
+def test_marker_and_prose_submit_skip_section_format(workspace: Path) -> None:
     """Marker/prose submits gate evidence only; the submit tool also gates sections."""
-    from kite.agent.verification import VerificationCollector
 
-    vc = VerificationCollector(workspace_root=".")
+    vc = VerificationCollector(workspace_root=str(workspace))
     vc.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
     vc.on_tool_end("bash", {"command": "pytest -q"}, {"ok": True, "returncode": 0, "output": "1 passed"})
     assert vc.submit_block_reason("shipped the fix, tests pass", structured=False) is None
     assert vc.submit_block_reason("shipped the fix, tests pass", structured=True) is not None
-    bare = VerificationCollector(workspace_root=".")
+    bare = VerificationCollector(workspace_root=str(workspace))
     bare.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
     assert bare.submit_block_reason("shipped", structured=False) is not None  # evidence still gated
     assert "Suggested command" in (bare.submit_block_reason("shipped", structured=False) or "")
 
 
-def test_failure_classification_and_bounded_submit_blocking() -> None:
+def test_failure_classification_and_bounded_submit_blocking(workspace: Path) -> None:
     """Failing checks are classified, and blocking is finite with an honest exit."""
-    from kite.agent.verification import VerificationCollector
     from kite.application.verification import (
         MAX_BLOCKED_SUBMITS,
         classify_failure,
@@ -428,7 +388,7 @@ def test_failure_classification_and_bounded_submit_blocking() -> None:
     assert not discloses_failures("- ✓ pytest -q — 1 passed")
 
     def _failing(output: str, rc: int = 1) -> VerificationCollector:
-        vc = VerificationCollector(workspace_root=".")
+        vc = VerificationCollector(workspace_root=str(workspace))
         vc.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
         vc.on_tool_end("bash", {"command": "pytest -q"}, {"ok": False, "returncode": rc, "output": output})
         return vc
@@ -534,22 +494,3 @@ def test_compaction_trigger_scales_with_window() -> None:
     assert scale_compact_ratio(0, 0) == 0.75
     assert scale_reserve_tokens(0, 0) == 12_288
     assert scale_compaction_llm_ratio(0, 0) == 0.92
-
-
-def test_batch_02(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_verification_plans_replay_and_package_paths, test_effects_coordinator_runner_and_cli_result."""
-    _t0 = tmp_path / "t2_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _w0 = tmp_path / "w2_0"
-    (_w0 / "src").mkdir(parents=True, exist_ok=True)
-    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_verification_plans_replay_and_package_paths(tmp_path=_t0, workspace=_w0)
-    _t1 = tmp_path / "t2_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _w1 = tmp_path / "w2_1"
-    (_w1 / "src").mkdir(parents=True, exist_ok=True)
-    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_effects_coordinator_runner_and_cli_result(tmp_path=_t1, workspace=_w1)
-

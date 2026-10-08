@@ -11,7 +11,18 @@ from kite.ui.complete import read_repl_line
 from kite.ui.state import SessionUiState
 
 
-def _c_test_composer_interrupt_kinds_queue_and_eof(monkeypatch) -> None:
+@pytest.fixture
+def chat(workspace, kite_home, monkeypatch):
+    from kite.ui.repl import ChatSession
+
+    monkeypatch.setattr(ChatSession, "_warm_auth_probes", lambda self: None)
+    monkeypatch.setattr("kite.models.litellm_model.prewarm_litellm", lambda: None)
+    session = ChatSession(cwd=str(workspace), provider="groq", model="test")
+    yield session
+    session.display.close()
+
+
+def test_composer_interrupt_kinds_queue_and_eof(monkeypatch) -> None:
     monkeypatch.setattr(
         "prompt_toolkit.patch_stdout.patch_stdout",
         lambda raw=False: nullcontext(),
@@ -59,14 +70,7 @@ def _c_test_composer_interrupt_kinds_queue_and_eof(monkeypatch) -> None:
     assert len(q) == 0
 
 
-def _c_test_busy_enter_steer_queue_classification(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "kite.providers.resolve.resolve_model",
-        lambda **_: MagicMock(provider="groq", model="test"),
-    )
-    from kite.ui.repl import ChatSession
-
-    chat = ChatSession(cwd=str(tmp_path))
+def test_busy_enter_steer_queue_classification(chat, monkeypatch) -> None:
     chat._queue_message("later")
     chat._queue_steer("first")
     assert list(chat._inbox) == ["first", "later"]
@@ -74,15 +78,13 @@ def _c_test_busy_enter_steer_queue_classification(tmp_path, monkeypatch) -> None
     assert chat.state.queue_steer == 1
     assert chat.state.queue_follow == 1
 
-    from unittest.mock import MagicMock as _MagicMock
-
     from kite.ui.complete import _prompt_once, busy_enter_queues_followup
     from kite.ui.state import SessionUiState as _State
 
     monkeypatch.delenv("KITE_BUSY_ENTER", raising=False)
     assert not busy_enter_queues_followup()
     monkeypatch.setattr("prompt_toolkit.patch_stdout.patch_stdout", lambda raw=False: nullcontext())
-    session = _MagicMock()
+    session = MagicMock()
     session.prompt.return_value = "redirect me"
     slot = {"kind": "submit"}
     result = _prompt_once(session, _State(busy=True), busy=True, action_slot=slot)
@@ -116,7 +118,7 @@ def _c_test_busy_enter_steer_queue_classification(tmp_path, monkeypatch) -> None
     assert parse_approval_choice("n", mandatory=True) == "deny"
 
 
-def _c_test_approval_composer_keys(monkeypatch) -> None:
+def test_approval_composer_keys(monkeypatch) -> None:
     """Composer wake exits empty while awaiting — must not auto-deny."""
     from kite.ui.complete import _prompt_once
 
@@ -155,7 +157,7 @@ def _c_test_approval_composer_keys(monkeypatch) -> None:
     event.app.exit.assert_called_once_with(result="a")
 
 
-def _c_test_slash_completion_wiring() -> None:
+def test_slash_completion_preserves_input_and_lists_matches(workspace, kite_home) -> None:
     from prompt_toolkit.buffer import Buffer, CompletionState
     from prompt_toolkit.completion import Completion
     from prompt_toolkit.document import Document
@@ -186,7 +188,8 @@ def _c_test_slash_completion_wiring() -> None:
     import kite.ui.complete as complete
     from kite.cli.slash import CommandIndex
 
-    completer = complete.SlashCompleter(lambda: CommandIndex.load("."))
+    index = CommandIndex.load(str(workspace))
+    completer = complete.SlashCompleter(lambda: index)
     exit_rows = list(completer.get_completions(Document("/exi"), CompleteEvent()))
     assert [row.text for row in exit_rows] == ["exit"]
     assert "Leave the REPL" in str(exit_rows[0].display_meta)
@@ -198,7 +201,7 @@ def _c_test_slash_completion_wiring() -> None:
     assert "quit" in names and "exit" in names
 
 
-def _c_test_slash_menu_rows_are_cached_until_invalidated() -> None:
+def test_slash_menu_rows_are_cached_until_invalidated(workspace, kite_home, monkeypatch) -> None:
     """complete_while_typing re-runs the completer per keystroke.
 
     Rebuilding the visible specs and re-rendering every menu row made typing a
@@ -210,7 +213,7 @@ def _c_test_slash_menu_rows_are_cached_until_invalidated() -> None:
     import kite.ui.complete as complete
     from kite.cli.slash import CommandIndex, SlashSpec
 
-    index = CommandIndex.load(".")
+    index = CommandIndex.load(str(workspace))
     completer = complete.SlashCompleter(lambda: index)
 
     calls: list[int] = []
@@ -220,13 +223,10 @@ def _c_test_slash_menu_rows_are_cached_until_invalidated() -> None:
         calls.append(1)
         return real(index_arg, support=support)
 
-    orig, complete._visible_specs = complete._visible_specs, _counting
-    try:
-        list(completer.get_completions(Document("/", 1), CompleteEvent()))
-        list(completer.get_completions(Document("/a", 2), CompleteEvent()))
-        list(completer.get_completions(Document("/ab", 3), CompleteEvent()))
-    finally:
-        complete._visible_specs = orig
+    monkeypatch.setattr(complete, "_visible_specs", _counting)
+    list(completer.get_completions(Document("/", 1), CompleteEvent()))
+    list(completer.get_completions(Document("/a", 2), CompleteEvent()))
+    list(completer.get_completions(Document("/ab", 3), CompleteEvent()))
     assert len(calls) == 1, "visible specs are built once, not per keystroke"
 
     # Rendered rows are memoized per spec name, and rebuilt after invalidate().
@@ -235,10 +235,12 @@ def _c_test_slash_menu_rows_are_cached_until_invalidated() -> None:
     assert complete.cached_completion_display(completer, spec, index) is first
     completer.invalidate()
     assert completer._display_cache == {}
-    assert complete.cached_completion_display(completer, spec, index) is not None
+    assert complete.cached_completion_display(completer, spec, index) is not first
+    list(completer.get_completions(Document("/", 1), CompleteEvent()))
+    assert len(calls) == 2
 
 
-def _c_test_composer_layout_multiline_and_newlines(kite_home, monkeypatch) -> None:
+def test_composer_layout_multiline_and_newlines(kite_home) -> None:
     from types import SimpleNamespace
 
     from prompt_toolkit.keys import Keys
@@ -316,30 +318,8 @@ def _c_test_composer_layout_multiline_and_newlines(kite_home, monkeypatch) -> No
     column_menu = next(child for child in body.children if isinstance(child, CompletionsMenu))
     assert column_menu.content.right_margins == []
 
-    # The session must not force single-line mode — long prompts clip there.
-    real_session_cls = complete.PromptSession
-    seen: dict = {}
-
-    def _recording_session(**kwargs):
-        seen.update(kwargs)
-        return real_session_cls(**kwargs)
-
-    monkeypatch.setattr(complete, "PromptSession", _recording_session)
-    multiline_session = complete.make_prompt_session(
-        complete.SlashCompleter(lambda: None),
-        state=SessionUiState(),
-        output=DummyOutput(),
-    )
-    assert seen.get("multiline") is True
-    assert multiline_session is not None
-
-    prompt_seen: dict = {}
-    multiline_session.prompt = lambda *a, **k: (prompt_seen.update(k) or "hello")  # type: ignore[method-assign]
-    result = complete._prompt_once(
-        multiline_session, SessionUiState(), busy=False, action_slot={"kind": "submit"}
-    )
-    assert prompt_seen.get("multiline") is True
-    assert result.kind == "text" and result.text == "hello"
+    # Long prompts use multiline editing, not a single clipped input row.
+    assert session.multiline is True
 
     # Ctrl+J and Alt+Enter insert newlines without submitting.
     bindings = complete.make_repl_key_bindings()
@@ -365,7 +345,7 @@ def _c_test_composer_layout_multiline_and_newlines(kite_home, monkeypatch) -> No
     buffer.validate_and_handle.assert_not_called()
 
 
-def _c_test_slash_completion_submit_flow() -> None:
+def test_slash_completion_submit_flow() -> None:
     from types import SimpleNamespace
 
     from prompt_toolkit.buffer import Buffer, CompletionState
@@ -411,7 +391,7 @@ def _c_test_slash_completion_submit_flow() -> None:
     submit_buffer.validate_and_handle.assert_called_once_with()
 
 
-def _c_test_toolbar_busy_approval_and_hints(monkeypatch) -> None:
+def test_toolbar_busy_approval_and_hints(monkeypatch) -> None:
     import time
 
     from kite.ui.complete import _activity_html, _toolbar_busy_bits, _toolbar_html
@@ -471,7 +451,7 @@ def _c_test_toolbar_busy_approval_and_hints(monkeypatch) -> None:
     assert "Ctrl+G steer" in legacy_bits
 
 
-def _c_test_busy_steer_keeps_composer_alive() -> None:
+def test_busy_steer_keeps_composer_alive() -> None:
     """Steering must not stop/leave the busy composer — it interrupts the
     turn so the agent continues, while the composer stays pinned."""
     from kite.ui.complete import (
@@ -505,7 +485,7 @@ def _c_test_busy_steer_keeps_composer_alive() -> None:
     assert calls[-1] == "queue:later"
 
 
-def _c_test_fold_long_paste_collapse_expand_and_bindings() -> None:
+def test_fold_long_paste_collapse_expand_and_bindings() -> None:
     from types import SimpleNamespace
 
     from prompt_toolkit.keys import Keys
@@ -570,18 +550,10 @@ def _c_test_fold_long_paste_collapse_expand_and_bindings() -> None:
     assert key_buf.text.split("\n") == [f"line {i}" for i in range(12)]
 
 
-def _c_test_plan_build_slash_text_runs_task(tmp_path, monkeypatch) -> None:
+def test_plan_build_slash_text_runs_task(chat) -> None:
     """`/plan <text>` and `/build <text>` act immediately; bare forms report state."""
-    from unittest.mock import MagicMock
-
     from kite.agent.mode import AgentMode
-    from kite.ui.repl import ChatSession
 
-    monkeypatch.setattr(
-        "kite.providers.resolve.resolve_model",
-        lambda **_: MagicMock(provider="groq", model="test"),
-    )
-    chat = ChatSession(cwd=str(tmp_path))
     ran: list[str] = []
     chat._run_task = lambda task: ran.append(task)  # type: ignore[method-assign]
     chat.display.print_user_turn = lambda text: None  # type: ignore[method-assign]
@@ -599,12 +571,9 @@ def _c_test_plan_build_slash_text_runs_task(tmp_path, monkeypatch) -> None:
     assert ran == ["fix it"]
 
 
-def _c_test_reasoning_support_redetects_on_model_switch(tmp_path, monkeypatch) -> None:
+def test_reasoning_support_redetects_on_model_switch(chat, monkeypatch) -> None:
     """Thinking levels must follow the current model, never a stale cache."""
-    from unittest.mock import MagicMock
-
     import kite.models.reasoning as reasoning
-    from kite.ui.repl import ChatSession
 
     calls: list[tuple[str, str]] = []
 
@@ -613,11 +582,7 @@ def _c_test_reasoning_support_redetects_on_model_switch(tmp_path, monkeypatch) -
         return MagicMock(supported=True, model=model)
 
     monkeypatch.setattr(reasoning, "detect_reasoning", _fake_detect)
-    monkeypatch.setattr(
-        "kite.providers.resolve.resolve_model",
-        lambda **_: MagicMock(provider="groq", model="test"),
-    )
-    chat = ChatSession(cwd=str(tmp_path))
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_: None)
     chat._model_resolved = True
     chat.provider, chat.model = "groq", "model-a"
     assert chat._reasoning_info_sync().model == "model-a"
@@ -627,51 +592,67 @@ def _c_test_reasoning_support_redetects_on_model_switch(tmp_path, monkeypatch) -
     assert [model for _, model in calls] == ["model-a", "model-b"]
 
 
-def _c_test_composer_data_paths_never_block_typing(tmp_path, monkeypatch) -> None:
-    """Model lists and reasoning info must serve cache instantly (slow network warms in bg)."""
-    import time
+def test_composer_data_paths_never_block_typing(chat, monkeypatch) -> None:
+    """Cache misses schedule work without fetching on the composer thread."""
+    import importlib
+    import threading
+    from types import SimpleNamespace
 
     import kite.models.reasoning as reasoning
-    from kite.ui.repl import ChatSession
 
-    def _slow_detect(provider: str, model: str, **_kwargs):
-        time.sleep(5)
-        return MagicMock(supported=False, model=model)
+    pending = []
 
-    def _slow_list(provider, **_kwargs):
-        time.sleep(5)
-        return MagicMock(ok=False, models=())
+    class DeferredThread:
+        def __init__(self, *, target, daemon, name):
+            self.target = target
+            self.finished = False
 
-    monkeypatch.setattr(reasoning, "detect_reasoning", _slow_detect)
-    # NOTE: `kite.providers.list_models` is shadowed by a same-named function
-    # on the package, so patch the real submodule via sys.modules.
-    import importlib
-    import sys
+        def start(self):
+            pending.append(self)
 
+        def run(self):
+            pending.remove(self)
+            self.target()
+            self.finished = True
+
+        def join(self, timeout):
+            self.run()
+
+        def is_alive(self):
+            return not self.finished
+
+    detected = SimpleNamespace(supported=True, model="model-a")
+    detect = MagicMock(return_value=detected)
+    list_models = MagicMock(return_value=SimpleNamespace(
+        ok=True, models=(SimpleNamespace(id="model-a"), SimpleNamespace(id="model-b"))
+    ))
+    monkeypatch.setattr(threading, "Thread", DeferredThread)
+    monkeypatch.setattr(reasoning, "detect_reasoning", detect)
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_: None)
     list_models_mod = importlib.import_module("kite.providers.list_models")
-    assert list_models_mod is sys.modules["kite.providers.list_models"]
-    monkeypatch.setattr(list_models_mod, "list_models_for_provider", _slow_list)
-    chat = ChatSession(cwd=str(tmp_path))
+    monkeypatch.setattr(list_models_mod, "list_models_for_provider", list_models)
     chat._model_resolved = True
     chat.provider, chat.model = "groq", "model-a"
 
-    started = time.monotonic()
-    assert chat._reasoning_info() is None
-    assert chat._model_ids("groq") == []
-    assert time.monotonic() - started < 2.0
+    for _ in range(3):
+        assert chat._reasoning_info() is None
+        assert chat._model_ids("groq") == []
+    detect.assert_not_called()
+    list_models.assert_not_called()
+    assert len(pending) == 2, "repeated keystrokes must not schedule duplicate fetches"
+
+    while pending:
+        pending[0].run()
+
+    assert chat._reasoning_info() is detected
+    assert chat._model_ids("groq") == ["model-a", "model-b"]
+    detect.assert_called_once_with("groq", "model-a")
+    list_models.assert_called_once_with("groq")
+    assert not pending, "warm-cache reads must not start more workers"
 
 
-def _c_test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path, monkeypatch) -> None:
+def test_queue_steer_falls_back_to_inbox_and_interrupts(chat) -> None:
     """A steer typed mid-turn must never be dropped when harness inject fails."""
-    from unittest.mock import MagicMock
-
-    monkeypatch.setattr(
-        "kite.providers.resolve.resolve_model",
-        lambda **_: MagicMock(provider="groq", model="test"),
-    )
-    from kite.ui.repl import ChatSession
-
-    chat = ChatSession(cwd=str(tmp_path))
     harness = MagicMock()
     harness.inject_user_message.return_value = False
     chat._harness = harness
@@ -686,81 +667,22 @@ def _c_test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path, monkeypatch
     assert list(chat._inbox) == ["use grep not find", "later"]
 
 
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_composer_interrupt_kinds_queue_and_eof, test_busy_enter_steer_queue_classification, test_approval_composer_keys."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _c_test_composer_interrupt_kinds_queue_and_eof(monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t0_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _c_test_busy_enter_steer_queue_classification(tmp_path=_t1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _c_test_approval_composer_keys(monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
+def test_path_completion_is_sorted_bounded_and_enters_directories(tmp_path, monkeypatch) -> None:
+    from kite.ui.complete import _path_completions
 
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_slash_completion_wiring, test_slash_menu_rows_are_cached_until_invalidated, test_composer_layout_multiline_and_newlines."""
-    _c_test_slash_completion_wiring()
-    _c_test_slash_menu_rows_are_cached_until_invalidated()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _k2 = tmp_path / "k1_2"
-        _k2.mkdir(parents=True, exist_ok=True)
-        _mp2.setenv("KITE_HOME", str(_k2))
-        _c_test_composer_layout_multiline_and_newlines(kite_home=_k2, monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
-
-def test_batch_02() -> None:
-    """Consolidated (bodies unchanged): test_slash_completion_submit_flow, test_toolbar_busy_approval_and_hints, test_busy_steer_keeps_composer_alive."""
-    _c_test_slash_completion_submit_flow()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _c_test_toolbar_busy_approval_and_hints(monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    _c_test_busy_steer_keeps_composer_alive()
-
-def test_batch_03(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_fold_long_paste_collapse_expand_and_bindings, test_plan_build_slash_text_runs_task, test_reasoning_support_redetects_on_model_switch."""
-    _c_test_fold_long_paste_collapse_expand_and_bindings()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t3_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _c_test_plan_build_slash_text_runs_task(tmp_path=_t1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _t2 = tmp_path / "t3_2"
-        _t2.mkdir(parents=True, exist_ok=True)
-        _c_test_reasoning_support_redetects_on_model_switch(tmp_path=_t2, monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
-
-def test_batch_04(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_composer_data_paths_never_block_typing, test_queue_steer_falls_back_to_inbox_and_interrupts."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t4_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _c_test_composer_data_paths_never_block_typing(tmp_path=_t0, monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t4_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _c_test_queue_steer_falls_back_to_inbox_and_interrupts(tmp_path=_t1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").touch()
+    (tmp_path / ".hidden").touch()
+    for i in reversed(range(70)):
+        (tmp_path / f"file_{i:03d}.py").touch()
+    rows = list(_path_completions("", 0))
+    assert len(rows) == 40
+    assert rows[0].text == "src/"
+    assert [row.text for row in rows[1:]] == [f"file_{i:03d}.py" for i in range(39)]
+    assert [row.text for row in _path_completions("src/", -4)] == [str((tmp_path / "src" / "main.py").relative_to(tmp_path))]
+    assert [row.text for row in _path_completions(".h", -2)] == [".hidden"]
+    assert list(_path_completions("missing/", -8)) == []
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    assert [row.text for row in _path_completions("~/src/", -6)] == [str(tmp_path / "src" / "main.py")]

@@ -12,37 +12,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from kite.config.user import UserConfig, kite_home
+from kite.providers import byos
 from kite.providers.catalog import load_catalog
 from kite.providers.keys import api_key_env_names, api_key_for
 
 if TYPE_CHECKING:
     from rich.console import Console
-
-
-def _byos():
-    from kite.providers import byos as mod
-
-    return mod
-
-
-def is_oauth_provider(spec) -> bool:
-    return _byos().is_oauth_provider(spec)
-
-
-def has_oauth_session(provider: str) -> bool:
-    return _byos().has_oauth_session(provider)
-
-
-def credential_label(spec) -> str:
-    return _byos().credential_label(spec)
-
-
-def login_oauth(spec, *, set_default: bool = False, console: Console | None = None):
-    return _byos().login_oauth(spec, set_default=set_default, console=console)
-
-
-def logout_oauth(spec) -> bool:
-    return _byos().logout_oauth(spec)
 
 
 def env_file_path() -> Path:
@@ -186,8 +161,8 @@ def inspect_provider_credentials(spec) -> ProviderCredentialStatus:
         return ProviderCredentialStatus(
             provider=spec.name, linked=True, usable=True, method="local", detail="local"
         )
-    if is_oauth_provider(spec):
-        linked = has_oauth_session(spec.oauth_provider or spec.name)
+    if byos.is_oauth_provider(spec):
+        linked = byos.has_oauth_session(spec.oauth_provider or spec.name)
         if spec.oauth_provider in {"anthropic", "antigravity"}:
             # Subscription auth is CLI-owned; Kite model calls need the BYOK
             # key (ANTHROPIC_API_KEY / GEMINI_API_KEY respectively).
@@ -265,7 +240,7 @@ def credential_type_label(spec) -> str:
     """BYOK, BYOS, local, or — for UI tables."""
     if spec.name == "ollama":
         return "local"
-    if is_oauth_provider(spec):
+    if byos.is_oauth_provider(spec):
         return "BYOS"
     if api_key_env_names(spec):
         return "BYOK"
@@ -282,7 +257,7 @@ def mask_api_key_fingerprint(value: str) -> str:
 
 def api_key_fingerprint(spec) -> str:
     """Masked fingerprint for a provider's primary API key, if set."""
-    if is_oauth_provider(spec) or spec.name == "ollama":
+    if byos.is_oauth_provider(spec) or spec.name == "ollama":
         return ""
     key = api_key_for(spec)
     return mask_api_key_fingerprint(key) if key else ""
@@ -345,8 +320,8 @@ def provider_needs_login(spec) -> bool:
     """True when setup/login should prompt before using this provider."""
     if spec.name == "ollama":
         return False
-    if is_oauth_provider(spec):
-        return not has_oauth_session(spec.oauth_provider or spec.name)
+    if byos.is_oauth_provider(spec):
+        return not byos.has_oauth_session(spec.oauth_provider or spec.name)
     envs = api_key_env_names(spec)
     return bool(envs) and not api_key_for(spec)
 
@@ -497,7 +472,7 @@ def configured_providers(*, fast: bool = False) -> list[tuple[str, bool, str]]:
 
     catalog = load_catalog()
     specs = catalog.list()
-    oauth_specs = [s for s in specs if s.name != "ollama" and is_oauth_provider(s)]
+    oauth_specs = [s for s in specs if s.name != "ollama" and byos.is_oauth_provider(s)]
     if fast:
         usable = {
             s.name: bool(oauth_session_marker_present(s.oauth_provider or s.name))
@@ -521,12 +496,12 @@ def configured_providers(*, fast: bool = False) -> list[tuple[str, bool, str]]:
         if spec.name == "ollama":
             rows.append((spec.name, True, "local"))
             continue
-        if is_oauth_provider(spec):
+        if byos.is_oauth_provider(spec):
             rows.append((spec.name, usable.get(spec.name, False), "oauth"))
             continue
         envs = api_key_env_names(spec)
         if not envs:
-            rows.append((spec.name, False, credential_label(spec)))
+            rows.append((spec.name, False, byos.credential_label(spec)))
             continue
         ok = bool(api_key_for(spec))
         rows.append((spec.name, ok, envs[0]))
@@ -556,7 +531,7 @@ def loginable_providers() -> list[tuple[str, str, str]]:
     for spec in load_catalog().list():
         if spec.name == "ollama":
             continue
-        if is_oauth_provider(spec):
+        if byos.is_oauth_provider(spec):
             rows.append((spec.name, spec.display_name, "oauth"))
             continue
         envs = api_key_env_names(spec)
@@ -589,8 +564,8 @@ def login_provider(
     if spec.name == "ollama":
         return 0, "ollama is local — no API key needed", spec.name
 
-    if is_oauth_provider(spec):
-        return login_oauth(spec, set_default=set_default, console=console)
+    if byos.is_oauth_provider(spec):
+        return byos.login_oauth(spec, set_default=set_default, console=console)
 
     env_names = api_key_env_names(spec)
     if not env_names:
@@ -652,8 +627,8 @@ def logout_provider(provider: str, *, byos_aliases: bool = False) -> tuple[int, 
     if spec.name == "ollama":
         return 0, "ollama has no stored key"
 
-    if is_oauth_provider(spec):
-        if logout_oauth(spec):
+    if byos.is_oauth_provider(spec):
+        if byos.logout_oauth(spec):
             msg = f"removed OAuth session for {spec.name}"
             if resolved == "antigravity":
                 # Kite only held a linkage marker; the Google session lives

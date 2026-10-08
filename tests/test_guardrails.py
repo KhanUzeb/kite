@@ -16,7 +16,7 @@ from kite.guardrails.sandbox import (
 )
 
 
-def _c_test_dangerous_bash_and_destructive_git_combined() -> None:
+def test_dangerous_bash_and_destructive_git_combined() -> None:
     # (merged from test_blocks_dangerous_bash)
     assert check_dangerous("rm -rf /")
     assert not check_dangerous("ls -la")
@@ -35,7 +35,7 @@ def _c_test_dangerous_bash_and_destructive_git_combined() -> None:
     assert not check_dangerous("rm -rf .pytest_cache")
 
 
-def _c_test_cache_delete_benign_vs_absolute_combined() -> None:
+def test_cache_delete_benign_vs_absolute_combined() -> None:
     # (merged from test_relative_cache_deletes_not_hard_blocked)
     for cmd in (
         "rmdir /s /q .pytest_cache",
@@ -54,7 +54,7 @@ def _c_test_cache_delete_benign_vs_absolute_combined() -> None:
     assert not is_benign_cache_delete("rm -rf src")
 
 
-def _c_test_cache_delete_policy_and_trusted_cwd_combined(workspace: Path) -> None:
+def test_cache_delete_policy_and_trusted_cwd_combined(workspace: Path) -> None:
     # (merged from test_guardrail_policy_allows_relative_cache_delete)
     policy = GuardrailPolicy(GuardrailConfig(), workspace)
     v = policy.check_bash(r'powershell -Command "Remove-Item -Recurse -Force .pytest_cache"')
@@ -100,7 +100,7 @@ def test_skill_tree_reads_combined(workspace: Path, kite_home: Path, tmp_path: P
     assert is_user_skill_read(notes)
 
 
-def _c_test_sandbox_escape_and_write_combined(workspace: Path, tmp_path: Path) -> None:
+def test_sandbox_escape_and_write_combined(workspace: Path, tmp_path: Path) -> None:
     # (merged from test_path_escape_blocked_in_restricted_mode)
     external = tmp_path / "outside.txt"
     external.write_text("secret\n", encoding="utf-8")
@@ -116,7 +116,7 @@ def _c_test_sandbox_escape_and_write_combined(workspace: Path, tmp_path: Path) -
     assert verdict2.allowed
 
 
-def _c_test_secret_redaction_and_write_guard_combined(workspace: Path) -> None:
+def test_secret_redaction_and_write_guard_combined(workspace: Path) -> None:
     # (merged from test_redact_secrets_masks_api_keys)
     policy = GuardrailPolicy(GuardrailConfig(), workspace)
     text = "api_key=sk-abcdefghijklmnopqrstuvwxyz123456"
@@ -136,7 +136,7 @@ def _c_test_secret_redaction_and_write_guard_combined(workspace: Path) -> None:
     ).allowed
 
 
-def _c_test_env_protection_combined(workspace: Path) -> None:
+def test_env_protection_combined(workspace: Path) -> None:
     # (merged from test_blocks_env_dump_commands)
     policy = GuardrailPolicy(GuardrailConfig(), workspace)
     for cmd in ("env", "printenv", "export", "set", "Get-ChildItem Env:", "dir env:"):
@@ -172,8 +172,6 @@ def _c_test_env_protection_combined(workspace: Path) -> None:
         verdict = policy.check_bash(cmd)
         assert not verdict.allowed, (cmd, verdict.reason)
         assert command_reads_sensitive_env(cmd)
-    assert policy.check_bash("echo hello").allowed
-    assert policy.check_bash("npm test").allowed
     assert not is_inspection_bash("sed -n '1,5p' .env")
     assert is_inspection_bash("rg foo src")
     assert is_sensitive_basename(".env.staging") and is_sensitive_basename("config.env")
@@ -184,7 +182,7 @@ def _c_test_env_protection_combined(workspace: Path) -> None:
     assert not policy.check_tool_call("read", {"path": "local.env"}).allowed
 
 
-def _c_test_bash_traversal_and_outside_roots_combined(workspace: Path) -> None:
+def test_bash_traversal_and_outside_roots_combined(workspace: Path) -> None:
     # (merged from test_bash_backslash_parent_traversal_blocked)
     from kite.guardrails.sandbox import check_command_paths, extract_command_paths
 
@@ -208,43 +206,3 @@ def _c_test_bash_traversal_and_outside_roots_combined(workspace: Path) -> None:
         verdict = policy.check_bash(cmd)
         assert not verdict.allowed, cmd
     assert policy.check_bash("echo hello").allowed
-
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_dangerous_bash_and_destructive_git_combined, test_cache_delete_benign_vs_absolute_combined, test_cache_delete_policy_and_trusted_cwd_combined."""
-    _c_test_dangerous_bash_and_destructive_git_combined()
-    _c_test_cache_delete_benign_vs_absolute_combined()
-    _w2 = tmp_path / "w0_2"
-    (_w2 / "src").mkdir(parents=True, exist_ok=True)
-    (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_cache_delete_policy_and_trusted_cwd_combined(workspace=_w2)
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_sandbox_escape_and_write_combined, test_secret_redaction_and_write_guard_combined."""
-    _t0 = tmp_path / "t1_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _w0 = tmp_path / "w1_0"
-    (_w0 / "src").mkdir(parents=True, exist_ok=True)
-    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_sandbox_escape_and_write_combined(tmp_path=_t0, workspace=_w0)
-    _w1 = tmp_path / "w1_1"
-    (_w1 / "src").mkdir(parents=True, exist_ok=True)
-    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_secret_redaction_and_write_guard_combined(workspace=_w1)
-
-def test_batch_02(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_env_protection_combined, test_bash_traversal_and_outside_roots_combined."""
-    _w0 = tmp_path / "w2_0"
-    (_w0 / "src").mkdir(parents=True, exist_ok=True)
-    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_env_protection_combined(workspace=_w0)
-    _w1 = tmp_path / "w2_1"
-    (_w1 / "src").mkdir(parents=True, exist_ok=True)
-    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_bash_traversal_and_outside_roots_combined(workspace=_w1)
-

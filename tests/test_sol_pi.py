@@ -22,7 +22,6 @@ from kite.sol_pi.evidence import (
 )
 from kite.sol_pi.integration import attach_sol_pi
 from kite.sol_pi.observation_core import (
-    FULL_SENDS,
     THRESHOLD_BYTES,
     create_observation,
     ensure_stored,
@@ -38,9 +37,9 @@ class _HarnessStub:
     sol_pi: object | None = field(default=None, init=False)
 
 
-def _c_test_sol_pi_config_load_and_attach(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    missing = load_sol_pi_config(tmp_path)
+def test_sol_pi_config_load_and_attach(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(workspace)
+    missing = load_sol_pi_config(workspace)
     assert missing.action_fusion is False
     assert missing.observation_pack is False
     assert missing.evidence_preserving_reducer is False
@@ -48,27 +47,23 @@ def _c_test_sol_pi_config_load_and_attach(tmp_path: Path, monkeypatch) -> None:
     assert missing.enabled is False
 
     harness = _HarnessStub()
-    assert attach_sol_pi(harness, str(tmp_path)) is None
+    assert attach_sol_pi(harness, str(workspace)) is None
     assert harness.sol_pi is None
     assert "sol_pi_session" not in harness.hooks.context
 
-    kite_dir = tmp_path / ".kite"
+    kite_dir = workspace / ".kite"
     kite_dir.mkdir()
     (kite_dir / "sol-pi.json").write_text(
         json.dumps({"version": 1, "actionFusion": True, "observationPack": True}),
         encoding="utf-8",
     )
-    # Anchor project-root discovery at tmp_path so ancestor markers
-    # (e.g. a dotfiles git repo at $HOME) cannot shadow the fixture.
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='sol-pi-fixture'\n", encoding="utf-8")
-    monkeypatch.chdir(tmp_path)
-    cfg = load_sol_pi_config(tmp_path)
+    cfg = load_sol_pi_config(workspace)
     assert cfg.action_fusion is True
     assert cfg.observation_pack is True
     assert cfg.enabled is True
 
 
-def _c_test_economics_horizon_and_gate() -> None:
+def test_economics_horizon_and_gate() -> None:
     horizon = estimate_remaining_requests(
         completed_boundary_request_counts=(4, 6, 5),
         remaining_boundaries=3,
@@ -115,20 +110,23 @@ def _c_test_economics_horizon_and_gate() -> None:
     )
 
 
-def _c_test_observation_pack_threshold_and_recall(tmp_path: Path) -> None:
+def test_observation_pack_threshold_and_recall(tmp_path: Path) -> None:
+    assert create_observation("bash", "small", "x" * THRESHOLD_BYTES, tmp_path) is None
     text = "line\n" * (THRESHOLD_BYTES // 5 + 10)
     obs = create_observation("bash", "call-1", text, tmp_path)
     assert obs is not None
     ensure_stored(obs)
-    assert obs.file_path.is_file()
+    assert obs.file_path.read_text(encoding="utf-8") == text
     placeholder = placeholder_for(obs)
     assert obs.id in placeholder
     chunk = read_recall_chunk(obs.file_path, 0, max_bytes=4096, max_lines=50)
-    assert chunk.bytes > 0
-    assert FULL_SENDS == 2
+    assert chunk.text == "line\n" * 50
+    assert chunk.bytes == chunk.next_offset == 250
+    assert chunk.lines == 50
+    assert chunk.eof is False
 
 
-def _c_test_evidence_receipt_and_plan_transition() -> None:
+def test_evidence_receipt_and_plan_transition() -> None:
     body = "FAILED test_foo\n" + ("x" * 5000)
     digest = sha256_text(body)
     archive = ArchiveObject(hash=digest, bytes=len(body), lines=2, body=body)
@@ -161,7 +159,7 @@ def _c_test_evidence_receipt_and_plan_transition() -> None:
     assert len(transition.completed_steps) == 1
 
 
-def _c_test_action_fusion_then_run_and_merge(tmp_path: Path) -> None:
+def test_action_fusion_then_run_and_merge(tmp_path: Path) -> None:
     target = tmp_path / "f.txt"
     target.write_text("old\n", encoding="utf-8")
 
@@ -170,37 +168,14 @@ def _c_test_action_fusion_then_run_and_merge(tmp_path: Path) -> None:
         return {"ok": True, "output": "edited"}
 
     def bash(_args: dict) -> dict:
-        return {"ok": True, "output": "ok", "returncode": 0}
+        return {"ok": True, "output": target.read_text(encoding="utf-8"), "returncode": 0}
 
     out = run_mutation_then_run(target, {"command": "true"}, mutate, bash)
-    assert THEN_RUN_SUCCEEDED in str(out.get("output"))
+    assert out["output"] == f"edited\n{THEN_RUN_SUCCEEDED}\nnew"
 
     merged = merge_then_run_output(
         {"ok": True, "output": "wrote"},
         {"ok": False, "output": "fail", "returncode": 1},
     )
-    assert THEN_RUN_SUCCEEDED in merged["output"]
+    assert merged["output"] == f"wrote\n{THEN_RUN_SUCCEEDED}\nfail"
     assert merged.get("then_run_exit") == 1
-
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_sol_pi_config_load_and_attach, test_economics_horizon_and_gate, test_observation_pack_threshold_and_recall."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t0_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _c_test_sol_pi_config_load_and_attach(tmp_path=_t0, monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _c_test_economics_horizon_and_gate()
-    _t2 = tmp_path / "t0_2"
-    _t2.mkdir(parents=True, exist_ok=True)
-    _c_test_observation_pack_threshold_and_recall(tmp_path=_t2)
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_evidence_receipt_and_plan_transition, test_action_fusion_then_run_and_merge."""
-    _c_test_evidence_receipt_and_plan_transition()
-    _t1 = tmp_path / "t1_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _c_test_action_fusion_then_run_and_merge(tmp_path=_t1)
-

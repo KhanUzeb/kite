@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from kite.config import kite_home
@@ -47,13 +48,13 @@ def expand_arguments(body: str, arg: str) -> str:
     return text
 
 
-def _load_command_file(path: Path, *, source: str, plugin: str = "") -> PromptCommand | None:
+def _load_command_file(path: Traversable, *, source: str, plugin: str = "") -> PromptCommand | None:
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError:
         return None
     meta, body = parse_frontmatter(raw)
-    name = (meta.get("name") or path.stem).strip()
+    name = (meta.get("name") or Path(path.name).stem).strip()
     if not NAME_RE.match(name):
         return None
     hint = meta.get("argument-hint") or meta.get("argument_hint") or ""
@@ -65,7 +66,7 @@ def _load_command_file(path: Path, *, source: str, plugin: str = "") -> PromptCo
         name=name.lower(),
         description=desc,
         body=content,
-        path=path,
+        path=Path(str(path)),
         argument_hint=hint,
         source=source,
         plugin=plugin,
@@ -90,17 +91,6 @@ def load_commands_from_dir(
     return out
 
 
-def bundled_commands_dir() -> Path | None:
-    try:
-        bundled = resources.files("kite").joinpath("data/commands")
-        path = Path(str(bundled))
-        if path.is_dir():
-            return path
-    except Exception:
-        return None
-    return None
-
-
 def user_commands_dir() -> Path:
     return kite_home() / "commands"
 
@@ -110,38 +100,14 @@ def project_commands_dir(cwd: str | Path) -> Path:
 
 
 def load_bundled_commands() -> list[PromptCommand]:
+    bundled = resources.files("kite").joinpath("data/commands")
     items: list[PromptCommand] = []
-    bundled = bundled_commands_dir()
-    if bundled is not None:
-        items.extend(load_commands_from_dir(bundled, source="bundled"))
-    try:
-        pkg = resources.files("kite").joinpath("data/commands")
-        if hasattr(pkg, "iterdir"):
-            seen = {c.name for c in items}
-            for child in pkg.iterdir():
-                if not child.name.endswith(".md") or child.name.lower() == "readme.md":
-                    continue
-                stem = child.name[:-3].lower()
-                if stem in seen:
-                    continue
-                raw = child.read_bytes().decode("utf-8")
-                meta, body = parse_frontmatter(raw)
-                cmd_name = (meta.get("name") or stem).lower()
-                if not NAME_RE.match(cmd_name):
-                    continue
-                items.append(
-                    PromptCommand(
-                        name=cmd_name,
-                        description=meta.get("description") or "",
-                        body=(body if meta else raw).strip(),
-                        path=Path(str(child)),
-                        argument_hint=meta.get("argument-hint") or meta.get("argument_hint") or "",
-                        source="bundled",
-                    )
-                )
-                seen.add(cmd_name)
-    except Exception:
-        pass
+    for child in sorted(bundled.iterdir(), key=lambda path: path.name.lower()):
+        if not child.name.endswith(".md") or child.name.lower() == "readme.md":
+            continue
+        command = _load_command_file(child, source="bundled")
+        if command is not None:
+            items.append(command)
     return items
 
 

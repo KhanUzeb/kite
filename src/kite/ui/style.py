@@ -46,6 +46,9 @@ Spacing
 
 from __future__ import annotations
 
+import re
+
+from rich.cells import cell_len, chop_cells
 from rich.console import Console
 
 from kite.ui.theme import glyph, rich_theme, syntax_name
@@ -123,9 +126,23 @@ GUTTER = "  "
 PANEL_BAR = "┊ "
 
 
+def clip_text(text: str, limit: int) -> str:
+    """Cut prose to display columns with an explicit ellipsis."""
+    if cell_len(text) <= limit:
+        return text
+    if limit < 2:
+        return "…"
+    out = ""
+    for ch in text:
+        if cell_len(out + ch) > limit - 1:
+            break
+        out += ch
+    return (out.rstrip() + "…") if out else "…"
+
+
 def cell_continuation_indent(first_line_prefix: str) -> str:
     """Spaces so wrapped cell lines align under the first line body."""
-    return " " * len(first_line_prefix or "")
+    return " " * cell_len(first_line_prefix or "")
 
 
 # Columns from the row edge within which a streamed word is held back rather than
@@ -155,87 +172,55 @@ def wrap_hanging_parts(
     arriving in many small chunks wraps on the same boundaries a single chunk
     would.
 
-    ``defer_tail`` holds the final token back in ``pending`` when the text does
-    not end in a space. A streamed fragment usually stops mid-word, and that
-    word may still be growing — emitting half of it would split the word across
-    two rows. The caller prepends ``pending`` to the next fragment. It is only
-    safe for text known to be complete.
+    ``defer_tail`` may hold a partial word near the right edge. The caller
+    prepends it to the next fragment, or flushes it when the stream closes.
     """
-    from rich.cells import cell_len
-
-    if "\t" in text or width <= 0:
+    if width <= 0:
         return text, ""
-    room = max(1, width - cell_len(first_indent))
+    occupied = cell_len(first_indent)
+    if "\t" in text:
+        text = (" " * occupied + text).expandtabs(8)[occupied:]
+    room = max(0, width - occupied)
     cont_room = max(1, width - cell_len(cont_indent))
-    pending = ""
-    head = text
-    if defer_tail and text and not text.endswith(" ") and room < DEFER_MARGIN:
-        # Near the row edge: hold the trailing token back instead of printing it.
-        # A streamed fragment stops mid-word, and that word may still be growing;
-        # once printed it cannot be taken back, so it would split across rows the
-        # moment it outgrew the remaining room. Its separating space stays on the
-        # emitted side so the row keeps the gap and the held word resumes flush
-        # against that column. The caller must flush `pending` — when the line
-        # closes or the stream ends.
-        #
-        # The margin keeps this off the common path: with real room left the word
-        # is printed straight away and the live tail stays visible.
-        cut = text.rfind(" ")
-        pending = text[cut + 1 :]
-        head = text[: cut + 1]
-    # Leading spaces are the row's own indent (a nested list, a model's
-    # indentation): they survive verbatim and do not count as a word.
-    lead = len(head) - len(head.lstrip(" "))
-    tokens = head[lead:].split(" ")
+    if cell_len(text) <= room:
+        if defer_tail and text and not text.endswith(" "):
+            cut = text.rfind(" ") + 1
+            # Measure from this word's start, not the chunk's start: earlier
+            # words in the same chunk may have consumed the safe margin.
+            if room - cell_len(text[:cut]) < DEFER_MARGIN and cell_len(text[cut:]) < cont_room:
+                return text[:cut], text[cut:]
+        return text, ""
+
     out: list[str] = []
-    cur = ""
-    cur_room = max(1, room - lead)
-    fresh = True  # no content placed on the current row yet
-    for word in tokens:
-        if not word:
-            # Zero-width: an interior space run, never a break point.
-            if cur:
-                cur += " "
+    for match in re.finditer(r" +|[^ ]+", text):
+        token = match.group()
+        size = cell_len(token)
+        if (
+            defer_tail and match.end() == len(text) and not token.isspace()
+            and room < DEFER_MARGIN and size < cont_room
+        ):
+            return "".join(out), token
+        if size <= room:
+            out.append(token)
+            room -= size
             continue
-        if fresh:
-            fresh = False
-            if cell_len(word) > cur_room:
-                # The current row cannot take this word. A word wider than a
-                # whole row has no break point, so split it; otherwise the next
-                # row starts with it. Either way the row breaks here, or the text
-                # would run past the terminal width and wrap at column 0.
-                cur_room = cont_room
-                if cell_len(word) <= cur_room:
-                    out.append("")
-                else:
-                    while cell_len(word) > cur_room:
-                        out.append(word[:cur_room])
-                        word = word[cur_room:]
-                    cur = word
-                    continue
-            cur = word
+        if token.isspace():
+            # Preserve separators at chunk boundaries, but discard whitespace
+            # that would extend beyond the right edge of a wrapped row.
+            out.append(token[:room])
+            room = 0
             continue
-        # Word boundary preferred — keep the word here only when it fits whole.
-        if cell_len(cur) + 1 + cell_len(word) <= cur_room:
-            cur = f"{cur} {word}"
-            continue
-        out.append(cur)
-        cur = ""
-        cur_room = cont_room
-        if cell_len(word) <= cur_room:
-            cur = word
-            continue
-        while cell_len(word) > cur_room:
-            out.append(word[:cur_room])
-            word = word[cur_room:]
-        cur = word
-    if cur:
-        out.append(cur)
-    if lead and out and out[0]:
-        # Re-attach the row's own indent to its first *content* row. When out[0]
-        # is a break marker the next row already carries it via cont_indent.
-        out[0] = " " * lead + out[0]
-    return f"\n{cont_indent}".join(out), pending
+        if room < cont_room:
+            out.append("\n" + cont_indent)
+            room = cont_room
+        if size <= room:
+            out.append(token)
+            room -= size
+        else:
+            rows = chop_cells(token, cont_room)
+            out.append(("\n" + cont_indent).join(rows))
+            room = cont_room - cell_len(rows[-1])
+    return "".join(out), ""
 
 
 def wrap_hanging(text: str, *, first_indent: str, cont_indent: str, width: int) -> str:
@@ -251,7 +236,6 @@ def wrap_hanging(text: str, *, first_indent: str, cont_indent: str, width: int) 
 
 def last_line_width(text: str) -> int:
     """Columns used by the final row of ``text`` — where the cursor lands."""
-    from rich.cells import cell_len
 
     tail = text.rsplit("\n", 1)[-1]
     return cell_len(tail) if tail else 0

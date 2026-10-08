@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from kite.config import ensure_home, kite_home
 from kite.context.window import ContextUsage, estimate_usage
+from kite.memory.secure_io import secure_memory_write
 
 CheckpointReason = Literal["manual", "auto", "pre_compact"]
 
@@ -111,34 +112,13 @@ def save_checkpoint(
         todos=list(todos or []),
         meta=dict(meta or {}),
     )
-    folder = checkpoints_dir(session_id)
-    folder.mkdir(parents=True, exist_ok=True)
     path = _checkpoint_path(session_id, cp.id)
     from kite.memory.session_policy import prepare_persisted_value
 
     blob = prepare_persisted_value(cp.to_dict())
-    # A checkpoint is the crash-recovery artifact, so it must land whole: a
-    # plain write_text can be torn by a crash or a concurrent writer, and every
-    # later load of a half-written checkpoint fails to parse — the safety net
-    # destroying the session it was meant to preserve.
-    secure_checkpoint_write(path, json.dumps(blob, indent=2, ensure_ascii=False) + "\n")
+    secure_memory_write(path, json.dumps(blob, indent=2, ensure_ascii=False) + "\n")
     _prune_checkpoints(session_id)
     return cp
-
-
-def secure_checkpoint_write(path: Path, text: str) -> None:
-    """Atomic + owner-only checkpoint write.
-
-    ``save_checkpoint`` is the crash-recovery artifact: a torn JSON file means
-    every later load of that checkpoint fails to parse, so the safety net would
-    destroy the session it was meant to preserve.
-    """
-    from kite.memory.session_policy import secure_session_file
-    from kite.util.atomic import atomic_write_text
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, text)
-    secure_session_file(path)
 
 
 _MAX_CHECKPOINTS_PER_SESSION = 5

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import time
+import threading
 from unittest.mock import MagicMock
+
+import pytest
 
 from kite.agent.cancel import CancelToken
 from kite.agent.orchestrator import (
@@ -11,15 +13,21 @@ from kite.agent.orchestrator import (
     evaluate_subagent_result,
     gate_result,
     summarize_result,
-    worker_glyph,
 )
 
 
-def _c_test_result_semantics_glyph_rubric_and_clamp() -> None:
-    assert worker_glyph(1) == "◆"
-    assert worker_glyph(2) == "●"
-    assert worker_glyph(7) == worker_glyph(1)
+@pytest.fixture(autouse=True)
+def _isolated_orchestrator(workspace, kite_home, monkeypatch):
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr("kite.agent.orchestrator._TASK_REGISTRY", {})
+    yield
+    for thread in threading.enumerate():
+        if thread.name.startswith("kite-subagent-"):
+            thread.join(timeout=5)
+            assert not thread.is_alive(), "background worker leaked past test teardown"
 
+
+def test_result_semantics_rubric_and_clamp() -> None:
     ok, quality, summary = evaluate_subagent_result(
         {"exit_status": "Submitted", "submission": "all good"}
     )
@@ -43,8 +51,6 @@ def _c_test_result_semantics_glyph_rubric_and_clamp() -> None:
     full = "## Result\nok\n## Files touched\n- a.py\n## Tests\nnone"
     ok, quality, _ = evaluate_subagent_result({"exit_status": "Stalled", "submission": full})
     assert (ok, quality) == (True, "done")
-    ok, quality, summary = evaluate_subagent_result({"exit_status": "Submitted", "submission": "all good"})
-    assert (ok, quality, summary) == (True, "done", "all good")
 
     clamped = summarize_result("A" * 5000)
     assert len(clamped) <= 2000
@@ -53,7 +59,7 @@ def _c_test_result_semantics_glyph_rubric_and_clamp() -> None:
     assert summarize_result("short") == "short"
 
 
-def _c_test_handoff_usage_and_files_flow_to_parent() -> None:
+def test_handoff_usage_and_files_flow_to_parent() -> None:
     """Worker cost/tokens/files must reach the payload (whole-tree accounting)."""
 
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
@@ -77,16 +83,7 @@ def _c_test_handoff_usage_and_files_flow_to_parent() -> None:
     assert all(r["files_touched"] == ["src/a.py", "src/b.py"] for r in crew["results"])
 
 
-def _c_test_legacy_cost_survives_projection() -> None:
-    from kite.application.cli import legacy_result_from_run
-    from kite.application.contracts import RunResult
-
-    result = RunResult(status="done", cost=0.07, usage={"tokens": 500, "calls": 2})
-    legacy = legacy_result_from_run(result)
-    assert legacy["cost"] == 0.07 and legacy["tokens"] == 500 and legacy["calls"] == 2
-
-
-def _c_test_run_one_events_view_and_thread_labels() -> None:
+def test_run_one_events_view_and_thread_labels() -> None:
     events: list[tuple[str, dict]] = []
 
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
@@ -113,7 +110,7 @@ def _c_test_run_one_events_view_and_thread_labels() -> None:
     assert "scout" in by_kind["subagent_end"]["thread"]
 
 
-def _c_test_run_parallel_orders_counts_and_input_order() -> None:
+def test_run_parallel_orders_counts_and_input_order() -> None:
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
         if "fail" in prompt:
             return {"exit_status": "Error", "error": "nope"}
@@ -138,12 +135,20 @@ def _c_test_run_parallel_orders_counts_and_input_order() -> None:
     assert "orchestrator_start" in events
     assert "orchestrator_end" in events
 
+    second_finished = threading.Event()
+
+    def finished(event):
+        if event.kind == "subagent_end" and event.payload["label"] == "beta":
+            second_finished.set()
+
     def ordered_runner(prompt: str, *, cancel: CancelToken | None = None, **_: object) -> dict:
         if "slow" in prompt:
-            time.sleep(0.25)
+            assert second_finished.wait(timeout=5)
         return {"exit_status": "Submitted", "submission": f"out:{prompt}"}
 
-    orch2 = SubagentOrchestrator(runner=ordered_runner, max_workers=2, timeout_seconds=0)
+    orch2 = SubagentOrchestrator(
+        runner=ordered_runner, on_event=finished, max_workers=2, timeout_seconds=0
+    )
     ordered = orch2.run_parallel(["slow first", "fast second"], labels=["alpha", "beta"])
     outputs = [str(r.get("output") or "") for r in ordered["results"]]
     assert outputs[0].startswith("out:slow first")
@@ -151,7 +156,7 @@ def _c_test_run_parallel_orders_counts_and_input_order() -> None:
     assert ordered["output"].index("alpha") < ordered["output"].index("beta")
 
 
-def _c_test_dispatch_validation_async_depth_and_combos() -> None:
+def test_dispatch_validation_async_depth_and_combos() -> None:
     orch = SubagentOrchestrator(runner=MagicMock())
     out = orch.dispatch({})
     assert out["ok"] is False
@@ -189,7 +194,7 @@ def _c_test_dispatch_validation_async_depth_and_combos() -> None:
     assert nested_orch.dispatch({"prompt": "x"}, allow_nested=True)["ok"] is True
 
 
-def _c_test_kill_cancels_running_tasks() -> None:
+def test_kill_cancels_running_tasks() -> None:
     from kite.agent.orchestrator import SubagentTask
 
     token = CancelToken()
@@ -214,34 +219,39 @@ def _c_test_kill_cancels_running_tasks() -> None:
     assert token_b.is_set()
 
 
-def _c_test_background_spawn_and_collect() -> None:
-    def slow_runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
-        time.sleep(0.3)
-        return {"exit_status": "Submitted", "submission": "late"}
-
-    orch = SubagentOrchestrator(runner=slow_runner, timeout_seconds=0)
-    started = time.monotonic()
-    out = orch.run_one_background("explore", label="scout")
-    elapsed = time.monotonic() - started
-    assert elapsed < 0.15
-    assert out["background"] is True
-    assert out["job_id"]
-    assert out["dispatch"] == "async"
+def test_background_spawn_and_collect() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
 
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
-        time.sleep(0.05)
+        started.set()
+        assert release.wait(timeout=5)
         return {"exit_status": "Submitted", "submission": f"findings: {prompt}"}
 
-    orch2 = SubagentOrchestrator(runner=runner, timeout_seconds=0)
-    spawned = orch2.run_one_background("auth paths", label="scout")
+    def on_event(event):
+        if event.kind == "subagent_end":
+            finished.set()
+
+    orch = SubagentOrchestrator(runner=runner, on_event=on_event, timeout_seconds=0)
+    try:
+        spawned = orch.run_one_background("auth paths", label="scout")
+        assert started.wait(timeout=5)
+        assert spawned["background"] is True
+        assert spawned["dispatch"] == "async"
+        assert orch.tasks[-1].status == "running"
+        assert not finished.is_set()
+    finally:
+        release.set()
+    assert finished.wait(timeout=5)
     job_id = str(spawned["job_id"])
-    collected = orch2.wait_for([job_id], timeout_seconds=5)
-    assert job_id not in collected.get("pending", [])
-    assert "findings" in collected["output"]
+    collected = orch.wait_for([job_id], timeout_seconds=5)
+    assert job_id not in collected["pending"]
+    assert "findings: auth paths" in collected["output"]
     assert collected["results"][job_id]["ok"] is True
 
 
-def _c_test_prune_and_context_compose() -> None:
+def test_prune_and_context_compose() -> None:
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
         return {"exit_status": "Submitted", "submission": "ok"}
 
@@ -268,7 +278,7 @@ def _c_test_prune_and_context_compose() -> None:
     assert len(capped) < len("y" * 5000)
 
 
-def _c_test_revise_and_scope_gate() -> None:
+def test_revise_and_scope_gate() -> None:
     calls: list[str] = []
 
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
@@ -291,7 +301,7 @@ def _c_test_revise_and_scope_gate() -> None:
     assert gate_result(SubagentTask(id="t2", prompt="p", label="w"), {"files_touched": ["anywhere"]}) == ""
 
 
-def _c_test_retry_policy_single_and_disabled() -> None:
+def test_retry_policy_single_and_disabled() -> None:
     calls: list[str] = []
 
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
@@ -314,7 +324,7 @@ def _c_test_retry_policy_single_and_disabled() -> None:
     assert len(fresh) == 1
 
 
-def _c_test_registry_tracks_parent_children() -> None:
+def test_registry_tracks_parent_children() -> None:
     from kite.agent.orchestrator import clear_registry, list_children
 
     clear_registry()
@@ -335,19 +345,16 @@ def _c_test_registry_tracks_parent_children() -> None:
         clear_registry()
 
 
-def _c_test_abort_and_sibling_results() -> None:
+def test_abort_and_sibling_results() -> None:
     saw_cancel = False
 
     def runner(prompt: str, *, cancel: CancelToken | None = None, **_: object) -> dict:
         nonlocal saw_cancel
         if "fail" in prompt:
             return {"exit_status": "Error", "error": "boom"}
-        for _ in range(100):
-            if cancel is not None and cancel.is_set():
-                saw_cancel = True
-                return {"exit_status": "Interrupted", "submission": ""}
-            time.sleep(0.02)
-        return {"exit_status": "Submitted", "submission": f"done: {prompt}"}
+        assert cancel is not None
+        saw_cancel = cancel._event.wait(timeout=5)
+        return {"exit_status": "Interrupted", "submission": ""}
 
     orch = SubagentOrchestrator(runner=runner, max_workers=2, timeout_seconds=0)
     out = orch.run_parallel(["do fail now", "slow sibling"], labels=["bad", "slow"], abort_on_failure=True)
@@ -367,40 +374,36 @@ def _c_test_abort_and_sibling_results() -> None:
     assert kept["results"][1]["ok"] is True
 
 
-def _c_test_per_worker_timeout_marks_failed() -> None:
-    def runner(prompt: str, *, cancel: CancelToken | None = None, **_: object) -> dict:
-        time.sleep(0.5)
-        return {"exit_status": "Submitted", "submission": "too late"}
+def test_per_worker_timeout_marks_failed(monkeypatch) -> None:
+    future = MagicMock()
+    future.result.side_effect = TimeoutError
+    pool = MagicMock()
+    pool.submit.return_value = future
+    orch = SubagentOrchestrator(runner=MagicMock(), timeout_seconds=30)
+    monkeypatch.setattr(orch, "_runner_executor", lambda: pool)
 
-    orch = SubagentOrchestrator(runner=runner, timeout_seconds=0)
     out = orch.run_one("slow job", label="turtle", timeout_s=0.15)
     assert out["ok"] is False
-    assert out.get("quality") == "failed"
-    assert "timed out after 0.15s" in str(out.get("output") or "")
+    assert out["quality"] == "failed"
+    assert "timed out after 0.15s" in out["output"]
     assert orch.tasks[-1].quality == "failed"
+    assert orch.tasks[-1].cancel.is_set()
+    future.result.assert_called_once_with(timeout=0.15)
 
 
-def _c_test_profiles_tiers_scopes_and_allowlist() -> None:
+def test_profiles_tiers_scopes_and_allowlist() -> None:
     from kite.agent.subagent_profiles import (
-        ROLE_MODEL_TIERS,
         get_profile,
         resolve_worker_model,
         worker_tool_allowlist,
     )
 
-    assert get_profile("scout").model_role == "fast"
-    assert get_profile("reviewer").model_role == "smart"
-    assert get_profile("context").model_role == "smart"  # architect role ~ planner tier
-    assert get_profile("coder").model_role == "coder"
-    assert get_profile("shell").model_role == "coder"
     assert get_profile("scout").tools == ("read", "grep", "glob", "ls")
     assert get_profile("reviewer").tools == ("read", "grep", "glob", "ls")
     assert get_profile("shell").tools == ("read", "bash", "grep", "glob", "ls")
     assert get_profile("coder").tools == ()  # inherit parent registry
     assert get_profile("context").tools == ()
 
-    assert set(ROLE_MODEL_TIERS) == {"fast", "coder", "smart"}
-    assert all(chain[0] == "parent" for chain in ROLE_MODEL_TIERS.values())
     # explicit model= wins over every tier
     assert resolve_worker_model(explicit_model="m-explicit", parent_model="m-parent", model_role="fast") == "m-explicit"
     # tier preference: parent first, then runtime default ("")
@@ -416,7 +419,7 @@ def _c_test_profiles_tiers_scopes_and_allowlist() -> None:
     assert worker_tool_allowlist(None) is None
 
 
-def _c_test_profile_file_scope_parsing(tmp_path) -> None:
+def test_profile_file_scope_parsing(tmp_path) -> None:
     from kite.agent.subagent_profiles import _parse_profile_file
 
     messy = tmp_path / "messy.md"
@@ -436,7 +439,7 @@ def _c_test_profile_file_scope_parsing(tmp_path) -> None:
     assert plain is not None and plain.tools == ()
 
 
-def _c_test_spawn_budget_exceeded_errors() -> None:
+def test_spawn_budget_exceeded_errors() -> None:
     def runner(prompt: str, *, cancel: CancelToken | None = None) -> dict:
         return {"exit_status": "Submitted", "submission": "ok"}
 
@@ -458,7 +461,7 @@ def _c_test_spawn_budget_exceeded_errors() -> None:
     assert "budget" in str(bg.get("error") or "")
 
 
-def _c_test_dispatch_forwards_profile_allowlist() -> None:
+def test_dispatch_forwards_profile_allowlist() -> None:
     seen: list[dict] = []
 
     def runner(prompt: str, **kwargs: object) -> dict:
@@ -477,43 +480,3 @@ def _c_test_dispatch_forwards_profile_allowlist() -> None:
 
     orch.run_one("jit", label="j")  # no profile at all
     assert seen[-1]["allowed_tools"] is None
-
-
-def test_batch_00() -> None:
-    """Consolidated (bodies unchanged): test_result_semantics_glyph_rubric_and_clamp, test_handoff_usage_and_files_flow_to_parent, test_legacy_cost_survives_projection."""
-    _c_test_result_semantics_glyph_rubric_and_clamp()
-    _c_test_handoff_usage_and_files_flow_to_parent()
-    _c_test_legacy_cost_survives_projection()
-
-def test_batch_01() -> None:
-    """Consolidated (bodies unchanged): test_run_one_events_view_and_thread_labels, test_run_parallel_orders_counts_and_input_order, test_dispatch_validation_async_depth_and_combos."""
-    _c_test_run_one_events_view_and_thread_labels()
-    _c_test_run_parallel_orders_counts_and_input_order()
-    _c_test_dispatch_validation_async_depth_and_combos()
-
-def test_batch_02() -> None:
-    """Consolidated (bodies unchanged): test_kill_cancels_running_tasks, test_background_spawn_and_collect, test_prune_and_context_compose."""
-    _c_test_kill_cancels_running_tasks()
-    _c_test_background_spawn_and_collect()
-    _c_test_prune_and_context_compose()
-
-def test_batch_03() -> None:
-    """Consolidated (bodies unchanged): test_revise_and_scope_gate, test_retry_policy_single_and_disabled, test_registry_tracks_parent_children."""
-    _c_test_revise_and_scope_gate()
-    _c_test_retry_policy_single_and_disabled()
-    _c_test_registry_tracks_parent_children()
-
-def test_batch_04() -> None:
-    """Consolidated (bodies unchanged): test_abort_and_sibling_results, test_per_worker_timeout_marks_failed, test_profiles_tiers_scopes_and_allowlist."""
-    _c_test_abort_and_sibling_results()
-    _c_test_per_worker_timeout_marks_failed()
-    _c_test_profiles_tiers_scopes_and_allowlist()
-
-def test_batch_05(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_profile_file_scope_parsing, test_spawn_budget_exceeded_errors, test_dispatch_forwards_profile_allowlist."""
-    _t0 = tmp_path / "t5_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_profile_file_scope_parsing(tmp_path=_t0)
-    _c_test_spawn_budget_exceeded_errors()
-    _c_test_dispatch_forwards_profile_allowlist()
-

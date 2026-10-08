@@ -98,20 +98,12 @@ def _quarantine(path: Path) -> None:
 
 
 def _connect_or_quarantine(path: Path) -> sqlite3.Connection | None:
-    """Open the episode DB, quarantining it if the file is unreadable.
-
-    A corrupt ``episodes.sqlite`` (torn WAL, partial disk write, or a non-sqlite
-    file dropped there by something else) used to raise ``DatabaseError`` out of
-    every ``remember()`` / ``retrieve_for_prompt()`` / ``render_for_prompt()``
-    call — permanently breaking the memory layer over a soft cache. The
-    unparseable file is moved aside (preserved, not deleted) and a fresh
-    database is created, so the episode log self-heals and durable markdown
-    notes keep working.
-    """
+    """Quarantine corrupt databases, never a healthy database that is busy or read-only."""
     try:
         return _connect(path)
-    except _DB_ERRORS:
-        pass
+    except _DB_ERRORS as exc:
+        if getattr(exc, "sqlite_errorcode", None) not in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
+            return None
     try:
         _quarantine(path)
     except OSError:

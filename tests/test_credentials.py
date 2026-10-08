@@ -6,6 +6,7 @@ import os
 import stat
 
 import pytest
+from rich.console import Console
 
 from kite.providers.catalog import load_catalog
 from kite.providers.credentials import (
@@ -19,17 +20,39 @@ from kite.providers.credentials import (
 )
 
 
-def _c_test_write_api_key_combined(tmp_path, monkeypatch) -> None:
-    # (merged from test_write_api_key_replaces_existing)
-    env = tmp_path / ".env"
+@pytest.fixture(autouse=True)
+def _isolate_credentials(workspace, kite_home, monkeypatch) -> None:
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr("kite.providers.credentials._ENV_LOADED_KEY", None)
+    for name in (
+        "OPENAI_API_KEY",
+        "GROQ_API_KEY",
+        "NVIDIA_API_KEY",
+        "NGC_API_KEY",
+        "FIRECRAWL_API_KEY",
+        "TAVILY_API_KEY",
+        "EXA_API_KEY",
+        "TINYFISH_API_KEY",
+        "OTHER",
+    ):
+        # delenv alone records nothing for an absent key. Register it first
+        # so direct write_api_key/load_kite_env mutations are also undone.
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_write_api_key_replaces_existing_and_secures_files(kite_home, monkeypatch) -> None:
+    env = kite_home / ".env"
     env.write_text("OPENAI_API_KEY=old\nOTHER=1\n", encoding="utf-8")
-    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
     write_api_key("OPENAI_API_KEY", "new-secret")
     text = env.read_text(encoding="utf-8")
     assert "OPENAI_API_KEY=new-secret" in text
     assert "OTHER=1" in text
-    # (merged from test_write_api_key_sets_owner_only_mode)
-    env2 = tmp_path / ".env2"
+    assert "old" not in text
+    assert os.environ["OPENAI_API_KEY"] == "new-secret"
+    if os.name != "nt":
+        assert stat.S_IMODE(env.stat().st_mode) == 0o600
+    env2 = kite_home / ".env2"
     monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env2)
     write_api_key("GROQ_API_KEY", "secret")
     if os.name != "nt":
@@ -37,17 +60,15 @@ def _c_test_write_api_key_combined(tmp_path, monkeypatch) -> None:
         assert mode == 0o600
 
 
-def _c_test_remove_api_key_combined(tmp_path, monkeypatch) -> None:
-    # (merged from test_remove_api_key)
-    env = tmp_path / ".env"
+def test_remove_api_key_removes_process_value_and_orphan_header(kite_home, monkeypatch) -> None:
+    env = kite_home / ".env"
     env.write_text("GROQ_API_KEY=abc\nOTHER=1\n", encoding="utf-8")
-    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
     monkeypatch.setenv("GROQ_API_KEY", "abc")
     assert remove_api_key("GROQ_API_KEY") is True
     assert "GROQ_API_KEY" not in env.read_text(encoding="utf-8")
-    # (merged from test_remove_api_key_drops_header_comment)
+    assert "GROQ_API_KEY" not in os.environ
     # write_api_key stores a '# VAR' header — logout must not leave it orphaned.
-    env2 = tmp_path / ".env2"
+    env2 = kite_home / ".env2"
     env2.write_text("OTHER=1\n", encoding="utf-8")
     monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env2)
     write_api_key("GROQ_API_KEY", "secret-value-123")
@@ -56,57 +77,53 @@ def _c_test_remove_api_key_combined(tmp_path, monkeypatch) -> None:
     text = env2.read_text(encoding="utf-8")
     assert "GROQ_API_KEY" not in text
     assert "OTHER=1" in text
+    assert "GROQ_API_KEY" not in os.environ
+    assert remove_api_key("GROQ_API_KEY") is False
 
 
-def _c_test_load_kite_env_combined(tmp_path, monkeypatch) -> None:
-    # (merged from test_load_kite_env_fills_empty_project_placeholder)
-    project_dir = tmp_path / "proj"
-    project_dir.mkdir()
-    (project_dir / ".env").write_text("GROQ_API_KEY=\n", encoding="utf-8")
-    kite_env = tmp_path / "kite" / ".env"
-    kite_env.parent.mkdir()
-    kite_env.write_text("GROQ_API_KEY=from-kite-home\n", encoding="utf-8")
-    monkeypatch.chdir(project_dir)
-    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: kite_env)
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+def test_load_kite_env_reloads_changes_and_fills_project_placeholders(
+    workspace, kite_home, monkeypatch
+) -> None:
+    (workspace / ".env").write_text(
+        "GROQ_API_KEY=\nOPENAI_API_KEY=from-project\n", encoding="utf-8"
+    )
+    home_env = kite_home / ".env"
+    home_env.write_text(
+        "GROQ_API_KEY=from-kite-home\nOPENAI_API_KEY=from-home\n", encoding="utf-8"
+    )
     load_kite_env()
     assert os.getenv("GROQ_API_KEY") == "from-kite-home"
-    # (merged from test_load_kite_env_reloads_after_rewrite_without_mtime_change)
-    # Same-mtime rewrites (coarse filesystems) must not serve stale keys.
-    import kite.providers.credentials as creds
+    assert os.getenv("OPENAI_API_KEY") == "from-project"
 
-    home_env = tmp_path / "kite-home.env"
-    home_env.write_text("RELOAD_KEY=one\n", encoding="utf-8")
-    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: home_env)
-    proj = tmp_path / "proj2"
-    proj.mkdir()
-    monkeypatch.chdir(proj)
-    monkeypatch.setattr(creds, "_ENV_LOADED_KEY", None)
-    monkeypatch.delenv("RELOAD_KEY", raising=False)
-    load_kite_env()
-    assert os.getenv("RELOAD_KEY") == "one"
+    # Same-mtime rewrites on coarse filesystems must not serve stale keys.
     st = home_env.stat()
-    home_env.write_text("RELOAD_KEY=two-much-longer\n", encoding="utf-8")
+    home_env.write_text("GROQ_API_KEY=replaced-with-longer-key\n", encoding="utf-8")
     os.utime(home_env, (st.st_atime, st.st_mtime))
-    monkeypatch.delenv("RELOAD_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY")
     load_kite_env()
-    assert os.getenv("RELOAD_KEY") == "two-much-longer"
+    assert os.getenv("GROQ_API_KEY") == "replaced-with-longer-key"
 
 
-def _c_test_login_provider_alias_cleanup_combined(tmp_path, monkeypatch) -> None:
-    # (merged from test_login_provider_removes_alias_keys_from_env_file)
-    env = tmp_path / ".env"
+def test_login_provider_removes_alias_and_accepts_web_keys(
+    kite_home, monkeypatch, caplog, capsys
+) -> None:
+    caplog.set_level("DEBUG")
+    env = kite_home / ".env"
     env.write_text("NGC_API_KEY=old-alias\nOTHER=1\n", encoding="utf-8")
-    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
     monkeypatch.setattr("kite.providers.credentials.read_secret", lambda _p: "new-primary-key")
     from kite.providers.credentials import login_provider
 
-    code, msg, name = login_provider("nvidia", set_default=False, console=None)
+    code, msg, name = login_provider("nvidia", set_default=False, console=Console())
     assert code == 0
     assert name == "nvidia"
-    assert "NGC_API_KEY" not in env.read_text(encoding="utf-8")
-    # (merged from test_keys_set_accepts_web_tool_alias)
-    env2 = tmp_path / ".env2"
+    text = env.read_text(encoding="utf-8")
+    assert "NGC_API_KEY" not in text
+    assert "NVIDIA_API_KEY=new-primary-key" in text
+    assert "OTHER=1" in text
+    assert "NGC_API_KEY" not in os.environ
+    output = capsys.readouterr()
+    assert "new-primary-key" not in msg + caplog.text + output.out + output.err
+    env2 = kite_home / ".env2"
     monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env2)
     monkeypatch.setattr(
         "kite.providers.credentials.read_secret",
@@ -114,18 +131,18 @@ def _c_test_login_provider_alias_cleanup_combined(tmp_path, monkeypatch) -> None
     )
     from kite.providers.credentials import web_tool_api_key
 
-    code, msg, name = login_provider("firecrawl", set_default=False, console=None)
+    code, msg, name = login_provider("firecrawl", set_default=False, console=Console())
     assert code == 0
     assert name == "firecrawl"
     assert web_tool_api_key("firecrawl") == "fc-test-key-abcdefghij"
     assert "FIRECRAWL_API_KEY" in msg
+    output = capsys.readouterr()
+    assert "fc-test-key-abcdefghij" not in msg + caplog.text + output.out + output.err
 
 
-def _c_test_api_key_validation_and_prompt_combined(monkeypatch) -> None:
-    # (merged from test_validate_api_key_rejects_empty_and_short)
+def test_api_key_validation_and_confirmation_mismatch(monkeypatch) -> None:
     assert validate_api_key("") == "API key cannot be empty"
     assert validate_api_key("valid-key-123") is None
-    # (merged from test_prompt_api_key_requires_matching_confirm)
     prompts = iter(["first-key-ok", "second-key-bad"])
     monkeypatch.setattr("kite.providers.credentials.read_secret", lambda _p: next(prompts))
     secret, err = prompt_api_key("GROQ_API_KEY", replacing=False)
@@ -133,33 +150,34 @@ def _c_test_api_key_validation_and_prompt_combined(monkeypatch) -> None:
     assert err == "keys did not match — nothing saved"
 
 
-def _c_test_api_key_fingerprint_masks_set_key(monkeypatch) -> None:
+def test_api_key_fingerprint_masks_set_key(monkeypatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "gsk_test_key_abcdefgh")
     assert api_key_fingerprint(load_catalog().get("groq")) == "••••efgh"
     assert mask_api_key_fingerprint("sk-abcdefghijklmnop") == "••••mnop"
 
 
-def _c_test_web_tool_login_logout_combined(tmp_path, monkeypatch) -> None:
-    # (merged from test_login_web_tool_key_writes_secure_env)
-    env = tmp_path / ".env"
-    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
+def test_web_tool_login_logout_secures_keys_without_logging_secrets(
+    kite_home, monkeypatch, caplog, capsys
+) -> None:
+    caplog.set_level("DEBUG")
+    env = kite_home / ".env"
     monkeypatch.setattr(
         "kite.providers.credentials.read_secret",
         lambda _p: "tvly-test-key-abcdefgh",
     )
     from kite.providers.credentials import login_web_tool_key, web_tool_api_key
 
-    code, msg, name = login_web_tool_key("tavily", console=None)
+    code, msg, name = login_web_tool_key("tavily", console=Console())
     assert code == 0
     assert name == "tavily"
     assert "TAVILY_API_KEY=tvly-test-key-abcdefgh" in env.read_text(encoding="utf-8")
     assert web_tool_api_key("tavily") == "tvly-test-key-abcdefgh"
     assert "••••efgh" in msg
+    output = capsys.readouterr()
+    assert "tvly-test-key-abcdefgh" not in msg + caplog.text + output.out + output.err
     if os.name != "nt":
         assert stat.S_IMODE(env.stat().st_mode) == 0o600
-    # (merged from test_logout_web_tool_key_removes_env)
     env.write_text("EXA_API_KEY=exa-secret-key\nOTHER=1\n", encoding="utf-8")
-    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
     monkeypatch.setenv("EXA_API_KEY", "exa-secret-key")
     from kite.providers.credentials import logout_web_tool_key
 
@@ -171,25 +189,9 @@ def _c_test_web_tool_login_logout_combined(tmp_path, monkeypatch) -> None:
     assert web_tool_api_key("exa") is None
 
 
-def _c_test_web_keys_cli_and_status_combined(tmp_path, monkeypatch) -> None:
-    # (merged from test_web_keys_cli_parser_registered)
-    from kite.cli.run import build_parser
-
-    parser = build_parser()
-    args = parser.parse_args(["web-keys", "set", "tavily"])
-    assert args.web_keys_cmd == "set"
-    assert args.name == "tavily"
-    args2 = parser.parse_args(["web-keys"])
-    assert args2.web_keys_cmd == "status"
-    args3 = parser.parse_args(["keys", "--set", "exa"])
-    assert args3.set == "exa"
-    # (merged from test_configured_web_tool_keys_reports_status)
-    env = tmp_path / ".env"
+def test_configured_web_tool_keys_distinguishes_saved_and_missing_keys(kite_home) -> None:
+    env = kite_home / ".env"
     env.write_text("TAVILY_API_KEY=tvly-abcdefg-xyz\n", encoding="utf-8")
-    monkeypatch.setattr("kite.providers.credentials.env_file_path", lambda: env)
-    monkeypatch.setenv("TAVILY_API_KEY", "tvly-abcdefg-xyz")
-    monkeypatch.delenv("EXA_API_KEY", raising=False)
-    monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
     from kite.providers.credentials import configured_web_tool_keys
 
     rows = {n: (ok, env_var) for n, ok, env_var in configured_web_tool_keys()}
@@ -197,66 +199,3 @@ def _c_test_web_keys_cli_and_status_combined(tmp_path, monkeypatch) -> None:
     assert rows["tavily"][1] == "TAVILY_API_KEY"
     assert rows["exa"][0] is False
     assert rows["firecrawl"][0] is False
-
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_write_api_key_combined, test_remove_api_key_combined, test_load_kite_env_combined."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t0_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _c_test_write_api_key_combined(tmp_path=_t0, monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t0_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _c_test_remove_api_key_combined(tmp_path=_t1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _t2 = tmp_path / "t0_2"
-        _t2.mkdir(parents=True, exist_ok=True)
-        _c_test_load_kite_env_combined(tmp_path=_t2, monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_login_provider_alias_cleanup_combined, test_api_key_validation_and_prompt_combined, test_api_key_fingerprint_masks_set_key."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t1_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _c_test_login_provider_alias_cleanup_combined(tmp_path=_t0, monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _c_test_api_key_validation_and_prompt_combined(monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _c_test_api_key_fingerprint_masks_set_key(monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
-
-def test_batch_02(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_web_tool_login_logout_combined, test_web_keys_cli_and_status_combined."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t2_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _c_test_web_tool_login_logout_combined(tmp_path=_t0, monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t2_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _c_test_web_keys_cli_and_status_combined(tmp_path=_t1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-

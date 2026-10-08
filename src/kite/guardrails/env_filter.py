@@ -66,8 +66,6 @@ def invokes_gh_cli(command: str | list[str] | None) -> bool:
     if not command:
         return False
     if isinstance(command, list):
-        if not command:
-            return False
         from pathlib import Path
 
         return Path(str(command[0])).name.lower() in {"gh", "gh.exe"}
@@ -98,8 +96,6 @@ def is_single_gh_command(command: str | list[str] | None) -> bool:
     if not command:
         return False
     if isinstance(command, list):
-        if not command:
-            return False
         from pathlib import Path
 
         return Path(str(command[0])).name.lower() in {"gh", "gh.exe"}
@@ -135,7 +131,7 @@ def is_sensitive_env_key(name: str) -> bool:
     upper = name.upper()
     if upper in _DROP_ENV_EXACT:
         return True
-    if any(upper.startswith(p) for p in _DROP_ENV_PREFIXES):
+    if upper.startswith(_DROP_ENV_PREFIXES):
         return True
     return bool(_SENSITIVE_SUFFIX.search(upper))
 

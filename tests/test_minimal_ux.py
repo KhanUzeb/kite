@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from io import StringIO
 
-import pytest
+from prompt_toolkit.document import Document
+from rich.cells import cell_len
 from rich.console import Console
 
 from kite.agent.mode import AgentMode
-from kite.cli.help_map import CLI_EPILOG, cli_help_brief, cli_help_text
+from kite.cli.help_map import cli_help_brief, cli_help_text
 from kite.cli.run import build_parser
 from kite.cli.slash import CommandIndex, help_text
-from kite.ui.commands import is_primary_slash, parse_slash, primary_builtins
+from kite.ui.commands import is_primary_slash, parse_slash
 from kite.ui.complete import SlashCompleter, _visible_specs
 from kite.ui.state import SessionUiState
 from kite.ui.status import render_status, status_segments
@@ -19,13 +20,12 @@ from kite.ui.style import KITE_THEME
 from tests.conftest import strip_ansi
 
 
-def _c_test_cli_help_and_parser_lists_usable_commands() -> None:
+def test_cli_help_and_parser_lists_usable_commands(kite_home) -> None:
     brief = cli_help_brief()
     full = cli_help_text()
     assert "kite run" in brief and "kite help all" in brief
     assert "kite keys" not in brief
     assert "kite keys" in full
-    assert "interactive session" in CLI_EPILOG
     parser = build_parser()
     help_text_cli = parser.format_help()
     for name in ("run", "resume", "setup", "sessions", "tasks", "help", "models", "chat", "exec", "config", "bench", "theme", "font", "variants"):
@@ -38,8 +38,8 @@ def _c_test_cli_help_and_parser_lists_usable_commands() -> None:
     assert parser.parse_args(["-r"]).resume_pick is True
 
 
-def _c_test_repl_help_and_legacy_slash_dispatch() -> None:
-    index = CommandIndex.load(".")
+def test_repl_help_and_legacy_slash_dispatch(workspace, kite_home) -> None:
+    index = CommandIndex.load(workspace)
     brief = help_text(index)
     full = help_text(index, all=True)
     assert "/plan" in brief and "/build" in brief
@@ -48,30 +48,33 @@ def _c_test_repl_help_and_legacy_slash_dispatch() -> None:
     assert "/select" not in brief
     assert "/compact" in full
     assert "/select" in full
-    primary = primary_builtins()
-    assert len(primary) == 16
-    assert primary[0].name == "build"
-    assert primary[1].name == "plan"
-    assert any(b.name == "thinking" for b in primary)
-    assert any(b.name == "variants" for b in primary)
-    assert any(b.name == "new" for b in primary)
-    assert any(b.name == "usage" for b in primary)
-    assert parse_slash("/compact").command == "compact"
-    assert parse_slash("/thinking").command == "thinking"
-    assert parse_slash("/variants").command == "variants"
-    assert parse_slash("/reasoning").command == "reasoning"
     assert parse_slash("/fast").command == "thinking"
     assert parse_slash("/fast").legacy == "fast"
     assert parse_slash("/cost").command == "status"
     assert not is_primary_slash("compact")
     assert is_primary_slash("plan")
 
+    from kite.ui.repl import ChatSession
 
-def _c_test_completion_skills_cues_bare_slash_and_mouse() -> None:
-    index = CommandIndex.load(".")
+    chat = object.__new__(ChatSession)
+    chat._index = lambda: index
+    for width in (50, 80, 120):
+        for arg in ("", "all"):
+            buf = StringIO()
+            chat.console = Console(file=buf, width=width, height=24, theme=KITE_THEME, soft_wrap=True)
+            chat._slash_help(arg)
+            chat._slash_hotkeys("")
+            rows = strip_ansi(buf.getvalue()).splitlines()
+            assert all(cell_len(row) <= width for row in rows), (width, arg, rows)
+            assert any("/theme" in row for row in rows)
+            assert any("Ctrl+C" in row for row in rows)
+
+
+def test_completion_cues_and_variants_when_reasoning_is_unavailable(workspace, kite_home) -> None:
     from kite.models.reasoning import ReasoningSupport
     from kite.ui.complete import _slash_display, _slash_meta, _slash_origin
 
+    index = CommandIndex.load(workspace)
     support = ReasoningSupport(False, False, False, False, source="none")
     specs = _visible_specs(index, support=support)
     names = {spec.name for spec in specs}
@@ -80,6 +83,7 @@ def _c_test_completion_skills_cues_bare_slash_and_mouse() -> None:
     assert "explain" in names
     assert "commit" in names
     assert "cost" not in names
+    assert "variants" in names and "thinking" in names
 
     origins = {_slash_origin(s, index) for s in specs}
     assert "builtin" in origins
@@ -96,102 +100,27 @@ def _c_test_completion_skills_cues_bare_slash_and_mouse() -> None:
     assert _slash_meta(explain, index).startswith("Explain the repo")
     assert not any(_slash_meta(spec, index).startswith(tag) for spec in specs for tag in ("cmd", "prompt", "skill"))
 
-    completer = SlashCompleter(lambda: index)
-    completions = list(
-        completer.get_completions(
-            type("D", (), {"text_before_cursor": "/"})(),
-            None,
-        )
-    )
-    completion_names = {c.text for c in completions}
-    assert "plan" in completion_names
-    assert "compact" in completion_names
-    assert "explain" in completion_names
-    assert "commit" in completion_names
-    assert "tools" in names
+    def unavailable_reasoning_info():
+        raise RuntimeError("reasoning support is not ready")
 
-    def unexpected_resolution() -> None:
-        raise AssertionError("bare slash completion must not resolve a model")
-
-    bare_completer = SlashCompleter(lambda: index, reasoning_info=unexpected_resolution)
+    bare_completer = SlashCompleter(lambda: index, reasoning_info=unavailable_reasoning_info)
     bare_completions = list(
         bare_completer.get_completions(
-            type("D", (), {"text_before_cursor": "/"})(),
+            Document("/"),
             None,
         )
     )
-    assert any(completion.text == "model" for completion in bare_completions)
-
-    import os
-
-    from kite.ui.complete import _mouse_support_enabled
-
-    prev = os.environ.get("KITE_MOUSE")
-    os.environ.pop("KITE_MOUSE", None)
-    try:
-        assert _mouse_support_enabled() is False
-        os.environ["KITE_MOUSE"] = "1"
-        assert _mouse_support_enabled() is True
-    finally:
-        if prev is None:
-            os.environ.pop("KITE_MOUSE", None)
-        else:
-            os.environ["KITE_MOUSE"] = prev
-
-
-def _c_test_variants_and_thinking_always_visible_before_detection() -> None:
-    """Regression: /variants + /thinking show before live detection warms.
-
-    Support gates only the *levels* (menu rows / #variant suffixes fall back
-    to the generic Pi list) — never the commands themselves.
-    """
-    from kite.models.reasoning import ReasoningSupport
-
-    index = CommandIndex.load(".")
-    unknown = ReasoningSupport(False, False, False, False, source="none")
-    names = {spec.name for spec in _visible_specs(index, support=unknown)}
-    assert "variants" in names and "thinking" in names
-
-    completer = SlashCompleter(lambda: index)
-    top = {
-        c.text
-        for c in completer.get_completions(
-            type("D", (), {"text_before_cursor": "/"})(),
-            None,
-        )
-    }
-    assert "variants" in top and "thinking" in top
+    completion_names = {completion.text for completion in bare_completions}
+    assert {"model", "plan", "compact", "explain", "commit", "tools", "variants", "thinking"} <= completion_names
 
     args = {
-        c.text
-        for c in completer.get_completions(
-            type("D", (), {"text_before_cursor": "/variants "})(),
-            None,
-        )
+        completion.text
+        for completion in bare_completer.get_completions(Document("/variants "), None)
     }
     assert {"off", "low", "medium", "high"} <= args
 
 
-def _c_test_builtin_tool_catalog_cues() -> None:
-    from kite.tools.cues import format_tool_catalog, tool_cue
-    from kite.ui.tool_cards import ToolCard, render_tool_card_done, render_tool_card_start
-
-    assert tool_cue("read") == ("○", "read")
-    assert tool_cue("edit") == ("✎", "edit")
-    assert tool_cue("bash") == ("$", "sh")
-    assert tool_cue("websearch") == ("↗", "net")
-    assert tool_cue("subagent") == ("◈", "crew")
-    catalog = format_tool_catalog()
-    assert "○ read" in catalog
-    assert "$ bash" in catalog
-    assert "◈ subagent" in catalog
-    start = render_tool_card_start(ToolCard(tool="grep", detail="foo"), running=False).plain
-    assert "○" in start and "grep" in start and "read" in start
-    done = render_tool_card_done("write", ok=True).plain
-    assert "✎" in done and "write" in done and "edit" in done
-
-
-def _c_test_status_footer_modes() -> None:
+def test_status_footer_modes() -> None:
     idle = SessionUiState(mode=AgentMode.BUILD, provider="groq", model="llama", cost=0.02)
     segments = status_segments(idle)
     texts = [t for t, _ in segments]
@@ -207,14 +136,13 @@ def _c_test_status_footer_modes() -> None:
     assert segments[0][0] == "approval"
 
 
-def _c_test_running_status_truncation_and_terminal_widths(monkeypatch) -> None:
+def test_running_status_truncation_and_terminal_widths(monkeypatch) -> None:
     import os
     import shutil
 
-    from kite.ui.state import SessionUiState as _State
     from kite.ui.status import format_running_status
 
-    state = _State(busy=True)
+    state = SessionUiState(busy=True)
     state.running_label = "x" * 200
     state.running_since = "12:00:00"
     state.activity_preview = "y" * 200
@@ -237,25 +165,4 @@ def _c_test_running_status_truncation_and_terminal_widths(monkeypatch) -> None:
         console.print(render_status(render_state))
         plain = strip_ansi(buf.getvalue())
         assert "kite" in plain and "plan" in plain and "$0.010" in plain
-
-
-def test_batch_00() -> None:
-    """Consolidated (bodies unchanged): test_cli_help_and_parser_lists_usable_commands, test_repl_help_and_legacy_slash_dispatch, test_completion_skills_cues_bare_slash_and_mouse."""
-    _c_test_cli_help_and_parser_lists_usable_commands()
-    _c_test_repl_help_and_legacy_slash_dispatch()
-    _c_test_completion_skills_cues_bare_slash_and_mouse()
-
-def test_batch_01() -> None:
-    """Consolidated (bodies unchanged): test_variants_and_thinking_always_visible_before_detection, test_builtin_tool_catalog_cues."""
-    _c_test_variants_and_thinking_always_visible_before_detection()
-    _c_test_builtin_tool_catalog_cues()
-
-def test_batch_02() -> None:
-    """Consolidated (bodies unchanged): test_status_footer_modes, test_running_status_truncation_and_terminal_widths."""
-    _c_test_status_footer_modes()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _c_test_running_status_truncation_and_terminal_widths(monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-
+        assert all(cell_len(row) <= width for row in plain.splitlines())

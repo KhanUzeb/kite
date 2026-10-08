@@ -53,29 +53,6 @@ class CacheStats:
         }
 
 
-def _tail_signature(messages: list[dict]) -> int:
-    """Fingerprint of the stable prefix + recent-tail boundary (not full length).
-
-    Breakpoints only cover the stable prefix (system / compaction summary), so appending tail turns
-    must not invalidate the prepared prefix. Hash the head (first system/user message) and the tail
-    boundary (last two messages' roles + snippets) instead of the conversation length.
-    """
-    if not messages:
-        return 0
-    head = ""
-    for m in messages[:3]:
-        if m.get("role") in {"system", "user"}:
-            content = m.get("content")
-            head = content[:240] if isinstance(content, str) else str(content)[:240]
-            break
-    tail: list[tuple[str | None, str]] = []
-    for m in messages[-2:]:
-        content = m.get("content")
-        snippet = content[:240] if isinstance(content, str) else str(content)[:240]
-        tail.append((m.get("role"), snippet))
-    return hash((head, tuple(tail)))
-
-
 def _hash_prefix(messages: list[dict]) -> str:
     """Stable hash of the stable prefix (system + first user if compacted)."""
     parts: list[str] = []
@@ -86,15 +63,6 @@ def _hash_prefix(messages: list[dict]) -> str:
                 parts.append(c[:4000])
     raw = "\n---\n".join(parts)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
-def _cache_key(messages: list[dict]) -> tuple[str, int]:
-    """Single conversation key: stable prefix hash + tail signature.
-
-    One equality check preserves the old dual ``prefix == and tail ==``
-    hit behavior exactly.
-    """
-    return (_hash_prefix(messages), _tail_signature(messages))
 
 
 def _supports_breakpoints(provider: str) -> bool:
@@ -116,48 +84,31 @@ def apply_cache_breakpoints(messages: list[dict], *, provider: str, enabled: boo
     if not enabled or not _supports_breakpoints(provider):
         return messages
 
-    out: list[dict] = []
+    out = list(messages)
     breakpoints = 0
-    for m in messages:
-        msg = dict(m)
-        role = msg.get("role")
-        extra = m.get("extra") if isinstance(m.get("extra"), dict) else {}
+    for index, message in enumerate(messages):
+        role = message.get("role")
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
         if breakpoints == 0 and role == "system":
-            content = msg.get("content")
-            if isinstance(content, str) and content.strip():
-                msg["content"] = [
-                    {
-                        "type": "text",
-                        "text": content,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
-                breakpoints += 1
-        elif breakpoints >= 1 and breakpoints < 2 and role == "user" and isinstance(msg.get("content"), str):
-            text = str(msg["content"])
-            is_setup = bool(extra.get("setup")) or text.startswith("# Setup")
-            is_summary = text.startswith("Previous conversation summary:")
-            if is_setup or is_summary:
-                msg["content"] = [
-                    {
-                        "type": "text",
-                        "text": text,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
-                breakpoints += 1
-        elif breakpoints == 0 and role == "user" and isinstance(msg.get("content"), str):
-            text = str(msg["content"])
-            if text.startswith("Previous conversation summary:"):
-                msg["content"] = [
-                    {
-                        "type": "text",
-                        "text": text,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
-                breakpoints += 1
-        out.append(msg)
+            if not content.strip():
+                continue
+        elif role == "user":
+            extra = message.get("extra") if isinstance(message.get("extra"), dict) else {}
+            is_setup = bool(extra.get("setup")) or content.startswith("# Setup")
+            is_summary = content.startswith("Previous conversation summary:")
+            if not (is_summary or (breakpoints >= 1 and is_setup)):
+                continue
+        else:
+            continue
+        out[index] = {
+            **message,
+            "content": [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}],
+        }
+        breakpoints += 1
+        if breakpoints == 2:
+            break
     return out
 
 
@@ -213,37 +164,12 @@ class PromptCacheManager:
     provider: str
     enabled: bool = True
     session: CacheStats = field(default_factory=CacheStats)
-    _cache_key_val: tuple[str, int] | None = field(default=None, init=False, repr=False)
-    _prepared_messages: list[dict] | None = field(default=None, init=False)
-
-    # Backward-compat aliases for the pre-trim dual fields.
-    @property
-    def _prefix_hash(self) -> str:
-        return self._cache_key_val[0] if self._cache_key_val else ""
-
-    @_prefix_hash.setter
-    def _prefix_hash(self, value: str) -> None:
-        tail = self._cache_key_val[1] if self._cache_key_val else 0
-        self._cache_key_val = (value, tail)
-
-    @property
-    def _tail_sig(self) -> int:
-        return self._cache_key_val[1] if self._cache_key_val else 0
-
-    @_tail_sig.setter
-    def _tail_sig(self, value: int) -> None:
-        prefix = self._cache_key_val[0] if self._cache_key_val else ""
-        self._cache_key_val = (prefix, value)
+    _prefix_hash: str = field(default="", init=False, repr=False)
 
     def prepare(self, messages: list[dict]) -> list[dict]:
-        key = _cache_key(messages)
-        if key == self._cache_key_val and self._prepared_messages is not None:
-            return self._prepared_messages
-        self._cache_key_val = key
-        self._prepared_messages = apply_cache_breakpoints(
-            messages, provider=self.provider, enabled=self.enabled
-        )
-        return self._prepared_messages
+        # Provider prefix caching must never reuse a previous turn's transcript.
+        self._prefix_hash = _hash_prefix(messages)
+        return apply_cache_breakpoints(messages, provider=self.provider, enabled=self.enabled)
 
     def record(self, usage: Any, hidden: dict[str, Any] | None = None) -> CacheStats:
         parsed = parse_cache_usage(usage, hidden)

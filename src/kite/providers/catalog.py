@@ -5,7 +5,6 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field
 from importlib import resources
-from pathlib import Path
 from typing import Any
 
 from kite.config.user import kite_home
@@ -92,7 +91,6 @@ def _parse_providers(data: dict[str, Any]) -> dict[str, ProviderSpec]:
     for raw in data.get("providers") or []:
         name = str(raw["name"])
         ctx = dict(raw.get("context_windows") or {})
-        # TOML may nest context_windows oddly depending on structure; handle both
         out[name] = ProviderSpec(
             name=name,
             display_name=str(raw.get("display_name") or name),
@@ -109,10 +107,6 @@ def _parse_providers(data: dict[str, Any]) -> dict[str, ProviderSpec]:
             billing_note=str(raw.get("billing_note") or ""),
         )
     return out
-
-
-def _load_toml_bytes(raw: bytes) -> dict[str, Any]:
-    return tomllib.loads(raw.decode("utf-8"))
 
 
 def _merge_provider(base: ProviderSpec, overlay: ProviderSpec) -> ProviderSpec:
@@ -143,7 +137,7 @@ def _bundled_providers() -> dict[str, ProviderSpec]:
     global _BUNDLED_PROVIDERS
     if _BUNDLED_PROVIDERS is None:
         pkg = resources.files("kite").joinpath("data/catalog.toml")
-        _BUNDLED_PROVIDERS = _parse_providers(_load_toml_bytes(pkg.read_bytes()))
+        _BUNDLED_PROVIDERS = _parse_providers(tomllib.loads(pkg.read_text(encoding="utf-8")))
     return _BUNDLED_PROVIDERS
 
 
@@ -161,7 +155,7 @@ def load_catalog() -> Catalog:
     providers = dict(_bundled_providers())
 
     if user_path.is_file():
-        user = _parse_providers(_load_toml_bytes(user_path.read_bytes()))
+        user = _parse_providers(tomllib.loads(user_path.read_text(encoding="utf-8")))
         for name, spec in user.items():
             if name in providers:
                 providers[name] = _merge_provider(providers[name], spec)
@@ -171,7 +165,3 @@ def load_catalog() -> Catalog:
     catalog = Catalog(providers=providers)
     _CATALOG_CACHE[key] = catalog
     return catalog
-
-
-def load_builtin_catalog_path() -> Path:
-    return Path(str(resources.files("kite").joinpath("data/catalog.toml")))

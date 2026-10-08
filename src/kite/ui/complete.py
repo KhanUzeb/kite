@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from heapq import nsmallest
 from pathlib import Path
 from typing import Any
 
@@ -640,31 +641,33 @@ def _path_completions(prefix: str, start: int):
     if not prefix:
         folder, needle = Path("."), ""
     elif prefix.endswith(("/", "\\")):
-        folder, needle = Path(prefix), ""
+        folder, needle = Path(prefix).expanduser(), ""
     else:
-        path = Path(prefix)
+        path = Path(prefix).expanduser()
         folder, needle = path.parent, path.name
-        if str(folder) in {".", ""}:
-            folder = Path(".")
-    if not folder.exists() or not folder.is_dir():
-        folder = Path(".")
     needle_l = needle.lower()
+
+    def matches(entries):
+        for item in entries:
+            name = item.name
+            if needle_l and needle_l not in name.lower():
+                continue
+            if name.startswith(".") and not needle.startswith("."):
+                continue
+            is_dir = item.is_dir()
+            yield (not is_dir, name.lower(), name), item.path, is_dir
+
     try:
-        entries = sorted(folder.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        with os.scandir(folder) as entries:
+            # DirEntry reuses directory metadata; keep only the menu's 40 rows
+            # rather than stat'ing and sorting the entire workspace each key.
+            rows = nsmallest(40, matches(entries), key=lambda row: row[0])
     except OSError:
         return
-    shown = 0
-    for item in entries:
-        if needle_l and needle_l not in item.name.lower():
-            continue
-        if item.name.startswith(".") and not needle.startswith("."):
-            continue
-        meta = "image" if item.suffix.lower() in IMAGE_EXTS else ("dir" if item.is_dir() else "file")
-        display = item.name + ("/" if item.is_dir() else "")
-        yield Completion(str(item), start_position=start, display=display, display_meta=meta)
-        shown += 1
-        if shown >= 40:
-            return
+    for (_, _, name), path, is_dir in rows:
+        suffix = "/" if is_dir else ""
+        meta = "dir" if is_dir else ("image" if Path(name).suffix.lower() in IMAGE_EXTS else "file")
+        yield Completion(str(Path(path)) + suffix, start_position=start, display=name + suffix, display_meta=meta)
 
 
 _ORIGIN_RANK = {
@@ -1059,6 +1062,7 @@ def make_prompt_session(
         "history": FileHistory(str(path)),
         "completer": completer,
         "complete_while_typing": True,
+        "complete_in_thread": True,
         # Multiline buffer: Enter submits via key bindings (_submit), while
         # Alt+Enter / Ctrl+J inserts a newline. Without this the session
         # forces single-line mode and long prompts clip past the first row.

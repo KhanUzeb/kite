@@ -5,12 +5,14 @@ from __future__ import annotations
 import re
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from kite.config import ensure_home, kite_home
 from kite.context.discovery import find_project_root
+from kite.memory.secure_io import secure_memory_write
 
 MemoryScope = Literal["user", "project"]
 
@@ -48,9 +50,8 @@ def _split_notes(raw: str) -> tuple[str, str]:
     return pin, body
 
 
-def parse_notes(raw: str, *, scope: MemoryScope) -> list[Note]:
+def parse_notes(raw: str, *, scope: MemoryScope) -> Iterator[Note]:
     _, body = _split_notes(raw)
-    notes: list[Note] = []
     for line in body.splitlines():
         match = NOTE_RE.match(line.strip())
         if not match:
@@ -58,25 +59,14 @@ def parse_notes(raw: str, *, scope: MemoryScope) -> list[Note]:
         text = match.group("text").strip()
         if not text:
             continue
-        notes.append(
-            Note(id=match.group("id"), text=text, created=0.0, scope=scope)
-        )
-    return notes
+        yield Note(id=match.group("id"), text=text, created=0.0, scope=scope)
 
 
 def _read(path: Path) -> str:
-    if not path.is_file():
-        return ""
     try:
         return path.read_text(encoding="utf-8")
     except OSError:
         return ""
-
-
-def _write(path: Path, text: str) -> None:
-    from kite.memory.secure_io import secure_memory_write
-
-    secure_memory_write(path, text)
 
 
 def render_file(pin: str, notes: list[Note]) -> str:
@@ -136,9 +126,9 @@ class SemanticStore:
         path = self.path_for(scope)
         raw = _read(path)
         pin, _ = _split_notes(raw) if raw.strip() else (HEADER.rsplit("## Notes", 1)[0].strip(), "")
-        existing = parse_notes(raw, scope=scope)
+        existing = list(parse_notes(raw, scope=scope))
         existing.append(note)
-        _write(path, render_file(pin or HEADER.rsplit("## Notes", 1)[0].strip(), existing))
+        secure_memory_write(path, render_file(pin or HEADER.rsplit("## Notes", 1)[0].strip(), existing))
         return note
 
     def forget(self, query: str) -> list[Note]:
@@ -162,25 +152,33 @@ class SemanticStore:
                 else:
                     kept.append(note)
             if dirty:
-                _write(path, render_file(pin, kept))
+                secure_memory_write(path, render_file(pin, kept))
         return removed
 
     def render_for_prompt(self, *, max_chars: int = 3_500) -> str:
+        sources: tuple[tuple[MemoryScope, str], ...] = (
+            ("user", _read(self.user_path())),
+            ("project", _read(self.project_path())),
+        )
         parts: list[str] = []
-        user_pin, _ = _split_notes(_read(self.user_path()))
-        if user_pin:
-            parts.append(f"### User MEMORY.md\n{user_pin}")
-        proj_pin, _ = _split_notes(_read(self.project_path()))
-        if proj_pin:
-            parts.append(f"### Project MEMORY.md\n{proj_pin}")
-        notes = self.notes()
-        if notes:
-            lines = ["### Notes"]
-            for note in notes:
-                lines.append(f"- ({note.scope}/{note.id}) {note.text}")
-            parts.append("\n".join(lines))
-        if not parts:
-            return ""
+        for scope, raw in sources:
+            pin, _ = _split_notes(raw)
+            if pin:
+                parts.append(f"### {scope.title()} MEMORY.md\n{pin}")
+        size = len("\n\n".join(parts))
+        if size <= max_chars:
+            lines: list[str] = []
+            for note in (note for scope, raw in sources for note in parse_notes(raw, scope=scope)):
+                if not lines:
+                    lines.append("### Notes")
+                    size += (2 if parts else 0) + len(lines[0])
+                line = f"- ({note.scope}/{note.id}) {note.text}"
+                lines.append(line)
+                size += len(line) + 1
+                if size > max_chars:
+                    break
+            if lines:
+                parts.append("\n".join(lines))
         text = "\n\n".join(parts)
         if len(text) > max_chars:
             return text[: max_chars - 20] + "\n\n...[truncated]..."

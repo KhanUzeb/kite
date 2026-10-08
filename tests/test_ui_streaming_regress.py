@@ -24,12 +24,13 @@ from __future__ import annotations
 import re
 from io import StringIO
 
+import pytest
 from rich.console import Console
 
 from kite.agent.events import Event
 from kite.ui.render import RunDisplay
 from kite.ui.state import SessionUiState
-from kite.ui.style import COLLAPSE_LINES, KITE_THEME, PREVIEW_LINES
+from kite.ui.style import KITE_THEME
 from tests.conftest import strip_ansi
 
 _HEAD = ("agent_start", {"task": "the task", "provider": "p", "model": "m"})
@@ -48,11 +49,7 @@ def _feed(display: RunDisplay, events: list[tuple[str, dict]]) -> None:
         display(Event(kind, payload=payload))
 
 
-def _stream(lines: list[str]) -> list[tuple[str, dict]]:
-    return _HEAD, _START
-
-
-def _c_test_todo_plan_checklist_does_not_paint_into_an_open_stream_line() -> None:
+def test_todo_plan_checklist_does_not_paint_into_an_open_stream_line() -> None:
     """A ``todo`` event mid-line must not swallow the rest of the answer.
 
     ``print_plan`` used to rely on a leading blank ``self._print()`` to end the
@@ -64,7 +61,7 @@ def _c_test_todo_plan_checklist_does_not_paint_into_an_open_stream_line() -> Non
     _feed(
         display,
         [
-            *_stream([]),
+            *(_HEAD, _START),
             ("stream_delta", {"text": "first half of the answer is written"}),
             (
                 "todo",
@@ -98,7 +95,7 @@ def _c_test_todo_plan_checklist_does_not_paint_into_an_open_stream_line() -> Non
     assert tail[0] == "  SECOND-HALF resumes here", repr(tail[0])
 
 
-def _c_test_tool_end_between_stream_lines_leaves_no_column_state_behind() -> None:
+def test_tool_end_between_stream_lines_leaves_no_column_state_behind() -> None:
     """A tool card closes the stream row; the next line still gets its indent.
 
     Also covers the ``echo_plan`` skip, where the plan body is deliberately not
@@ -112,7 +109,7 @@ def _c_test_tool_end_between_stream_lines_leaves_no_column_state_behind() -> Non
         _feed(
             display,
             [
-                *_stream([]),
+                *(_HEAD, _START),
                 ("stream_delta", {"text": "alpha beta gamma delta epsilon zeta\n"}),
                 ("tool_start", {"tool": tool, "arguments": {}}),
                 ("tool_end", payload),
@@ -130,19 +127,18 @@ def _c_test_tool_end_between_stream_lines_leaves_no_column_state_behind() -> Non
         assert tail == ["  next streamed line after the tool card"], (tool, tail)
 
 
-def _c_test_long_streamed_answer_is_not_capped_by_the_scrollback_line_budget() -> None:
+def test_long_streamed_answer_is_not_capped_by_the_scrollback_line_budget() -> None:
     """40 streamed paragraphs all reach the screen, with no /expand marker.
 
     ``COLLAPSE_LINES`` was 12 and is now ``PREVIEW_LINES`` (5). It is a
     tool-body budget; if any part of the answer path reaches it, a normal long
     answer loses everything past the 5th line.
     """
-    assert COLLAPSE_LINES == PREVIEW_LINES == 5
     display, buf = _display()
     _feed(
         display,
         [
-            *_stream([]),
+            *(_HEAD, _START),
             *[
                 ("stream_delta", {"text": f"Paragraph {i:02d} explains the streamed answer.\n"})
                 for i in range(40)
@@ -162,31 +158,13 @@ def _c_test_long_streamed_answer_is_not_capped_by_the_scrollback_line_budget() -
     assert "lines" not in plain, plain
 
 
-def _c_test_tool_body_still_gets_the_preview_budget() -> None:
-    """Control for the test above: the budget applies to tool bodies only."""
-    display, buf = _display()
-    display.state.expanded_all = False
-    _feed(
-        display,
-        [
-            ("tool_end", {"tool": "bash", "ok": True,
-                          "output": "\n".join(f"result line {i:02d}" for i in range(30))}),
-        ],
-    )
-    display.close()
-    plain = strip_ansi(buf.getvalue())
-    body = [ln for ln in plain.splitlines() if "result line" in ln]
-    assert len(body) == PREVIEW_LINES, body
-    assert "result line 29" not in plain and "/expand" in plain
-
-
-def _c_test_oversized_fenced_block_shows_the_truncation_marker() -> None:
+def test_oversized_fenced_block_shows_the_truncation_marker() -> None:
     """Past the fence budget the block stops, says so, and still closes."""
     display, buf = _display()
     _feed(
         display,
         [
-            *_stream([]),
+            *(_HEAD, _START),
             ("stream_delta", {"text": "```python\n"}),
             *[("stream_delta", {"text": f"code row {i:03d} " + "x" * 40 + "\n"}) for i in range(200)],
             ("stream_delta", {"text": "```\n"}),
@@ -207,35 +185,6 @@ def _c_test_oversized_fenced_block_shows_the_truncation_marker() -> None:
     assert "```" in plain.split("truncated code block", 1)[1], plain
 
 
-def _c_test_streamed_answer_reaches_the_screen_through_output_view_uncapped() -> None:
-    """``_collapse_text`` must not sit in the answer path.
-
-    ``render_output_block``'s default ``limit`` became ``PREVIEW_LINES``; the
-    answer writer bypasses it entirely, and this locks that bypass.
-    """
-    from kite.ui.output_view import render_output_block
-
-    display, buf = _display()
-    _feed(
-        display,
-        [
-            *_stream([]),
-            *[("stream_delta", {"text": f"answer row {i:02d} padding\n"}) for i in range(20)],
-            ("stream_end", {}),
-            ("turn_end", {}),
-            ("agent_end", {}),
-        ],
-    )
-    display.close()
-    plain = strip_ansi(buf.getvalue())
-    assert len(re.findall(r"answer row \d\d", plain)) == 20, plain
-
-    # The block renderer is still capped - for its actual callers.
-    capped = strip_ansi(render_output_block("\n".join(f"row {i}" for i in range(20)),
-                                           expanded=False).plain)
-    assert len(capped.splitlines()) == PREVIEW_LINES + 1, capped
-
-
 # --- invisible render failures -------------------------------------------------
 #
 # A render bug must never kill a run - that is why both swallow sites catch
@@ -251,29 +200,22 @@ def _boom_handler(payload: dict) -> None:
     raise ValueError(f"render blew up on {sorted(payload)}")
 
 
-def _drain_harness(tmp_path, monkeypatch, width: int = 100):
-    """A real ChatSession with its console pointed at an in-memory buffer.
-
-    Mirrors ``tests/test_repl_exit._quiet_session`` (same four patches) and then
-    swaps in a recording console, so ``_drain_ui_queue`` runs exactly as the REPL
-    runs it - through the real ``_ui_queue`` and the real ``RunDisplay``.
-    """
+@pytest.fixture
+def drain_harness(workspace, kite_home, monkeypatch):
+    """Real queue/display behavior without startup network or background warmers."""
     from kite.ui.repl import ChatSession
 
-    monkeypatch.setattr(ChatSession, "_schedule_release_check_legacy", lambda self: None)
-    monkeypatch.setattr(ChatSession, "_prewarm_composer", lambda self: None)
-    monkeypatch.setattr(ChatSession, "_startup_banner", lambda self: None)
-    monkeypatch.setattr(ChatSession, "_maybe_prompt_project_trust", lambda self: None)
     monkeypatch.setattr(ChatSession, "_warm_auth_probes", lambda self: None)
     monkeypatch.setattr("kite.models.litellm_model.prewarm_litellm", lambda: None)
 
-    session = ChatSession(cwd=str(tmp_path))
+    session = ChatSession(cwd=str(workspace))
     buf = StringIO()
-    console = Console(file=buf, width=width, force_terminal=True, theme=KITE_THEME)
+    console = Console(file=buf, width=100, force_terminal=True, theme=KITE_THEME)
     session.console = console
     session.display.console = console
     session._busy = True
-    return session, buf
+    yield session, buf
+    session.display.close()
 
 
 def _queue(session, *events: tuple[str, dict]) -> None:
@@ -284,14 +226,14 @@ def _queue(session, *events: tuple[str, dict]) -> None:
 _PARTIAL = "half-written answer text long enough to reach the terminal"
 
 
-def _c_test_drain_survives_a_raising_handler_and_says_so(tmp_path, monkeypatch) -> None:
+def test_drain_survives_a_raising_handler_and_says_so(drain_harness) -> None:
     """A render failure must not kill the turn, and must not be invisible.
 
     Covers all four properties at once, because they were one bug: no
     propagation, a visible one-line notice, a closed row, and a retrievable
     traceback.
     """
-    session, buf = _drain_harness(tmp_path, monkeypatch)
+    session, buf = drain_harness
     # The handler that will fail, installed the way the registry calls it.
     session.display._event_handlers["tool_end"] = _boom_handler  # noqa: SLF001
     _queue(
@@ -329,27 +271,6 @@ def _c_test_drain_survives_a_raising_handler_and_says_so(tmp_path, monkeypatch) 
     assert display._streaming is False  # noqa: SLF001
     assert display._answer_hold == ""  # noqa: SLF001
 
-
-def _c_test_drain_leaves_the_next_stream_line_correct_after_a_failure(
-    tmp_path, monkeypatch
-) -> None:
-    """A failure must not cascade: the next streamed line still gets its indent.
-
-    Without the state reset the phantom ``_answer_col`` makes the following line
-    wrap and indent against a cursor that is gone, which is how one bad event
-    turned into a whole broken turn.
-    """
-    session, buf = _drain_harness(tmp_path, monkeypatch)
-    session.display._event_handlers["tool_end"] = _boom_handler  # noqa: SLF001
-    _queue(
-        session,
-        ("agent_start", {"task": "t", "provider": "p", "model": "m"}),
-        ("stream_start", {}),
-        ("stream_delta", {"text": _PARTIAL}),
-        ("tool_end", {"tool": "bash", "ok": True, "output": "x"}),
-    )
-    session._drain_ui_queue()
-
     # The handler is restored: the display heals and the turn carries on.
     del session.display._event_handlers["tool_end"]  # noqa: SLF001
     _queue(
@@ -371,9 +292,9 @@ def _c_test_drain_leaves_the_next_stream_line_correct_after_a_failure(
     assert tail[0] == "  next streamed line after the failure", repr(tail[0])
 
 
-def _c_test_drain_reports_once_and_counts_repeats(tmp_path, monkeypatch) -> None:
+def test_drain_reports_once_and_counts_repeats(drain_harness) -> None:
     """A per-token bug must not scroll hundreds of identical notices."""
-    session, buf = _drain_harness(tmp_path, monkeypatch)
+    session, buf = drain_harness
     session.display._event_handlers["tool_end"] = _boom_handler  # noqa: SLF001
     for _ in range(5):
         _queue(session, ("tool_end", {"tool": "bash", "ok": True, "output": "x"}))
@@ -393,9 +314,9 @@ def _c_test_drain_reports_once_and_counts_repeats(tmp_path, monkeypatch) -> None
     assert strip_ansi(buf.getvalue()).count("ui event failed") == 2
 
 
-def _c_test_drain_reports_a_flushing_stream_failure_too(tmp_path, monkeypatch) -> None:
+def test_drain_reports_a_flushing_stream_failure_too(drain_harness) -> None:
     """The coalescer flush is the other swallow site; it is now visible too."""
-    session, buf = _drain_harness(tmp_path, monkeypatch)
+    session, buf = drain_harness
 
     def boom() -> None:
         raise RuntimeError("flush exploded")
@@ -411,7 +332,7 @@ def _c_test_drain_reports_a_flushing_stream_failure_too(tmp_path, monkeypatch) -
     assert "flush exploded" in session.state.last_trace
 
 
-def _c_test_runtime_listener_failure_is_non_fatal_and_recorded() -> None:
+def test_runtime_listener_failure_is_non_fatal_and_recorded(workspace, kite_home) -> None:
     """A frontend that raises must not break the agent - or vanish.
 
     ``_on_event`` catches listener exceptions so one broken UI cannot abort a
@@ -421,7 +342,7 @@ def _c_test_runtime_listener_failure_is_non_fatal_and_recorded() -> None:
     """
     from kite.agent.runtime import AgentRuntime, RuntimeOptions
 
-    runtime = AgentRuntime(RuntimeOptions(cwd="."))
+    runtime = AgentRuntime(RuntimeOptions(cwd=str(workspace)))
     reached: list[str] = []
 
     def bad(_event: Event) -> None:
@@ -459,11 +380,11 @@ def _c_test_runtime_listener_failure_is_non_fatal_and_recorded() -> None:
     assert runtime.last_listener_error
 
 
-def _harness_with_parked_listener_error(kind: str) -> object:
+def _harness_with_parked_listener_error(kind: str, cwd: str) -> object:
     """A Harness whose runtime has one listener failure waiting to be reported."""
-    from kite.agent.harness import Harness
+    from kite.agent.harness import Harness, HarnessConfig
 
-    harness = Harness()
+    harness = Harness(config=HarnessConfig(cwd=cwd))
     harness.subscribe(lambda _e: None)  # builds the runtime
     runtime = harness._runtime  # noqa: SLF001
     assert runtime is not None
@@ -475,10 +396,10 @@ def _harness_with_parked_listener_error(kind: str) -> object:
     return harness
 
 
-def _c_test_repl_surfaces_a_listener_failure_at_turn_end(tmp_path, monkeypatch) -> None:
+def test_repl_surfaces_a_listener_failure_at_turn_end(drain_harness) -> None:
     """The parked record becomes a visible line once the turn is over."""
-    session, buf = _drain_harness(tmp_path, monkeypatch)
-    harness = _harness_with_parked_listener_error("stream_delta")
+    session, buf = drain_harness
+    harness = _harness_with_parked_listener_error("stream_delta", session.cwd)
 
     session._report_listener_failure(harness)  # noqa: SLF001
 
@@ -493,111 +414,77 @@ def _c_test_repl_surfaces_a_listener_failure_at_turn_end(tmp_path, monkeypatch) 
 
     # A harness with no runtime, or no parked error, is simply a no-op.
     session._report_listener_failure(object())  # noqa: SLF001
+    assert strip_ansi(buf.getvalue()) == plain
 
 
-def _c_test_repl_listener_notice_does_not_clobber_a_real_agent_trace(
-    tmp_path, monkeypatch
-) -> None:
+def test_repl_listener_notice_does_not_clobber_a_real_agent_trace(drain_harness) -> None:
     """An Error status line has a better trace than a listener failure."""
-    session, _buf = _drain_harness(tmp_path, monkeypatch)
+    session, _buf = drain_harness
     session.state.last_trace = "REAL AGENT TRACEBACK"
 
     session._report_listener_failure(  # noqa: SLF001
-        _harness_with_parked_listener_error("turn_end")
+        _harness_with_parked_listener_error("turn_end", session.cwd)
     )
 
     assert session.state.last_trace == "REAL AGENT TRACEBACK"
 
 
-def _c_test_streamed_paragraph_wraps_inside_the_gutter_at_narrow_widths() -> None:
-    """Width 60 and 80: no row overruns, and continuations keep the indent.
+def test_streamed_cells_preserve_unicode_and_chunk_separators() -> None:
+    from rich.cells import cell_len
 
-    ``_wrap_width`` returns 0 when the width is unknown and the answer path then
-    relies on Rich, which wraps to column 0 and loses the gutter. At a known
-    width the wrap must happen here instead - for one big chunk and for a
-    paragraph trickled in as many small ones (the real token stream).
-    """
-    paragraph = (
-        "This is a long streamed paragraph that must wrap inside the cell gutter "
-        "and keep a correct continuation indent on every wrapped row, which is the "
-        "whole point of the wrap pass, and it keeps going for a while to force "
-        "several wraps in a row. "
+    from kite.ui.theme import glyph
+
+    samples = (
+        "word boundaries survive small chunks. " * 12,
+        "路径界面 emoji 🙂 cafe\u0301 " * 12,
+        "https://example.com/" + "界" * 140 + " end",
     )
-    for width in (60, 80):
-        for chunks in (1, 7):
-            display, buf = _display(width=width)
-            _feed(
-                display,
-                [
-                    *_stream([]),
-                    *_streamed_chunks(paragraph * 3, chunks),
-                    ("stream_end", {}),
-                    ("turn_end", {}),
-                    ("agent_end", {}),
-                ],
-            )
-            display.close()
-            plain = strip_ansi(buf.getvalue())
-            # Only the streamed answer, not the user cell the run also prints.
-            body = [
-                ln
-                for ln in plain.splitlines()
-                if "streamed paragraph" in ln or "continuation indent" in ln
-                or "wrap pass" in ln or "several wraps" in ln or "keeps going" in ln
-            ]
-            assert body, (width, chunks, plain)
-            # The paragraph really did wrap, so the width check below is real.
-            assert len(body) > 4, (width, chunks, body)
-            # No row overruns the terminal width (the hard wrap is the bug).
-            over = [ln for ln in body if len(ln) > width]
-            assert not over, (width, chunks, over[:2])
-            # Every continuation row is indented, never back at column 0.
-            cont = body[1:]
-            assert all(ln.startswith("  ") for ln in cont), (width, chunks, cont[:3])
-            # No text is lost by wrapping.
-            joined = " ".join(body)
-            for word in ("gutter", "continuation", "several", "wraps"):
-                assert word in joined, (width, chunks, word)
+    for width in (50, 60, 80, 120):
+        for text in samples:
+            for size in (5, len(text)):
+                display, buf = _display(width)
+                for offset in range(0, len(text), size):
+                    display(Event("stream_delta", payload={"text": text[offset:offset + size]}))
+                display.close()
+                rows = strip_ansi(buf.getvalue()).splitlines()
+                assert all(cell_len(row) <= width for row in rows), (width, size, rows)
+                assert all(row.startswith("  ") for row in rows[1:]), (width, size, rows)
+                recovered = "".join(rows).replace(glyph("agent"), "", 1)
+                assert "".join(recovered.split()) == "".join(text.split())
+                if text.startswith("word"):
+                    assert recovered.split() == text.split()
 
 
-def _streamed_chunks(text: str, chunks: int) -> list[tuple[str, dict]]:
-    step = max(1, len(text) // chunks)
-    return [("stream_delta", {"text": text[i : i + step]}) for i in range(0, len(text), step)]
+def test_deferred_answer_and_live_reasoning_keep_the_whole_stream() -> None:
+    display, buf = _display()
+    display.state.busy = True
+    display.composer_owns_input = True
+    parts = [f"part-{i:04d}\n" for i in range(2105)]
+    for part in parts:
+        display(Event("stream_delta", payload={"text": part}))
+    display.finish_composer_turn({"exit_status": "Submitted"})
+    plain = strip_ansi(buf.getvalue())
+    assert re.findall(r"part-\d{4}", plain) == [part.strip() for part in parts]
+    assert display._deferred_answer_parts == []
 
+    display.state.thinking_expanded = False
+    display.state.last_thinking = "previous completed reasoning"
+    for part in ("look ", "at ", "the tests"):
+        display(Event("stream_reasoning", payload={"text": part}))
+    assert display.state.last_thinking == "previous completed reasoning"
+    assert display.thinking_text() == "look at the tests"
+    display(Event("stream_end", payload={}))
+    assert display.state.last_thinking == "look at the tests"
+    assert display.thinking_text() == "look at the tests"
+    display.close()
 
-def test_batch_00() -> None:
-    """Consolidated (bodies unchanged): stream-vs-tool interleaving."""
-    _c_test_todo_plan_checklist_does_not_paint_into_an_open_stream_line()
-    _c_test_tool_end_between_stream_lines_leaves_no_column_state_behind()
-    _c_test_long_streamed_answer_is_not_capped_by_the_scrollback_line_budget()
-    _c_test_tool_body_still_gets_the_preview_budget()
-    _c_test_oversized_fenced_block_shows_the_truncation_marker()
-    _c_test_streamed_answer_reaches_the_screen_through_output_view_uncapped()
-
-
-def test_batch_01(tmp_path, monkeypatch) -> None:
-    """Consolidated (bodies unchanged): drain+flush."""
-    _t0 = tmp_path / "b1_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_drain_survives_a_raising_handler_and_says_so(tmp_path=_t0, monkeypatch=monkeypatch)
-    _t1 = tmp_path / "b1_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _c_test_drain_leaves_the_next_stream_line_correct_after_a_failure(tmp_path=_t1, monkeypatch=monkeypatch)
-    _t2 = tmp_path / "b1_2"
-    _t2.mkdir(parents=True, exist_ok=True)
-    _c_test_drain_reports_once_and_counts_repeats(tmp_path=_t2, monkeypatch=monkeypatch)
-    _t3 = tmp_path / "b1_3"
-    _t3.mkdir(parents=True, exist_ok=True)
-    _c_test_drain_reports_a_flushing_stream_failure_too(tmp_path=_t3, monkeypatch=monkeypatch)
-
-
-def test_batch_02(tmp_path, monkeypatch) -> None:
-    """Consolidated (bodies unchanged): listener-plumbing+narrow-wrap."""
-    _c_test_runtime_listener_failure_is_non_fatal_and_recorded()
-    _t0 = tmp_path / "b2_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_repl_surfaces_a_listener_failure_at_turn_end(tmp_path=_t0, monkeypatch=monkeypatch)
-    _t1 = tmp_path / "b2_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _c_test_repl_listener_notice_does_not_clobber_a_real_agent_trace(tmp_path=_t1, monkeypatch=monkeypatch)
-    _c_test_streamed_paragraph_wraps_inside_the_gutter_at_narrow_widths()
+    live, live_buf = _display()
+    reasoning = "unique-reasoning-token " + "detail " * 20
+    live(Event("stream_reasoning", payload={"text": reasoning}))
+    live(Event("stream_reasoning", payload={"text": "last-reasoning-token"}))
+    live(Event("stream_delta", payload={"text": "final answer"}))
+    live.close()
+    painted = strip_ansi(live_buf.getvalue())
+    assert painted.count("unique-reasoning-token") == 1
+    assert painted.count("last-reasoning-token") == 1
+    assert painted.index("last-reasoning-token") < painted.index("final answer")

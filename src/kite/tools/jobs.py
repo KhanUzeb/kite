@@ -40,6 +40,12 @@ class BackgroundJob:
     log: deque[str] = field(default_factory=lambda: deque(maxlen=_LOG_RING), repr=False)
     result_payload: dict[str, Any] | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _done: threading.Event = field(default_factory=threading.Event, repr=False)
+    _drained: threading.Event = field(default_factory=threading.Event, repr=False)
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Wait for terminal status and output; return False on timeout."""
+        return self._done.wait(timeout)
 
     def display_label(self, *, width: int = 48) -> str:
         text = (self.label or self.command).replace("\n", " ").strip() or self.id
@@ -93,8 +99,6 @@ class JobRegistry:
             return
         self._on_event(Event(kind=event_kind, payload=payload))  # type: ignore[arg-type]
 
-    def _new_id(self) -> str:
-        return uuid.uuid4().hex[:8]
 
     def get(self, job_id: str) -> BackgroundJob | None:
         with self._lock:
@@ -108,7 +112,8 @@ class JobRegistry:
         return sorted(jobs, key=lambda j: j.started_at)
 
     def active_count(self) -> int:
-        return len(self.list(active_only=True))
+        with self._lock:
+            return sum(job.status == "running" for job in self._jobs.values())
 
     def _prune_finished(self) -> None:
         with self._lock:
@@ -128,15 +133,12 @@ class JobRegistry:
         timeout_seconds: float = 3600.0,
     ) -> BackgroundJob:
         """Start a shell command without waiting; drain stdout into a ring buffer."""
-        try:
-            from kite.guardrails.sandbox import clamp_cwd, workspace_root
+        from kite.guardrails.sandbox import clamp_cwd, workspace_root
 
-            clamped, reason = clamp_cwd(cwd, workspace_root(cwd), allow_outside=False)
-            if clamped is None:
-                raise OSError(reason or "cwd escapes sandbox")
-            cwd = str(clamped)
-        except ImportError:
-            pass
+        clamped, reason = clamp_cwd(cwd, workspace_root(cwd), allow_outside=False)
+        if clamped is None:
+            raise OSError(reason or "cwd escapes sandbox")
+        cwd = str(clamped)
         from kite.env.shell import resolve_shell_invocation
 
         argv, cmd_text = resolve_shell_invocation(command)
@@ -147,7 +149,7 @@ class JobRegistry:
             "text": True,
             "encoding": "utf-8",
             "errors": "replace",
-            "env": env or filtered_child_env({"PAGER": "cat", "GIT_PAGER": "cat"}),
+            "env": env if env is not None else filtered_child_env({"PAGER": "cat", "GIT_PAGER": "cat"}),
         }
         if argv is not None:
             popen_kw["shell"] = False
@@ -158,7 +160,7 @@ class JobRegistry:
         popen_kw.update(popen_process_group_kwargs())
 
         proc = subprocess.Popen(launch, **popen_kw)
-        job_id = self._new_id()
+        job_id = uuid.uuid4().hex[:8]
         job = BackgroundJob(
             id=job_id,
             kind="bash",
@@ -192,13 +194,10 @@ class JobRegistry:
         return job.log_text(tail=n)
 
     def _job_elapsed_s(self, job: BackgroundJob) -> float:
-        try:
-            return round(time.time() - job.started_at, 1)
-        except Exception:
-            return 0.0
+        return round(time.time() - job.started_at, 1)
 
     def _drain_bash(self, job: BackgroundJob, timeout_seconds: float = 3600.0) -> None:
-        from kite.env.shell import sanitize_shell_line
+        from kite.env.shell import iter_bounded_lines, sanitize_shell_line
         from kite.guardrails.redact import redact_string
 
         proc = job.proc
@@ -225,19 +224,30 @@ class JobRegistry:
                 error="job process unavailable",
             )
             self._prune_finished()
+            job._drained.set()
+            job._done.set()
             return
         drained_bytes = 0
         max_bytes = 512_000
-        deadline = time.monotonic() + max(1.0, timeout_seconds)
         truncated = False
+        timed_out = threading.Event()
+
+        def expire() -> None:
+            if job.status == "running":
+                timed_out.set()
+                terminate_process_tree(proc)
+
+        watchdog = threading.Timer(max(1.0, timeout_seconds), expire)
+        watchdog.daemon = True
+        watchdog.start()
         try:
-            for line in iter(proc.stdout.readline, ""):
-                if time.monotonic() >= deadline:
-                    break
+            for line in iter_bounded_lines(proc.stdout):
                 if truncated:
                     continue
-                drained_bytes += len(line.encode("utf-8", errors="replace"))
-                safe = redact_string(sanitize_shell_line(line))
+                safe = redact_string(sanitize_shell_line(line)) + ("\n" if line.endswith("\n") else "")
+                encoded = safe.encode("utf-8", errors="replace")[: max_bytes - drained_bytes]
+                safe = encoded.decode("utf-8", errors="ignore")
+                drained_bytes += len(encoded)
                 job.append_log(safe)
                 self._emit("job_output", id=job.id, line=safe, kind="bash")
                 if drained_bytes >= max_bytes:
@@ -245,16 +255,14 @@ class JobRegistry:
                     truncated = True
         except OSError:
             pass
-        rc: int | None = None
-        while rc is None and time.monotonic() < deadline:
-            try:
-                rc = proc.wait(timeout=0.25)
-            except subprocess.TimeoutExpired:
-                continue
-        if rc is None:
-            terminate_process_tree(proc)
-            rc = -1
-            job.append_log("\n...[job killed: timeout]...\n")
+        finally:
+            proc.stdout.close()
+            rc = proc.wait()
+            watchdog.cancel()
+            if timed_out.is_set():
+                rc = -1
+                job.append_log("\n...[job killed: timeout]...\n")
+            job._drained.set()
         with self._lock:
             if job.status != "running":
                 return  # killed already emitted job_end
@@ -275,6 +283,7 @@ class JobRegistry:
             output=tail,
         )
         self._prune_finished()
+        job._done.set()
 
     def register_subagent(
         self,
@@ -286,7 +295,7 @@ class JobRegistry:
         cancel: CancelToken | None = None,
     ) -> BackgroundJob:
         """Track a live nested LLM worker so /jobs and /kill can reach it."""
-        tid = job_id or self._new_id()
+        tid = job_id or uuid.uuid4().hex[:8]
         token = cancel or CancelToken()
         safe_prompt = (prompt or "")[:500]
         safe_label = (label or safe_prompt[:60].replace("\n", " ") or tid)[:80]
@@ -350,6 +359,7 @@ class JobRegistry:
             output=tail,
         )
         self._prune_finished()
+        job._done.set()
 
     def kill(self, job_id: str) -> bool:
         with self._lock:
@@ -373,14 +383,12 @@ class JobRegistry:
             if job.status != "running":
                 return False
             job.status = "killed"
-        if job.kind == "bash":
-            self._kill_bash(job)
+        if job.kind == "bash" and job.proc is not None:
+            terminate_process_tree(job.proc)
         elif job.cancel is not None:
             job.cancel.request()
-        # Give the drain thread a beat to flush buffered pipe lines into the
-        # ring before we snapshot the tail, so kill shows context, not a void.
         if job.kind == "bash":
-            time.sleep(0.2)
+            job._drained.wait(timeout=0.2)
             job.append_log("\n...[job killed]...\n")
         tail = self._job_tail(job)
         self._emit(
@@ -396,10 +404,6 @@ class JobRegistry:
             output=tail,
         )
         self._prune_finished()
+        job._done.set()
         return True
 
-    def _kill_bash(self, job: BackgroundJob) -> None:
-        proc = job.proc
-        if proc is None:
-            return
-        terminate_process_tree(proc)

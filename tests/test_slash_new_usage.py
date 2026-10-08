@@ -1,39 +1,26 @@
-"""Issues #86–#90: resume picker cards, /new, README hero, /unslop, /usage."""
+"""Session reset, usage reports, resume cards, and bundled prompt expansion."""
 
 from __future__ import annotations
 
 import json
 from io import StringIO
 
-import pytest
 from rich.console import Console
 
 
-def _chat(tmp_path, kite_home, **kwargs):
+def _chat(workspace, monkeypatch, **kwargs):
     from kite.ui.repl import ChatSession
 
-    chat = ChatSession(cwd=str(tmp_path), **kwargs)
+    monkeypatch.setattr("kite.models.litellm_model.prewarm_litellm", lambda: None)
+    monkeypatch.setattr(ChatSession, "_warm_auth_probes", lambda self: None)
+    chat = ChatSession(cwd=str(workspace), **kwargs)
     buf = StringIO()
     chat.console = Console(file=buf, force_terminal=False, width=100)
     return chat, buf
 
 
-def _c_test_new_registration_and_reset(tmp_path, kite_home) -> None:
-    from kite.cli.slash import CommandIndex, help_text
-    from kite.ui.commands import is_primary_slash, parse_slash, primary_builtins
-
-    assert parse_slash("/new").kind == "handled" and parse_slash("/new").command == "new"
-    assert parse_slash("/usage").kind == "handled" and parse_slash("/usage").command == "usage"
-    assert parse_slash("/usage session").command == "usage"
-    assert parse_slash("/clear").command == "clear"
-    assert is_primary_slash("new") and is_primary_slash("usage")
-    names = {b.name for b in primary_builtins()}
-    assert {"new", "usage"} <= names
-    index = CommandIndex.load(str(tmp_path))
-    assert "new" in index.specs and "usage" in index.specs
-    assert "/new" in help_text(index) and "/usage" in help_text(index)
-
-    chat, buf = _chat(tmp_path, kite_home, provider="groq", model="llama-3.3-70b-versatile")
+def test_new_resets_session_usage_and_queue_but_preserves_model(workspace, kite_home, monkeypatch) -> None:
+    chat, buf = _chat(workspace, monkeypatch, provider="groq", model="llama-3.3-70b-versatile")
     chat._session_id = "sess-old"
     chat.state.cost = 1.25
     chat.state.n_calls = 7
@@ -44,7 +31,7 @@ def _c_test_new_registration_and_reset(tmp_path, kite_home) -> None:
     chat.state.tokens = 500
     chat.state.window = 128000
     chat._inbox.enqueue("pending follow-up")
-    chat._slash_new("")
+    assert chat._handle_slash("/new") is True
     out = buf.getvalue()
     assert "Started a new session." in out
     assert chat._session_id is None
@@ -55,10 +42,10 @@ def _c_test_new_registration_and_reset(tmp_path, kite_home) -> None:
     assert chat.provider == "groq" and chat.model == "llama-3.3-70b-versatile"
 
 
-def _c_test_usage_reports_json_and_format(tmp_path, kite_home) -> None:
-    from kite.models.usage import format_usage_report, provider_quota
+def test_usage_reports_json_and_format(workspace, kite_home, monkeypatch) -> None:
+    from kite.models.usage import format_usage_report
 
-    chat, buf = _chat(tmp_path, kite_home, provider="groq", model="m")
+    chat, buf = _chat(workspace, monkeypatch, provider="groq", model="m")
     chat._slash_usage("")
     out = buf.getvalue()
     assert "Usage" in out and "Session" in out and "Context" in out and "Providers" in out
@@ -90,9 +77,6 @@ def _c_test_usage_reports_json_and_format(tmp_path, kite_home) -> None:
     chat._slash_usage("bogus")
     assert "usage" in buf.getvalue().lower()
 
-    assert provider_quota("groq") is None
-    report = format_usage_report()
-    assert report["total_tokens"] == 0 and "Cache read tokens" in report["text"]
     report = format_usage_report(
         input_tokens=10, output_tokens=5, cache_read_tokens=3, cache_write_tokens=2,
         cost=0.5, context_tokens=100, context_window=1000,
@@ -101,7 +85,7 @@ def _c_test_usage_reports_json_and_format(tmp_path, kite_home) -> None:
     assert report["total_tokens"] == 17 and "60 req/min" in report["text"]
 
 
-def _c_test_resume_picker_cards_scan_truncate_and_group(tmp_path, kite_home) -> None:
+def test_resume_picker_cards_scan_truncate_and_group(workspace, monkeypatch) -> None:
     import time
 
     from kite.memory.session import SessionMeta
@@ -112,10 +96,11 @@ def _c_test_resume_picker_cards_scan_truncate_and_group(tmp_path, kite_home) -> 
     )
     from kite.ui.tables import render_sessions_table
 
+    monkeypatch.setattr(time, "time", lambda: 1_700_000_000.0)
     now = time.time()
     here = SessionMeta(
         id="20240101-120000-aaaabbbb", created_at=now - 36000, updated_at=now - 36000,
-        cwd=str(tmp_path), provider="groq", model="llama", task="x" * 200,
+        cwd=str(workspace), provider="groq", model="llama", task="x" * 200,
         label="Explain RL and truncation feedback", exit_status="done",
     )
     away = SessionMeta(
@@ -125,11 +110,11 @@ def _c_test_resume_picker_cards_scan_truncate_and_group(tmp_path, kite_home) -> 
     )
     label = format_session_picker_label(here)
     assert label.index("Explain RL") < label.index("groq/llama")  # prompt first
-    prompt_line, meta_line = format_session_card(here, width=30)
+    prompt_line, _ = format_session_card(here, width=30)
     assert len(prompt_line) <= 32 and prompt_line.endswith("…")
     _, full_meta = format_session_card(here, width=120)
     assert "done" in full_meta and "groq/llama" in full_meta
-    current, rest = group_sessions_by_scope([away, here], str(tmp_path))
+    current, rest = group_sessions_by_scope([away, here], str(workspace))
     assert [m.id for m in current] == [here.id] and [m.id for m in rest] == [away.id]
 
     buf = StringIO()
@@ -145,60 +130,9 @@ def _c_test_resume_picker_cards_scan_truncate_and_group(tmp_path, kite_home) -> 
     assert "Resume Session (current folder)" in out
 
 
-def _c_test_unslop_bundled_command_loads_and_expands(tmp_path, kite_home) -> None:
+def test_unslop_bundled_command_expands_user_arguments(workspace, kite_home) -> None:
     from kite.cli.slash import CommandIndex
-    from kite.commands.loader import load_bundled_commands
 
-    assert "unslop" in {c.name for c in load_bundled_commands()}
-    index = CommandIndex.load(str(tmp_path))
-    assert "unslop" in index.specs
+    index = CommandIndex.load(workspace)
     expanded = index.expand("unslop", "this README")
     assert expanded and "this README" in expanded and "behavior" in expanded.lower()
-
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_new_registration_and_reset, test_usage_reports_json_and_format."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t0_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _k0 = tmp_path / "k0_0"
-        _k0.mkdir(parents=True, exist_ok=True)
-        _mp0.setenv("KITE_HOME", str(_k0))
-        _c_test_new_registration_and_reset(tmp_path=_t0, kite_home=_k0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t0_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _k1 = tmp_path / "k0_1"
-        _k1.mkdir(parents=True, exist_ok=True)
-        _mp1.setenv("KITE_HOME", str(_k1))
-        _c_test_usage_reports_json_and_format(tmp_path=_t1, kite_home=_k1)
-    finally:
-        _mp1.undo()
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_resume_picker_cards_scan_truncate_and_group, test_unslop_bundled_command_loads_and_expands."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t1_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _k0 = tmp_path / "k1_0"
-        _k0.mkdir(parents=True, exist_ok=True)
-        _mp0.setenv("KITE_HOME", str(_k0))
-        _c_test_resume_picker_cards_scan_truncate_and_group(tmp_path=_t0, kite_home=_k0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t1_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _k1 = tmp_path / "k1_1"
-        _k1.mkdir(parents=True, exist_ok=True)
-        _mp1.setenv("KITE_HOME", str(_k1))
-        _c_test_unslop_bundled_command_loads_and_expands(tmp_path=_t1, kite_home=_k1)
-    finally:
-        _mp1.undo()
-

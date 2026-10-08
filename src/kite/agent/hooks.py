@@ -38,6 +38,9 @@ class HookBus:
     _subs: dict[str, list[HookFn]] = field(default_factory=dict)
     context: dict[str, object] = field(default_factory=dict)
 
+    def __contains__(self, event: str) -> bool:
+        return bool(self._subs.get(event))
+
     def on(self, event: str, fn: HookFn) -> HookFn:
         self._subs.setdefault(event, []).append(fn)
         return fn

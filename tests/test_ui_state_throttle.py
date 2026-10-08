@@ -31,7 +31,7 @@ def _recording_state(clock: _Clock) -> tuple[SessionUiState, list[float]]:
     return state, paints
 
 
-def _c_test_throttled_touch_defers_and_flush_pending_touch_delivers(monkeypatch) -> None:
+def test_throttled_touch_defers_and_flush_pending_touch_delivers(monkeypatch) -> None:
     """A second touch inside the window must not repaint; the drain must."""
     clock = _Clock()
     monkeypatch.setattr(time, "monotonic", clock)
@@ -54,7 +54,7 @@ def _c_test_throttled_touch_defers_and_flush_pending_touch_delivers(monkeypatch)
     assert len(paints) == 2, "draining twice must not repaint an already-painted footer"
 
 
-def _c_test_turn_boundary_clear_running_is_never_throttled_away(monkeypatch) -> None:
+def test_turn_boundary_clear_running_is_never_throttled_away(monkeypatch) -> None:
     """The last touch of a turn must repaint, or the footer freezes on "working".
 
     A turn ends microseconds after its last streamed paint, so the boundary
@@ -83,14 +83,8 @@ def _c_test_turn_boundary_clear_running_is_never_throttled_away(monkeypatch) -> 
     assert state._touch_pending is False  # noqa: SLF001
 
 
-def _c_test_flash_is_never_swallowed_by_the_repaint_throttle(monkeypatch) -> None:
-    """A flash is a one-shot notification, so the rate limiter must not eat it.
-
-    Nothing drains ``_touch_pending`` while the composer is idle (the only
-    ``flush_pending_touch()`` call lives in ``ChatSession._drain_ui_queue``,
-    reachable only from the busy-turn pollers), so a flash set inside the
-    throttle window never reaches the toolbar.
-    """
+def test_flash_repaints_inside_throttle_window_and_expires_while_idle(monkeypatch) -> None:
+    """Idle notifications must repaint immediately, then expire without a touch."""
     clock = _Clock()
     monkeypatch.setattr(time, "monotonic", clock)
     state, paints = _recording_state(clock)
@@ -104,17 +98,7 @@ def _c_test_flash_is_never_swallowed_by_the_repaint_throttle(monkeypatch) -> Non
     assert state.flash == "queued 1  check the failing test"
     assert len(paints) == 2, "a flash set inside the throttle window must still repaint"
     assert state._touch_pending is False  # noqa: SLF001
-
-
-def _c_test_flash_expires_after_its_ttl_while_the_ui_sits_idle(monkeypatch) -> None:
-    """Expiry is checked on read: nothing calls touch() for 8s at the prompt."""
-    clock = _Clock()
-    monkeypatch.setattr(time, "monotonic", clock)
-    state, _paints = _recording_state(clock)
-
-    state.set_flash("restored queued messages to composer")
-    assert state.active_flash == "restored queued messages to composer"
-    assert "restored queued messages to composer" in str(_toolbar_html(state))
+    assert "queued 1  check the failing test" in str(_toolbar_html(state))
 
     clock.advance(8.5)  # idle at the prompt: no touch(), no busy turn
 
@@ -124,7 +108,7 @@ def _c_test_flash_expires_after_its_ttl_while_the_ui_sits_idle(monkeypatch) -> N
     assert state.flash_at is None
 
 
-def _c_test_context_pct_is_safe_for_nonpositive_and_overfull_windows() -> None:
+def test_context_pct_is_safe_for_nonpositive_and_overfull_windows() -> None:
     """A misconfigured ``context_window = -1`` must not render as ctx -800%."""
     state = SessionUiState()
 
@@ -139,12 +123,3 @@ def _c_test_context_pct_is_safe_for_nonpositive_and_overfull_windows() -> None:
 
     state.set_context_usage(total_tokens=500, window=1000)
     assert state.context_pct == pytest.approx(0.5)
-
-
-def test_batch_00(monkeypatch) -> None:
-    """Consolidated (bodies unchanged): all throttle helpers in one batch."""
-    _c_test_throttled_touch_defers_and_flush_pending_touch_delivers(monkeypatch=monkeypatch)
-    _c_test_turn_boundary_clear_running_is_never_throttled_away(monkeypatch=monkeypatch)
-    _c_test_flash_is_never_swallowed_by_the_repaint_throttle(monkeypatch=monkeypatch)
-    _c_test_flash_expires_after_its_ttl_while_the_ui_sits_idle(monkeypatch=monkeypatch)
-    _c_test_context_pct_is_safe_for_nonpositive_and_overfull_windows()

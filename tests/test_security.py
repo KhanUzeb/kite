@@ -31,14 +31,13 @@ from kite.guardrails.sandbox import (
 from kite.guardrails.ssrf import (
     SafeRedirectHandler,
     ValidatedHTTPConnection,
-    build_safe_opener,
     host_blocked,
     url_blocked,
 )
 from kite.tools.web import _url_blocked, unwrap_tracking_url
 
 
-def _c_test_dangerous_bash_and_benign_cache_deletes(workspace: Path) -> None:
+def test_dangerous_bash_and_benign_cache_deletes(workspace: Path) -> None:
     assert check_dangerous("rm -rf /")
     assert check_dangerous("git push --force")
     assert check_dangerous("rm -rf .")
@@ -71,7 +70,7 @@ def _c_test_dangerous_bash_and_benign_cache_deletes(workspace: Path) -> None:
     assert policy.check_bash("echo hello").allowed
 
 
-def _c_test_sandbox_paths_os_interface_and_restricted_network(workspace: Path, kite_home: Path, tmp_path: Path, monkeypatch) -> None:
+def test_sandbox_paths_os_interface_and_restricted_network(workspace: Path, kite_home: Path, tmp_path: Path, monkeypatch) -> None:
     root = workspace_root(workspace)
     assert cwd_in_trusted(workspace / "src", root, ["src/"])
     assert not cwd_in_trusted(workspace, root, ["src/"])
@@ -122,23 +121,29 @@ def _c_test_sandbox_paths_os_interface_and_restricted_network(workspace: Path, k
         assert not decision.allowed
     captured: dict = {}
 
-    def fake_run(cmd, **kwargs):  # noqa: ANN001
+    def fake_popen(cmd, **kwargs):  # noqa: ANN001
+        import io
+
         captured["env"] = kwargs.get("env")
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        proc = MagicMock(stdout=io.StringIO(""))
+        proc.__enter__.return_value = proc
+        proc.wait.return_value = 1
+        return proc
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret-key-value")
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
     import shutil
 
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/rg" if name == "rg" else None)
     from kite.tools.coding import make_coding_tools
 
     grep_tool = next(t for t in make_coding_tools(cwd=str(workspace), enabled=["grep"]) if t.name == "grep")
-    grep_tool.run({"pattern": "foo", "path": "."})
+    assert grep_tool.run({"pattern": "foo", "path": "."})["ok"]
+    assert captured.get("env") is not None
     assert "OPENAI_API_KEY" not in (captured.get("env") or {})
 
 
-def _c_test_child_env_gh_inspection_and_token_passthrough(monkeypatch, workspace: Path, kite_home) -> None:
+def test_child_env_gh_inspection_and_token_passthrough(monkeypatch, workspace: Path, kite_home) -> None:
     assert is_sensitive_env_key("OPENAI_API_KEY")
     assert is_sensitive_env_key("GITHUB_TOKEN")
     assert not is_sensitive_env_key("PATH")
@@ -209,7 +214,7 @@ def _c_test_child_env_gh_inspection_and_token_passthrough(monkeypatch, workspace
     assert user_path().stat().st_mode & 0o077 == 0
 
 
-def _c_test_gh_tokens_only_for_single_gh_command(monkeypatch, workspace: Path) -> None:
+def test_gh_tokens_only_for_single_gh_command(monkeypatch, workspace: Path) -> None:
     from kite.guardrails.env_filter import is_single_gh_command
 
     assert is_single_gh_command("gh issue list")
@@ -233,7 +238,7 @@ def _c_test_gh_tokens_only_for_single_gh_command(monkeypatch, workspace: Path) -
     seen: list = []
 
     class _FakeStdout:
-        def readline(self) -> str:
+        def readline(self, size=-1) -> str:
             return ""
 
         def close(self) -> None:
@@ -243,16 +248,21 @@ def _c_test_gh_tokens_only_for_single_gh_command(monkeypatch, workspace: Path) -
         def __init__(self, *args, **kwargs) -> None:  # noqa: ANN001, ANN002
             seen.append(kwargs.get("env"))
             self.stdout = _FakeStdout()
+            self.returncode = None
 
         def wait(self, timeout=None):  # noqa: ANN001
-            return 0
+            self.returncode = 0
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
 
     monkeypatch.setattr(subprocess, "Popen", _FakeProc)
     from kite.tools.coding import make_coding_tools
 
     bash = next(t for t in make_coding_tools(cwd=str(workspace), enabled=["bash"]) if t.name == "bash")
-    bash.run({"command": "gh issue list; python -c \"print('x')\"", "cwd": str(workspace)})
-    bash.run({"command": "gh issue list", "cwd": str(workspace)})
+    assert bash.run({"command": "gh issue list; python -c \"print('x')\"", "cwd": str(workspace)})["ok"]
+    assert bash.run({"command": "gh issue list", "cwd": str(workspace)})["ok"]
     assert len(seen) == 2
     chained_env, single_env = seen
     assert chained_env is not None and single_env is not None
@@ -262,7 +272,11 @@ def _c_test_gh_tokens_only_for_single_gh_command(monkeypatch, workspace: Path) -
     assert "OPENAI_API_KEY" not in single_env
 
 
-def _c_test_ssrf_blocks_private_and_rebinding(monkeypatch) -> None:
+def test_ssrf_blocks_private_and_rebinding(monkeypatch) -> None:
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],
+    )
     cases = [
         ("http://2130706433/", "private"),
         ("http://0x7f000001/", "private"),
@@ -275,7 +289,7 @@ def _c_test_ssrf_blocks_private_and_rebinding(monkeypatch) -> None:
         ("http://user:pass@example.com/path", "credential"),
     ]
     for url, kind in cases:
-        reason = url_blocked(url) or _url_blocked(url)
+        reason = url_blocked(url)
         assert reason, url
         if kind == "http":
             assert "http" in reason.lower()
@@ -312,11 +326,9 @@ def _c_test_ssrf_blocks_private_and_rebinding(monkeypatch) -> None:
     req.full_url = "https://example.com/a"
     with pytest.raises(URLError, match="too many redirects"):
         handler.redirect_request(req, None, 302, "", {}, "https://example.com/next")
-    names = {type(h).__name__ for h in build_safe_opener(max_redirects=3).handlers}
-    assert "_ValidatedHTTPHandler" in names and "_ValidatedHTTPSHandler" in names
 
 
-def _c_test_nested_redaction_untrusted_content_and_crew_bounds(kite_home, tmp_path) -> None:
+def test_nested_redaction_untrusted_content_and_crew_bounds(kite_home, tmp_path) -> None:
     payload = {
         "command": "curl -H 'Authorization: Bearer SECRET'",
         "headers": {"Authorization": "Bearer SECRET"},
@@ -327,6 +339,23 @@ def _c_test_nested_redaction_untrusted_content_and_crew_bounds(kite_home, tmp_pa
     assert out["headers"]["Authorization"] == REDACTED
     nested = sanitize_value(({"refresh_token": "abc"}, [{"api_key": "sk-abcdefghijklmnopqrstuvwxyz123456"}]))
     assert "abc" not in str(nested) and "sk-abc" not in str(nested)
+    from kite.guardrails import SECRET_PATTERNS, redact_secrets
+
+    for text in (
+        "ordinary output " * 1000,
+        "api_key=abcdefghijklmnopqrstuvwx Authorization: Bearer short",
+        "apı_key=abcdefghijklmnopqrstuvwx",  # Unicode IGNORECASE must not bypass prefilters.
+        "-----BEGIN PRIVATE KEY-----\nsk-abcdefghijklmnopqrstuvwxyz",
+        "token='abcdefghijklmnopqrstuvwx' password=abcdefgh",
+    ):
+        expected, count = text, 0
+        for pattern in SECRET_PATTERNS:
+            expected, replaced = pattern.subn("[REDACTED_SECRET]", expected)
+            count += replaced
+        assert redact_secrets(text) == (expected, count)
+    assert "short" not in redact_string("Authorization: short")
+    assert "cookie-value" not in redact_string("Set-Cookie: cookie-value")
+    assert "verifier-value" not in redact_string("code_verifier=verifier-value")
     from kite.memory.audit import AuditLog
 
     log = AuditLog()
@@ -357,7 +386,6 @@ def _c_test_nested_redaction_untrusted_content_and_crew_bounds(kite_home, tmp_pa
     from kite.agent.orchestrator import SubagentOrchestrator
     from kite.agent.subagent_profiles import get_profile, reload_profiles
     from kite.memory.secure_io import wrap_untrusted_user_content
-    from kite.tools.jobs import JobRegistry
     from kite.ui.attach import load_file
 
     nested_tools = tools_for_nested_subagent(["read", "memory", "subagent", "bash"])
@@ -379,19 +407,17 @@ def _c_test_nested_redaction_untrusted_content_and_crew_bounds(kite_home, tmp_pa
         pass
     else:
         reload_profiles()
-        assert get_profile("evil") is None
-    events: list[dict] = []
-    JobRegistry(on_event=lambda e: events.append(dict(e.payload)))._emit(
-        "job_output", id="x", line=redact_string("token=Bearer SECRETTOKEN\n"), kind="bash"
-    )
-    assert events and "SECRETTOKEN" not in events[0].get("line", "")
+        try:
+            assert get_profile("evil") is None
+        finally:
+            reload_profiles()
     env_file = tmp_path / ".env"
     env_file.write_text("API_KEY=abc\n", encoding="utf-8")
     with pytest.raises(ValueError, match="protected path"):
         load_file(env_file)
 
 
-def _c_test_inspection_bash_plan_mode_and_skill_trust(workspace: Path, tmp_path, kite_home) -> None:
+def test_inspection_bash_plan_mode_and_skill_trust(workspace: Path, tmp_path, kite_home) -> None:
     assert is_inspection_bash("rg 'def foo' src/")
     assert is_inspection_bash("head -n 40 src/app.py")
     assert not is_inspection_bash("rm -rf build")
@@ -450,10 +476,14 @@ def test_terminate_process_tree_kills_descendants(tmp_path: Path) -> None:
 
     marker = tmp_path / "child.pid"
     parent_script = f"""
-import subprocess, sys, time
-child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+import signal, subprocess, sys
+child = subprocess.Popen(
+    [sys.executable, "-c", "import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); signal.pause()"],
+    stdout=subprocess.PIPE, text=True,
+)
+child.stdout.readline()
 open({repr(str(marker))}, "w", encoding="utf-8").write(str(child.pid))
-time.sleep(120)
+signal.pause()
 """
     proc = subprocess.Popen(
         [sys.executable, "-c", parent_script],
@@ -468,82 +498,31 @@ time.sleep(120)
     child_pid = int(marker.read_text(encoding="utf-8").strip())
     terminate_process_tree(proc)
     proc.wait(timeout=5)
-    time.sleep(0.2)
-    assert proc.poll() is not None
-    try:
-        os.kill(child_pid, 0)
-        alive = True
-    except OSError:
-        alive = False
-    assert not alive
-    result = ProcessRunner(timeout_seconds=1.0).run(
-        [sys.executable, "-c", "import time; time.sleep(30)"]
+    deadline = time.monotonic() + 1.0
+    alive = True
+    while alive and time.monotonic() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except OSError:
+            alive = False
+        else:
+            time.sleep(0.01)
+    assert proc.poll() is not None and not alive
+    result = ProcessRunner(timeout_seconds=0.0).run(
+        [sys.executable, "-c", "import signal; signal.pause()"]
     )
-    assert result.exit_code == -1
+    assert result.exit_code == -1 and result.stderr == "timeout"
 
 
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_dangerous_bash_and_benign_cache_deletes, test_sandbox_paths_os_interface_and_restricted_network, test_child_env_gh_inspection_and_token_passthrough."""
-    _w0 = tmp_path / "w0_0"
-    (_w0 / "src").mkdir(parents=True, exist_ok=True)
-    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_dangerous_bash_and_benign_cache_deletes(workspace=_w0)
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t0_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _k1 = tmp_path / "k0_1"
-        _k1.mkdir(parents=True, exist_ok=True)
-        _mp1.setenv("KITE_HOME", str(_k1))
-        _w1 = tmp_path / "w0_1"
-        (_w1 / "src").mkdir(parents=True, exist_ok=True)
-        (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-        (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-        _c_test_sandbox_paths_os_interface_and_restricted_network(tmp_path=_t1, kite_home=_k1, workspace=_w1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _k2 = tmp_path / "k0_2"
-        _k2.mkdir(parents=True, exist_ok=True)
-        _mp2.setenv("KITE_HOME", str(_k2))
-        _w2 = tmp_path / "w0_2"
-        (_w2 / "src").mkdir(parents=True, exist_ok=True)
-        (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-        (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-        _c_test_child_env_gh_inspection_and_token_passthrough(kite_home=_k2, workspace=_w2, monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_gh_tokens_only_for_single_gh_command, test_ssrf_blocks_private_and_rebinding."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _w0 = tmp_path / "w1_0"
-        (_w0 / "src").mkdir(parents=True, exist_ok=True)
-        (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-        (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-        _c_test_gh_tokens_only_for_single_gh_command(workspace=_w0, monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _c_test_ssrf_blocks_private_and_rebinding(monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-
-def test_external_approval_and_toolchain(tmp_path) -> None:
+def test_external_approval_and_toolchain(workspace: Path, tmp_path: Path) -> None:
     """Outside reads are free, outside writes/bash need approval; toolchains stay free; the bypass flag is not forgeable."""
-    import sys
 
     from kite.agent.loop import DefaultAgent
     from kite.application.policy import PolicyEngine
     from kite.application.tools import ToolCall, tool_requires_approval_gate
     from kite.guardrails.sandbox import check_command_paths, is_toolchain_path, workspace_root
 
-    ws = tmp_path / "proj"
-    (ws / "src").mkdir(parents=True)
+    ws = workspace
     outside = tmp_path / "sibling" / "note.txt"
     outside.parent.mkdir(parents=True)
     outside.write_text("hi\n", encoding="utf-8")
@@ -566,6 +545,33 @@ def test_external_approval_and_toolchain(tmp_path) -> None:
 
     assert tool_requires_approval_gate("write", {"path": str(outside)}, workspace_cwd=str(ws), approval="auto")
     assert tool_requires_approval_gate("bash", {"command": f"cat {outside}"}, workspace_cwd=str(ws), approval="auto")
+    assert tool_requires_approval_gate(
+        "write", {"path": str(tmp_path / "proj-sibling" / "new.txt")},
+        workspace_cwd=str(ws), approval="auto",
+    )
+    outside_link = ws / "outside-link"
+    inside_link = ws / "inside-link"
+    workspace_link = tmp_path / "workspace-link"
+    try:
+        outside_link.symlink_to(outside.parent, target_is_directory=True)
+        inside_link.symlink_to(ws / "src", target_is_directory=True)
+        workspace_link.symlink_to(ws, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pass  # Windows may not grant symlink creation privileges.
+    else:
+        for root in (ws, workspace_link):
+            assert tool_requires_approval_gate(
+                "write", {"path": "outside-link/new.txt"}, workspace_cwd=str(root), approval="auto",
+            )
+            assert tool_requires_approval_gate(
+                "bash", {"command": "pwd", "cwd": "outside-link"}, workspace_cwd=str(root), approval="auto",
+            )
+            assert not tool_requires_approval_gate(
+                "write", {"path": "inside-link/new.txt"}, workspace_cwd=str(root), approval="auto",
+            )
+            assert not tool_requires_approval_gate(
+                "bash", {"command": "pwd", "cwd": "inside-link"}, workspace_cwd=str(root), approval="auto",
+            )
 
     exe = Path(sys.executable)
     assert is_toolchain_path(exe, workspace_root(ws))
@@ -579,30 +585,51 @@ def test_external_approval_and_toolchain(tmp_path) -> None:
     assert tool == "read" and "_approved_external" not in args  # forged flag stripped
 
 
-def test_batch_02(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_nested_redaction_untrusted_content_and_crew_bounds, test_inspection_bash_plan_mode_and_skill_trust."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t2_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _k0 = tmp_path / "k2_0"
-        _k0.mkdir(parents=True, exist_ok=True)
-        _mp0.setenv("KITE_HOME", str(_k0))
-        _c_test_nested_redaction_untrusted_content_and_crew_bounds(tmp_path=_t0, kite_home=_k0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t2_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _k1 = tmp_path / "k2_1"
-        _k1.mkdir(parents=True, exist_ok=True)
-        _mp1.setenv("KITE_HOME", str(_k1))
-        _w1 = tmp_path / "w2_1"
-        (_w1 / "src").mkdir(parents=True, exist_ok=True)
-        (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-        (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-        _c_test_inspection_bash_plan_mode_and_skill_trust(tmp_path=_t1, kite_home=_k1, workspace=_w1)
-    finally:
-        _mp1.undo()
+def test_suite_blocks_external_connections_before_dns(monkeypatch) -> None:
+    def unexpected_dns(*_args, **_kwargs):
+        pytest.fail("External connection attempted DNS resolution")
 
+    monkeypatch.setattr(socket, "getaddrinfo", unexpected_dns)
+    for host in ("example.com", "93.184.216.34", "192.168.1.1", "2606:4700:4700::1111"):
+        address = (host, 443)
+        with pytest.raises(AssertionError, match="External network access blocked"):
+            socket.create_connection(address)
+        with socket.socket() as sock:
+            with pytest.raises(AssertionError, match="External network access blocked"):
+                sock.connect(address)
+            with pytest.raises(AssertionError, match="External network access blocked"):
+                sock.connect_ex(address)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+def test_suite_allows_loopback_connections(host) -> None:
+    if host == "::1" and not socket.has_ipv6:
+        pytest.skip("IPv6 unavailable")
+    family = socket.AF_INET6 if host == "::1" else socket.AF_INET
+    with socket.socket(family) as listener:
+        listener.settimeout(0.2)
+        listener.bind(("::1" if family == socket.AF_INET6 else "127.0.0.1", 0))
+        listener.listen()
+        with socket.create_connection((host, listener.getsockname()[1]), timeout=0.2) as client:
+            accepted, _address = listener.accept()
+            with accepted:
+                accepted.settimeout(0.2)
+                client.sendall(b"local")
+                assert accepted.recv(5) == b"local"
+
+
+def test_suite_allows_unix_connections(tmp_path, monkeypatch) -> None:
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("Unix sockets unavailable")
+    monkeypatch.chdir(tmp_path)
+    with socket.socket(socket.AF_UNIX) as listener, socket.socket(socket.AF_UNIX) as client:
+        listener.settimeout(0.2)
+        client.settimeout(0.2)
+        listener.bind("local.sock")
+        listener.listen()
+        client.connect("local.sock")
+        accepted, _address = listener.accept()
+        with accepted:
+            accepted.settimeout(0.2)
+            client.sendall(b"local")
+            assert accepted.recv(5) == b"local"

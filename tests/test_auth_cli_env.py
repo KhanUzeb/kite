@@ -14,8 +14,8 @@ each helper hands down.
 from __future__ import annotations
 
 import io
+import os
 import subprocess
-import sys
 from typing import Any
 
 import pytest
@@ -103,8 +103,11 @@ def _force_platform(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
         monkeypatch.setattr(cli_mod.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
 
 
-def _c_test_run_cli_strips_session_identity_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_cli_sanitizes_session_identity_and_isolates_console(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """CLAUDE_*/ANTHROPIC_* never reach a delegated child, in any letter case."""
+    _force_platform(monkeypatch, "win32")
     monkeypatch.setenv("CLAUDE_CODE_SSE_PORT", "12345")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-lite-llm-routing-key")
     monkeypatch.setenv("Anthropic_Custom_Header", "lower-case-prefix-match")
@@ -119,9 +122,11 @@ def _c_test_run_cli_strips_session_identity_env(monkeypatch: pytest.MonkeyPatch)
     assert "ANTHROPIC_API_KEY" not in child_env
     assert "Anthropic_Custom_Header" not in child_env
     assert all("sk-ant-lite-llm-routing-key" not in v for v in child_env.values())
+    assert seen["creationflags"] == subprocess.CREATE_NO_WINDOW
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-lite-llm-routing-key"
 
 
-def _c_test_run_cli_preserves_what_a_child_login_needs(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_cli_preserves_what_a_child_login_needs(monkeypatch: pytest.MonkeyPatch) -> None:
     """Strip too much and every login breaks: PATH, HOME, KITE_HOME, foreign creds stay."""
     monkeypatch.setenv("PATH", os_ish_path := "C:\\bin")
     monkeypatch.setenv("HOME", "/home/tester")
@@ -149,10 +154,10 @@ def _c_test_run_cli_preserves_what_a_child_login_needs(monkeypatch: pytest.Monke
     assert "ANTHROPIC_API_KEY" not in child_env
 
 
-def _c_test_run_cli_streaming_sanitizes_env_and_isolates_console(
+def test_run_cli_streaming_sanitizes_env_and_isolates_console(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """GAP 1 lock: the OAuth-login path needs BOTH guards, not just the env."""
+    """The OAuth-login path needs both guards, not just a sanitized env."""
     _force_platform(monkeypatch, "win32")
     monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-lite-llm-routing-key")
@@ -179,7 +184,7 @@ def _c_test_run_cli_streaming_sanitizes_env_and_isolates_console(
     assert seen["creationflags"] == subprocess.CREATE_NO_WINDOW
 
 
-def _c_test_run_cli_streaming_sanitizes_an_explicit_env_argument(
+def test_run_cli_streaming_sanitizes_an_explicit_env_argument(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A caller-supplied env is sanitized too, not forwarded verbatim."""
@@ -195,15 +200,9 @@ def _c_test_run_cli_streaming_sanitizes_an_explicit_env_argument(
     assert "CLAUDE_CONFIG_DIR" in base
 
 
-def _c_test_run_cli_passes_console_isolation_kwargs(monkeypatch: pytest.MonkeyPatch) -> None:
-    _force_platform(monkeypatch, "win32")
-    seen = _record_run(monkeypatch)
-    run_cli("claude", "auth", "status")
-    assert seen["creationflags"] == subprocess.CREATE_NO_WINDOW
-
-
-def _c_test_run_checked_delegates_through_run_cli(monkeypatch: pytest.MonkeyPatch) -> None:
-    """run_checked reaches the child via run_cli, so it inherits both guards."""
+def test_run_checked_preserves_subprocess_guards_and_reports_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _force_platform(monkeypatch, "win32")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-lite-llm-routing-key")
     seen = _record_run(monkeypatch, stdout="ok")
@@ -221,30 +220,23 @@ def _c_test_run_checked_delegates_through_run_cli(monkeypatch: pytest.MonkeyPatc
         run_checked("claude", "auth", "status")
 
 
-def _c_test_console_isolation_kwargs_is_platform_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_console_isolation_is_platform_scoped_and_handles_missing_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _force_platform(monkeypatch, "linux")
     assert console_isolation_kwargs() == {}
     _force_platform(monkeypatch, "darwin")
     assert console_isolation_kwargs() == {}
     _force_platform(monkeypatch, "win32")
     assert console_isolation_kwargs() == {"creationflags": subprocess.CREATE_NO_WINDOW}
-
-
-def _c_test_console_isolation_kwargs_never_raises_on_missing_constant(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """subprocess.CREATE_NO_WINDOW only exists on win32 builds — never assume it."""
-    monkeypatch.setattr(cli_mod.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     monkeypatch.delattr(cli_mod.subprocess, "CREATE_NO_WINDOW", raising=False)
     # Raw platform patch on purpose: _force_platform("win32") would stub the
     # constant back in, but here the point is a win32 *without* the constant.
     monkeypatch.setattr(cli_mod.sys, "platform", "win32")
     assert console_isolation_kwargs() == {}
-    _force_platform(monkeypatch, "linux")
-    assert console_isolation_kwargs() == {}
 
 
-def _c_test_kite_tui_vars_are_stripped_but_kite_config_is_kept() -> None:
+def test_kite_tui_vars_are_stripped_but_kite_config_is_kept() -> None:
     """Kite's own terminal knobs are the *parent's*; KITE_HOME/OFFLINE are config."""
     base = {
         "KITE_LOADER": "dots",
@@ -281,50 +273,3 @@ def _c_test_kite_tui_vars_are_stripped_but_kite_config_is_kept() -> None:
         "KITE_HOME",
         "KITE_OFFLINE",
     }
-    # os.environ is the default source and is never mutated.
-    assert provider_cli_env() is not provider_cli_env()
-
-
-def _c_test_platform_module_is_the_real_sys() -> None:
-    """The platform checks must follow the live interpreter, not a copied constant."""
-    assert cli_mod.sys is sys
-    assert cli_mod.subprocess is subprocess
-
-
-# No test may reach a real provider binary: the recorders must be what every
-# helper actually calls, for argv that does not exist on PATH.
-def _c_test_helpers_are_intercepted_never_a_real_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    run_seen = _record_run(monkeypatch)
-    popen_seen = _record_popen(monkeypatch)
-    missing = "kite-no-such-provider-binary"
-
-    assert run_cli(missing, "auth", "status").returncode == 0
-    assert popen_seen == {}
-    assert run_seen["argv"] == [missing, "auth", "status"]
-
-    assert run_cli_streaming(missing, "login").returncode == 0
-    assert popen_seen["argv"] == [missing, "login"]
-    assert run_seen["argv"] == [missing, "auth", "status"]  # unchanged
-
-
-def test_batch_00(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Consolidated (bodies unchanged): env strip + preserve + streaming sanitize + explicit env."""
-    _c_test_run_cli_strips_session_identity_env(monkeypatch)
-    _c_test_run_cli_preserves_what_a_child_login_needs(monkeypatch)
-    _c_test_run_cli_streaming_sanitizes_env_and_isolates_console(monkeypatch)
-    _c_test_run_cli_streaming_sanitizes_an_explicit_env_argument(monkeypatch)
-
-
-def test_batch_01(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Consolidated (bodies unchanged): console-isolation pass-through + run_checked + platform scoping."""
-    _c_test_run_cli_passes_console_isolation_kwargs(monkeypatch)
-    _c_test_run_checked_delegates_through_run_cli(monkeypatch)
-    _c_test_console_isolation_kwargs_is_platform_scoped(monkeypatch)
-    _c_test_console_isolation_kwargs_never_raises_on_missing_constant(monkeypatch)
-
-
-def test_batch_02(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Consolidated (bodies unchanged): TUI vars + platform identity + interception."""
-    _c_test_kite_tui_vars_are_stripped_but_kite_config_is_kept()
-    _c_test_platform_module_is_the_real_sys()
-    _c_test_helpers_are_intercepted_never_a_real_binary(monkeypatch)

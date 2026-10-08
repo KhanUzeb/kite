@@ -93,7 +93,7 @@ def scout_toolchains(cwd: str | Path, project_root: str | Path | None = None) ->
         if resolved in seen or not path.is_file():
             return
         seen.add(resolved)
-        found.append(Toolchain(name=name, path=resolved, version=_probe_version(path, flag), source=source))
+        found.append(Toolchain(name=name, path=str(path.absolute()), version=_probe_version(path, flag), source=source))
 
     try:
         from kite.env.venv import discover_venv, venv_bin_dir
@@ -106,7 +106,7 @@ def scout_toolchains(cwd: str | Path, project_root: str | Path | None = None) ->
         pass
 
     try:
-        active = Path(sys.executable).resolve()
+        active = Path(sys.executable)
         _add("python", active, "active", "--version")
     except OSError:
         pass

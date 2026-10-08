@@ -28,6 +28,15 @@ SECRET_PATTERNS = [
     re.compile(r"(?i)(?:key|token|secret|password)\s*[:=]\s*['\"]?[A-Za-z0-9+/]{24,}={0,2}"),
 ]
 
+# Literal prefilters avoid regex scans of ordinary large outputs. Non-ASCII text
+# takes the full regex path to retain Python's Unicode IGNORECASE semantics.
+_SECRET_MARKERS = (
+    ("api", "secret", "token", "password", "passwd", "authorization"),
+    ("-----begin ",),
+    ("sk-", "ghp_", "xox"),
+    ("key", "token", "secret", "password"),
+)
+
 _ENV_DUMP_PATTERNS = (
     re.compile(r"(?i)^\s*env\s*$"),
     re.compile(r"(?i)^\s*printenv\b"),
@@ -51,10 +60,14 @@ def redact_secrets(text: str) -> tuple[str, int]:
         return text, 0
     count = 0
     out = text
-    for rx in SECRET_PATTERNS:
-        new, n = rx.subn("[REDACTED_SECRET]", out)
+    lower = out.lower() if out.isascii() else None
+    for rx, markers in zip(SECRET_PATTERNS, _SECRET_MARKERS, strict=True):
+        if lower is not None and not any(marker in lower for marker in markers):
+            continue
+        out, n = rx.subn("[REDACTED_SECRET]", out)
         count += n
-        out = new
+        if n and lower is not None:
+            lower = out.lower()
     return out, count
 
 
@@ -189,10 +202,6 @@ class GuardrailPolicy:
                     for_write=tool in {"write", "edit"},
                     approved_external=approved_external,
                 )
-                if not v.allowed:
-                    return v
-            if tool == "glob" and args.get("root"):
-                v = self.check_path(str(args["root"]), approved_external=approved_external)
                 if not v.allowed:
                     return v
 

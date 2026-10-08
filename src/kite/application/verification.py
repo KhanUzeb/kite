@@ -65,8 +65,6 @@ class WorkspaceProfile:
         return None
 
 
-def _posix_rel(workspace: Path, path: Path) -> str:
-    return path.relative_to(workspace).as_posix()
 def normalize_workspace_path(path: str, workspace_root: str | Path | None) -> str:
     """Return a workspace-relative POSIX path when the path is inside the workspace."""
     raw = str(path or "").strip()
@@ -177,16 +175,6 @@ def _default_python_test(directory: Path, workspace: Path) -> str | None:
     return None
 
 
-def _default_rust_test(directory: Path) -> str:
-    return "cargo test"
-
-
-def _default_go_test(directory: Path, rel_root: str) -> str:
-    if rel_root:
-        return f"go test ./{rel_root}/..."
-    return "go test ./..."
-
-
 def _infer_python_test_targets(pkg_root: Path, workspace: Path, touched: str) -> tuple[str, ...]:
     rel = PurePosixPath(touched.replace("\\", "/"))
     stem = rel.stem
@@ -251,7 +239,7 @@ def _scan_packages(workspace: Path, user_packages: dict[str, dict[str, str]]) ->
             continue
         ecosystems = _ecosystems_at(directory)
         if ecosystems:
-            rel = _posix_rel(workspace, directory) if directory != workspace else ""
+            rel = directory.relative_to(workspace).as_posix() if directory != workspace else ""
             key = rel or "."
             user = user_packages.get(key) or user_packages.get(rel) or {}
             user_test = user.get("test") or user.get("verify")
@@ -263,9 +251,9 @@ def _scan_packages(workspace: Path, user_packages: dict[str, dict[str, str]]) ->
                 elif "js" in ecosystems:
                     test_cmd = _default_js_test(directory)
                 elif "rust" in ecosystems:
-                    test_cmd = _default_rust_test(directory)
+                    test_cmd = "cargo test"
                 elif "go" in ecosystems:
-                    test_cmd = _default_go_test(directory, rel)
+                    test_cmd = "go test ./..."
                 if test_cmd and rel:
                     test_cmd = f"cd {rel} && {test_cmd}"
             found.append(
@@ -1237,17 +1225,12 @@ def unfounded_claim_reason(collector: VerificationCollector, text: str) -> str |
     if not plan.required_checks:
         # Docs/config/other-only edits have nothing verifiable — submit freely.
         return None
-    if plan.required_checks:
-        if plan_status(plan, collector._records) != "verified":
-            return (
-                "Submit blocked: workspace was edited but required verification is incomplete. "
-                "Run the applicable check for the changed files, then submit again."
-            )
-        return None
-    return (
-        "Submit blocked: workspace was edited but no passing test/lint command was recorded. "
-        "Run the applicable check, then submit again."
-    )
+    if plan_status(plan, collector._records) != "verified":
+        return (
+            "Submit blocked: workspace was edited but required verification is incomplete. "
+            "Run the applicable check for the changed files, then submit again."
+        )
+    return None
 
 
 def _missing_verification_section(body: str, *, need_verification: bool = True) -> str | None:
@@ -1338,9 +1321,8 @@ def _escalate_submit_block(reason: str, attempt: int) -> str:
             "`## Blocked` section (or a `- ✗ <command>` line) naming what is still broken."
         )
     return (
-        f"{reason}\n\nBlocked {attempt} times — the run stops on the next attempt. Submit now with a "
-        "`## Blocked` section (or a `- ✗ <command>` line under `## Verification`) naming what is "
-        "still broken."
+        f"{reason}\n\nBlocked {attempt} times — this run has exhausted its submission retries. "
+        "Resume with a concrete fix or an honest `## Blocked` report naming what is still broken."
     )
 
 
