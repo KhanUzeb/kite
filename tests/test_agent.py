@@ -602,18 +602,22 @@ def test_cancel_stops_running_bash(workspace: Path, monkeypatch) -> None:
     cancel = CancelToken()
     popen = subprocess.Popen
     processes = []
+    argv = [sys.executable, "-c", "import threading; threading.Event().wait()"]
+    command = subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
 
     def cancel_after_spawn(*args, **kwargs):
         process = popen(*args, **kwargs)
-        processes.append(process)
-        cancel.request()
+        # Patching the shared subprocess module also intercepts Windows taskkill.
+        if args[0] == command:
+            processes.append(process)
+            assert process.poll() is None
+            cancel.request()
         return process
 
     monkeypatch.setattr("kite.tools.coding.subprocess.Popen", cancel_after_spawn)
     tools = make_coding_tools(cwd=str(workspace), cancel=cancel, enabled=["bash"], auto_venv=False)
     env = LocalEnvironment(registry=ToolRegistry(tools))
     # Cancel as soon as the real process exists, without racing a sleep timer.
-    command = f'{shlex.quote(sys.executable)} -c "import threading; threading.Event().wait()"'
     out = env.execute({"tool": "bash", "arguments": {"command": command}})
     assert out.get("cancelled") is True and out["ok"] is False
     assert len(processes) == 1 and processes[0].poll() is not None

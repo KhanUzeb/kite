@@ -110,18 +110,20 @@ def test_economics_horizon_and_gate() -> None:
     )
 
 
-def test_observation_pack_threshold_and_recall(tmp_path: Path) -> None:
+@pytest.mark.parametrize("line", ["line\n", "line\r\n"])
+def test_observation_pack_threshold_and_recall(tmp_path: Path, line: str) -> None:
     assert create_observation("bash", "small", "x" * THRESHOLD_BYTES, tmp_path) is None
-    text = "line\n" * (THRESHOLD_BYTES // 5 + 10)
+    text = line * (THRESHOLD_BYTES // len(line.encode("utf-8")) + 10)
     obs = create_observation("bash", "call-1", text, tmp_path)
     assert obs is not None
     ensure_stored(obs)
-    assert obs.file_path.read_text(encoding="utf-8") == text
+    assert obs.file_path.read_bytes() == text.encode("utf-8")
+    ensure_stored(obs)  # Reopening must validate the stored content hash and byte count.
     placeholder = placeholder_for(obs)
     assert obs.id in placeholder
     chunk = read_recall_chunk(obs.file_path, 0, max_bytes=4096, max_lines=50)
-    assert chunk.text == "line\n" * 50
-    assert chunk.bytes == chunk.next_offset == 250
+    assert chunk.text == line * 50
+    assert chunk.bytes == chunk.next_offset == len((line * 50).encode("utf-8"))
     assert chunk.lines == 50
     assert chunk.eof is False
 

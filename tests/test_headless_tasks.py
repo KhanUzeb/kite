@@ -116,6 +116,7 @@ def test_tasks_command_requires_file() -> None:
 def test_headless_jsonl_trace_redacts_bounds_and_appends(monkeypatch, workspace, kite_home, tmp_path, capsys) -> None:
     import json
     import stat
+    import sys
     import time
     from types import SimpleNamespace
 
@@ -188,7 +189,8 @@ def test_headless_jsonl_trace_redacts_bounds_and_appends(monkeypatch, workspace,
     assert delta["headers"]["authorization"] == "[REDACTED]"
     original = next(event for event in seen if event.kind == "stream_delta")
     assert original.payload["headers"]["authorization"] == secret and len(original.payload["text"]) == 8000
-    assert stat.S_IMODE(trace_path.stat().st_mode) == 0o600
+    if sys.platform != "win32":
+        assert stat.S_IMODE(trace_path.stat().st_mode) == 0o600
 
     # Reusing a runtime (REPL turns) appends a fresh run ID without retaining a sink.
     seen.clear()
@@ -205,3 +207,31 @@ def test_headless_jsonl_trace_redacts_bounds_and_appends(monkeypatch, workspace,
     monkeypatch.setenv("KITE_TRACE_JSONL", str(tmp_path))
     assert run_headless_task(task, no_context=True, no_compact=True, step_limit=3).ok
     assert capsys.readouterr().err.count("KITE_TRACE_JSONL failed") == 1
+
+
+def test_jsonl_trace_windows_permissions_are_best_effort(monkeypatch, tmp_path, capsys) -> None:
+    import json
+    import os
+    from types import SimpleNamespace
+
+    from kite.agent import runtime
+
+    # Model Windows without changing the host platform or pathlib's behavior.
+    trace_os = SimpleNamespace(**vars(os))
+    trace_os.name = "nt"
+    monkeypatch.delattr(trace_os, "fchmod", raising=False)
+
+    def denied_chmod(path, mode):
+        raise PermissionError("Windows permissions cannot be tightened")
+
+    trace_os.chmod = denied_chmod
+    monkeypatch.setattr(runtime, "os", trace_os)
+    trace_path = tmp_path / "trace.jsonl"
+    trace = runtime._JsonlTrace(str(trace_path))
+    try:
+        trace(Event("agent_start", {"task": "trace on Windows"}))
+    finally:
+        trace.close()
+    row = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert row["type"] == "agent_start" and row["task"] == "trace on Windows"
+    assert "KITE_TRACE_JSONL failed" not in capsys.readouterr().err

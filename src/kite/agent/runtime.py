@@ -51,7 +51,7 @@ _TRACE_TRUNCATED = "…[truncated]"
 
 
 class _JsonlTrace:
-    """One run's private, bounded event sink; failures only disable tracing."""
+    """Bounded event sink; owner-only on POSIX, best-effort permissions on Windows."""
 
     def __init__(self, path: str) -> None:
         from threading import Lock
@@ -66,7 +66,14 @@ class _JsonlTrace:
             # secure_io's atomic replacement helpers cannot append a live stream.
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             try:
-                os.fchmod(fd, 0o600)
+                if os.name == "nt":
+                    # Windows lacks fchmod and chmod only controls the read-only bit.
+                    try:
+                        os.chmod(path, 0o600)
+                    except OSError:
+                        pass
+                else:
+                    os.fchmod(fd, 0o600)
                 self._handle = os.fdopen(fd, "a", encoding="utf-8", buffering=1)
             except BaseException:
                 os.close(fd)
