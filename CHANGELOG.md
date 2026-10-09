@@ -2,6 +2,27 @@
 
 All notable changes to Kite are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] - 2026-10-09
+
+### Added
+- Opt-in, redacted JSONL runtime tracing with `KITE_TRACE_JSONL`.
+- `kite bench --suite full` with 43 measurements and MAD-aware `--save` / `--compare`.
+- Offline end-to-end smoke coverage, isolated worktrees, faster CI workflows, and CLI profiling.
+
+### Changed
+- Runtime hot paths improve model construction, headless startup, streaming, reasoning accumulation, path completion, picker performance, and large transcript/session operations.
+- Test suite uses named, isolated tests instead of mechanical batching; deterministic fixtures replace slow seams.
+- Benchmark workloads measure cold startup and prompt-cache preparation without contaminating the working directory.
+
+### Fixed
+- Prompt caching no longer reuses stale history after transcript truncation.
+- Repository symbol maps are populated despite circular imports.
+- Narrow-terminal streamed output handles chunk boundaries, wide characters, and tabs correctly.
+- Corrupt or missing session headers remain listable and resumable; transient SQLite locks no longer quarantine episodic data.
+- Resume exit codes, background-job watchdogs, shell output limits, secret redaction, interpreter selection, and invalid task argument handling are corrected.
+- Test isolation blocks accidental external network calls.
+
+
 ## [1.0.6] - 2026-10-05
 
 ### Added
