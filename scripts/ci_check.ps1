@@ -1,4 +1,6 @@
-# kite-release-version: 1.0.6
+1: # kite-release-version: 1.0.7
+# Core CI gates; run scripts/e2e_smoke.py separately for offline CLI/PTY QA.
+2: # kite-release-version: 1.0.7
 # Core CI gates; run scripts/e2e_smoke.py --headless-only separately for offline CLI QA.
 # Usage: .\scripts\ci_check.ps1 [-Release]  # -Release adds RELEASE doc + CHANGELOG check
 param([switch]$Release)

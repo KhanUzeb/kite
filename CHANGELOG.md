@@ -27,6 +27,23 @@ Representative before/after measurements from controlled optimization runs (not 
 ### Security
 - Bounded output capture, redaction-before-truncation, private trace files, and durable atomic writes: see [SECURITY.md](SECURITY.md).
 
+## [1.0.7] - 2026-10-09
+
+### Added
+- Offline end-to-end smoke coverage exercising the real CLI with a loopback recorded provider; isolated worktrees; faster CI tooling; and CLI profiling.
+- `KITE_TRACE_JSONL` opt-in redacted JSONL runtime tracing.
+- `kite bench --suite full` with 43 measurements and MAD-aware `--save` / `--compare`.
+
+### Changed
+- Runtime hot paths improve model construction, headless startup, streaming, reasoning accumulation, completion/picker performance, and large transcript/session operations.
+- Test suite refactored into named, isolated tests with deterministic fixtures and no external network calls.
+
+### Fixed
+- Prompt-cache stale history, missing repository symbol maps, and narrow-terminal stream boundary/width handling.
+- Session recovery, transient SQLite lock handling, resume exit codes, background-job watchdogs, shell output limits, pre-truncation secret redaction, interpreter selection, and invalid task argument prewarm.
+- Test environment leakage that could trigger real external provider requests.
+- Added developer workflow documentation for performance/behavior changes, runtime traces, and test policy.
+
 ## [1.0.6] - 2026-10-05
 
 ### Added
