@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 import shutil
 import sys
+from collections.abc import Iterator
+from typing import TextIO
 
 _PS_MARKERS = re.compile(
     r"(?i)(?:\bGet-|\bSet-|\bSelect-Object\b|\bWhere-Object\b|\$env:|\$_|\$PSItem|"
@@ -19,6 +21,21 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 def sanitize_shell_line(text: str) -> str:
     cleaned = _CONTROL_CHARS.sub("", text or "")
     return " ".join(cleaned.replace("\r", " ").replace("\n", " ").replace("\t", " ").split())
+
+
+def iter_bounded_lines(stream: TextIO, *, max_chars: int = 8192) -> Iterator[str]:
+    """Drain lines without retaining an unbounded, possibly secret-bearing line.
+
+    Oversized lines are omitted in full, rather than splitting a credential
+    across separately redacted chunks.
+    """
+    while line := stream.readline(max_chars + 1):
+        if len(line) <= max_chars:
+            yield line
+            continue
+        yield "...[oversized output line omitted]...\n"
+        while line and not line.endswith("\n"):
+            line = stream.readline(max_chars + 1)
 
 
 def _looks_powershell(command: str) -> bool:

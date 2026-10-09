@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from rich.cells import cell_len
 from rich.console import Console
 from rich.padding import Padding
 from rich.panel import Panel
@@ -35,6 +36,7 @@ from kite.ui.style import (
     SYMBOL_USER,
     SYMBOL_WARN,
     cell_continuation_indent,
+    clip_text,
     last_line_width,
     make_console,
     wrap_hanging,
@@ -143,14 +145,6 @@ def _is_answer_only_turn(task: str) -> bool:
     return bool(task) and _is_casual_user_turn(task)
 
 
-def _ellipsize(text: str, limit: int) -> str:
-    """Shorten an overlong card segment so narrow terminals don't wrap mid-token."""
-    text = text or ""
-    if len(text) <= limit or limit <= 1:
-        return text
-    return text[: limit - 1] + "…"
-
-
 def render_startup_card(
     *,
     version: str,
@@ -175,13 +169,13 @@ def render_startup_card(
         else "A lightweight coding agent for inspecting, editing, and verifying code."
     )
     body.append(blurb + "\n", style="kite.muted")
-    body.append(_ellipsize(f"{provider}/{model}", 48), style="kite.highlight")
+    body.append(clip_text(f"{provider}/{model}", 48), style="kite.highlight")
     body.append(f" · {mode} · ", style="kite.muted")
-    body.append(_ellipsize(workspace, 32), style="kite.muted")
+    body.append(clip_text(workspace, 32), style="kite.muted")
     shown_files = list(context_files or [])[:3]
     if shown_files:
         body.append(" · ", style="kite.muted")
-        body.append(" · ".join(_ellipsize(name, 32) for name in shown_files), style="kite.muted")
+        body.append(" · ".join(clip_text(name, 32) for name in shown_files), style="kite.muted")
         extra = len(context_files or []) - len(shown_files)
         if extra > 0:
             body.append(f" · +{extra} more", style="kite.muted")
@@ -405,9 +399,6 @@ def render_session_transcript(
 def _composer_owns_bottom(state: SessionUiState) -> bool:
     return state.busy
 
-def _composer_suppresses_scrollprint(state: SessionUiState) -> bool:
-    return state.busy
-
 _RENDER_EVENT_KINDS = (
     "attach",
     "route",
@@ -490,8 +481,8 @@ class RunDisplay:
         self._anim_tick = 0
         self._thinking_open = False
         self._thinking_buf: list[str] = []
+        self._thinking_chars = 0
         self._stream_coalesce = StreamCoalescer()
-        self._answer_line = ""
         self._answer_line_chars = 0
         self._answer_col = 0
         self._thinking_col = 0
@@ -529,7 +520,9 @@ class RunDisplay:
     def _wrap_width(self) -> int:
         """Usable row width, or 0 when the width is unknown (defer to Rich)."""
         try:
-            width = int(getattr(self.console, "width", 0) or 0)
+            # Rich's dumb-terminal size fallback ignores an explicit width
+            # unless height is also set. The requested width still wins here.
+            width = int(getattr(self.console, "_width", None) or self.console.width)
         except (TypeError, ValueError):
             return 0
         return width if width > 16 else 0
@@ -554,7 +547,7 @@ class RunDisplay:
         if width and body:
             wrapped, held = wrap_hanging_parts(
                 body,
-                first_indent=" " * (col + len(indent)),
+                first_indent=" " * (col + cell_len(indent)),
                 cont_indent=cont,
                 width=width,
                 # Hold the trailing word while more of it may still arrive;
@@ -562,31 +555,20 @@ class RunDisplay:
                 defer_tail=not final,
             )
             self._answer_hold = held
-            if not wrapped or not wrapped.strip():
-                # Everything is a still-growing word — print nothing yet rather
-                # than a bare gutter with no body. The answer path never
-                # ellipsizes (unlike the tool _clip paths): a bare "…" stub
-                # names nothing, so a fragment that would collapse to one is
-                # held the same way until more of its word arrives.
-                if held:
-                    return False
-                # No pending tail either (e.g. whitespace-only body): nothing
-                # to emit, but the prefix was not consumed so the row stays.
+            if not wrapped:
                 return False
             if "\n" in wrapped:
-                # The cursor now sits after the final continuation row, which
-                # starts at the continuation indent.
-                col = len(cont) + last_line_width(wrapped)
+                col = last_line_width(wrapped)
             else:
-                col += len(wrapped)
+                col += cell_len(indent) + cell_len(wrapped)
             body = wrapped
         else:
-            col += len(body)
+            col += cell_len(indent) + cell_len(body)
         block = Text()
         block.append(indent, style=style)
         block.append(body, style=style)
-        self._answer_col = col + len(indent)
-        self._print(block, end="", highlight=False, markup=False)
+        self._answer_col = col
+        self._print(block, end="", highlight=False, markup=False, soft_wrap=True)
         return True
 
     def _flush_console(self) -> None:
@@ -639,7 +621,6 @@ class RunDisplay:
             self._print()
             self._streaming = False
         self._need_prefix = False
-        self._answer_line = ""
         self._answer_line_chars = 0
         self._answer_col = 0
         self._thinking_col = 0
@@ -654,7 +635,6 @@ class RunDisplay:
         self._channel = channel
         self._need_prefix = True
         self._did_first_line = False
-        self._answer_line = ""
         self._answer_line_chars = 0
         self._answer_col = 0
         self._answer_hold = ""
@@ -722,7 +702,7 @@ class RunDisplay:
                     # A wrapped fragment restarts at column 0; an unwrapped one
                     # keeps growing the row it shares with earlier chunks.
                     self._thinking_col = (
-                        last_line_width(wrapped) if "\n" in wrapped else self._thinking_col + len(part)
+                        last_line_width(wrapped) if "\n" in wrapped else self._thinking_col + cell_len(part)
                     )
                     part = wrapped
                 block.append(part, style="kite.thinking")
@@ -732,18 +712,16 @@ class RunDisplay:
             elif i > 0:
                 self._streaming = True
         if block.plain:
-            self._print(block, end="", highlight=False, markup=False)
+            self._print(block, end="", highlight=False, markup=False, soft_wrap=True)
 
     def _stream_write_answer(self, text: str) -> None:
         """Answer channel — newlines come from the model, never from chunk boundaries."""
         self._ensure_channel("answer")
-        while text:
-            index = text.find("\n")
-            if index < 0:
-                self._write_answer_partial(text)
-                return
-            line, text = text[:index], text[index + 1 :]
+        lines = text.split("\n")
+        for line in lines[:-1]:
             self._write_answer_line(line)
+        if lines[-1]:
+            self._write_answer_partial(lines[-1])
 
     def _emit_fence_truncated(self) -> None:
         """Paint the explicit overflow marker once per fenced block."""
@@ -778,13 +756,11 @@ class RunDisplay:
             return
         if self._in_code_fence:
             if self._fence_truncated:
-                self._answer_line += fragment
                 self._answer_line_chars += len(fragment)
                 return
             room = _MAX_FENCE_STREAM_CHARS - self._fence_chars
             if room <= 0:
                 self._emit_fence_truncated()
-                self._answer_line += fragment
                 self._answer_line_chars += len(fragment)
                 return
             if len(fragment) > room:
@@ -810,7 +786,6 @@ class RunDisplay:
                 self._did_first_line = True
         else:
             self._emit_cell_line(body, style, indent="", cont=cont, final=final)
-        self._answer_line += fragment
         self._answer_line_chars += len(fragment)
         self._streaming = True
         if emit_after:
@@ -828,7 +803,6 @@ class RunDisplay:
         if self._answer_line_chars:
             if self._in_code_fence and self._fence_truncated and not line.strip().startswith("```"):
                 self._fence_chars += len(line)
-                self._answer_line = ""
                 self._answer_line_chars = 0
                 self._need_prefix = True
                 self._streaming = True
@@ -857,7 +831,6 @@ class RunDisplay:
             elif self._in_code_fence:
                 if self._fence_truncated:
                     self._fence_chars += len(line) + 1
-                    self._answer_line = ""
                     self._answer_line_chars = 0
                     self._need_prefix = True
                     self._streaming = True
@@ -869,7 +842,6 @@ class RunDisplay:
                         self._did_first_line = True
                         block.append(line[:room], style=self._answer_style())
                     self._fence_chars += len(line) + 1
-                    self._answer_line = ""
                     self._answer_line_chars = 0
                     self._need_prefix = True
                     self._streaming = True
@@ -909,26 +881,13 @@ class RunDisplay:
                     block.append(indent, style=self._answer_style())
                     self._did_first_line = True
                     block.append(body, style=style)
-        self._answer_line = ""
         self._answer_line_chars = 0
         self._answer_col = 0
         self._answer_hold = ""
         self._need_prefix = True
         self._streaming = True
         block.append("\n")
-        self._print(block, end="", highlight=False, markup=False)
-        # A glyph or fence prefix was baked into `block`, not emitted through
-        # `_emit_cell_line`, so it never advanced the column tracker. Re-anchor
-        # on the final row so the next line's wrap measures from the real cursor.
-        self._answer_col = last_line_width(block.plain)
-
-    @staticmethod
-    def _leading_columns(row: str) -> int:
-        """Columns before the first non-blank cell — the row's left edge."""
-        from rich.cells import cell_len
-
-        stripped = row.lstrip(" ")
-        return cell_len(row[: len(row) - len(stripped)])
+        self._print(block, end="", highlight=False, markup=False, soft_wrap=True)
 
     @staticmethod
     def _body_text_offset(body: str) -> int:
@@ -957,13 +916,15 @@ class RunDisplay:
             return "kite.answer", f"{lead}• {stripped[2:]}"
         return "kite.answer", line
 
-    def _thinking_text(self) -> str:
-        return "".join(self._thinking_buf)
+    def thinking_text(self) -> str:
+        """Materialize the live reasoning only when a reader asks for it."""
+        return "".join(self._thinking_buf) if self._thinking_buf else self.state.last_thinking
 
     def _finalize_thinking(self) -> None:
-        text = self._thinking_text().strip()
+        text = "".join(self._thinking_buf).strip()
         if not text:
             self._thinking_buf.clear()
+            self._thinking_chars = 0
             self._thinking_open = False
             return
         from kite.ui.output_view import format_thinking_text
@@ -973,25 +934,30 @@ class RunDisplay:
         lines = len([ln for ln in self.state.last_thinking.splitlines() if ln.strip()]) or 1
         chars = len(self.state.last_thinking)
         if self.state.thinking_expanded:
-            self._stream_write(self.state.last_thinking, channel="thinking")
+            self._flush_stream_buffers()
+            # Only the pinned composer suppressed these chunks. Otherwise they
+            # are already in scrollback: replaying the buffer duplicates them.
+            if _composer_owns_bottom(self.state):
+                self._stream_write(self.state.last_thinking, channel="thinking")
             self._end_stream_line()
         else:
             self._print(render_thinking_summary(chars, lines), highlight=False)
         self._thinking_buf.clear()
+        self._thinking_chars = 0
         self._thinking_open = False
 
     def _append_thinking(self, text: str) -> None:
         if not text:
             return
         self._thinking_buf.append(text)
-        self.state.last_thinking = self._thinking_text()
+        self._thinking_chars += len(text)
         if self.state.thinking_expanded:
             if not self._thinking_open:
                 self._print(Text("Thinking", style="kite.thinking bold"))
                 self._thinking_open = True
             self._coalesced_stream("thinking", text)
             return
-        chars = len(self.state.last_thinking)
+        chars = self._thinking_chars
         if not self._thinking_open:
             self._print(Text("Thinking", style="kite.thinking bold"))
             self._thinking_open = True
@@ -1022,7 +988,6 @@ class RunDisplay:
             # Bounded tail: enough to tell whether the final submit report
             # repeats what is already on screen.
             self._stream_tail = (self._stream_tail + chunk)[-_STREAM_TAIL_CHARS:]
-        self._flush_console()
 
     def flush_due_streams(self) -> None:
         """Paint coalescer partials stalled past their latency (timer flush)."""
@@ -1146,7 +1111,6 @@ class RunDisplay:
         finally:
             self._streaming = False
             self._need_prefix = True
-            self._answer_line = ""
             self._answer_line_chars = 0
             self._answer_col = 0
             self._thinking_col = 0
@@ -1178,6 +1142,7 @@ class RunDisplay:
         self.state.interrupted = False
         self._thinking_open = False
         self._thinking_buf.clear()
+        self._thinking_chars = 0
         if not self.composer_owns_input:
             self.print_user_turn(str(p.get("task") or "").strip())
         self._answer_only_turn = _is_answer_only_turn(str(p.get("task") or ""))
@@ -1247,14 +1212,11 @@ class RunDisplay:
             return
         if self._thinking_buf:
             self._finalize_thinking()
-        # Deferred replay buffer when the composer owns the bottom (live prints
-        # during the turn are erased on repaint/exit). Bounded so a huge
-        # generation cannot grow memory without limit. Live runs paint
-        # directly and leave this empty so finish skips the repaint.
+        # Retain the full answer while the composer suppresses live printing.
+        # A chunk-count cap silently lost the start of long answers; release
+        # the replay buffer as soon as the completed turn is painted.
         if _composer_owns_bottom(self.state):
             self._deferred_answer_parts.append(text)
-            if len(self._deferred_answer_parts) > 2000:
-                del self._deferred_answer_parts[:500]
         # Mirror the answer tail into the running line so the footer stays
         # live through a long generation instead of reading as frozen.
         self._note_answer_tail(text)
@@ -1555,7 +1517,7 @@ class RunDisplay:
         if limit > 0:
             self.state.budget_limit = limit
             self._touch_state()
-        if _composer_suppresses_scrollprint(self.state):
+        if self.state.busy:
             return
         note = str(p.get("note") or "")
         if note:
@@ -1947,6 +1909,7 @@ class RunDisplay:
             return
         submission = str(payload.get("submission") or payload.get("content") or "").strip()
         streamed = "".join(self._deferred_answer_parts).strip()
+        self._deferred_answer_parts.clear()
         # Live streaming is suppressed while the composer owns the bottom
         # (re-entrant prints from the toolbar poll are erased on repaint), so
         # nothing painted live during a busy turn — repaint the deferred
@@ -2196,12 +2159,3 @@ class RunDisplay:
             except ValueError:
                 pass
         self.print_status()
-
-def make_run_display(
-    console: Console,
-    *,
-    quiet: bool,
-    verbose: bool,
-    state: SessionUiState | None = None,
-) -> RunDisplay:
-    return RunDisplay(console, quiet=quiet, verbose=verbose, state=state)

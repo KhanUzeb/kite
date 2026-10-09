@@ -73,8 +73,8 @@ def prepare_child_env(
         return base
     resolved = venv
     if resolved is None:
-        roots: list[Path] = [Path(cwd).expanduser().resolve()]
+        roots: list[str | Path] = [cwd]
         if project_root:
-            roots.append(Path(project_root).expanduser().resolve())
+            roots.append(project_root)
         resolved = discover_venv(*roots)
     return apply_venv(base, resolved)

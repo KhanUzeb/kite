@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 from pathlib import Path
 
 import pytest
@@ -74,3 +76,42 @@ def _stub_oauth_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("kite.providers.byos.get_auth_provider", lambda _key: stub)
     # LiteLLM ChatGPT OAuth device-code login hangs pytest when resolving model capabilities.
     monkeypatch.setattr("kite.providers.capabilities._tools_from_litellm", lambda *_a, **_k: None)
+
+
+@pytest.fixture(autouse=True)
+def _block_outbound_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Allow local test servers and Unix sockets, never external services."""
+    connect = socket.socket.connect
+    connect_ex = socket.socket.connect_ex
+    create_connection = socket.create_connection
+
+    def require_loopback(address) -> None:
+        host = address[0]
+        if isinstance(host, bytes):
+            host = host.decode("ascii")
+        if host == "localhost":
+            return
+        try:
+            allowed = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            allowed = False
+        if not allowed:
+            raise AssertionError(f"External network access blocked in tests: {address!r}")
+
+    def local_connect(sock, address):
+        if sock.family != getattr(socket, "AF_UNIX", None):
+            require_loopback(address)
+        return connect(sock, address)
+
+    def local_connect_ex(sock, address):
+        if sock.family != getattr(socket, "AF_UNIX", None):
+            require_loopback(address)
+        return connect_ex(sock, address)
+
+    def local_create_connection(address, *args, **kwargs):
+        require_loopback(address)
+        return create_connection(address, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", local_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", local_connect_ex)
+    monkeypatch.setattr(socket, "create_connection", local_create_connection)

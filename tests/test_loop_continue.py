@@ -47,7 +47,7 @@ def _agent(model, env=None, **kw):
     return DefaultAgent(model, env, provider_max_retries=2, **kw)
 
 
-def _c_test_stream_stall_maps_to_provider_fault_not_error() -> None:
+def test_stream_stall_maps_to_provider_fault_not_error() -> None:
     assert _is_stream_stall(TimeoutError("stream timed out after 5s without completing"))
     from kite.models.litellm_model import StreamStalledError
 
@@ -61,7 +61,7 @@ def _c_test_stream_stall_maps_to_provider_fault_not_error() -> None:
     assert "stalled" in ei.value.error.lower()
 
 
-def _c_test_cancel_beats_stall() -> None:
+def test_cancel_beats_stall() -> None:
     agent = _agent(_StallModel())
     agent.messages = [{"role": "user", "content": "hi"}]
     agent._interrupt = True
@@ -71,7 +71,7 @@ def _c_test_cancel_beats_stall() -> None:
         agent.query()
 
 
-def _c_test_stalled_error_auto_continue_with_work() -> None:
+def test_stalled_error_auto_continue_with_work() -> None:
     todos = [{"status": "pending", "content": "finish edit"}]
     assert has_unfinished_work(todos=todos, exit_status="Stalled", tool_call_count=0)
     assert has_unfinished_work(todos=[], exit_status="Stalled", tool_call_count=2)
@@ -95,7 +95,7 @@ def _c_test_stalled_error_auto_continue_with_work() -> None:
     )
 
 
-def _c_test_tool_failure_does_not_end_loop() -> None:
+def test_tool_failure_does_not_end_loop() -> None:
     class _ToolModel:
         def format_message(self, **kwargs):
             return dict(kwargs)
@@ -106,32 +106,22 @@ def _c_test_tool_failure_does_not_end_loop() -> None:
                 for o in outputs
             ]
 
-    agent = _agent(_ToolModel(), _FailOnceEnv())
+    env = _FailOnceEnv()
+    agent = _agent(_ToolModel(), env, approver=lambda *_args: "approve")
     msg = {
         "role": "assistant",
         "content": "",
         "extra": {"actions": [{"tool": "bash", "id": "c1", "arguments": {"command": "false"}}]},
     }
     obs = agent.execute_actions(msg)
-    assert obs and agent.tool_call_count >= 0
-    # No exit marker — the loop continues after a single tool failure.
-    assert not agent.messages or agent.messages[-1].get("role") != "exit"
+    assert obs == [{"role": "tool", "tool_call_id": "c1", "content": "boom"}]
+    assert env.calls == 1
+    assert agent.execute_actions(msg) == [{"role": "tool", "tool_call_id": "c1", "content": "ok"}]
+    assert env.calls == 2
+    assert all(message.get("role") != "exit" for message in agent.messages)
 
 
-def _c_test_recoverable_stop_hint_suggests_continue() -> None:
+def test_recoverable_stop_hint_suggests_continue() -> None:
     hint = recoverable_stop_hint("Stalled", "Stopped after 3 idle turns")
     assert hint is not None and "continue" in hint and "Stopped after 3 idle turns" in hint
     assert recoverable_stop_hint("Submitted", "done") is None
-
-
-def test_batch_00() -> None:
-    """Consolidated (bodies unchanged): test_stream_stall_maps_to_provider_fault_not_error, test_cancel_beats_stall, test_stalled_error_auto_continue_with_work."""
-    _c_test_stream_stall_maps_to_provider_fault_not_error()
-    _c_test_cancel_beats_stall()
-    _c_test_stalled_error_auto_continue_with_work()
-
-def test_batch_01() -> None:
-    """Consolidated (bodies unchanged): test_tool_failure_does_not_end_loop, test_recoverable_stop_hint_suggests_continue."""
-    _c_test_tool_failure_does_not_end_loop()
-    _c_test_recoverable_stop_hint_suggests_continue()
-

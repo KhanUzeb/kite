@@ -12,30 +12,12 @@ from kite.config.readiness import (
 from kite.providers.byos import is_oauth_provider
 from kite.providers.catalog import load_catalog
 from kite.providers.credentials import (
-    configured_providers,
     env_file_path,
     inspect_provider_credentials,
     login_provider,
     logout_provider,
-    write_api_key,
 )
 from kite.providers.select import connect_interactive, select_provider_interactive
-
-# Re-export for tests and legacy imports.
-__all__ = [
-    "configured_providers",
-    "env_file_path",
-    "write_api_key",
-    "cmd_setup",
-    "cmd_keys",
-    "cmd_login",
-    "cmd_logout",
-    "run_setup_wizard",
-    "maybe_run_first_setup",
-    "print_providers_table",
-    "print_keys_table",
-]
-
 
 NARROW_PROVIDER_WIDTH = 72
 
@@ -175,8 +157,7 @@ def run_setup_wizard(console, *, provider: str | None = None) -> int:
         )
     )
 
-    rows = configured_providers()
-    ready = [name for name, ok, _ in rows if ok]
+    ready = status.configured_providers
     if ready:
         console.print(f"[green]Credentials ready[/] for: {', '.join(ready)}")
     else:

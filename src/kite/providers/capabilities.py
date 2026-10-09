@@ -67,12 +67,12 @@ def _tools_from_raw(raw: dict[str, Any] | None) -> bool | None:
 @functools.lru_cache(maxsize=256)
 def _litellm_openai_params(model: str, provider: str) -> frozenset[str] | None:
     """Cached LiteLLM supported OpenAI params — expensive on cold start."""
+    mid = (model or "").strip()
+    if not mid:
+        return None
     try:
         import litellm
     except Exception:
-        return None
-    mid = (model or "").strip()
-    if not mid:
         return None
     attempts: list[dict[str, Any]] = []
     if provider:
@@ -139,19 +139,16 @@ def model_supports_tools(
 ) -> bool | None:
     """Best-effort tool-calling support. None = unknown (do not warn).
 
-    ``local_only`` skips LiteLLM entirely (name hints + live payload only) —
-    for startup/resolve paths where importing LiteLLM (~seconds cold) would
-    block the composer. Unknown models report None, never a warning.
+    ``local_only`` skips LiteLLM entirely (live payload only) for startup /
+    resolve paths where importing LiteLLM would block the composer.
+    Unknown models report None, never a warning.
     """
     from_meta = _tools_from_raw(raw)
     if from_meta is not None:
         return from_meta
     if local_only:
         return None
-    from_litellm = _tools_from_litellm(provider, model, litellm_model)
-    if from_litellm is not None:
-        return from_litellm
-    return None
+    return _tools_from_litellm(provider, model, litellm_model)
 
 
 def agent_model_warning(

@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 
 from kite.util.cache import TtlCache
-
-try:
-    from kite.context.repomap import build_repo_map
-except ImportError:  # pragma: no cover
-    build_repo_map = None  # type: ignore[assignment,misc]
 
 PROJECT_MARKERS = (".git", "pyproject.toml", "package.json", "Cargo.toml", "go.mod")
 INSTRUCTION_BASENAMES = frozenset({"KITE.md", "AGENTS.md", "CONTEXT.md"})
@@ -31,6 +28,8 @@ SKIP_DIRS = {
     ".tox",
     ".kite",
 }
+MAX_SCAN_ENTRIES = 6_000
+MAX_GIT_STATUS_CHARS = 4_000
 
 
 @dataclass(frozen=True)
@@ -157,10 +156,11 @@ def discover_agents_files(cwd: Path) -> tuple[ContextFile, ...]:
     return tuple(files)
 
 
-def git_status_snippet(cwd: Path, *, max_chars: int = 4_000) -> str:
+def git_status_snippet(cwd: Path, *, max_chars: int = MAX_GIT_STATUS_CHARS) -> str:
+    """Porcelain status for the prompt; max_chars=0 retains all paths for ranking."""
     try:
         proc = subprocess.run(
-            ["git", "status", "--short", "--branch"],
+            ["git", "-c", "core.quotePath=false", "status", "--porcelain=v1", "--branch", "--untracked-files=normal"],
             cwd=str(cwd),
             capture_output=True,
             text=True,
@@ -172,8 +172,8 @@ def git_status_snippet(cwd: Path, *, max_chars: int = 4_000) -> str:
         return ""
     if proc.returncode != 0:
         return ""
-    out = (proc.stdout or "").strip()
-    if len(out) > max_chars:
+    out = (proc.stdout or "").rstrip()
+    if max_chars and len(out) > max_chars:
         return out[: max_chars - 15] + "\n...[truncated]"
     return out
 
@@ -182,25 +182,32 @@ def tree_snippet(root: Path, *, max_entries: int = 80) -> str:
     root = root.expanduser().resolve()
     lines: list[str] = [str(root.name) + "/"]
     count = 0
+    scanned = 0
 
     def walk(dir_path: Path, prefix: str = "") -> None:
-        nonlocal count
+        nonlocal count, scanned
         try:
-            entries = sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+            with os.scandir(dir_path) as entries:
+                batch = list(islice(entries, MAX_SCAN_ENTRIES - scanned))
+            scanned += len(batch)
+            visible = sorted(
+                (entry for entry in batch if entry.name not in SKIP_DIRS and not entry.name.startswith(".")),
+                key=lambda entry: (not entry.is_dir(follow_symlinks=False), entry.name.lower()),
+            )
         except OSError:
             return
-        visible = [e for e in entries if e.name not in SKIP_DIRS and not e.name.startswith(".")]
         for i, entry in enumerate(visible):
             if count >= max_entries:
                 lines.append(prefix + "…")
                 return
             last = i == len(visible) - 1
             branch = "└── " if last else "├── "
-            lines.append(f"{prefix}{branch}{entry.name}{'/' if entry.is_dir() else ''}")
+            is_dir = entry.is_dir(follow_symlinks=False)
+            lines.append(f"{prefix}{branch}{entry.name}{'/' if is_dir else ''}")
             count += 1
-            if entry.is_dir() and count < max_entries:
+            if is_dir and count < max_entries:
                 extension = "    " if last else "│   "
-                walk(entry, prefix + extension)
+                walk(Path(entry.path), prefix + extension)
 
     walk(root)
     return "\n".join(lines)
@@ -259,7 +266,7 @@ def gather_project_context(
         if include_git:
             # Unstaged/working-tree edits do not move HEAD, so refresh the
             # cheap status snippet instead of serving a stale one.
-            fresh_status = git_status_snippet(cwd_path)
+            fresh_status = git_status_snippet(cached.root)
             if fresh_status != cached.git_status:
                 from dataclasses import replace
 
@@ -267,33 +274,32 @@ def gather_project_context(
                 _CTX_CACHE.set(key, cached)
         return cached
 
-    def build() -> ProjectContext:
-        from kite.context.verify_hint import resolve_verification_command
+    from kite.context.repomap import build_repo_map, git_changed_paths
+    from kite.context.toolchains import render_toolchains, scout_toolchains
+    from kite.context.verify_hint import resolve_verification_command
 
-        root = find_project_root(cwd_path)
-        repo_map = ""
-        if include_repo_map and build_repo_map is not None:
-            repo_map = build_repo_map(root, max_chars=4_000)
-        verify_cmd, verify_src = resolve_verification_command(root)
-        toolchains = ""
-        try:
-            from kite.context.toolchains import render_toolchains, scout_toolchains
-
-            toolchains = render_toolchains(scout_toolchains(cwd_path, root))
-        except Exception:
-            toolchains = ""
-        return ProjectContext(
-            root=root,
-            cwd=cwd_path,
-            files=discover_agents_files(cwd_path),
-            git_status=git_status_snippet(cwd_path) if include_git else "",
-            tree_snippet=tree_snippet(root, max_entries=tree_max_entries) if include_tree else "",
-            repo_map=repo_map,
-            verification_command=verify_cmd,
-            verification_source=verify_src,
-            toolchains=toolchains,
+    root = find_project_root(cwd_path)
+    git_status = git_status_snippet(root, max_chars=0) if include_git else ""
+    repo_map = ""
+    if include_repo_map:
+        repo_map = build_repo_map(
+            root,
+            max_chars=4_000,
+            changed_paths=git_changed_paths(root, status=git_status),
         )
-
-    ctx = build()
+    if len(git_status) > MAX_GIT_STATUS_CHARS:
+        git_status = git_status[: MAX_GIT_STATUS_CHARS - 15] + "\n...[truncated]"
+    verify_cmd, verify_src = resolve_verification_command(root)
+    ctx = ProjectContext(
+        root=root,
+        cwd=cwd_path,
+        files=discover_agents_files(cwd_path),
+        git_status=git_status,
+        tree_snippet=tree_snippet(root, max_entries=tree_max_entries) if include_tree else "",
+        repo_map=repo_map,
+        verification_command=verify_cmd,
+        verification_source=verify_src,
+        toolchains=render_toolchains(scout_toolchains(cwd_path, root)),
+    )
     _CTX_CACHE.set(key, ctx)
     return ctx

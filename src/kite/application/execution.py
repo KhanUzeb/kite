@@ -9,14 +9,16 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from kite.agent.exceptions import InterruptAgentFlow
 from kite.application.policy import PolicyEngine
 from kite.application.tools import PolicyDecision, ToolCall, ToolIntent, ToolResult
+from kite.env.shell import iter_bounded_lines
 from kite.guardrails import redact_secrets
 from kite.guardrails.env_filter import filtered_child_env, is_single_gh_command, with_gh_tokens
 from kite.guardrails.process import popen_process_group_kwargs, terminate_process_tree
+from kite.guardrails.redact import redact_string
 
 _PASSTHROUGH_KEYS = (
     "returncode",
@@ -145,7 +147,7 @@ class ProcessResult:
 
 
 class ProcessRunner:
-    """Cross-platform subprocess runner with timeout and output limits."""
+    """Drain subprocess pipes with bounded, redacted capture and tree-aware timeouts."""
 
     def __init__(self, *, timeout_seconds: float = 120.0, max_output_bytes: int = 256_000) -> None:
         self.timeout_seconds = timeout_seconds
@@ -180,29 +182,74 @@ class ProcessRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
             **popen_process_group_kwargs(),
         )
-        try:
-            stdout, stderr = proc.communicate(timeout=self.timeout_seconds)
-        except subprocess.TimeoutExpired:
-            terminate_process_tree(proc)
+        buffers = [bytearray(), bytearray()]
+        truncated = [False, False]
+        errors = ["", ""]
+        limit = max(0, self.max_output_bytes)
+
+        def drain(stream: TextIO, index: int) -> None:
             try:
-                stdout, stderr = proc.communicate(timeout=1.0)
-            except subprocess.TimeoutExpired:
-                stdout, stderr = "", ""
-            return ProcessResult(-1, stdout or "", stderr or "timeout", time.monotonic() - start)
+                with stream:
+                    # Keep complete lines for redaction; the shared helper omits
+                    # oversized lines whole instead of exposing a secret prefix.
+                    for line in iter_bounded_lines(stream, max_chars=max(8192, limit)):
+                        if line == "...[oversized output line omitted]...\n":
+                            truncated[index] = True
+                        remaining = limit - len(buffers[index])
+                        if not remaining:
+                            truncated[index] = True
+                            continue
+                        safe = redact_string(line).encode("utf-8")
+                        buffers[index].extend(safe[:remaining])
+                        if len(safe) > remaining:
+                            truncated[index] = True
+            except Exception as exc:
+                errors[index] = str(exc)
+
+        assert proc.stdout is not None and proc.stderr is not None
+        readers = [
+            threading.Thread(target=drain, args=(stream, index), daemon=True)
+            for index, stream in enumerate((proc.stdout, proc.stderr))
+        ]
+        deadline = time.monotonic() + self.timeout_seconds
+        failure = ""
+        try:
+            for reader in readers:
+                reader.start()
+            # A descendant may retain a pipe after the parent exits. Include
+            # pipe EOF in the deadline, just as communicate(timeout=...) did.
+            for reader in readers:
+                reader.join(timeout=max(0.0, deadline - time.monotonic()))
+                if reader.is_alive():
+                    raise subprocess.TimeoutExpired(command, self.timeout_seconds)
+            proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            failure = "timeout"
         except Exception as exc:
+            failure = str(exc)
+        if failure:
             terminate_process_tree(proc)
-            return ProcessResult(-1, "", str(exc), time.monotonic() - start)
-        stdout, stderr, truncated = stdout or "", stderr or "", False
-        if len(stdout.encode()) > self.max_output_bytes:
-            stdout = stdout[: self.max_output_bytes] + "\n...[truncated]"
-            truncated = True
-        if len(stderr.encode()) > self.max_output_bytes:
-            stderr = stderr[: self.max_output_bytes] + "\n...[truncated]"
-            truncated = True
-        return ProcessResult(int(proc.returncode or 0), stdout, stderr, time.monotonic() - start, truncated)
+            drain_deadline = time.monotonic() + 1.0
+            for reader in readers:
+                if reader.ident is not None:
+                    reader.join(timeout=max(0.0, drain_deadline - time.monotonic()))
+        failure = failure or next((error for error in errors if error), "")
+        stdout, stderr = (
+            buffer.decode("utf-8", errors="ignore") + ("\n...[truncated]" if was_truncated else "")
+            for buffer, was_truncated in zip(buffers, truncated, strict=True)
+        )
+        return ProcessResult(
+            -1 if failure else int(proc.returncode or 0),
+            stdout,
+            stderr or failure,
+            time.monotonic() - start,
+            any(truncated),
+        )
 
 
 

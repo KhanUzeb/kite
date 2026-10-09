@@ -56,15 +56,10 @@ def _stable_parts(
     *,
     config: AgentRuntimeConfig,
     override_system: str | None = None,
-    cwd: str | Path | None = None,
-    project_context: ProjectContext | None = None,
 ) -> list[str]:
     """Cache-stable instructions: identical across turns for a given model."""
     prompts: PromptsConfig = config.prompts
-    discovered_override, _ = discover_system_prompt_files(
-        cwd if cwd is not None else (project_context.root if project_context else None)
-    )
-    base = (override_system or discovered_override or load_prompt_template(prompts.system)).strip()
+    base = (override_system or load_prompt_template(prompts.system)).strip()
     parts = [base]
     try:
         layers = load_prompt_template("memory_layers").strip()
@@ -85,18 +80,14 @@ def _setup_parts(
     memory: str | None = None,
     working_style: str | None = None,
     continuity: str | None = None,
-    cwd: str | Path | None = None,
 ) -> list[str]:
     """Per-request setup: date, environment, repo state, skills, rules (§2 Move).
 
     Sent as a user-role message after the cache breakpoint so volatile values
     never invalidate the stable system prefix.
     """
-    _, discovered_append = discover_system_prompt_files(
-        cwd if cwd is not None else (project_context.root if project_context else None)
-    )
     parts = [session_time_section()]
-    append = (append_system if append_system is not None else discovered_append) or ""
+    append = append_system or ""
     if append.strip():
         parts.append(append.strip())
     if project_context is not None:
@@ -131,13 +122,17 @@ def split_system_and_setup(
     cwd: str | Path | None = None,
 ) -> tuple[str, str]:
     """Return (stable_system, setup) for cache-friendly request layout."""
+    discovered_override, discovered_append = discover_system_prompt_files(
+        cwd if cwd is not None else (project_context.root if project_context else None)
+    )
     stable = "\n\n".join(p for p in _stable_parts(
-        config=config, override_system=override_system, cwd=cwd, project_context=project_context,
+        config=config, override_system=override_system or discovered_override,
     ) if p.strip()).strip() + "\n"
     setup = "\n\n".join(p for p in _setup_parts(
         config=config, project_context=project_context, skills=skills,
-        extra_sections=extra_sections, append_system=append_system,
-        memory=memory, working_style=working_style, continuity=continuity, cwd=cwd,
+        extra_sections=extra_sections,
+        append_system=append_system if append_system is not None else discovered_append,
+        memory=memory, working_style=working_style, continuity=continuity,
     ) if p.strip()).strip()
     if setup:
         setup += "\n"

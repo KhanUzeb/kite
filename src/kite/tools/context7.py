@@ -40,7 +40,7 @@ def _request(path: str, params: dict[str, str], *, api_key: str | None) -> tuple
     except HTTPError as e:
         status = e.code
         try:
-            body = e.read().decode("utf-8", errors="replace")
+            body = e.read(500_000).decode("utf-8", errors="replace")
         except OSError:
             body = str(e)
     except (URLError, OSError, TimeoutError, ValueError) as e:

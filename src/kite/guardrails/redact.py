@@ -28,10 +28,15 @@ def redact_string(text: str) -> str:
     if not text:
         return text
     out, _ = redact_secrets(text)
-    out = _AUTH_HEADER_RE.sub(r"\1Bearer " + REDACTED, out)
-    out = _COOKIE_RE.sub(r"\1" + REDACTED, out)
-    out = _PKCE_RE.sub(r"\1" + REDACTED, out)
-    out = _BEARER_RE.sub("Bearer " + REDACTED, out)
+    lower = out.lower() if out.isascii() else None
+    if lower is None or "authorization" in lower:
+        out = _AUTH_HEADER_RE.sub(r"\1Bearer " + REDACTED, out)
+    if lower is None or "set-cookie" in lower:
+        out = _COOKIE_RE.sub(r"\1" + REDACTED, out)
+    if lower is None or "code_verifier" in lower:
+        out = _PKCE_RE.sub(r"\1" + REDACTED, out)
+    if lower is None or "bearer" in lower:
+        out = _BEARER_RE.sub("Bearer " + REDACTED, out)
     return out.replace(REDACTED_SECRET, REDACTED)
 
 
@@ -46,10 +51,7 @@ def sanitize_value(value: Any) -> Any:
     if isinstance(value, str):
         return redact_string(value)
     if isinstance(value, bytes):
-        try:
-            return redact_string(value.decode("utf-8", errors="replace"))
-        except Exception:
-            return REDACTED
+        return redact_string(value.decode("utf-8", errors="replace"))
     if isinstance(value, dict):
         out: dict[Any, Any] = {}
         for key, val in value.items():

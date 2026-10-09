@@ -9,8 +9,9 @@ from typing import Any
 from kite.agent.events import Event
 from kite.context.window import (
     ContextUsage,
+    estimate_message_tokens,
+    estimate_text_tokens,
     estimate_tool_schema_tokens,
-    estimate_usage,
     scale_compaction_llm_ratio,
     should_compact,
 )
@@ -68,28 +69,49 @@ class LoopCompactor:
         self.last_usage: ContextUsage | None = None
         self._checkpoint_keys: set[str] = set()
         self._tool_tokens = estimate_tool_schema_tokens(self.tool_schemas)
-        self._last_msg_count = 0
+        self._measured_messages: list[dict] | None = None
+        self._measured_count = 0
 
     def _emit(self, kind: str, **payload: Any) -> None:
         if self.on_event:
             self.on_event(Event(kind=kind, payload=payload))  # type: ignore[arg-type]
 
-    def measure(self, messages: list[dict]) -> ContextUsage:
-        msg_count = sum(1 for m in messages if m.get("role") != "exit")
+    def measure(self, messages: list[dict], *, append_only: bool = False) -> ContextUsage:
+        """Measure arbitrary history, or just its tail when the caller owns an append-only prefix."""
+        start = 0
+        message_tokens = 0
+        message_count = 0
         if (
-            self.last_usage is not None
-            and msg_count == self._last_msg_count
-            and self.last_usage.message_count == msg_count
+            append_only
+            and messages is self._measured_messages
+            and len(messages) >= self._measured_count
+            and self.last_usage is not None
         ):
-            return self.last_usage
-        usage = estimate_usage(
-            system=self.system,
-            messages=messages,
+            start = self._measured_count
+            message_tokens = self.last_usage.message_tokens
+            message_count = self.last_usage.message_count
+        for index in range(start, len(messages)):
+            message = messages[index]
+            if message.get("role") != "exit":
+                message_tokens += estimate_message_tokens(message)
+                message_count += 1
+        system_tokens = estimate_text_tokens(self.system)
+        total = system_tokens + message_tokens + self._tool_tokens
+        if messages and messages[0].get("role") == "system" and self.system:
+            total -= estimate_text_tokens(str(messages[0].get("content") or ""))
+        usage = ContextUsage(
+            total_tokens=max(0, total),
+            system_tokens=system_tokens,
+            message_tokens=message_tokens,
             tool_tokens=self._tool_tokens,
+            message_count=message_count,
             window=self.config.window,
         )
+        self._measured_messages = messages
+        self._measured_count = len(messages)
+        if usage == self.last_usage:
+            return self.last_usage
         self.last_usage = usage
-        self._last_msg_count = msg_count
         self._emit(
             "context",
             total_tokens=usage.total_tokens,
@@ -99,8 +121,10 @@ class LoopCompactor:
         )
         return usage
 
-    def maybe_compact(self, messages: list[dict], *, force: bool = False) -> CompactionResult:
-        usage = self.measure(messages)
+    def maybe_compact(
+        self, messages: list[dict], *, force: bool = False, append_only: bool = False
+    ) -> CompactionResult:
+        usage = self.measure(messages, append_only=append_only)
         before = len(messages)
 
         checkpoint = None

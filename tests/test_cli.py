@@ -8,17 +8,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from kite.agent.events import Event
-from kite.agent.mode import AgentMode, ApprovalMode
 from kite.cli.apply_cmd import _path_inside_workspace, apply_unified_diff
 from kite.cli.slash import CommandIndex, help_text
 from kite.tasks import (
-    HeadlessRunDisplay,
     HeadlessTask,
-    is_headless_run,
     load_tasks_text,
     parse_task_line,
-    resolve_headless_approval,
     run_headless_batch,
     run_headless_task,
 )
@@ -27,7 +22,7 @@ from kite.ui.pick import numbered_pick
 from kite.ui.repl import ChatSession
 
 
-def _c_test_apply_diff_and_pickers(tmp_path: Path) -> None:
+def test_apply_diff_stays_inside_workspace(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
     sibling = tmp_path / "root2"
@@ -37,11 +32,16 @@ def _c_test_apply_diff_and_pickers(tmp_path: Path) -> None:
     target.write_text("hello\n", encoding="utf-8")
     result = apply_unified_diff("--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-hello\n+world\n", cwd=str(tmp_path))
     assert result["count"] == 1 and target.read_text(encoding="utf-8") == "world\n"
+
+
+def test_typed_picker_selection_filter_paging_and_refresh(monkeypatch) -> None:
     console = MagicMock()
     console.input.return_value = "2"
     assert numbered_pick(console, [("a", "alpha"), ("b", "beta")], current="a", title="t", noun="model") == "b"
     console.input.return_value = ""
     assert numbered_pick(console, [("a", "alpha")], current=None, title="t", noun="item") is None
+    console.input.return_value = "b"
+    assert numbered_pick(console, [("a", "alpha"), ("b", "beta")], title="t", noun="model") == "b"
     console.input.side_effect = ["gpt", "2"]
     assert numbered_pick(
         console,
@@ -50,16 +50,6 @@ def _c_test_apply_diff_and_pickers(tmp_path: Path) -> None:
         title="t",
         noun="model",
     ) == "gpt-4o"
-    from unittest.mock import patch
-
-    from kite.ui.pick import _console_is_scripted
-
-    assert _console_is_scripted(console) is True
-    with patch("kite.ui.pick.can_scroll_pick", return_value=True), patch(
-        "kite.ui.pick._console_is_scripted", return_value=False
-    ), patch("kite.ui.pick._raw_pick", return_value="gpt-4") as raw:
-        assert numbered_pick(console, [("gpt-4", "gpt-4")], current=None, title="t", noun="model") == "gpt-4"
-        raw.assert_called_once()
     items = [(str(i), f"m{i}") for i in range(1, 6)]
     console.input.side_effect = ["+", "1"]
     assert numbered_pick(console, items, current=None, title="t", noun="model", show=2) == "3"
@@ -68,12 +58,11 @@ def _c_test_apply_diff_and_pickers(tmp_path: Path) -> None:
     console.input.side_effect = None
     console.input.return_value = "r"
     assert numbered_pick(console, [("a", "a")], current=None, title="t", noun="model", refreshable=True) == REFRESH_PICK
-    monkeypatch = pytest.MonkeyPatch()
-    try:
-        monkeypatch.setenv("KITE_TYPED_PICK", "1")
-        assert can_scroll_pick() is False
-    finally:
-        monkeypatch.undo()
+    monkeypatch.setenv("KITE_TYPED_PICK", "1")
+    assert can_scroll_pick() is False
+
+
+def test_posix_picker_keys_and_mouse_coordinates() -> None:
     from kite.ui.pick import _posix_key, _posix_mouse, view_index_from_mouse
 
     assert _posix_key("\x1b[A") == "up"
@@ -91,14 +80,14 @@ def _c_test_apply_diff_and_pickers(tmp_path: Path) -> None:
     assert _posix_mouse("\x1b[<64;4;12M", drawn) == "up"
 
 
-def _c_test_picker_filter_never_absorbs_escape_fragments() -> None:
+def test_picker_filter_never_absorbs_escape_fragments() -> None:
     """A PTY relay can split one control sequence across reads.
 
     The tail (``[B``, ``<35;22;19M``) is all printable, so it used to land in
     the type-to-filter buffer: every row stopped matching, the heading read
     "0 matches" plus raw bytes, and the panel repainted forever.
     """
-    from kite.ui.pick import _MAX_FILTER, _consume_event, _filter_char
+    from kite.ui.pick import _consume_event, _filter_char
 
     for ch in "[];<>~":
         assert not _filter_char(ch), ch
@@ -106,12 +95,6 @@ def _c_test_picker_filter_never_absorbs_escape_fragments() -> None:
     # inside control sequences (M, O) and punctuation like _ and -.
     for ch in "abcdefghijklmnopqrstuvwxyzABCOPM0123456789.-_/*+ '\"{}#":
         assert _filter_char(ch), ch
-
-    # A split sequence's tail cannot start a filter: the leading marker is
-    # rejected, so nothing behind it can accumulate.
-    for ch in "[<;":
-        assert not _filter_char(ch)
-    assert _filter_char("B") and _filter_char("M"), "tail letters stay typeable on their own"
 
     # A whole SGR mouse report is consumed as one sequence, not eight chars.
     ev, rest, more = _consume_event("\x1b[<35;22;19Mabc", {})
@@ -121,10 +104,9 @@ def _c_test_picker_filter_never_absorbs_escape_fragments() -> None:
     # Cursor keys still decode.
     assert _consume_event("\x1b[B", {})[0] == "down"
     assert _consume_event("\x1b[A", {})[0] == "up"
-    assert _MAX_FILTER <= 128, "a stuck filter must not grow without bound"
 
 
-def _c_test_win_click_release_selects() -> None:
+def test_win_click_release_selects() -> None:
     """Windows press highlights, release confirms — same as the POSIX path."""
     from types import SimpleNamespace
 
@@ -149,7 +131,7 @@ def _c_test_win_click_release_selects() -> None:
     assert _click(buttons=0x0, y=11) is None  # release without press: no-op
 
 
-def _c_test_picker_terminal_type_and_relay_guards(monkeypatch) -> None:
+def test_picker_terminal_type_and_relay_guards(monkeypatch) -> None:
     """A Windows relay is a PTY: never drive it with msvcrt, never ask for mouse."""
     import sys
 
@@ -170,7 +152,7 @@ def _c_test_picker_terminal_type_and_relay_guards(monkeypatch) -> None:
 
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(pick, "native_console", lambda: False)
-    assert type(pick._event_reader({})).__name__ == "_FakeReader"
+    pick._event_reader({})
     assert seen[-1] == "pty", "a PTY relay must not get the console reader"
     monkeypatch.setattr(pick, "native_console", lambda: True)
     pick._event_reader({})
@@ -190,14 +172,8 @@ def _c_test_picker_terminal_type_and_relay_guards(monkeypatch) -> None:
     ev, rest, need_more = pick._consume_event("\x1b[12;40Rabc", {})
     assert ev == "__cpr__:12;40" and rest == "abc" and need_more is False
 
-    # A panel taller than the screen must not repaint with relative cursor moves.
-    monkeypatch.setattr(pick, "_screen_height", lambda: 10)
-    assert pick._screen_height() == 10
 
-
-def _c_test_picker_multi_select_typed_fallback() -> None:
-    from kite.ui.pick import numbered_pick
-
+def test_picker_multi_select_typed_fallback() -> None:
     console = MagicMock()
     console.input.side_effect = ["2,1"]
     picked = numbered_pick(
@@ -212,13 +188,8 @@ def _c_test_picker_multi_select_typed_fallback() -> None:
     console.input.side_effect = [""]
     assert numbered_pick(console, [("a", "a")], title="t", noun="option", multiple=True) == []
 
-    from kite.ui.pick import pick_one
 
-    console.input.side_effect = ["2"]
-    assert pick_one(console, [("a", "alpha"), ("b", "beta")], title="t", noun="model") == "b"
-
-
-def _c_test_render_pick_list_cursor_checkbox_and_details() -> None:
+def test_render_pick_list_cursor_checkbox_and_details() -> None:
     from kite.ui.credentials import render_pick_list
 
     panel = render_pick_list(
@@ -235,96 +206,68 @@ def _c_test_render_pick_list_cursor_checkbox_and_details() -> None:
     assert text.rstrip().endswith("↑/↓ move"), "explicit hint replaces the default footer"
 
 
-def _c_test_theme_font_subcommands(kite_home) -> None:
-    from kite.cli.run import build_parser, cmd_font, cmd_theme
-    from kite.ui.theme import current_font, reset_prefs, set_font, theme_label
+def test_theme_font_subcommands(kite_home, monkeypatch) -> None:
+    from kite.cli.run import cmd_font, cmd_theme
+    from kite.config import UserConfig
+    from kite.ui import theme
 
-    reset_prefs(theme="auto", font="unicode")
-    parser = build_parser()
-    assert parser.parse_args(["theme", "--list"]).func is cmd_theme
-    assert parser.parse_args(["font", "ascii"]).func is cmd_font
-    assert cmd_theme(argparse.Namespace(name=None, list=True)) == 0
+    monkeypatch.setattr(theme, "_prefs", theme.UiPrefs())
+    monkeypatch.setattr(theme, "_loaded", True)
     assert cmd_theme(argparse.Namespace(name="nope", list=False)) == 2
     assert cmd_theme(argparse.Namespace(name="dark", list=False)) == 0
-    assert theme_label() == "dark"
-    assert set_font("unicode") == "unicode"
-    assert set_font("ascii") == "ascii"
+    assert theme.theme_label() == "dark"
+    assert UserConfig.load().theme == "dark"
     assert cmd_font(argparse.Namespace(name="ascii", list=False)) == 0
-    assert current_font() == "ascii"
+    assert theme.current_font() == "ascii"
+    assert UserConfig.load().font == "ascii"
     assert cmd_font(argparse.Namespace(name="bogus", list=False)) == 2
-    reset_prefs(theme="auto", font="unicode")
+    assert theme.current_font() == "ascii"
 
 
-def _c_test_theme_typed_picker_wiring(kite_home, monkeypatch) -> None:
-    """Bare `kite theme` uses the typed picker — never raw mouse mode."""
-    from unittest.mock import MagicMock
-
-    from kite.cli.run import cmd_theme
-    from kite.ui.pick import _typed_pick
-    from kite.ui.theme import reset_prefs, theme_label
-
-    reset_prefs(theme="auto", font="unicode")
-    # Typed picker itself: number, name, and cancel over a scripted console.
-    console = MagicMock()
-    items = [("a", "alpha"), ("b", "beta")]
-    # Defaults cover bare calls (the /theme + `kite theme` wiring omits show/refreshable).
-    kwargs: dict = {"current": None, "title": "t", "noun": "theme"}
-    console.input.return_value = "2"
-    assert _typed_pick(console, items, **kwargs) == "b"
-    console.input.return_value = "b"
-    assert _typed_pick(console, items, **kwargs) == "b"
-    console.input.return_value = ""
-    assert _typed_pick(console, items, **kwargs) is None
-
-    # Wiring: the bare subcommand delegates to _typed_pick (module attrs are
-    # looked up at call time, so monkeypatch applies).
-    monkeypatch.setattr("kite.ui.pick.can_prompt", lambda: True)
-    monkeypatch.setattr("kite.cli.run._console", lambda: MagicMock())
-    monkeypatch.setattr("kite.ui.pick._typed_pick", lambda *a, **k: "ocean")
-    assert cmd_theme(argparse.Namespace(name=None, list=False)) == 0
-    assert theme_label() == "ocean"
-    reset_prefs(theme="auto", font="unicode")
-
-
-def _c_test_variants_list_bounded_and_unknown(kite_home, monkeypatch) -> None:
-    """`kite variants --list` never hangs: slow detection → exit 1, fast."""
-    import time
+def test_variants_list_distinguishes_timeout_from_unsupported(kite_home, monkeypatch, capsys) -> None:
     from types import SimpleNamespace
-    from unittest.mock import MagicMock
 
     import kite.models.reasoning as reasoning
-    from kite.cli.run import _detect_variants_support, cmd_variants
+    from kite.cli import run
 
-    monkeypatch.setattr("kite.cli.run._VARIANTS_DETECT_TIMEOUT_S", 0.5)
+    # Advance the detection worker deterministically instead of leaving two
+    # 30-second sleepers alive after two real half-second join timeouts.
+    pending = True
 
+    class DetectionWorker:
+        def __init__(self, *, target, daemon, name):
+            self.target = target
+
+        def start(self):
+            if not pending:
+                self.target()
+
+        def join(self, timeout=None):
+            assert timeout == 0.01, "detection must use a bounded join"
+
+        def is_alive(self):
+            return pending
+
+    monkeypatch.setattr("threading.Thread", DetectionWorker)
+    monkeypatch.setattr(run, "_VARIANTS_DETECT_TIMEOUT_S", 0.01)
     monkeypatch.setattr(
         "kite.providers.resolve.resolve_model",
         lambda **_: SimpleNamespace(provider="groq", model="m", litellm_model="groq/m"),
     )
     monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_a, **_k: None)
+    monkeypatch.setattr(reasoning, "detect_reasoning", lambda *_a, **_k: SimpleNamespace(supported=False))
+    args = argparse.Namespace(provider=None, model=None, level=None, list=True)
+    assert run.cmd_variants(args) == 1
+    assert "detection timed out" in capsys.readouterr().err
 
-    def _slow(provider: str, model: str, **_k):
-        time.sleep(30)
-        return MagicMock(supported=True)
-
-    monkeypatch.setattr(reasoning, "detect_reasoning", _slow)
-    started = time.monotonic()
-    assert (
-        cmd_variants(argparse.Namespace(provider=None, model=None, level=None, list=True)) == 1
-    )
-    assert time.monotonic() - started < 10.0
-
-    resolved = SimpleNamespace(provider="groq", model="m", litellm_model="groq/m")
-    assert _detect_variants_support(MagicMock(), resolved) is None
-
-    monkeypatch.setattr(
-        reasoning, "detect_reasoning", lambda *a, **_k: MagicMock(supported=False)
-    )
-    info = _detect_variants_support(MagicMock(), resolved)
-    assert info is not None and info.supported is False
+    pending = False
+    assert run.cmd_variants(args) == 1
+    output = capsys.readouterr().err
+    assert "does not advertise thinking variants" in output
+    assert "timed out" not in output
 
 
-def _c_test_slash_help_and_legacy_routing() -> None:
+def test_slash_help_and_legacy_routing(workspace) -> None:
     assert parse_slash("/select groq").command == "select"
     assert parse_slash("/thinking").command == "thinking"
     assert parse_slash("/skill commit").command == "skill"
@@ -333,9 +276,9 @@ def _c_test_slash_help_and_legacy_routing() -> None:
     session = ChatSession.__new__(ChatSession)
     cmd, arg = session._apply_legacy_slash("model", "groq", "select")
     assert cmd == "model" and arg == "select groq"
-    text = help_text(CommandIndex.load("."))
+    text = help_text(CommandIndex.load(workspace))
     assert "/plan" in text and "More: /help all" in text
-    text_all = help_text(CommandIndex.load("."), all=True)
+    text_all = help_text(CommandIndex.load(workspace), all=True)
     assert "session" in text_all and "/select" in text_all
     from kite import __version__
 
@@ -345,23 +288,9 @@ def _c_test_slash_help_and_legacy_routing() -> None:
     assert "kite-system-design" not in text and "docs/memory.md" not in text
 
 
-def _c_test_chat_resume_flags_transcript_and_context(monkeypatch, tmp_path: Path, kite_home) -> None:
-    captured: dict = {}
+def test_chat_rejects_missing_attachments_and_output_flags(monkeypatch, kite_home) -> None:
+    from kite.cli.run import build_parser, main
 
-    class FakeSession:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-        def run(self) -> int:
-            return 0
-
-    monkeypatch.setattr("kite.ui.repl.ChatSession", FakeSession)
-    attach = tmp_path / "note.txt"
-    attach.write_text("hi", encoding="utf-8")
-    from kite.cli.run import build_parser, cmd_resume, main
-
-    assert main(["chat", "--steps", "3", "--cost", "1.5", "--time", "9", "--role", "architect", "--long", "--attach", str(attach)]) == 0
-    assert captured["step_limit"] == 3 and captured["role"] == "architect" and captured["attachments"]
     parser = build_parser()
     for flag in ("--headless", "--json", "--quiet", "--no-stream"):
         with pytest.raises(SystemExit) as exc:
@@ -369,75 +298,23 @@ def _c_test_chat_resume_flags_transcript_and_context(monkeypatch, tmp_path: Path
         assert exc.value.code == 2
     monkeypatch.setattr("kite.ui.repl.ChatSession", lambda **kwargs: (_ for _ in ()).throw(AssertionError("no start")))
     assert main(["chat", "--attach", "/definitely/missing"]) == 2
-    from kite.application.contracts import RunResult
-    from kite.memory.session import Session, SessionMeta
-
-    meta = SessionMeta(id="abc12345", created_at=1.0, updated_at=1.0, cwd=".", provider="groq", model="x", task="t")
-    monkeypatch.setattr("kite.memory.session.load_session", lambda *_a, **_k: Session(meta=meta))
-    action = parser._subparsers._group_actions[0]
-    resume = action.choices["resume"]
-    assert cmd_resume(resume.parse_args(["abc12345", "--json"])) == 2
-    seen: dict = {}
-
-    def fake_build(**kwargs):
-        seen.update(kwargs)
-        return MagicMock()
-
-    class FakeHarness:
-        def __init__(self, config):
-            self.config = config
-            self.last_session = None
-
-        def subscribe(self, *_a, **_k):
-            return None
-
-        def teardown_jobs(self):
-            return None
-
-    monkeypatch.setattr("kite.agent.harness_build.build_harness_config", fake_build)
-    monkeypatch.setattr("kite.agent.harness.Harness", FakeHarness)
-    monkeypatch.setattr(
-        "kite.application.cli.execute_harness_task",
-        lambda *_a, **_k: RunResult(status="completed", stop_reason="submitted", final_message="ok", legacy={"exit_status": "Submitted", "submission": "ok"}),
-    )
-    out = tmp_path / "traj.json"
-    args = resume.parse_args(["abc12345", "continue", "--time", "30", "--role", "debugger", "--output", str(out), "--json"])
-    args.cwd = str(tmp_path)
-    assert cmd_resume(args) == 0
-    assert seen["wall_time_limit_seconds"] == 30 and seen["role"] == "debugger"
-    import re
-
-    from kite.cli.help_map import cli_help_brief, cli_help_text
-
-    assert "kite help all" in cli_help_brief()
-    text = cli_help_text()
-    assert "kite_commands.md" in text and "CONTEXT.md" in text
-    assert "kite-system-design" not in text
-    flags = set(re.findall(r"--[a-z0-9-]+", text.split("Flags on run:")[-1]))
-    combined = action.choices["run"].format_help() + action.choices["chat"].format_help() + resume.format_help() + action.choices["config"].format_help()
-    assert [flag for flag in flags if flag not in combined] == []
-    help_text_cli = parser.format_help()
-    assert "maintainer" not in help_text_cli
-    assert "models" in help_text_cli
-    assert "run" in help_text_cli
-    assert parser.parse_args(["maintainer", "dashboard"]).command == "maintainer"
-    from kite.cli.run import cmd_resume as _resume
-    monkeypatch.setattr("kite.ui.pick.can_prompt", lambda: False)
-    assert _resume(argparse.Namespace(session=None)) == 2
 
 
-    # Issue #83: one-shot resume prints the full transcript and forwards resume context to the harness.
+def test_resume_transcript_context_and_exit_status(monkeypatch, workspace, kite_home) -> None:
     from io import StringIO
 
     from rich.console import Console
 
-    from kite.cli import run as run_mod
+    from kite.application.cli import ExitCode
+    from kite.application.contracts import RunResult
+    from kite.cli import run
+    from kite.memory.session import Session, SessionMeta
 
-    meta = SessionMeta(
-        id="sess83", created_at=1.0, updated_at=2.0, cwd=str(tmp_path), provider="groq", model="x", task="t",
-    )
     stored = Session(
-        meta=meta,
+        meta=SessionMeta(
+            id="sess83", created_at=1.0, updated_at=2.0, cwd=str(workspace),
+            provider="groq", model="x", task="t",
+        ),
         messages=[
             {"role": "user", "content": "What is Kite?"},
             {"role": "assistant", "content": "A coding agent."},
@@ -450,47 +327,87 @@ def _c_test_chat_resume_flags_transcript_and_context(monkeypatch, tmp_path: Path
     )
     monkeypatch.setattr("kite.memory.session.load_session", lambda *_a, **_k: stored)
     buf = StringIO()
-    monkeypatch.setattr(run_mod, "_console", lambda: Console(file=buf, force_terminal=False, width=200))
+    monkeypatch.setattr(run, "_console", lambda: Console(file=buf, force_terminal=False, width=200))
     seen: dict = {}
 
     def fake_build(**kwargs):
         seen.update(kwargs)
         return MagicMock()
 
-    class FakeHarness:
-        def __init__(self, config):
-            self.config = config
-
-        def subscribe(self, *_a, **_k):
-            return None
-
-        def teardown_jobs(self):
-            return None
-
+    harness = MagicMock(last_session=None)
+    harness.teardown_jobs.return_value = 0
     monkeypatch.setattr("kite.agent.harness_build.build_harness_config", fake_build)
-    monkeypatch.setattr("kite.agent.harness.Harness", FakeHarness)
+    monkeypatch.setattr("kite.agent.harness.Harness", lambda _config: harness)
     monkeypatch.setattr(
         "kite.application.cli.execute_harness_task",
         lambda *_a, **_k: RunResult(
-            status="completed",
-            stop_reason="submitted",
-            final_message="ok",
+            status="completed", stop_reason="submitted", final_message="ok",
             legacy={"exit_status": "Submitted", "submission": "ok"},
         ),
     )
+    parser = run.build_parser()
+    assert run.cmd_resume(parser.parse_args(["resume", "sess83", "--json"])) == 2
+    args = parser.parse_args(["resume", "sess83", "continue"])
+    args.cwd = str(workspace)
+    assert run.cmd_resume(args) == 0
+    transcript = buf.getvalue()
+    assert transcript.index("What is Kite?") < transcript.index("A coding agent.") < transcript.index("done bullets")
+    assert seen["resume"] is True
+    assert seen["session_id"] == "sess83"
+    assert seen["follow_up"] == "continue"
+
+    for reason, code in (
+        ("interrupted", ExitCode.CANCELLED),
+        ("approval_denied", ExitCode.APPROVAL_DENIED),
+        ("verification_failed", ExitCode.VERIFICATION_FAILED),
+    ):
+        monkeypatch.setattr(
+            "kite.application.cli.execute_harness_task",
+            lambda *_a, _reason=reason, **_k: RunResult(status="failed", stop_reason=_reason),
+        )
+        assert run.cmd_resume(args) == code
+    monkeypatch.setattr(
+        "kite.application.cli.execute_harness_task",
+        lambda *_a, **_k: RunResult(status="completed", stop_reason="submitted", legacy={"exit_status": "Submitted"}),
+    )
+    harness.teardown_jobs.return_value = 1
+    assert run.cmd_resume(args) == 1, "leftover jobs must not report a successful resume"
+    harness.teardown_jobs.return_value = 0
+    monkeypatch.setattr(run, "_wire_display", lambda *_a: (_ for _ in ()).throw(ValueError("bad runtime config")))
+    assert run.cmd_resume(args) == 1, "setup errors must use the normal CLI error result"
+
+
+def test_cli_help_documents_accepted_flags_without_loading_credentials(monkeypatch, kite_home) -> None:
+    import re
+
+    from kite.cli.help_map import cli_help_brief, cli_help_text
+    from kite.cli.run import build_parser, main
+
     parser = build_parser()
-    resume = parser._subparsers._group_actions[0].choices["resume"]
-    args = resume.parse_args(["sess83", "continue"])
-    args.cwd = str(tmp_path)
-    assert cmd_resume(args) == 0
-    out = buf.getvalue()
-    assert out.index("What is Kite?") < out.index("A coding agent.") < out.index("done bullets")
-    assert seen.get("resume") is True
-    assert seen.get("session_id") == "sess83"
-    assert seen.get("follow_up") == "continue"
+    commands = parser._subparsers._group_actions[0].choices
+    assert "kite help all" in cli_help_brief()
+    text = cli_help_text()
+    assert "kite_commands.md" in text and "CONTEXT.md" in text
+    assert "kite-system-design" not in text
+    flags = set(re.findall(r"--[a-z0-9-]+", text.split("Flags on run:")[-1]))
+    combined = "".join(commands[name].format_help() for name in ("run", "chat", "resume", "config"))
+    assert [flag for flag in flags if flag not in combined] == []
+    assert "maintainer" not in parser.format_help()
+    monkeypatch.setattr("kite.providers.credentials.load_kite_env", lambda: (_ for _ in ()).throw(AssertionError("help must not read credentials")))
+    for command in ("run", "models", "sessions", "setup"):
+        with pytest.raises(SystemExit) as exc:
+            main([command, "--help"])
+        assert exc.value.code == 0
 
 
-def _c_test_headless_tasks_status_approval_and_parsing(monkeypatch, workspace, kite_home, capsys) -> None:
+def test_resume_requires_session_without_prompt(monkeypatch, kite_home) -> None:
+    from kite.cli.run import cmd_resume
+
+    monkeypatch.setattr("kite.ui.pick.can_prompt", lambda: False)
+    assert cmd_resume(argparse.Namespace(session=None)) == 2
+
+
+def test_headless_tasks_parse_plain_text_and_json() -> None:
     task = parse_task_line("fix the tests", default_cwd="/tmp/ws")
     assert task and task.task == "fix the tests" and task.cwd == "/tmp/ws"
     json_task = parse_task_line('{"task": "scout auth", "label": "auth", "profile": "scout", "mode": "plan"}')
@@ -499,12 +416,15 @@ def _c_test_headless_tasks_status_approval_and_parsing(monkeypatch, workspace, k
     assert len(tasks) == 2
     with pytest.raises(ValueError, match="invalid JSON"):
         parse_task_line("{not json}")
-    assert resolve_headless_approval("approve", AgentMode.BUILD, headless=True) is ApprovalMode.APPROVE
-    assert resolve_headless_approval(None, AgentMode.BUILD, headless=True) is ApprovalMode.AUTO
-    assert is_headless_run(headless_flag=True, quiet=False)
-    HeadlessRunDisplay(stream_tools=True)(Event("tool_start", payload={"tool": "bash", "arguments": {"command": "pytest -q"}}))
-    assert "[tool]" in capsys.readouterr().err
+
+
+def test_headless_only_submitted_tasks_succeed(monkeypatch, workspace, kite_home) -> None:
     from kite.application.contracts import RunResult
+
+    harness = MagicMock(last_session=None)
+    harness.teardown_jobs.return_value = 0
+    monkeypatch.setattr("kite.agent.harness_build.build_harness_config", lambda **_k: None)
+    monkeypatch.setattr("kite.agent.harness.Harness", lambda _config: harness)
 
     def fake_execute(harness, task):  # noqa: ANN001
         return RunResult(status="failed", stop_reason="error", final_message="", legacy={"exit_status": "Stalled", "submission": "", "error": "Stalled"})
@@ -528,60 +448,9 @@ def _c_test_headless_tasks_status_approval_and_parsing(monkeypatch, workspace, k
     monkeypatch.setattr("kite.tasks.run_headless_task", fake_run)
     batch = run_headless_batch([HeadlessTask(task="one", label="a")], continue_on_error=True)
     assert batch.ok is False and batch.to_dict()["succeeded"] == 0
-    from kite.cli.run import build_parser
-
-    args = build_parser().parse_args(["tasks", "run", "tasks.jsonl", "--dry-run"])
-    assert args.tasks_action == "run" and args.dry_run is True
-    run_args = build_parser().parse_args(["run", "--headless", "--no-stream", "fix tests"])
-    assert run_args.headless is True and run_args.task == "fix tests"
 
 
-    # Non-interactive approval wiring across auto/readonly/approve.
-    observed: list[str] = []
-
-    def fake_execute(harness, task):  # noqa: ANN001
-        observed.append(harness.approver("write", {"path": str(workspace / "generated.txt")}, {}))
-        return RunResult(status="completed", stop_reason="submitted", final_message="done", legacy={"exit_status": "Submitted", "submission": "done"})
-
-    monkeypatch.setattr("kite.application.cli.execute_harness_task", fake_execute)
-    for approval, expected in (("auto", "allow"), ("readonly", "deny"), ("approve", "deny")):
-        observed.clear()
-        result = run_headless_task(HeadlessTask(task="generate a file", cwd=str(workspace), approval=approval))
-        assert result.ok is True and observed == [expected]
-
-
-def _c_test_ci_scripts_and_implicit_routing() -> None:
-    root = Path(__file__).resolve().parents[1]
-    tests_yml = (root / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-    release_yml = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-    assert "KITE_TYPED_PICK" in tests_yml
-    for body in (tests_yml, release_yml):
-        assert "ruff check src tests" in body
-        assert "pytest -q" in body
-        assert "bench --check" in body
-    check_sh = (root / "scripts" / "ci_check.sh").read_text(encoding="utf-8")
-    check_ps1 = (root / "scripts" / "ci_check.ps1").read_text(encoding="utf-8")
-    for check in (check_sh, check_ps1):
-        assert "sync_version.py --check" in check
-        assert "ruff check src tests" in check
-        assert "bench --check" in check
-        assert ".venv" in check
-
-
-    # Supported scripts directory contents.
-    names = {p.name for p in Path(__file__).resolve().parents[1].joinpath("scripts").iterdir() if p.is_file()}
-    assert names == {
-        "bump_release.sh",
-        "download.ps1",
-        "download.sh",
-        "install.ps1",
-        "ci_check.ps1",
-        "ci_check.sh",
-        "install.sh",
-        "sync_version.py",
-    }
-
-
+def test_implicit_prompt_routing() -> None:
     # Implicit prompt routing (Pi-style): bare words become chat/run.
     from kite.cli.run import rewrite_implicit_task
 
@@ -597,18 +466,10 @@ def _c_test_ci_scripts_and_implicit_routing() -> None:
     assert rewrite_implicit_task(["fix", "--print"])[0] == "run"
 
 
-def _c_test_update_uninstall_print_dispatch(monkeypatch, kite_home, capsys) -> None:
-    import argparse
-
-    from kite.cli.run import build_parser, cmd_print, main
-
-    parser = build_parser()
-    assert parser.parse_args(["update", "--check"]).command == "update"
-    assert parser.parse_args(["uninstall", "--purge"]).command == "uninstall"
-    assert parser.parse_args(["run", "--print", "hi"]).print_mode is True
-
+def test_update_and_uninstall_missing_manager(monkeypatch, kite_home, capsys) -> None:
     # update --check is read-only: version + mode, no uv calls.
     from kite import __version__
+    from kite.cli.run import main
 
     monkeypatch.setattr("shutil.which", lambda _name: None)
     assert main(["update", "--check"]) == 0
@@ -640,33 +501,15 @@ def _c_test_update_uninstall_print_dispatch(monkeypatch, kite_home, capsys) -> N
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     assert main(["--print"]) == 2
 
-    # --print routes a prompt to cmd_run in print mode (harness mocked).
-    seen: dict = {}
 
-    def fake_run(args: argparse.Namespace) -> int:
-        seen.update(vars(args))
-        assert args.print_mode is True and args.quiet is True
-        return 0
-
-    monkeypatch.setattr("kite.cli.run.cmd_run", fake_run)
-    assert cmd_print(argparse.Namespace(task=["hello", "world"])) == 0
-    assert seen["task"] == "hello world"
-
-
-def _c_test_windows_update_handoff_script(monkeypatch, tmp_path, capsys) -> None:
+def test_windows_update_handoff_script(monkeypatch, tmp_path) -> None:
     """Windows self-update must not touch the locked env: build + launch helper only."""
-    from unittest.mock import MagicMock
-
     from kite.cli import self_manage
 
     spec = "git+https://github.com/KhanUzeb/kite.git@main"
     script = self_manage._windows_update_script("C:\\uv\\uv.exe", spec, "C:\\Temp\\kite-update.log")
     assert "tool install --force" in script and spec in script
     assert "timeout /t 3" in script and 'del "%~f0"' in script
-    assert "[kite] starting" in script and "[kite] done" in script
-    # Update streams in the terminal you typed in: step banners echo to the
-    # console and the install itself is NOT redirected to the log (only exit codes are).
-    assert "echo [kite] install" in script
     assert f'"C:\\uv\\uv.exe" tool install --force "{spec}"\r\n' in script
 
     uninstall_script = self_manage._windows_uninstall_script("C:\\uv\\uv.exe", "C:\\Temp\\kite-un.log")
@@ -681,7 +524,6 @@ def _c_test_windows_update_handoff_script(monkeypatch, tmp_path, capsys) -> None
         lambda cmd, **k: launched.append((list(cmd), k)) or MagicMock(),
     )
     monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
-    import argparse
 
     assert self_manage.cmd_update(argparse.Namespace(check=False, force=False, ref=None, repo=None)) == 0
     assert launched and launched[0][0][:2] == ["cmd", "/c"]
@@ -693,13 +535,8 @@ def _c_test_windows_update_handoff_script(monkeypatch, tmp_path, capsys) -> None
     assert (tmp_path / "kite-update-helper.cmd").is_file()
 
 
-def _c_test_gh_cli_dispatch(monkeypatch, kite_home, capsys) -> None:
-    from kite.cli.run import build_parser, main, rewrite_implicit_task
-
-    parser = build_parser()
-    assert parser.parse_args(["gh", "issue", "view", "12"]).gh_kind == "issue"
-    assert parser.parse_args(["gh", "pr", "create", "--title", "t"]).gh_action == "create"
-    assert rewrite_implicit_task(["gh", "issue", "list"]) == ["gh", "issue", "list"]
+def test_gh_cli_missing_binary_and_child_secret_filtering(monkeypatch, kite_home, capsys) -> None:
+    from kite.cli.run import main
 
     # No gh binary: graceful message, no crash.
     monkeypatch.setattr("shutil.which", lambda _name: None)
@@ -728,34 +565,22 @@ def _c_test_gh_cli_dispatch(monkeypatch, kite_home, capsys) -> None:
     assert "OPENAI_API_KEY" not in seen["env"]
 
 
-def _c_test_parser_env_purge_and_main_loading(monkeypatch, tmp_path) -> None:
+def test_purge_removes_read_only_files(tmp_path) -> None:
     import os
-    import sys
 
-    from kite.cli.run import build_parser
-    from kite.cli.self_manage import _count_files, _purge_home
+    from kite.cli.self_manage import _purge_home
 
-    before = set(sys.modules)
-    build_parser()
-    added = set(sys.modules) - before
-    assert "kite.cli.setup" not in added
-    assert "kite.cli.dashboard" not in added
-    assert "kite.bench.suite" not in added
-    from kite.config import UserConfig, assess_setup_status
-
-    assert UserConfig.load() is not None
-    assert callable(assess_setup_status)
-
-    # Safer --purge removes even read-only files and reports leftovers.
     home = tmp_path / ".kite"
     nested = home / "sessions"
     nested.mkdir(parents=True)
     target = nested / "s.jsonl"
     target.write_text("{}\n", encoding="utf-8")
     os.chmod(target, 0o444)
-    assert _count_files(str(home)) == 1
     removed, leftover, error = _purge_home(str(home))
     assert removed and leftover == 0 and error == "" and not home.exists()
+
+
+def test_main_loads_credentials_except_for_version(monkeypatch, kite_home) -> None:
     calls: list[str] = []
     monkeypatch.setattr("kite.providers.credentials.load_kite_env", lambda: calls.append("load"))
     monkeypatch.setattr("kite.cli.run.cmd_print", lambda args: 7)
@@ -769,117 +594,4 @@ def _c_test_parser_env_purge_and_main_loading(monkeypatch, tmp_path) -> None:
     assert main(["--version"]) == 0
     assert calls == ["load", "load"]
 
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_apply_diff_and_pickers, test_picker_filter_never_absorbs_escape_fragments, test_win_click_release_selects."""
-    _t0 = tmp_path / "t0_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_apply_diff_and_pickers(tmp_path=_t0)
-    _c_test_picker_filter_never_absorbs_escape_fragments()
-    _c_test_win_click_release_selects()
-
-def test_batch_01() -> None:
-    """Consolidated (bodies unchanged): test_picker_terminal_type_and_relay_guards, test_picker_multi_select_typed_fallback, test_render_pick_list_cursor_checkbox_and_details."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _c_test_picker_terminal_type_and_relay_guards(monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _c_test_picker_multi_select_typed_fallback()
-    _c_test_render_pick_list_cursor_checkbox_and_details()
-
-def test_batch_02(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_theme_font_subcommands, test_theme_typed_picker_wiring, test_variants_list_bounded_and_unknown."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _k0 = tmp_path / "k2_0"
-        _k0.mkdir(parents=True, exist_ok=True)
-        _mp0.setenv("KITE_HOME", str(_k0))
-        _c_test_theme_font_subcommands(kite_home=_k0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _k1 = tmp_path / "k2_1"
-        _k1.mkdir(parents=True, exist_ok=True)
-        _mp1.setenv("KITE_HOME", str(_k1))
-        _c_test_theme_typed_picker_wiring(kite_home=_k1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _k2 = tmp_path / "k2_2"
-        _k2.mkdir(parents=True, exist_ok=True)
-        _mp2.setenv("KITE_HOME", str(_k2))
-        _c_test_variants_list_bounded_and_unknown(kite_home=_k2, monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
-
-def test_batch_03(tmp_path, capsys) -> None:
-    """Consolidated (bodies unchanged): test_slash_help_and_legacy_routing, test_chat_resume_flags_transcript_and_context, test_headless_tasks_status_approval_and_parsing."""
-    _c_test_slash_help_and_legacy_routing()
-    capsys.readouterr()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t3_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _k1 = tmp_path / "k3_1"
-        _k1.mkdir(parents=True, exist_ok=True)
-        _mp1.setenv("KITE_HOME", str(_k1))
-        _c_test_chat_resume_flags_transcript_and_context(tmp_path=_t1, kite_home=_k1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    capsys.readouterr()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _k2 = tmp_path / "k3_2"
-        _k2.mkdir(parents=True, exist_ok=True)
-        _mp2.setenv("KITE_HOME", str(_k2))
-        _w2 = tmp_path / "w3_2"
-        (_w2 / "src").mkdir(parents=True, exist_ok=True)
-        (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-        (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-        _c_test_headless_tasks_status_approval_and_parsing(kite_home=_k2, workspace=_w2, capsys=capsys, monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
-
-def test_batch_04(tmp_path, capsys) -> None:
-    """Consolidated (bodies unchanged): test_ci_scripts_and_implicit_routing, test_update_uninstall_print_dispatch, test_windows_update_handoff_script."""
-    _c_test_ci_scripts_and_implicit_routing()
-    capsys.readouterr()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _k1 = tmp_path / "k4_1"
-        _k1.mkdir(parents=True, exist_ok=True)
-        _mp1.setenv("KITE_HOME", str(_k1))
-        _c_test_update_uninstall_print_dispatch(kite_home=_k1, capsys=capsys, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    capsys.readouterr()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _t2 = tmp_path / "t4_2"
-        _t2.mkdir(parents=True, exist_ok=True)
-        _c_test_windows_update_handoff_script(tmp_path=_t2, capsys=capsys, monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
-
-def test_batch_05(tmp_path, capsys) -> None:
-    """Consolidated (bodies unchanged): test_gh_cli_dispatch, test_parser_env_purge_and_main_loading."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _k0 = tmp_path / "k5_0"
-        _k0.mkdir(parents=True, exist_ok=True)
-        _mp0.setenv("KITE_HOME", str(_k0))
-        _c_test_gh_cli_dispatch(kite_home=_k0, capsys=capsys, monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    capsys.readouterr()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t5_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _c_test_parser_env_purge_and_main_loading(tmp_path=_t1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
 

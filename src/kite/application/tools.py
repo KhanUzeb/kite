@@ -8,7 +8,6 @@ from typing import Any, Literal
 
 from kite.guardrails.sandbox import (
     check_command_paths,
-    is_inside,
     resolve_in_workspace,
     workspace_root,
 )
@@ -273,7 +272,8 @@ def _targets_outside_workspace(tool: str, arguments: dict[str, Any], workspace_c
         cwd = str(arguments.get("cwd") or "").strip()
         if cwd:
             try:
-                if not is_inside(resolve_in_workspace(cwd, root), root):
+                resolved_target = resolve_in_workspace(cwd, root)
+                if not resolved_target.is_relative_to(root):
                     return True
             except OSError:
                 return False
@@ -284,7 +284,8 @@ def _targets_outside_workspace(tool: str, arguments: dict[str, Any], workspace_c
         if not value:
             continue
         try:
-            if not is_inside(resolve_in_workspace(str(value), root), root):
+            resolved_target = resolve_in_workspace(str(value), root)
+            if not resolved_target.is_relative_to(root):
                 return True
         except OSError:
             continue

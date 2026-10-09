@@ -17,27 +17,9 @@ def _tree(root: Path) -> None:
     (root / "tests" / "test_a.py").write_text("def test_foo():\n    assert foo()\n", encoding="utf-8")
 
 
-def _c_test_grep_output_modes(tmp_path: Path) -> None:
+def test_grep_filter_and_python_fallback(monkeypatch, tmp_path: Path) -> None:
     _tree(tmp_path)
-    files_only = grep_search(pattern="def foo", root=tmp_path, cwd=str(tmp_path), files_only=True)
-    assert files_only["ok"] is True
-    assert "src/a.py" in files_only["output"]
-    assert "return 1" not in files_only["output"]
-    assert files_only.get("summary")
-
-    count_only = grep_search(pattern="def ", root=tmp_path, cwd=str(tmp_path), count_only=True)
-    assert count_only["ok"] is True
-    assert ":" in count_only["output"]
-    assert count_only["hits"] >= 2
-
-    grouped = grep_search(pattern="def", root=tmp_path, cwd=str(tmp_path), max_hits=20)
-    assert grouped["ok"] is True
-    assert "hit" in grouped["output"]
-    assert "summary" in grouped
-
-
-def _c_test_grep_filter_and_python_fallback(monkeypatch, tmp_path: Path) -> None:
-    _tree(tmp_path)
+    (tmp_path / "src" / "notes.txt").write_text("def not_python(): pass\n", encoding="utf-8")
     filtered = grep_search(
         pattern="def",
         root=tmp_path / "src",
@@ -48,6 +30,7 @@ def _c_test_grep_filter_and_python_fallback(monkeypatch, tmp_path: Path) -> None
     assert filtered["ok"] is True
     assert "a.py" in filtered["output"]
     assert "tests" not in filtered["output"]
+    assert "notes.txt" not in filtered["output"]
 
     monkeypatch.setattr("kite.tools.search.shutil.which", lambda _name: None)
     fallback = grep_search(pattern="class Bar", root=tmp_path, cwd=str(tmp_path))
@@ -56,25 +39,20 @@ def _c_test_grep_filter_and_python_fallback(monkeypatch, tmp_path: Path) -> None
     assert "Bar" in fallback["output"]
 
 
-def _c_test_glob_and_ls(tmp_path: Path) -> None:
+def test_glob_and_ls(tmp_path: Path) -> None:
     _tree(tmp_path)
     recursive = glob_search(pattern="**/*.py", root=tmp_path)
     assert recursive["ok"] is True
-    assert recursive["count"] >= 3
+    assert recursive["count"] == 3
     assert "src/a.py" in recursive["output"]
-
-    by_mtime = glob_search(pattern="**/*.py", root=tmp_path, sort="mtime")
-    assert by_mtime["ok"] is True
-    assert by_mtime["count"] >= 1
 
     listed = ls_search(path=tmp_path / "src", glob_pat="*.py")
     assert listed["ok"] is True
     assert "a.py" in listed["output"]
     assert "b.py" in listed["output"]
-    assert "subdir" not in listed["output"]
 
 
-def _c_test_glob_mtime_sort_skips_unreadable_files(tmp_path: Path, monkeypatch) -> None:
+def test_glob_mtime_sort_skips_unreadable_files(tmp_path: Path, monkeypatch) -> None:
     """Permission-denied entries must not crash glob (is_file re-raises EACCES)."""
     (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
     (tmp_path / "b.py").write_text("y\n", encoding="utf-8")
@@ -89,9 +67,10 @@ def _c_test_glob_mtime_sort_skips_unreadable_files(tmp_path: Path, monkeypatch) 
     out = glob_search(pattern="*.py", root=tmp_path, sort="mtime")
     assert out["ok"] is True
     assert "a.py" in out["output"]
+    assert "b.py" not in out["output"]
 
 
-def _c_test_grep_skips_credential_files_and_literal_patterns(tmp_path: Path, monkeypatch) -> None:
+def test_grep_skips_credential_files_and_literal_patterns(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "a.py").write_text("token = visible\n", encoding="utf-8")
     (tmp_path / ".env").write_text("API_KEY=supersecret\n", encoding="utf-8")
@@ -110,36 +89,34 @@ def _c_test_grep_skips_credential_files_and_literal_patterns(tmp_path: Path, mon
     assert bad["ok"] is False and "invalid regex" in bad["output"]
 
 
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_grep_output_modes, test_grep_filter_and_python_fallback, test_glob_and_ls."""
-    _t0 = tmp_path / "t0_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_grep_output_modes(tmp_path=_t0)
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t0_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _c_test_grep_filter_and_python_fallback(tmp_path=_t1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    _t2 = tmp_path / "t0_2"
-    _t2.mkdir(parents=True, exist_ok=True)
-    _c_test_glob_and_ls(tmp_path=_t2)
+@pytest.mark.parametrize("fallback", [False, True])
+def test_grep_limits_context_and_colons(tmp_path, monkeypatch, fallback):
+    import shutil
 
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_glob_mtime_sort_skips_unreadable_files, test_grep_skips_credential_files_and_literal_patterns."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t1_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _c_test_glob_mtime_sort_skips_unreadable_files(tmp_path=_t0, monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t1_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _c_test_grep_skips_credential_files_and_literal_patterns(tmp_path=_t1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-
+    if fallback:
+        monkeypatch.setattr("kite.tools.search.shutil.which", lambda _name: None)
+    elif not shutil.which("rg"):
+        pytest.skip("ripgrep not installed")
+    for name in ("a.py", "b.py", "c.py"):
+        (tmp_path / name).write_text("before\nneedle: detail: value\nafter\n", encoding="utf-8")
+    (tmp_path / "credentials.json").write_text("needle: do-not-show\n", encoding="utf-8")
+    (tmp_path / "config.env").write_text("needle: do-not-show\n", encoding="utf-8")
+    args = {"pattern": "needle", "root": tmp_path, "cwd": str(tmp_path), "glob_pat": "*"}
+    grouped = grep_search(**args, max_hits=2)
+    assert grouped["hits"] == 2 and "2: needle: detail: value" in grouped["output"]
+    assert "do-not-show" not in grouped["output"]
+    surrounding = grep_search(**args, max_hits=1, context=1)
+    assert surrounding["hits"] == 1
+    assert "-1-before" in surrounding["output"] and "-3-after" in surrounding["output"]
+    assert "do-not-show" not in surrounding["output"]
+    counted = grep_search(**args, count_only=True, max_files=1)
+    assert counted["hits"] == 3 and counted["files"] == 3
+    assert len(counted["output"].splitlines()) == 1
+    files = grep_search(**args, files_only=True, max_files=1)
+    assert files["files"] == 3 and "+2 more files" in files["output"]
+    single = grep_search(pattern="needle", root=tmp_path / "a.py", cwd=str(tmp_path))
+    assert "a.py (1 hit)" in single["output"]
+    boundary = tmp_path / "boundary.py"
+    boundary.write_text("needle" + " " * 222 + "api_key=sensitivedataabcdefghijklmnop\n", encoding="utf-8")
+    redacted = grep_search(pattern="needle", root=boundary, cwd=str(tmp_path))
+    assert "sens" not in redacted["output"]

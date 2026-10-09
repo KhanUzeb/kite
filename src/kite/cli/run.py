@@ -143,14 +143,14 @@ def _wire_display(harness, console, args: argparse.Namespace):
             )
         )
     elif not quiet:
-        from kite.ui.render import make_run_display
+        from kite.ui.render import RunDisplay
 
         state = SessionUiState(
             mode=mode,
             approval=approval,
             git_branch=git_branch(getattr(args, "cwd", os.getcwd())),
         )
-        display = make_run_display(
+        display = RunDisplay(
             console,
             quiet=False,
             verbose=getattr(args, "verbose", False),
@@ -300,10 +300,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not task.strip():
         console.print("[red]Provide a task, --stdin, or --attach[/]")
         return 2
-    harness = _build_harness_from_args(args, mode=mode, approval=approval, attachments=attachments)
-    _wire_display(harness, console, args)
+    harness = None
     killed = 0
     try:
+        harness = _build_harness_from_args(args, mode=mode, approval=approval, attachments=attachments)
+        _wire_display(harness, console, args)
         from kite.application.cli import CliResult, execute_harness_task, legacy_result_from_run
 
         run_result = execute_harness_task(harness, task)
@@ -316,7 +317,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             console.print(f"[red]{e}[/]")
         return 1
     finally:
-        killed = harness.teardown_jobs() or 0
+        if harness is not None:
+            killed = harness.teardown_jobs() or 0
 
     sid = harness.last_session.id if harness.last_session else ""
     exit_status = str(result.get("exit_status") or "")
@@ -428,14 +430,9 @@ def cmd_print(args: argparse.Namespace) -> int:
     )
 
 
-def _session_pick_items(rows) -> list[tuple[str, str]]:
-    from kite.memory.session_format import session_pick_items
-
-    return session_pick_items(rows)
-
-
 def _pick_session_id(console, *, title: str = "Pick a session") -> str | None:
     from kite.memory.session import list_sessions
+    from kite.memory.session_format import session_pick_items
     from kite.ui.pick import numbered_pick
 
     rows = list_sessions(limit=20)
@@ -444,7 +441,7 @@ def _pick_session_id(console, *, title: str = "Pick a session") -> str | None:
         return None
     return numbered_pick(
         console,
-        _session_pick_items(rows),
+        session_pick_items(rows),
         current=None,
         title=title,
         noun="session",
@@ -519,21 +516,24 @@ def cmd_resume(args: argparse.Namespace) -> int:
     if loaded is None:
         return 2
     follow, attachments = loaded
-    harness = _build_harness_from_args(
-        args,
-        mode=mode,
-        approval=approval,
-        attachments=attachments,
-        session_id=args.session,
-        resume=True,
-        follow_up=follow,
-    )
-    _wire_display(harness, console, args)
+    harness = None
+    killed = 0
     try:
-        from kite.application.cli import execute_harness_task, legacy_result_from_run
+        harness = _build_harness_from_args(
+            args,
+            mode=mode,
+            approval=approval,
+            attachments=attachments,
+            session_id=args.session,
+            resume=True,
+            follow_up=follow,
+        )
+        _wire_display(harness, console, args)
+        from kite.application.cli import CliResult, execute_harness_task, legacy_result_from_run
 
         run_result = execute_harness_task(harness, follow)
         result = legacy_result_from_run(run_result)
+        cli_result = CliResult.from_run_result(run_result, run_id=run_result.trace_id)
     except Exception as e:
         if getattr(args, "json", False):
             print(json.dumps({"ok": False, "error": str(e)}))
@@ -541,15 +541,17 @@ def cmd_resume(args: argparse.Namespace) -> int:
             console.print(f"[red]{e}[/]")
         return 1
     finally:
-        harness.teardown_jobs()
+        if harness is not None:
+            killed = harness.teardown_jobs() or 0
     sid = args.session
     exit_status = str(result.get("exit_status") or "")
+    ok = exit_status == "Submitted" and killed == 0
     _report_listener_failure(harness, console)
     if getattr(args, "json", False):
         print(
             json.dumps(
                 {
-                    "ok": exit_status == "Submitted",
+                    "ok": ok,
                     "exit_status": exit_status,
                     "session_id": sid,
                     "submission": result.get("submission"),
@@ -559,7 +561,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
                 indent=2,
             )
         )
-        return 0 if exit_status == "Submitted" else 1
+        return 0 if ok else (int(cli_result.exit_code) or 1)
     console.print(f"[bold]exit[/]={result.get('exit_status')}  session={args.session}")
     if run_result.blocked_reason:
         console.print(f"[kite.muted]blocked — {run_result.blocked_reason}[/]")
@@ -578,7 +580,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             "[kite.muted]interrupted — session kept. "
             f"kite resume {args.session}  or  kite resume {args.session} --retry[/]"
         )
-    return 0 if exit_status == "Submitted" else 1
+    return 0 if ok else (int(cli_result.exit_code) or 1)
 
 
 def cmd_sessions(args: argparse.Namespace) -> int:
@@ -586,6 +588,7 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 
     from kite.config import kite_home
     from kite.memory.session import delete_all_sessions, delete_session, list_sessions, load_session
+    from kite.memory.session_format import session_pick_items
     from kite.ui.pick import can_prompt, confirm, numbered_pick
     from kite.ui.tables import render_sessions_table
 
@@ -667,7 +670,7 @@ def cmd_sessions(args: argparse.Namespace) -> int:
         render_sessions_table(console, rows, title=title)
         sid = numbered_pick(
             console,
-            _session_pick_items(rows),
+            session_pick_items(rows),
             current=None,
             title=title,
             noun="session",
@@ -1499,7 +1502,7 @@ def _add_interactive_flags(p: argparse.ArgumentParser) -> None:
 def _add_one_shot_output_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("-o", "--output", help="Trajectory JSON path")
     p.add_argument("--label", default="", help="Session label")
-    p.add_argument("-q", "--quiet", action="store_true")
+    p.add_argument("-q", "--quiet", action="store_true", help="Suppress live events; still show the final run summary")
     p.add_argument(
         "--headless",
         action="store_true",
@@ -1510,7 +1513,7 @@ def _add_one_shot_output_flags(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="With --headless, hide live bash/tool output lines",
     )
-    p.add_argument("--json", action="store_true", help="Emit final trajectory JSON on stdout (CI-friendly)")
+    p.add_argument("--json", action="store_true", help="Emit final run status and submission as JSON on stdout")
 
 
 def _add_run_flags(p: argparse.ArgumentParser) -> None:
@@ -1976,12 +1979,10 @@ def main(argv: list[str] | None = None) -> int:
         print(__version__)
         return 0
 
-    if not raw or raw[0] not in {"-h", "--help", "help"}:
+    if raw[:1] == ["--print"]:
         from kite.providers.credentials import load_kite_env
 
         load_kite_env()
-
-    if raw[:1] == ["--print"]:
         # Pi -p: `kite --print "prompt"` bypasses the subcommand parser so a
         # multi-word prompt is never mistaken for a COMMAND.
         rest = raw[1:]
@@ -1997,6 +1998,11 @@ def main(argv: list[str] | None = None) -> int:
 
         print(__version__)
         return 0
+
+    if args.command != "help":
+        from kite.providers.credentials import load_kite_env
+
+        load_kite_env()
 
     # Bare `kite` → lean REPL. `-c` / `-r` match Pi continue / session browse.
     if args.command is None:

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
+import statistics
 import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from kite.bench.timing import TimingSample, measure, measure_many
@@ -49,8 +50,10 @@ class BenchmarkReport:
             "results": [r.to_dict() for r in self.results],
         }
 
-    def compare(self, baseline: BenchmarkReport) -> list[dict[str, Any]]:
-        """Return BEFORE / AFTER / DELTA rows for shared benchmark names."""
+    def compare(
+        self, baseline: BenchmarkReport, *, threshold_pct: float = 20.0, min_delta_ms: float = 2.0
+    ) -> list[dict[str, Any]]:
+        """Flag changes exceeding both practical and measured-noise thresholds."""
         before = {r.name: r for r in baseline.results}
         rows: list[dict[str, Any]] = []
         for after in self.results:
@@ -59,6 +62,8 @@ class BenchmarkReport:
                 continue
             delta_ms = after.ms - prev.ms
             pct = ((after.ms / prev.ms) - 1.0) * 100.0 if prev.ms else 0.0
+            noise_ms = 3 * (float(prev.metadata.get("mad_ms", 0)) + float(after.metadata.get("mad_ms", 0)))
+            threshold_ms = max(prev.ms * threshold_pct / 100.0, min_delta_ms, noise_ms)
             rows.append(
                 {
                     "name": after.name,
@@ -67,12 +72,17 @@ class BenchmarkReport:
                     "after_ms": round(after.ms, 3),
                     "delta_ms": round(delta_ms, 3),
                     "delta_pct": round(pct, 2),
+                    "threshold_ms": round(threshold_ms, 3),
+                    "regression": delta_ms > threshold_ms,
                 }
             )
         return rows
 
 
 def _sample(name: str, category: str, sample: TimingSample, **metadata: Any) -> BenchmarkResult:
+    if sample.samples:
+        metadata["samples_ms"] = [round(value * 1000, 6) for value in sample.samples]
+        metadata["mad_ms"] = statistics.median(abs(value - sample.seconds) for value in sample.samples) * 1000
     return BenchmarkResult(
         name=name,
         category=category,
@@ -84,12 +94,10 @@ def _sample(name: str, category: str, sample: TimingSample, **metadata: Any) -> 
 
 def _bench_cli_import() -> BenchmarkResult:
     def _run() -> None:
-        if "kite.cli.run" in sys.modules:
-            del sys.modules["kite.cli.run"]
-        import kite.cli.run  # noqa: F401
+        subprocess.run([sys.executable, "-c", "import kite.cli.run"], check=True, capture_output=True, timeout=30)
 
     _, sample = measure_many("cli_import", _run, iterations=3)
-    return _sample("cli_import", "startup", sample)
+    return _sample("cli_import", "startup", sample, process_cold=True, filesystem_cache="warm/OS-managed")
 
 
 def _bench_config_load() -> BenchmarkResult:
@@ -219,8 +227,11 @@ def _bench_grep_tool(cwd: Path) -> BenchmarkResult:
 
 def _bench_bash_echo(cwd: Path) -> BenchmarkResult:
     from kite.env.local import LocalEnvironment
+    from kite.tools import ToolRegistry
+    from kite.tools.coding import make_coding_tools
 
-    env = LocalEnvironment(cwd=str(cwd))
+    registry = ToolRegistry(make_coding_tools(cwd=str(cwd), enabled=["bash"], on_event=lambda event: None))
+    env = LocalEnvironment(cwd=str(cwd), registry=registry)
 
     def _run():
         return env.execute({"tool": "bash", "arguments": {"command": "echo ok"}})
@@ -269,17 +280,15 @@ def _bench_subprocess_spawn() -> BenchmarkResult:
 
 def _bench_job_lifecycle() -> BenchmarkResult:
     """Background-job spawn → drain → teardown cost (long-task exit path)."""
-    import time as _time
-
     from kite.tools.jobs import JobRegistry
 
     def _run():
         reg = JobRegistry()
         job = reg.spawn_bash("echo bench-ok", cwd=".", timeout_seconds=30.0)
-        deadline = _time.monotonic() + 10.0
-        while job.status == "running" and _time.monotonic() < deadline:
-            _time.sleep(0.02)
+        finished = job.wait(timeout=10.0)
         reg.kill_all()
+        if not finished or job.status != "done":
+            raise RuntimeError(f"benchmark job failed: {job.status}")
         return job.status
 
     status, sample = measure_many("job_lifecycle", _run, iterations=3)
@@ -310,13 +319,21 @@ def _bench_checkpoint_roundtrip() -> BenchmarkResult:
 
 
 def _bench_repl_chat_init(cwd: Path) -> BenchmarkResult:
-    def _run():
-        from kite.ui.repl import ChatSession
+    """Measure synchronous construction, not asynchronous provider warm-up work.
 
-        ChatSession(cwd=str(cwd))
+    Warmers otherwise keep importing/probing during every later quick/full
+    measurement. REPL import cost is measured separately in a fresh process.
+    """
+    from unittest.mock import patch
 
-    _, sample = measure_many("repl_chat_init", _run, iterations=3)
-    return _sample("repl_chat_init", "startup", sample)
+    from kite.ui.repl import ChatSession
+
+    with (
+        patch("kite.models.litellm_model.prewarm_litellm", lambda: None),
+        patch.object(ChatSession, "_warm_auth_probes", lambda self: None),
+    ):
+        _, sample = measure_many("repl_chat_init", lambda: ChatSession(cwd=str(cwd)), iterations=3)
+    return _sample("repl_chat_init", "startup", sample, scope="synchronous_init_without_warmers")
 
 
 def _bench_model_resolve() -> BenchmarkResult:
@@ -333,41 +350,39 @@ def _bench_model_resolve() -> BenchmarkResult:
 
 
 def _bench_prompt_cache_prepare() -> BenchmarkResult:
-    from kite.config import UserConfig
     from kite.models.cache import PromptCacheManager
-    from kite.providers.resolve import resolve_model
 
-    cfg = UserConfig.load()
-
-    def _run():
-        resolved = resolve_model(provider=cfg.default_provider, model=cfg.default_model, config=cfg)
-        return PromptCacheManager(resolved.provider, enabled=True)
-
-    _, sample = measure_many("prompt_cache_prepare", _run, iterations=3)
-    return _sample("prompt_cache_prepare", "context", sample)
+    manager = PromptCacheManager("anthropic")
+    messages = [{"role": "system", "content": "Coding instructions. " * 100},
+                {"role": "user", "content": "# Setup context"},
+                {"role": "assistant", "content": "Inspecting source."},
+                {"role": "tool", "content": "source " * 600}]
+    _, sample = measure_many("prompt_cache_prepare", lambda: manager.prepare(messages), iterations=5)
+    return _sample("prompt_cache_prepare", "context", sample, messages=len(messages))
 
 
 def _ensure_workspace(cwd: Path) -> None:
     src = cwd / "src"
     src.mkdir(parents=True, exist_ok=True)
-    app = src / "app.py"
-    if not app.is_file():
-        app.write_text("x = 1\n", encoding="utf-8")
-    if not (cwd / "pyproject.toml").is_file():
-        (cwd / "pyproject.toml").write_text("[project]\nname='bench'\n", encoding="utf-8")
+    (src / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (cwd / "pyproject.toml").write_text("[project]\nname='bench'\n", encoding="utf-8")
 
 
-def run_suite(*, cwd: str | Path | None = None) -> BenchmarkReport:
-    """Run the built-in benchmark suite and return structured results."""
+def run_suite(*, cwd: str | Path | None = None, suite: str = "quick") -> BenchmarkReport:
+    """Benchmark context at cwd; keep generated tool fixtures out of the workspace."""
+    if suite not in {"quick", "full"}:
+        raise ValueError(f"unknown benchmark suite: {suite}")
+    with TemporaryDirectory(prefix="kite-bench-") as tmp:
+        fixture = Path(tmp)
+        _ensure_workspace(fixture)
+        root = Path(cwd).expanduser().resolve() if cwd else fixture
+        return _run_suite(root, fixture, suite=suite)
+
+
+def _run_suite(root: Path, fixture: Path, *, suite: str) -> BenchmarkReport:
     import platform
 
-    try:
-        from kite import __version__
-    except Exception:  # pragma: no cover
-        __version__ = "unknown"
-
-    root = Path(cwd or os.getcwd()).expanduser().resolve()
-    _ensure_workspace(root)
+    from kite import __version__
 
     builders: list[Callable[[], BenchmarkResult]] = [
         _bench_cli_import,
@@ -383,9 +398,9 @@ def run_suite(*, cwd: str | Path | None = None) -> BenchmarkReport:
         lambda: _bench_repo_map(root),
         lambda: _bench_context_gather(root),
         lambda: _bench_tool_registry(root),
-        lambda: _bench_read_tool(root),
-        lambda: _bench_grep_tool(root),
-        lambda: _bench_bash_echo(root),
+        lambda: _bench_read_tool(fixture),
+        lambda: _bench_grep_tool(fixture),
+        lambda: _bench_bash_echo(fixture),
         lambda: _bench_prompt_assembly(root),
         _bench_subprocess_spawn,
         _bench_job_lifecycle,
@@ -393,11 +408,15 @@ def run_suite(*, cwd: str | Path | None = None) -> BenchmarkReport:
     ]
 
     results = tuple(builder() for builder in builders)
+    if suite == "full":
+        from kite.bench.full import run_full_suite
+
+        results += tuple(run_full_suite(fixture))
     return BenchmarkReport(
         kite_version=__version__,
         python_version=sys.version.split()[0],
         platform=platform.platform(),
-        cwd=str(root),
+        cwd=str(root) if root != fixture else "<generated workspace>",
         results=results,
     )
 

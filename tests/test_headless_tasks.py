@@ -2,25 +2,20 @@
 
 from __future__ import annotations
 
-import pytest
-
 from kite.agent.events import Event
 from kite.tasks import (
     HeadlessRunDisplay,
     HeadlessTask,
-    run_headless_batch,
     run_headless_task,
 )
 
 
-def _c_test_headless_display_combined(capsys) -> None:
-    # (merged from test_headless_display_tool_start)
+def test_headless_display_tool_and_subagent_events(capsys) -> None:
     display = HeadlessRunDisplay(stream_tools=True)
     display(Event("tool_start", payload={"tool": "bash", "arguments": {"command": "pytest -q"}}))
     err = capsys.readouterr().err
     assert "[tool]" in err
     assert "pytest" in err
-    # (merged from test_headless_display_subagent)
     crew_display = HeadlessRunDisplay()
     crew_display(
         Event(
@@ -33,31 +28,7 @@ def _c_test_headless_display_combined(capsys) -> None:
     assert "scout" in crew_err
 
 
-def _c_test_headless_batch_and_approval_wiring_combined(monkeypatch, workspace, kite_home) -> None:
-    # (merged from test_run_headless_batch_dry_integration)
-    calls: list[str] = []
-
-    def fake_run(task: HeadlessTask, **kwargs):  # noqa: ANN003
-        calls.append(task.task)
-        from kite.tasks import HeadlessTaskResult
-
-        return HeadlessTaskResult(
-            index=0,
-            label=task.label,
-            ok=True,
-            exit_status="Submitted",
-            session_id="s1",
-        )
-
-    monkeypatch.setattr("kite.tasks.run_headless_task", fake_run)
-    tasks = [
-        HeadlessTask(task="one", label="a"),
-        HeadlessTask(task="two", label="b"),
-    ]
-    batch = run_headless_batch(tasks, continue_on_error=True)
-    assert batch.ok
-    assert calls == ["one", "two"]
-    # (merged from test_headless_task_wires_noninteractive_approval)
+def test_headless_noninteractive_approval_modes(monkeypatch, workspace, kite_home) -> None:
     from kite.application.contracts import RunResult
 
     for approval, expected in (("auto", "allow"), ("readonly", "deny"), ("approve", "deny")):
@@ -82,18 +53,10 @@ def _c_test_headless_batch_and_approval_wiring_combined(monkeypatch, workspace, 
         assert observed == [expected]
 
 
-def _c_test_headless_budgets_leftover_jobs_and_cli_flags(monkeypatch, workspace, kite_home) -> None:
+def test_headless_leftover_jobs_and_exceeded_limits_fail(monkeypatch, workspace, kite_home) -> None:
     from unittest.mock import MagicMock
 
     from kite.application.contracts import RunResult
-    from kite.cli.run import build_parser, cmd_exec
-    from kite.cli.tasks import cmd_tasks
-
-    seen: dict = {}
-
-    def fake_build(**kwargs):  # noqa: ANN003
-        seen.update(kwargs)
-        return MagicMock()
 
     class FakeHarness:
         def __init__(self, config) -> None:  # noqa: ANN001
@@ -107,7 +70,7 @@ def _c_test_headless_budgets_leftover_jobs_and_cli_flags(monkeypatch, workspace,
         def teardown_jobs(self) -> int:
             return 2
 
-    monkeypatch.setattr("kite.agent.harness_build.build_harness_config", fake_build)
+    monkeypatch.setattr("kite.agent.harness_build.build_harness_config", lambda **_kwargs: MagicMock())
     monkeypatch.setattr("kite.agent.harness.Harness", FakeHarness)
     monkeypatch.setattr(
         "kite.application.cli.execute_harness_task",
@@ -118,15 +81,9 @@ def _c_test_headless_budgets_leftover_jobs_and_cli_flags(monkeypatch, workspace,
             legacy={"exit_status": "Submitted", "submission": "done"},
         ),
     )
-    leftover = run_headless_task(
-        HeadlessTask(task="do work", cwd=str(workspace)),
-        step_limit=7,
-        cost_limit=1.25,
-        wall_time_limit_seconds=30,
-    )
+    leftover = run_headless_task(HeadlessTask(task="do work", cwd=str(workspace)))
     assert leftover.ok is False
     assert "leftover" in leftover.error
-    assert seen["step_limit"] == 7 and seen["cost_limit"] == 1.25
 
     monkeypatch.setattr(
         "kite.application.cli.execute_harness_task",
@@ -146,50 +103,135 @@ def _c_test_headless_budgets_leftover_jobs_and_cli_flags(monkeypatch, workspace,
     limited = run_headless_task(HeadlessTask(task="do work", cwd=str(workspace)))
     assert limited.ok is False and limited.exit_status == "LimitsExceeded"
 
+
+def test_tasks_command_requires_file() -> None:
+    from kite.cli.run import build_parser
+    from kite.cli.tasks import cmd_tasks
+
     parser = build_parser()
-    budgeted = parser.parse_args(["tasks", "run", "batch.jsonl", "--steps", "9", "--cost", "2.5", "--time", "15"])
-    assert budgeted.steps == 9 and budgeted.cost == 2.5 and budgeted.time == 15
     missing = parser.parse_args(["tasks", "run"])
     assert cmd_tasks(missing) == 2
-    captured: dict = {}
-
-    def fake_cmd_run(args) -> int:  # noqa: ANN001
-        captured.update(headless=args.headless, quiet=args.quiet, steps=args.steps)
-        return 0
-
-    monkeypatch.setattr("kite.cli.run.cmd_run", fake_cmd_run)
-    exec_args = parser.parse_args(["exec", "--steps", "4", "ci task"])
-    assert cmd_exec(exec_args) == 0
-    assert captured["headless"] is True and captured["quiet"] is True and captured["steps"] == 4
 
 
-def test_batch_00(tmp_path, capsys) -> None:
-    """Consolidated (bodies unchanged): test_headless_display_combined, test_headless_batch_and_approval_wiring_combined, test_headless_budgets_leftover_jobs_and_cli_flags."""
-    _c_test_headless_display_combined(capsys=capsys)
+def test_headless_jsonl_trace_redacts_bounds_and_appends(monkeypatch, workspace, kite_home, tmp_path, capsys) -> None:
+    import json
+    import stat
+    import sys
+    import time
+    from types import SimpleNamespace
+
+    from kite.agent.harness import Harness
+    from kite.agent.runtime import AgentRuntime
+    from kite.config import AgentRuntimeConfig
+
+    trace_path = tmp_path / "trace.jsonl"
+    monkeypatch.setenv("KITE_TRACE_JSONL", str(trace_path))
+    secret = "trace-fake-secret-do-not-persist"
+    (workspace / "sample.txt").write_text(f"Authorization: Bearer {secret}\n" + "x" * 8000, encoding="utf-8")
+    resolved = SimpleNamespace(provider="stub", model="stub", context_window=100_000)
+    config = AgentRuntimeConfig(auto_compact=False, auto_venv=False, context7_enabled=False)
+    config.tools.enabled = ["read", "submit"]
+    monkeypatch.setattr(AgentRuntime, "prepare", lambda self: (config, resolved, "Test system prompt"))
+    seen = []
+    runtimes = []
+
+    class StubModel:
+        def __init__(self, *, on_event, **kwargs):
+            self.on_event = on_event
+            self.resolved = resolved
+            self.calls = 0
+
+        def format_message(self, **kwargs):
+            return dict(kwargs)
+
+        def query(self, messages):
+            self.calls += 1
+            self.on_event(Event("stream_start", {"model": "stub"}))
+            self.on_event(Event("stream_delta", {"text": "working " * 1000, "headers": {"authorization": secret}}))
+            self.on_event(Event("stream_end", {}))
+            action = (
+                {"tool": "read", "arguments": {"path": "sample.txt"}}
+                if self.calls == 1 else {"tool": "submit", "arguments": {"message": "Inspected sample.txt."}}
+            )
+            return {"role": "assistant", "content": "", "extra": {"actions": [action], "cost": 0.0}}
+
+        def format_observation_messages(self, message, outputs, template_vars=None):
+            return [{"role": "tool", "content": json.dumps(output)} for output in outputs]
+
+    def make_harness(config):
+        config.no_extensions = True
+        harness = Harness(config).use("model", StubModel)
+        harness.subscribe(seen.append)
+        runtimes.append(harness._runtime)
+        return harness
+
+    monkeypatch.setattr("kite.agent.harness.Harness", make_harness)
+    task = HeadlessTask(task="Inspect sample.txt and report its contents.", cwd=str(workspace))
+    started = time.time()
+    result = run_headless_task(task, no_context=True, no_compact=True, step_limit=3)
+    assert result.ok, result.error
+    text = trace_path.read_text(encoding="utf-8")
+    rows = [json.loads(line) for line in text.splitlines()]
+    assert [row["type"] for row in rows] == [event.kind for event in seen]
+    kinds = [row["type"] for row in rows]
+    assert kinds[0] == "agent_start" and kinds[-1] == "agent_end"
+    assert kinds.index("agent_start") < kinds.index("stream_start") < kinds.index("tool_start") < kinds.index("tool_end")
+    assert rows[-1]["exit_status"] == "Submitted"
+    assert len({row["run_id"] for row in rows}) == 1 and rows[0]["run_id"]
+    assert all(started <= row["ts"] <= time.time() for row in rows)
+    assert 0 <= rows[0]["t"] <= rows[-1]["t"]
+    assert [row["t"] for row in rows] == sorted(row["t"] for row in rows)
+    assert secret not in text
+    output = next(row["output"] for row in rows if row["type"] == "tool_end" and row["tool"] == "read")
+    assert "[REDACTED]" in output and output.endswith("…[truncated]") and len(output) <= 4096
+    delta = next(row for row in rows if row["type"] == "stream_delta")
+    assert len(delta["text"]) <= 4096 and delta["text"].endswith("…[truncated]")
+    assert delta["headers"]["authorization"] == "[REDACTED]"
+    original = next(event for event in seen if event.kind == "stream_delta")
+    assert original.payload["headers"]["authorization"] == secret and len(original.payload["text"]) == 8000
+    if sys.platform != "win32":
+        assert stat.S_IMODE(trace_path.stat().st_mode) == 0o600
+
+    # Reusing a runtime (REPL turns) appends a fresh run ID without retaining a sink.
+    seen.clear()
+    monkeypatch.delenv("KITE_TRACE_JSONL")
+    second = runtimes[0].run(task.task)
+    assert second["exit_status"] == "Submitted"
+    appended = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert appended[:len(rows)] == rows
+    assert len({row["run_id"] for row in appended}) == 2
+    assert [row["type"] for row in appended[len(rows):]] == [event.kind for event in seen]
+
+    # An unavailable trace destination must not change a headless run's outcome.
     capsys.readouterr()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _k1 = tmp_path / "k0_1"
-        _k1.mkdir(parents=True, exist_ok=True)
-        _mp1.setenv("KITE_HOME", str(_k1))
-        _w1 = tmp_path / "w0_1"
-        (_w1 / "src").mkdir(parents=True, exist_ok=True)
-        (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-        (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-        _c_test_headless_batch_and_approval_wiring_combined(kite_home=_k1, workspace=_w1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    capsys.readouterr()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _k2 = tmp_path / "k0_2"
-        _k2.mkdir(parents=True, exist_ok=True)
-        _mp2.setenv("KITE_HOME", str(_k2))
-        _w2 = tmp_path / "w0_2"
-        (_w2 / "src").mkdir(parents=True, exist_ok=True)
-        (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-        (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-        _c_test_headless_budgets_leftover_jobs_and_cli_flags(kite_home=_k2, workspace=_w2, monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
+    monkeypatch.setenv("KITE_TRACE_JSONL", str(tmp_path))
+    assert run_headless_task(task, no_context=True, no_compact=True, step_limit=3).ok
+    assert capsys.readouterr().err.count("KITE_TRACE_JSONL failed") == 1
 
+
+def test_jsonl_trace_windows_permissions_are_best_effort(monkeypatch, tmp_path, capsys) -> None:
+    import json
+    import os
+    from types import SimpleNamespace
+
+    from kite.agent import runtime
+
+    # Model Windows without changing the host platform or pathlib's behavior.
+    trace_os = SimpleNamespace(**vars(os))
+    trace_os.name = "nt"
+    monkeypatch.delattr(trace_os, "fchmod", raising=False)
+
+    def denied_chmod(path, mode):
+        raise PermissionError("Windows permissions cannot be tightened")
+
+    trace_os.chmod = denied_chmod
+    monkeypatch.setattr(runtime, "os", trace_os)
+    trace_path = tmp_path / "trace.jsonl"
+    trace = runtime._JsonlTrace(str(trace_path))
+    try:
+        trace(Event("agent_start", {"task": "trace on Windows"}))
+    finally:
+        trace.close()
+    row = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert row["type"] == "agent_start" and row["task"] == "trace on Windows"
+    assert "KITE_TRACE_JSONL failed" not in capsys.readouterr().err

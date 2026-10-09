@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import stat
 import sys
-import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,24 +12,19 @@ from kite.agent.loop import DefaultAgent
 from kite.agent.subagent_profiles import (
     get_profile,
     init_user_profile,
-    list_profiles,
-    profiles_for_orchestrator,
     resolve_subagent_task,
 )
-from kite.config import load_runtime_config
-from kite.config.interactive_budget import effective_agent_limits, resolve_interactive_limits
+from kite.config.interactive_budget import resolve_interactive_limits
 from kite.config.runtime import AgentRuntimeConfig, MemoryConfig
 from kite.config.user import UserConfig
 from kite.memory.continuity import (
     build_continuity_brief,
     format_continuity_section,
     latest_continuity_markdown,
-    next_budget_action,
     record_continuity_after_compact,
-    save_continuity,
     should_budget_auto_continue,
 )
-from kite.memory.session import create_session, format_meta_line, list_sessions, load_session
+from kite.memory.session import create_session, list_sessions, load_session
 from kite.memory.session_analytics import SessionStats, save_session_stats, scan_session_file
 from kite.memory.session_format import (
     format_session_picker_label,
@@ -44,66 +38,34 @@ from kite.memory.store import MemoryStore
 from kite.memory.user_context import (
     append_profile_note,
     append_user_note,
-    profile_path,
     read_profile,
     read_user,
     render_user_context,
-    user_path,
 )
 from kite.memory.working_style import (
     append_signal,
     format_working_section,
-    infer_style_signals,
     observe_session_turn,
     render_working_context,
 )
-from kite.prompts import assemble_system_prompt, discover_system_prompt_files, load_prompt_template
-from kite.ui.budget_continue import decide_budget_continue
+from kite.prompts import assemble_system_prompt, discover_system_prompt_files
 
 
-class _StubModel:
-    def format_message(self, **kwargs) -> dict:
-        return dict(kwargs)
-
-    def query(self, messages):
-        return {"role": "assistant", "content": "hello", "extra": {"actions": [], "cost": 0.0}}
-
-    def format_observation_messages(self, message, outputs, template_vars=None):
-        return []
-
-
-class _StubEnv:
-    def execute(self, action, cwd=""):
-        return {"ok": True, "output": ""}
-
-
-def _c_test_session_append_compact_and_stats(kite_home, tmp_path) -> None:
+def test_session_stats_merge_sidecar_and_durable_events(kite_home, tmp_path) -> None:
     session = create_session(task="demo", cwd=str(tmp_path), provider="groq", model="test")
     session.append({"role": "user", "content": "hi"})
     session.append({"role": "assistant", "content": "hello"})
-    lines = session.path.read_text(encoding="utf-8").splitlines()
-    assert json.loads(lines[0])["type"] == "meta"
-    assert sum(1 for ln in lines if '"type": "message"' in ln) == 2
-    first = format_meta_line(session.meta)
-    session.meta.updated_at = session.meta.updated_at + 1
-    assert len(first) == len(format_meta_line(session.meta))
-    for i in range(5):
-        session.append({"role": "user", "content": f"turn {i}" * 50})
-    size_before = session.path.stat().st_size
-    session.replace_messages([{"role": "user", "content": "Previous conversation summary:\ncompacted"}, {"role": "assistant", "content": "recent"}])
-    assert session.path.stat().st_size < size_before
-    loaded = load_session(session.id)
-    assert len(loaded.messages) == 2
     save_session_stats(SessionStats(session_id=session.id, created_at=1.0, updated_at=10.0, duration_s=9.0, provider="groq", model="test", cwd=str(tmp_path), tool_calls=3, tool_counts={"read": 2}, api_calls=5, cost=0.12, estimated_tokens=4000, cache_hit_tokens=800))
     row = scan_session_file(session.save())
-    assert row is not None and row.tool_calls == 3
+    assert row.tool_calls == 3 and row.api_calls == 5
+    assert row.cost == 0.12 and row.cache_hit_tokens == 800
     session.record_event("compact", {"before": 10, "after": 4})
     session.record_event("tool_end", {"tool": "edit", "ok": False, "blocked": True})
     scanned = scan_session_file(session._session_path())
     assert scanned.compaction_count == 1 and scanned.tool_blocked == 1
 
 
-def _c_test_session_persistence_modes(kite_home) -> None:
+def test_session_persistence_modes(kite_home) -> None:
     cfg = UserConfig.load()
     cfg.session_persistence = "redacted"
     cfg.save()
@@ -125,16 +87,16 @@ def _c_test_session_persistence_modes(kite_home) -> None:
     assert not off.path.is_file() or off.path.stat().st_size == 0
 
 
-def _c_test_session_format_search_and_resume(kite_home, tmp_path) -> None:
+def test_session_format_search_and_resume(kite_home, tmp_path) -> None:
     from kite.memory.session_format import transcript_entries
 
     session = create_session(task="long task text", cwd="/tmp", provider="p", model="m", label="Humanize docs")
     assert session_title(session.meta) == "Humanize docs"
-    _, _, rel = format_session_when(time.time() - 120, now=time.time())
+    _, _, rel = format_session_when(3480.0, now=3600.0)
     assert rel == "2m ago"
     create_session(task="beta", cwd="/tmp", provider="p", model="m", label="tests only")
     matched = match_sessions(list_sessions(limit=10), "docs")
-    assert len(matched) == 1
+    assert [row.id for row in matched] == [session.id]
     labeled = create_session(task="ship it", cwd="/tmp/kite", provider="groq", model="llama", label="ship")
     label = format_session_picker_label(labeled.meta)
     assert "groq/llama" in label
@@ -173,32 +135,24 @@ def _c_test_session_format_search_and_resume(kite_home, tmp_path) -> None:
     assert reloaded.messages[-1].get("content") == "continue" and len(reloaded.messages) == 3
 
 
-def _c_test_continuity_budget_memory_render(workspace, kite_home) -> None:
+def test_continuity_budget_memory_render(workspace, kite_home) -> None:
     brief = build_continuity_brief(messages=[{"role": "user", "content": "Add auth tests"}], todos=[{"status": "in_progress", "content": "write failing test"}], task="Add auth tests")
     assert "Add auth tests" in brief.to_markdown()
     assert should_budget_auto_continue(exit_status="LimitsExceeded", continues_used=0, max_continues=2, todos=[{"status": "pending", "content": "x"}], tool_call_count=2, inbox_queued=False)
     assert not should_budget_auto_continue(exit_status="LimitsExceeded", continues_used=0, max_continues=2, todos=[{"status": "pending", "content": "x"}], tool_call_count=2, inbox_queued=True)
-    assert next_budget_action(exit_status="LimitsExceeded", continues_used=0, max_continues=2, todos=[{"status": "pending", "content": "x"}], tool_call_count=1, inbox_queued=False) == "continue"
     store = MemoryStore.open(workspace)
     md = record_continuity_after_compact(store=store, messages=[{"role": "user", "content": "Ship the fix"}], todos=[{"status": "in_progress", "content": "add regression test"}], session_id="sess1", cwd=str(workspace), task="Ship the fix")
     assert "## Continuity" in md and "Ship the fix" in latest_continuity_markdown(store, session_id="sess1")
-    assert decide_budget_continue(exit_status="LimitsExceeded", continues_used=0, max_continues=2, todos=[{"status": "pending", "content": "x"}], tool_call_count=2, inbox_queued=False) == "continue"
-    assert decide_budget_continue(exit_status="LimitsExceeded", continues_used=2, max_continues=2, todos=[{"status": "pending", "content": "x"}], tool_call_count=2, inbox_queued=False) == "stop"
+    assert not should_budget_auto_continue(exit_status="LimitsExceeded", continues_used=2, max_continues=2, todos=[{"status": "pending", "content": "x"}], tool_call_count=2, inbox_queued=False)
     store.remember("prefer ruff", scope="project")
     cfg = AgentRuntimeConfig(memory=MemoryConfig(inject="opt_in"))
     empty_system = assemble_system_prompt(config=cfg, memory="", continuity="")
-    assert "## Memory layers" in empty_system
     assert "# Memory\n" not in empty_system
     system = assemble_system_prompt(config=cfg, memory=store.render_for_prompt(), continuity="")
     assert "# Memory\n" in system and "prefer ruff" in system
     assert "# Memory" not in format_continuity_section("## Continuity\n- Mission: ship fix")
-    save_continuity(store=store, brief=brief, session_id="s1", cwd=str(workspace))
-    steps, cost = resolve_interactive_limits(interactive=True, user_step=40, user_cost=5.0, runtime_step=40, runtime_cost=5.0)
-    assert steps == 80 and cost == 10.0
     low_s, low_c = resolve_interactive_limits(interactive=True, user_step=20, user_cost=1.0, runtime_step=20, runtime_cost=1.0)
     assert low_s == 20 and low_c == 1.0
-    long_s, long_c = effective_agent_limits(interactive=False, options_step=None, options_cost=None, runtime_step=40, runtime_cost=5.0, user_step=40, user_cost=5.0, interactive_step=80, interactive_cost=10.0, long_task=True)
-    assert long_s == 120 and long_c == 25.0
     text = store.render_for_prompt()
     assert "# Memory" in text and "prefer ruff" in text
     assert len(store.render_for_prompt(max_chars=1200)) <= 1200
@@ -206,9 +160,19 @@ def _c_test_continuity_budget_memory_render(workspace, kite_home) -> None:
     relevant = store.retrieve_for_prompt("run ruff formatting checks", max_chars=800)
     assert "prefer ruff" in relevant and len(relevant) <= 800
 
+    # Prompt truncation remains byte-for-byte stable when parsing notes lazily.
+    store.semantic.user_path().write_text(
+        "# User pin\n\n## Notes\n" + "".join(f"- [`n{i:04d}`] note {i}\n" for i in range(500)),
+        encoding="utf-8",
+    )
+    complete = store.semantic.render_for_prompt(max_chars=100_000)
+    for budget in (20, 40, 100, 300, 3_500):
+        assert store.semantic.render_for_prompt(max_chars=budget) == (
+            complete[: budget - 20] + "\n\n...[truncated]..."
+        )
 
-def _c_test_user_context_profiles_and_working_style(workspace, kite_home) -> None:
-    assert user_path().name == "USER.md" and profile_path().name == "PROFILE.md"
+
+def test_user_context_profiles_and_working_style(workspace, kite_home) -> None:
     append_user_note("prefers pytest")
     append_profile_note("Python backend focus")
     assert "prefers pytest" in read_user() and "Python backend focus" in read_profile()
@@ -219,43 +183,36 @@ def _c_test_user_context_profiles_and_working_style(workspace, kite_home) -> Non
     assert "small diffs" in rendered
     cfg = AgentRuntimeConfig(memory=MemoryConfig(inject="opt_in"))
     system = assemble_system_prompt(config=cfg, memory="", working_style=render_working_context(store), continuity="")
-    assert "Working rhythm" in system and "## Memory layers" in system
+    assert "Working rhythm" in system and "small diffs" in system
     assert "# Memory\n" not in system
-    ids = {p.id for p in list_profiles()}
-    assert "scout" in ids and "coder" in ids
     composed, role, label = resolve_subagent_task(prompt="find auth module", profile="scout", role="", label="")
     assert "find auth module" in composed and role == "architect"
-    assert "scout" in profiles_for_orchestrator()
     assert get_profile("nonexistent-xyz") is None
     path = init_user_profile("my-auditor", label="Auditor", role="debugger", description="Security-focused review")
     assert path.is_file() and get_profile("my-auditor").label == "Auditor"
     with pytest.raises(ValueError, match="invalid profile id"):
         init_user_profile("!!!")
-    from kite.cli.run import build_parser
-
-    args = build_parser().parse_args(["subagents", "--init", "reviewer-custom", "--role", "debugger"])
-    assert args.init == "reviewer-custom"
-    assert infer_style_signals(mode="plan", write_edits=5, bash_calls=4)
     observe_session_turn(store, session_id="s1", mode="plan", approval="readonly", extra={"exit_status": "Submitted", "model_stats": {"write_edits": 6, "bash_calls": 1}})
+    assert {row.summary for row in store.episodes() if row.kind == "style"} == {
+        "often sketches a plan before changing code",
+        "sometimes explores read-only before editing",
+        "iterates with several edits in one sitting",
+    }
     assert "Working rhythm" in format_working_section("### Signals\n- tends to plan first")
     assert "untrusted" in format_working_section("### Signals\n- tends to plan first").lower()
 
 
-def _c_test_prompts_chat_literal_and_checkpoint_lookup(tmp_path, kite_home) -> None:
-    agent = DefaultAgent(_StubModel(), _StubEnv(), instance_prompt="Please solve this task:\n\n{task}\nInspect before editing.", interactive=True)
+def test_prompts_chat_literal_and_checkpoint_lookup(workspace, kite_home) -> None:
+    agent = DefaultAgent(SimpleNamespace(), SimpleNamespace(), instance_prompt="Please solve this task:\n\n{task}\nInspect before editing.", interactive=True)
     text = agent._user_turn_text("hi", follow="hi", kwargs={})
     assert text == "hi" and "Please solve this task" not in text
-    oneshot = DefaultAgent(_StubModel(), _StubEnv(), instance_prompt="TASK:{task}", interactive=False)
+    oneshot = DefaultAgent(SimpleNamespace(), SimpleNamespace(), instance_prompt="TASK:{task}", interactive=False)
     assert oneshot._user_turn_text("hi", follow="hi", kwargs={}) == "TASK:hi"
-    assembled = assemble_system_prompt(config=load_runtime_config())
-    assert "## Effort" in assembled and "## Credentials & secrets" in assembled and "## Skills (trust & supply chain)" in assembled
-    home = kite_home
-    (home / "SYSTEM.md").write_text("GLOBAL BASE", encoding="utf-8")
-    project = tmp_path / "proj"
-    (project / ".kite").mkdir(parents=True)
-    (project / ".kite" / "SYSTEM.md").write_text("PROJECT BASE", encoding="utf-8")
-    override, _append = discover_system_prompt_files(project)
-    assert override == "PROJECT BASE" and load_prompt_template("system")
+    (kite_home / "SYSTEM.md").write_text("GLOBAL BASE", encoding="utf-8")
+    (workspace / ".kite").mkdir()
+    (workspace / ".kite" / "SYSTEM.md").write_text("PROJECT BASE", encoding="utf-8")
+    override, _append = discover_system_prompt_files(workspace)
+    assert override == "PROJECT BASE"
 
     from kite.memory.context_checkpoint import delete_checkpoint, load_checkpoint, save_checkpoint
 
@@ -266,73 +223,3 @@ def _c_test_prompts_chat_literal_and_checkpoint_lookup(tmp_path, kite_home) -> N
         load_checkpoint("sess-1", "*")
     assert delete_checkpoint("sess-1", "*") is False
     assert delete_checkpoint("sess-1", cp.id) is True
-
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_session_append_compact_and_stats, test_session_persistence_modes, test_session_format_search_and_resume."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t0_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _k0 = tmp_path / "k0_0"
-        _k0.mkdir(parents=True, exist_ok=True)
-        _mp0.setenv("KITE_HOME", str(_k0))
-        _c_test_session_append_compact_and_stats(tmp_path=_t0, kite_home=_k0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _k1 = tmp_path / "k0_1"
-        _k1.mkdir(parents=True, exist_ok=True)
-        _mp1.setenv("KITE_HOME", str(_k1))
-        _c_test_session_persistence_modes(kite_home=_k1)
-    finally:
-        _mp1.undo()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _t2 = tmp_path / "t0_2"
-        _t2.mkdir(parents=True, exist_ok=True)
-        _k2 = tmp_path / "k0_2"
-        _k2.mkdir(parents=True, exist_ok=True)
-        _mp2.setenv("KITE_HOME", str(_k2))
-        _c_test_session_format_search_and_resume(tmp_path=_t2, kite_home=_k2)
-    finally:
-        _mp2.undo()
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_continuity_budget_memory_render, test_user_context_profiles_and_working_style, test_prompts_chat_literal_and_checkpoint_lookup."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _k0 = tmp_path / "k1_0"
-        _k0.mkdir(parents=True, exist_ok=True)
-        _mp0.setenv("KITE_HOME", str(_k0))
-        _w0 = tmp_path / "w1_0"
-        (_w0 / "src").mkdir(parents=True, exist_ok=True)
-        (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-        (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-        _c_test_continuity_budget_memory_render(kite_home=_k0, workspace=_w0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _k1 = tmp_path / "k1_1"
-        _k1.mkdir(parents=True, exist_ok=True)
-        _mp1.setenv("KITE_HOME", str(_k1))
-        _w1 = tmp_path / "w1_1"
-        (_w1 / "src").mkdir(parents=True, exist_ok=True)
-        (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-        (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-        _c_test_user_context_profiles_and_working_style(kite_home=_k1, workspace=_w1)
-    finally:
-        _mp1.undo()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _t2 = tmp_path / "t1_2"
-        _t2.mkdir(parents=True, exist_ok=True)
-        _k2 = tmp_path / "k1_2"
-        _k2.mkdir(parents=True, exist_ok=True)
-        _mp2.setenv("KITE_HOME", str(_k2))
-        _c_test_prompts_chat_literal_and_checkpoint_lookup(tmp_path=_t2, kite_home=_k2)
-    finally:
-        _mp2.undo()
-

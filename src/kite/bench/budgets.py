@@ -29,6 +29,16 @@ BUDGETS_MS: dict[str, float] = {
     "checkpoint_roundtrip": 1200.0,
 }
 
+# Full-suite measurements are diagnostic: never turn filesystem/cold-start noise into a CI gate.
+FULL_BENCHMARKS = frozenset({
+    "cold_cli_help", "cold_repl_import", "stream_render_50", "stream_render_80", "stream_render_120",
+    "agent_turn", "large_repo_map", "large_grep", "large_completion",
+    "prompt_cache_growth_50", "prompt_cache_growth_200", "agent_loop_50", "agent_loop_200",
+    "stream_delta_20k", "stream_reasoning_20k", "picker_navigation_10k", "stream_render_dumb",
+    "session_list_2000", "session_append_500", "session_resume_50mb", "session_tail_50mb",
+    "session_recent_events", "session_reverse_row_50mb",
+})
+
 CATEGORIES = ("startup", "context", "tools")
 
 
@@ -36,6 +46,10 @@ def check_report(report: BenchmarkReport) -> list[str]:
     """Return human-readable violations for benchmarks over budget."""
     violations: list[str] = []
     for row in report.results:
+        if row.metadata.get("ok") is False or row.metadata.get("roundtrip") is False or row.metadata.get("returncode", 0) != 0:
+            violations.append(f"{row.name}: benchmark operation failed")
+        if row.name in FULL_BENCHMARKS:
+            continue
         ceiling = BUDGETS_MS.get(row.name)
         if ceiling is None:
             violations.append(f"missing budget for benchmark '{row.name}'")

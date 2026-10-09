@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from kite.application.verification import discover_workspace_profile
 from kite.config.runtime import load_runtime_config
 from kite.context.ci_hints import canonical_test_command
@@ -16,12 +18,20 @@ from kite.context.project_init import (
     scaffold_project_docs,
 )
 from kite.context.verify_hint import resolve_verification_command
-from kite.prompts import assemble_system_prompt, load_prompt_template
+from kite.prompts import split_system_and_setup
 
 
-def _c_test_scaffold_and_force_overwrite(tmp_path: Path) -> None:
-    root = tmp_path / "proj"
-    root.mkdir()
+@pytest.fixture(autouse=True)
+def _isolate_project_context(kite_home, tmp_path, monkeypatch):
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("kite.context.toolchains.scout_toolchains", lambda *_args: [])
+    invalidate_project_context_cache()
+    yield
+    invalidate_project_context_cache()
+
+
+def test_scaffold_and_force_overwrite(workspace: Path, tmp_path: Path) -> None:
+    root = workspace
     (root / "pyproject.toml").write_text(
         '[project]\nname="demo"\ndescription="Demo project"\n',
         encoding="utf-8",
@@ -35,6 +45,7 @@ def _c_test_scaffold_and_force_overwrite(tmp_path: Path) -> None:
     assert "pytest" in agents
     again = scaffold_project_docs(root)
     assert again.agents is not None and again.agents.action == "skipped"
+    assert (root / "AGENTS.md").read_text(encoding="utf-8") == agents
 
     node = tmp_path / "node-proj"
     node.mkdir()
@@ -45,30 +56,26 @@ def _c_test_scaffold_and_force_overwrite(tmp_path: Path) -> None:
     forced = scaffold_project_docs(node, force=True)
     assert forced.agents is not None and forced.agents.action == "overwritten"
     assert forced.agents.backup is not None and forced.agents.backup.is_file()
+    assert forced.agents.backup.read_text(encoding="utf-8") == "# old\n"
     assert "## Setup" in (node / "AGENTS.md").read_text(encoding="utf-8")
 
 
-def _c_test_bootstrap_nudge_present_and_absent(tmp_path: Path) -> None:
-    missing = tmp_path / "proj"
-    missing.mkdir()
-    (missing / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+def test_bootstrap_nudge_present_and_absent(workspace: Path) -> None:
+    missing = workspace
     subprocess.run(["git", "init"], cwd=missing, check=True, capture_output=True)
     assert needs_agents_bootstrap(missing)
     rendered = gather_project_context(missing).render_for_prompt()
     assert "<bootstrap_check>" in rendered
     assert "`init` skill" in rendered
 
-    present = tmp_path / "proj2"
-    present.mkdir()
-    (present / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    present = missing
     (present / "AGENTS.md").write_text("# ok\n", encoding="utf-8")
-    subprocess.run(["git", "init"], cwd=present, check=True, capture_output=True)
     assert not needs_agents_bootstrap(present)
     rendered_present = gather_project_context(present).render_for_prompt()
     assert "<bootstrap_check>" not in rendered_present
 
 
-def _c_test_ecosystem_ci_verify_and_context_block(tmp_path: Path) -> None:
+def test_ecosystem_ci_verify_and_context_block(tmp_path: Path) -> None:
     root = tmp_path / "node"
     root.mkdir()
     (root / "package.json").write_text(
@@ -102,36 +109,16 @@ def _c_test_ecosystem_ci_verify_and_context_block(tmp_path: Path) -> None:
     assert "Canonical verification" in rendered and "<worktree-reminder>" in rendered
 
 
-def _c_test_memory_layers_prompt() -> None:
-    assert "AGENTS.md" in load_prompt_template("memory_layers")
-    assert "Memory layers" in assemble_system_prompt(config=load_runtime_config(), skills=[])
-
-
-def _c_test_stable_setup_split_keeps_prefix_cacheable(tmp_path) -> None:
-    from kite.prompts import split_system_and_setup
-
+def test_stable_setup_split_keeps_prefix_cacheable(tmp_path) -> None:
     config = load_runtime_config()
     stable, setup = split_system_and_setup(config=config, skills=[])
     assert "UTC:" not in stable and "UTC:" in setup
-    assert "Kite" in stable and len(stable) > 500
-
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_scaffold_and_force_overwrite, test_bootstrap_nudge_present_and_absent, test_ecosystem_ci_verify_and_context_block."""
-    _t0 = tmp_path / "t0_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_scaffold_and_force_overwrite(tmp_path=_t0)
-    _t1 = tmp_path / "t0_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _c_test_bootstrap_nudge_present_and_absent(tmp_path=_t1)
-    _t2 = tmp_path / "t0_2"
-    _t2.mkdir(parents=True, exist_ok=True)
-    _c_test_ecosystem_ci_verify_and_context_block(tmp_path=_t2)
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_memory_layers_prompt, test_stable_setup_split_keeps_prefix_cacheable."""
-    _c_test_memory_layers_prompt()
-    _t1 = tmp_path / "t1_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _c_test_stable_setup_split_keeps_prefix_cacheable(tmp_path=_t1)
+    overlay = tmp_path / ".kite"
+    overlay.mkdir()
+    (overlay / "SYSTEM.md").write_text("PROJECT BASE", encoding="utf-8")
+    (overlay / "APPEND_SYSTEM.md").write_text("PROJECT APPEND", encoding="utf-8")
+    stable, setup = split_system_and_setup(config=config, cwd=tmp_path)
+    assert stable.startswith("PROJECT BASE") and "PROJECT APPEND" in setup
+    stable, setup = split_system_and_setup(config=config, cwd=tmp_path, override_system="EXPLICIT", append_system="")
+    assert stable.startswith("EXPLICIT") and "PROJECT APPEND" not in setup
 

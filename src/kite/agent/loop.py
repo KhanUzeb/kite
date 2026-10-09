@@ -209,16 +209,13 @@ def _is_casual_user_turn(content: str) -> bool:
     return False
 
 
-def _is_casual_chat(content: str) -> bool:
-    """Alias — casual detection applies to user turns only (see _allow_text_submit)."""
-    return _is_casual_user_turn(content)
-
-
 def _is_injected_nudge(content: str) -> bool:
     text = (content or "").strip()
     if not text:
         return False
     if text == _IDLE_NUDGE or text.startswith("Stopped after"):
+        return True
+    if text.startswith(("Submit blocked:", "[verification]", _VERIFY_IDLE_NUDGE, "You described a next action")):
         return True
     if text.startswith(_SUBMIT_MARKER):
         return True
@@ -527,7 +524,7 @@ class DefaultAgent:
             label=f"phase turn {self.n_calls}",
             reason="auto",
             todos=self.todos.read() if self.todos is not None else None,
-            system=self._full_system(),
+            system=self.system_prompt,
             window=self.context_window,
         )
         self.session.record_context_checkpoint(cp.id, label=cp.label, reason="auto")
@@ -549,17 +546,8 @@ class DefaultAgent:
         if self.on_event:
             self.on_event(Event(kind=kind, payload=payload))  # type: ignore[arg-type]
 
-    def _full_system(self) -> str:
-        # Stable prefix only — volatile setup rides as a user message after the
-        # cache breakpoint (§2 Move + §4) so timestamps/repo state never
-        # invalidate the cached system block.
-        return self.system_prompt
-
-    def _setup_text(self) -> str:
-        return (self.project_context or "").strip()
-
     def _setup_message(self) -> dict | None:
-        setup = self._setup_text()
+        setup = (self.project_context or "").strip()
         if not setup:
             return None
         body = f"# Setup (reference — not the task)\n{setup}"
@@ -592,7 +580,7 @@ class DefaultAgent:
                     compact_ratio=self.compaction_ratio,
                     compaction_llm_ratio=self.compaction_llm_ratio,
                 ),
-                system=self._full_system(),
+                system=self.system_prompt,
                 tool_schemas=schemas,
                 on_event=self.on_event,
                 summarizer=self.summarizer,
@@ -627,7 +615,11 @@ class DefaultAgent:
         force = False
         if self.hooks is not None:
             force = bool(self.hooks.context.pop("sol_pi_force_compact", False))
-        result = compactor.maybe_compact(messages, force=force)
+        # History hooks may mutate old messages in place, not just replace the list.
+        append_only = self.hooks is None or not any(
+            event in self.hooks for event in ("before_compact", "before_query")
+        )
+        result = compactor.maybe_compact(messages, force=force, append_only=append_only)
         self.last_usage_estimate = result.usage
         if result.compacted:
             self.messages = result.messages
@@ -702,7 +694,7 @@ class DefaultAgent:
             if not self.attachments:
                 content = prompt
             starter = [
-                self.model.format_message(role="system", content=self._full_system()),
+                self.model.format_message(role="system", content=self.system_prompt),
             ]
             setup_msg = self._setup_message()
             if setup_msg is not None:
@@ -1051,39 +1043,15 @@ class DefaultAgent:
             last_user=last_user,
         ):
             if self.mode is AgentMode.BUILD and self.verification.has_edits():
-                reason = self.verification.submit_block_reason(
-                    content,
-                    require_verification=self.verify_before_submit,
-                    structured=False,
-                )
-                if reason:
-                    return self.add_messages({"role": "user", "content": reason})
+                return self._submit_text(content)
             raise Submitted(_exit_msg("Submitted", content=content, submission=content))
         if self._awaiting_approval:
             return self.add_messages({"role": "user", "content": _IDLE_NUDGE})
-        if self.mode is AgentMode.BUILD and is_unexpected_stop(content):
-            return self.add_messages(
-                {
-                    "role": "user",
-                    "content": (
-                        "You described a next action but stopped before taking it. "
-                        "Either perform the action with a tool, or clearly state that you are blocked "
-                        "and ask the user what to do next."
-                    ),
-                }
-            )
         if (
             self.mode is AgentMode.BUILD
             and self.verification.status() == "changed_unverified"
             and self.verification.needs_tests()
         ):
-            if content:
-                reason = self.verification.unfounded_claim_reason(content)
-                if reason:
-                    return self.add_messages({"role": "user", "content": reason})
-            # This branch never increments the idle counter, so a model that only
-            # re-narrates unverified edits used to spin until step_limit. Count it
-            # here and stop instead of spending the remaining budget.
             self._verify_nudge_turns += 1
             if self._verify_nudge_turns >= _MAX_VERIFY_NUDGE_TURNS:
                 self.add_messages(
@@ -1097,6 +1065,10 @@ class DefaultAgent:
                     )
                 )
                 return []
+            if content:
+                reason = self.verification.unfounded_claim_reason(content)
+                if reason:
+                    return self.add_messages({"role": "user", "content": reason})
             nudge = self.verification.post_edit_nudge() or _VERIFY_IDLE_NUDGE
             from kite.application.verification import next_required_check_command
 
@@ -1126,6 +1098,17 @@ class DefaultAgent:
             )
             return []
         self._last_idle_content = content
+        if self.mode is AgentMode.BUILD and is_unexpected_stop(content):
+            return self.add_messages(
+                {
+                    "role": "user",
+                    "content": (
+                        "You described a next action but stopped before taking it. "
+                        "Either perform the action with a tool, or clearly state that you are blocked "
+                        "and ask the user what to do next."
+                    ),
+                }
+            )
         if self.mode is AgentMode.BUILD and self.verify_before_submit and content:
             reason = self.verification.unfounded_claim_reason(content)
             if reason:
@@ -1545,9 +1528,7 @@ class DefaultAgent:
         if vstatus != self._last_verification_status:
             self._last_verification_status = vstatus
             self._emit("verification_status", status=vstatus, summary=self.verification.summary())
-        if out.get("blocked"):
-            pass
-        else:
+        if not out.get("blocked"):
             self.tool_call_count += 1
             self.tool_counts[tool] = self.tool_counts.get(tool, 0) + 1
             self._turn_tool_names.append(tool)
@@ -1566,10 +1547,11 @@ class DefaultAgent:
                 self.error_ledger.record(tool, out, model=model_name)
             except Exception:
                 pass
-        nudge = self.verification.post_edit_nudge()
-        if nudge and out.get("ok") and tool in {"write", "edit"}:
-            existing = str(out.get("output") or "")
-            out = {**out, "output": f"{existing}\n\n{nudge}".strip()}
+        if out.get("ok") and tool in {"write", "edit"}:
+            nudge = self.verification.post_edit_nudge()
+            if nudge:
+                existing = str(out.get("output") or "")
+                out = {**out, "output": f"{existing}\n\n{nudge}".strip()}
         if self.hooks is not None:
             self.hooks.call("after_tool", out, tool=tool, args=args)
         if self.audit is not None:

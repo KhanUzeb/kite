@@ -4,15 +4,11 @@ Every test here corresponds to a defect that reproduced as a crash, a silent
 data loss, or a duplicated note. Tests use the shared ``kite_home`` fixture so
 no path ever resolves into the real ~/.kite.
 
-Scope note: ``kite.memory.session`` / ``session_analytics`` are owned by a
-concurrent change, so this file only exercises them as read-only consumers and
-asserts the hardening that lives in the modules it does own.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import os
 import sqlite3
 from pathlib import Path
@@ -55,13 +51,6 @@ _FUZZ_IDS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _project(tmp_path: Path) -> Path:
-    root = tmp_path / "proj"
-    root.mkdir(exist_ok=True)
-    (root / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    return root
-
-
 def _session(tmp_path: Path, task: str = "demo") -> Session:
     s = create_session(task=task, cwd=str(tmp_path), provider="p", model="m")
     s.append({"role": "user", "content": task})
@@ -71,7 +60,7 @@ def _session(tmp_path: Path, task: str = "demo") -> Session:
 # --- 1. path traversal / id safety -------------------------------------------
 
 
-def _c_test_fuzzed_ids_never_escape_their_storage_root(kite_home: Path) -> None:
+def test_fuzzed_ids_never_escape_their_storage_root(kite_home: Path) -> None:
     """No id from user/tool/model input may resolve outside its storage root.
 
     Every builder that turns a session id into a filename funnels through
@@ -120,14 +109,14 @@ def _c_test_fuzzed_ids_never_escape_their_storage_root(kite_home: Path) -> None:
             resolve_session_path(bad)
 
 
-def _c_test_overlong_session_id_is_rejected_before_touching_the_filesystem(kite_home: Path) -> None:
+def test_overlong_session_id_is_rejected_before_touching_the_filesystem(kite_home: Path) -> None:
     """A pathological id must fail as ValueError, not as a raw OSError mid-write."""
     for bad in ("x" * 10_000, "y" * 400):
         with pytest.raises(ValueError):
             save_session_goal(bad, SessionGoal(objective="o"))
 
 
-def _c_test_reaper_derives_keep_names_from_live_stems(kite_home: Path) -> None:
+def test_reaper_derives_keep_names_from_live_stems(kite_home: Path) -> None:
     """An id that itself ends in ``.meta``/``.stats`` must not orphan its sidecars.
 
     ``_reap_orphan_sidecars`` builds the keep-set from live ``*.jsonl`` stems
@@ -159,14 +148,6 @@ def _c_test_reaper_derives_keep_names_from_live_stems(kite_home: Path) -> None:
 # --- 2. corruption / crash recovery ------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FIX NEEDED in session.py::_read_session_meta (not owned by this change): a "
-        "corrupt meta row must still yield a SessionMeta derived from the filename "
-        "so the transcript stays listable and reapable."
-    ),
-)
 def test_corrupt_meta_row_does_not_make_a_session_unlistable(kite_home: Path, tmp_path: Path) -> None:
     """A torn *first* line must not silently orphan the whole transcript.
 
@@ -180,14 +161,28 @@ def test_corrupt_meta_row_does_not_make_a_session_unlistable(kite_home: Path, tm
     path = s._session_path()
 
     lines = path.read_text(encoding="utf-8").split("\n")
-    lines[0] = '{"type":"meta"'  # torn header
-    path.write_text("\n".join(lines), encoding="utf-8")
+    for header in ('{"type":"meta"', "[]", '{}', '{"type":"meta","id":"x","created_at":"bad"}'):
+        lines[0] = header
+        path.write_text("\n".join(lines), encoding="utf-8")
+        listed = {m.id: m for m in session_mod.list_sessions(limit=50)}
+        assert s.id in listed, "session with a torn meta row became invisible and unlistable"
+        assert listed[s.id].label == "Recovered session"
+        assert listed[s.id].provider == "p"
+        assert session_mod.load_session(s.id).messages == s.messages
+        assert session_mod.load_session_tail(s.id, 1).messages == s.messages[-1:]
 
-    listed = {m.id for m in session_mod.list_sessions(limit=50)}
-    assert s.id in listed, "session with a torn meta row became invisible and unlistable"
+    path.write_bytes(b"\xff\xfe\n" + "\n".join(lines[1:]).encode("utf-8"))
+    assert session_mod._read_session_meta(path).id == s.id
+    newer = _session(tmp_path, "newer work")
+    os.utime(path, (1, 1))
+    os.utime(path.with_suffix(".meta"), (1, 1))
+    removed = session_mod.prune_sessions(keep=1, dry_run=False)
+    assert [row.id for row in removed] == [s.id]
+    assert not path.exists()
+    assert newer._session_path().exists()
 
 
-def _c_test_torn_checkpoint_reports_a_clear_error_instead_of_raw_json(kite_home: Path, tmp_path: Path) -> None:
+def test_torn_checkpoint_reports_a_clear_error_instead_of_raw_json(kite_home: Path, tmp_path: Path) -> None:
     """A half-written checkpoint is the normal crash state — it must not raise JSONDecodeError."""
     cp = save_checkpoint(
         session_id="s-torn", messages=[{"role": "user", "content": "x" * 400}], cwd=str(tmp_path)
@@ -202,9 +197,7 @@ def _c_test_torn_checkpoint_reports_a_clear_error_instead_of_raw_json(kite_home:
     assert list_checkpoints("s-torn") == []
 
 
-def _c_test_non_finite_sidecar_timestamp_cannot_crash_the_session_picker(
-    kite_home: Path, tmp_path: Path
-) -> None:
+def test_non_finite_sidecar_timestamp_cannot_crash_the_session_picker(kite_home: Path, tmp_path: Path) -> None:
     """A NaN/inf timestamp in the sidecar must not blow up the picker rendering.
 
     ``json.loads`` happily parses ``NaN`` and ``Infinity`` (both valid JS), so a
@@ -213,18 +206,21 @@ def _c_test_non_finite_sidecar_timestamp_cannot_crash_the_session_picker(
     every listed session.
     """
     for bad in (float("nan"), float("inf"), -float("inf")):
-        rendered = session_format.format_session_when(bad, now=0.0)
-        assert rendered[0] and isinstance(rendered[1], str)
+        assert session_format.format_session_when(bad, now=0.0) == (
+            session_format.format_session_when(0.0, now=0.0)
+        )
 
     s = _session(tmp_path)
     meta = s.meta
     for bad in (float("nan"), float("inf")):
         meta.updated_at = bad
-        assert session_format.format_session_picker_label(meta)
-        assert session_format.format_session_card(meta)[0]
+        label = session_format.format_session_picker_label(meta)
+        prompt, details = session_format.format_session_card(meta)
+        assert "demo" in label and "p/m" in label
+        assert "demo" in prompt and "p/m" in details
 
 
-def _c_test_mid_file_torn_row_keeps_the_surviving_prefix(kite_home: Path, tmp_path: Path) -> None:
+def test_mid_file_torn_row_keeps_the_surviving_prefix(kite_home: Path, tmp_path: Path) -> None:
     """Tearing is only 'normal' at EOF; a torn middle row must still not lose the rest."""
     s = _session(tmp_path, "multi")
     for i in range(4):
@@ -237,17 +233,20 @@ def _c_test_mid_file_torn_row_keeps_the_surviving_prefix(kite_home: Path, tmp_pa
 
     stats = scan_session_file(path)
     assert stats is not None
-    assert stats.message_count >= 4, "prefix and suffix rows must both survive a middle tear"
-    assert len(session_mod.load_session(s.id).messages) >= 4
+    assert stats.message_count == 4, "prefix and suffix rows must both survive a middle tear"
+    assert [row["content"] for row in session_mod.load_session(s.id).messages] == [
+        "multi", "msg 1", "msg 2", "msg 3",
+    ]
 
 
-def _c_test_garbage_sidecars_never_break_meta_resolution(kite_home: Path, tmp_path: Path) -> None:
+def test_garbage_sidecars_never_break_meta_resolution(kite_home: Path, tmp_path: Path) -> None:
     """A garbage ``.meta`` / ``.stats.json`` degrades to file meta, never raises."""
     s = _session(tmp_path)
     sidecar = session_mod.sessions_dir() / f"{s.id}.meta"
     sidecar.write_text("}}not json{{", encoding="utf-8")
     assert session_mod.session_runtime_overlay(s._session_path()) == {}
-    assert session_mod._read_session_meta(s._session_path()) is not None
+    recovered = session_mod._read_session_meta(s._session_path())
+    assert (recovered.id, recovered.task, recovered.provider) == (s.id, "demo", "p")
 
     from kite.memory.session_analytics import load_session_stats
 
@@ -260,9 +259,7 @@ def _c_test_garbage_sidecars_never_break_meta_resolution(kite_home: Path, tmp_pa
 # --- 3. concurrency -----------------------------------------------------------
 
 
-def _c_test_checkpoint_writes_are_atomic_under_a_crash_during_replace(
-    kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_checkpoint_writes_are_atomic_under_a_crash_during_replace(kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A checkpoint is the crash-recovery artifact — it must never be torn.
 
     ``save_checkpoint`` wrote with a plain ``write_text``. A crash (or a second
@@ -276,6 +273,7 @@ def _c_test_checkpoint_writes_are_atomic_under_a_crash_during_replace(
     )
     path = checkpoints_dir("s-atomic") / f"{good.id}.json"
     original = path.read_text(encoding="utf-8")
+    before_files = set(path.parent.iterdir())
 
     real_replace = os.replace
 
@@ -291,34 +289,36 @@ def _c_test_checkpoint_writes_are_atomic_under_a_crash_during_replace(
 
     assert path.read_text(encoding="utf-8") == original, "checkpoint was left torn on disk"
     assert load_checkpoint("s-atomic", good.id).messages[0]["content"] == "first"
+    assert set(path.parent.iterdir()) == before_files
 
 
-def _c_test_handoff_bundle_write_leaves_no_torn_artifact(
-    kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_handoff_bundle_write_leaves_no_torn_artifact(kite_home: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Handoff markdown/json are written atomically for the same reason."""
-    proj = _project(tmp_path)
-    s = create_session(task="handoff", cwd=str(proj), provider="p", model="m")
+    s = create_session(task="handoff", cwd=str(workspace), provider="p", model="m")
     s.append({"role": "user", "content": "do the thing"})
 
+    bundle = write_handoff(session=s, cwd=str(workspace))
     real_replace = os.replace
+    for target in (bundle.markdown_path, bundle.json_path):
+        original = target.read_bytes()
+        leftovers = set(target.parent.glob("*.tmp"))
 
-    def boom(src, dst):
-        raise OSError("simulated crash during replace")
+        def boom(src, dst, *, target=target):
+            if Path(dst) == target:
+                raise OSError("simulated handoff replace failure")
+            return real_replace(src, dst)
 
-    monkeypatch.setattr(os, "replace", boom)
-    with pytest.raises(OSError):
-        write_handoff(session=s, cwd=str(proj))
-    monkeypatch.setattr(os, "replace", real_replace)
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "replace", boom)
+            with pytest.raises(OSError, match="handoff replace failure"):
+                write_handoff(session=s, cwd=str(workspace))
+        assert target.read_bytes() == original
+        assert set(target.parent.glob("*.tmp")) == leftovers
 
-    bundle = write_handoff(session=s, cwd=str(proj))
-    assert bundle.markdown_path.is_file() and bundle.json_path.is_file()
     assert json.loads(bundle.json_path.read_text(encoding="utf-8"))["format"] == "kite-handoff-v1"
 
 
-def _c_test_mtime_ranking_never_runs_ahead_of_recorded_updated_at(
-    kite_home: Path, tmp_path: Path
-) -> None:
+def test_mtime_ranking_never_runs_ahead_of_recorded_updated_at(kite_home: Path, tmp_path: Path) -> None:
     """``list_sessions`` prefilters on mtime, then orders by ``updated_at``.
 
     The prefilter is only sound if the mtime rank key (newest of transcript and
@@ -327,8 +327,6 @@ def _c_test_mtime_ranking_never_runs_ahead_of_recorded_updated_at(
     ``note_runtime`` stamps only the sidecar, so the sidecar leg is the one
     that actually carries "last touched".
     """
-    ranked = dict(session_mod._ranked_transcripts(session_mod.sessions_dir()))
-
     for i in range(3):
         s = _session(tmp_path, f"task-{i}")
         s.note_runtime(model=f"m{i}")
@@ -353,9 +351,7 @@ def _c_test_mtime_ranking_never_runs_ahead_of_recorded_updated_at(
 # --- 4. store / episodic sqlite ----------------------------------------------
 
 
-def _c_test_corrupt_episodic_db_degrades_instead_of_killing_memory(
-    kite_home: Path, tmp_path: Path
-) -> None:
+def test_corrupt_episodic_db_degrades_instead_of_killing_memory(kite_home: Path, workspace: Path, monkeypatch) -> None:
     """A corrupt episodes.sqlite must not take durable notes down with it.
 
     The observed failure was the worst shape: ``remember()`` persisted the note
@@ -364,8 +360,7 @@ def _c_test_corrupt_episodic_db_degrades_instead_of_killing_memory(
     ``render_for_prompt`` raised on every subsequent turn, permanently breaking
     the memory layer over a soft cache file.
     """
-    proj = _project(tmp_path)
-    store = MemoryStore(proj)
+    store = MemoryStore(workspace)
     store.remember("warm the db")
 
     store.episodic.user_path().write_bytes(b"this is not a sqlite database" * 64)
@@ -373,28 +368,45 @@ def _c_test_corrupt_episodic_db_degrades_instead_of_killing_memory(
     note = store.remember("the user prefers tabs over spaces")
     assert note.text == "the user prefers tabs over spaces"
     assert "the user prefers tabs over spaces" in {n.text for n in store.notes()}
-    assert store.retrieve_for_prompt("tabs spaces")
-    assert store.render_for_prompt()
-    assert store.record_episode(kind="note", summary="still recording") is not False
+    assert "the user prefers tabs over spaces" in store.retrieve_for_prompt("tabs spaces")
+    assert "the user prefers tabs over spaces" in store.render_for_prompt()
+    episode = store.record_episode(kind="note", summary="still recording")
+    assert episode.summary == "still recording"
+    assert "still recording" in {row.summary for row in store.episodes()}
+
+    # A transient failure must not quarantine a healthy database and its WAL.
+    from kite.memory import episodic
+
+    path = store.episodic.user_path()
+    original = path.read_bytes()
+    quarantined = set(path.parent.glob("*.corrupt-*"))
+
+    def busy(_path):
+        raise sqlite3.OperationalError("database is locked")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(episodic, "_connect", busy)
+        assert episodic._connect_or_quarantine(path) is None
+    assert path.read_bytes() == original
+    assert set(path.parent.glob("*.corrupt-*")) == quarantined
 
 
-# Runs in a separate interpreter so the "second Kite process" is a real, separate
-# SQLite client. It holds the write lock for a bounded moment and then releases.
+# A real second SQLite client waits until the contender reaches its INSERT.
+# The brief overlap exercises SQLite's busy handler without a half-second stall.
 _LOCK_HOLDER = """
 import sqlite3, sys, time
 
 conn = sqlite3.connect(sys.argv[1], isolation_level=None, timeout=5)
 conn.execute("BEGIN IMMEDIATE")
 print("held", flush=True)
-time.sleep(float(sys.argv[2]))
+sys.stdin.readline()
+time.sleep(0.01)
 conn.rollback()
 conn.close()
 """
 
 
-def _c_test_episodic_write_survives_a_concurrent_writer_holding_the_lock(
-    kite_home: Path, tmp_path: Path
-) -> None:
+def test_episodic_write_survives_a_concurrent_writer_holding_the_lock(kite_home: Path, workspace: Path, monkeypatch) -> None:
     """Two Kite processes on one KITE_HOME: a held lock must not lose an episode.
 
     ``PRAGMA busy_timeout`` plus WAL is the entire cross-process safety story for
@@ -405,22 +417,42 @@ def _c_test_episodic_write_survives_a_concurrent_writer_holding_the_lock(
     import subprocess
     import sys
 
-    store = EpisodicStore(_project(tmp_path))
+    from kite.memory import episodic
+
+    store = EpisodicStore(workspace)
     for i in range(3):
         store.record(kind="note", summary=f"before {i}")
+    contender = episodic._connect(store.user_path())
 
     holder = subprocess.Popen(
-        [sys.executable, "-c", _LOCK_HOLDER, str(store.user_path()), "0.5"],
+        [sys.executable, "-c", _LOCK_HOLDER, str(store.user_path())],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
     )
+
+    def release_on_insert(statement):
+        if statement.startswith("INSERT INTO episodes"):
+            holder.stdin.write("release\n")
+            holder.stdin.flush()
+
+    contender.set_trace_callback(release_on_insert)
     try:
         assert holder.stdout is not None
         assert holder.stdout.readline().strip() == "held", "lock holder never took the lock"
-        for i in range(3):
+        with monkeypatch.context() as patch:
+            patch.setattr(episodic, "_connect", lambda _path: contender)
+            store.record(kind="note", summary="during 0")
+        for i in range(1, 3):
             store.record(kind="note", summary=f"during {i}")
     finally:
-        holder.wait(timeout=30)
+        contender.close()
+        try:
+            holder.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            holder.kill()
+            holder.communicate()
+    assert holder.returncode == 0
 
     summaries = {e.summary for e in store.recent(limit=50)}
     assert {f"before {i}" for i in range(3)} <= summaries, "episodes lost before contention"
@@ -433,9 +465,7 @@ def _c_test_episodic_write_survives_a_concurrent_writer_holding_the_lock(
         conn.close()
 
 
-def _c_test_legacy_jsonl_migration_is_idempotent_after_a_crash_before_rename(
-    kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_legacy_jsonl_migration_is_idempotent_after_a_crash_before_rename(kite_home: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A crash between folding notes and renaming to ``.bak`` must not duplicate.
 
     The dedup compared the *raw* legacy text against the *clamped* stored text, so
@@ -444,14 +474,13 @@ def _c_test_legacy_jsonl_migration_is_idempotent_after_a_crash_before_rename(
     identical note — and ``remember()`` was never called, so the duplication was
     invisible to the user.
     """
-    proj = _project(tmp_path)
     memory_dir = kite_home / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)
     legacy = memory_dir / "notes.jsonl"
     long_note = "L" * 3000
     legacy.write_text(json.dumps({"id": "abc", "text": long_note}) + "\n", encoding="utf-8")
 
-    semantic = SemanticStore(proj)
+    semantic = SemanticStore(workspace)
     real_replace = os.replace
 
     def boom(src, dst):
@@ -477,16 +506,12 @@ def _c_test_legacy_jsonl_migration_is_idempotent_after_a_crash_before_rename(
 # --- 5. limits, coercion, ratios ---------------------------------------------
 
 
-def _c_test_limit_zero_or_negative_means_no_rows(kite_home: Path, tmp_path: Path) -> None:
+def test_limit_zero_or_negative_means_no_rows(kite_home: Path, tmp_path: Path) -> None:
     """A 0/negative limit must mean 'nothing', never 'everything' or a tail slice."""
-    s = _session(tmp_path)
-    for _ in range(3):
-        s.record_event("tool_end", {"tool": "read", "ok": True})
-
     for i in range(2):
         save_checkpoint(session_id="s-lim", messages=[{"role": "user", "content": str(i)}], cwd=str(tmp_path))
-    assert len(list(list_checkpoints("s-lim", limit=0))) == 0
-    assert len(list(list_checkpoints("s-lim", limit=-2))) == 0
+    assert list_checkpoints("s-lim", limit=0) == []
+    assert list_checkpoints("s-lim", limit=-2) == []
 
     log = AuditLog()
     for i in range(5):
@@ -496,56 +521,30 @@ def _c_test_limit_zero_or_negative_means_no_rows(kite_home: Path, tmp_path: Path
     assert len(log.tail(3)) == 3
 
 
-def _c_test_working_style_observation_tolerates_non_numeric_model_stats(
-    kite_home: Path, tmp_path: Path
-) -> None:
+def test_working_style_observation_tolerates_non_numeric_model_stats(kite_home: Path, workspace: Path) -> None:
     """Model stats reach us as provider payloads; a string must not crash the turn.
 
     ``observe_session_turn`` is called at the end of every REPL turn purely to
     record a soft signal. ``int("abc")`` escaping there aborts the turn's
     post-processing on nothing but a cosmetic observation.
     """
-    store = MemoryStore(_project(tmp_path))
+    store = MemoryStore(workspace)
     for junk in ({"api_calls": "abc"}, {"model_stats": {"api_calls": "many"}}, {"api_calls": None}):
-        observe_session_turn(store, session_id="s", extra=junk)
+        assert observe_session_turn(store, session_id="s", extra=junk) == 0
+    assert store.episodes() == []
 
     assert observe_session_turn(
         store, session_id="s", extra={"model_stats": {"write_edits": "6", "api_calls": "2"}}
-    ) >= 0
+    ) == 1
+    assert [(row.kind, row.summary) for row in store.episodes()] == [
+        ("style", "iterates with several edits in one sitting"),
+    ]
 
 
-def _c_test_dashboard_average_is_safe_with_no_sessions(kite_home: Path) -> None:
+def test_dashboard_average_is_safe_with_no_sessions(kite_home: Path) -> None:
     """The avg divides by len(sessions) — zero rows must not raise ZeroDivisionError."""
     from kite.memory.session_analytics import build_dashboard_summary
 
     summary = build_dashboard_summary(limit=0)
     assert summary.session_count == 0
-    assert not math.isnan(summary.avg_duration_s)
-    assert summary.avg_duration_s >= 0.0
-
-def test_batch_00(kite_home: Path, tmp_path: Path) -> None:
-    """Traversal/id safety + limits edges (exact-count first: later helpers create sessions)."""
-    _c_test_dashboard_average_is_safe_with_no_sessions(kite_home)
-    _c_test_reaper_derives_keep_names_from_live_stems(kite_home)
-    _c_test_fuzzed_ids_never_escape_their_storage_root(kite_home)
-    _c_test_overlong_session_id_is_rejected_before_touching_the_filesystem(kite_home)
-    _c_test_limit_zero_or_negative_means_no_rows(kite_home, tmp_path)
-    _c_test_working_style_observation_tolerates_non_numeric_model_stats(kite_home, tmp_path)
-
-
-def test_batch_01(kite_home: Path, tmp_path: Path) -> None:
-    """Corruption / crash-recovery paths."""
-    _c_test_torn_checkpoint_reports_a_clear_error_instead_of_raw_json(kite_home, tmp_path)
-    _c_test_non_finite_sidecar_timestamp_cannot_crash_the_session_picker(kite_home, tmp_path)
-    _c_test_mid_file_torn_row_keeps_the_surviving_prefix(kite_home, tmp_path)
-    _c_test_garbage_sidecars_never_break_meta_resolution(kite_home, tmp_path)
-
-
-def test_batch_02(kite_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Concurrency + store/episodic integrity (ranking count first: later helpers create sessions)."""
-    _c_test_mtime_ranking_never_runs_ahead_of_recorded_updated_at(kite_home, tmp_path)
-    _c_test_checkpoint_writes_are_atomic_under_a_crash_during_replace(kite_home, tmp_path, monkeypatch)
-    _c_test_handoff_bundle_write_leaves_no_torn_artifact(kite_home, tmp_path, monkeypatch)
-    _c_test_episodic_write_survives_a_concurrent_writer_holding_the_lock(kite_home, tmp_path)
-    _c_test_legacy_jsonl_migration_is_idempotent_after_a_crash_before_rename(kite_home, tmp_path, monkeypatch)
-    _c_test_corrupt_episodic_db_degrades_instead_of_killing_memory(kite_home, tmp_path)
+    assert summary.avg_duration_s == 0.0

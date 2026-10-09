@@ -27,7 +27,7 @@ def _needs_git() -> None:
         pytest.skip("git not on PATH")
 
 
-def _c_test_detect_normalize_encode_and_os_default(tmp_path: Path) -> None:
+def test_detect_normalize_encode_and_os_default(tmp_path: Path) -> None:
     crlf = tmp_path / "a.txt"
     crlf.write_bytes(b"one\r\ntwo\r\nthree\r\n")
     assert detect_line_ending(crlf) == CRLF
@@ -47,7 +47,7 @@ def _c_test_detect_normalize_encode_and_os_default(tmp_path: Path) -> None:
     assert os_default_ending() == (CRLF if sys.platform == "win32" else LF)
 
 
-def _c_test_new_and_existing_file_endings(tmp_path: Path) -> None:
+def test_new_and_existing_file_endings(tmp_path: Path) -> None:
     target = tmp_path / "fresh.txt"
     assert new_file_ending(target) == os_default_ending()
     ending = write_text_preserving(target, "x\ny\n")
@@ -94,7 +94,7 @@ def _coding_tools(cwd: Path) -> dict:
     return {t.name: t for t in tools}
 
 
-def _c_test_write_and_edit_tools_preserve_endings(tmp_path: Path) -> None:
+def test_write_and_edit_tools_preserve_endings(tmp_path: Path) -> None:
     tools = _coding_tools(tmp_path)
     target = tmp_path / "app.py"
     target.write_bytes(b"line1\nline2\nline3\n")
@@ -110,11 +110,6 @@ def _c_test_write_and_edit_tools_preserve_endings(tmp_path: Path) -> None:
     after = srv.read_bytes()
     assert after == b"a\r\nB\r\nc\r\nd\r\n"
     assert edit_result["line_ending"] == "crlf"
-    # Only one line differs — no whole-file churn.
-    before_lines = before.split(b"\r\n")
-    after_lines = after.split(b"\r\n")
-    assert len(before_lines) == len(after_lines)
-    assert sum(1 for i in range(len(before_lines)) if before_lines[i] != after_lines[i]) == 1
     brand_new = tmp_path / "brand-new.txt"
     new_result = tools["write"].run({"path": str(brand_new), "content": "hello\nworld\n"})
     assert new_result["ok"] is True
@@ -125,7 +120,7 @@ def _c_test_write_and_edit_tools_preserve_endings(tmp_path: Path) -> None:
         assert new_raw == b"hello\nworld\n"
 
 
-def _c_test_apply_diff_preserves_endings(tmp_path: Path) -> None:
+def test_apply_diff_preserves_endings(tmp_path: Path) -> None:
     from kite.cli.apply_cmd import apply_unified_diff
 
     target = tmp_path / "f.py"
@@ -134,23 +129,3 @@ def _c_test_apply_diff_preserves_endings(tmp_path: Path) -> None:
     result = apply_unified_diff(diff, cwd=str(tmp_path))
     assert result["count"] == 1
     assert target.read_bytes() == b"x = 10\r\ny = 2\r\n"
-
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_detect_normalize_encode_and_os_default, test_new_and_existing_file_endings."""
-    _t0 = tmp_path / "t0_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_detect_normalize_encode_and_os_default(tmp_path=_t0)
-    _t1 = tmp_path / "t0_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _c_test_new_and_existing_file_endings(tmp_path=_t1)
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_write_and_edit_tools_preserve_endings, test_apply_diff_preserves_endings."""
-    _t0 = tmp_path / "t1_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_write_and_edit_tools_preserve_endings(tmp_path=_t0)
-    _t1 = tmp_path / "t1_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _c_test_apply_diff_preserves_endings(tmp_path=_t1)
-

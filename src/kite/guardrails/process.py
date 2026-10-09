@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
-import time
 from typing import Any
 
 
@@ -18,7 +17,7 @@ def popen_process_group_kwargs() -> dict[str, Any]:
 
 def terminate_process_tree(proc: subprocess.Popen[Any], *, grace_seconds: float = 0.25) -> None:
     """Terminate a process and its descendants (best effort)."""
-    if proc.poll() is not None:
+    if os.name == "nt" and proc.poll() is not None:
         return
     pid = proc.pid
     if pid is None:
@@ -45,6 +44,10 @@ def terminate_process_tree(proc: subprocess.Popen[Any], *, grace_seconds: float 
 
     try:
         pgid = os.getpgid(pid)
+    except ProcessLookupError:
+        # Isolated children use their pid as pgid. The leader may have exited
+        # while descendants still hold its stdout pipe open.
+        pgid = pid
     except OSError:
         try:
             proc.kill()
@@ -61,11 +64,11 @@ def terminate_process_tree(proc: subprocess.Popen[Any], *, grace_seconds: float 
             pass
         return
 
-    deadline = time.monotonic() + grace_seconds
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            return
-        time.sleep(0.05)
+    try:
+        proc.wait(timeout=max(0.0, grace_seconds))
+    except subprocess.TimeoutExpired:
+        pass
+    # Reap stubborn descendants even if their group leader exited on SIGTERM.
     try:
         os.killpg(pgid, signal.SIGKILL)
     except OSError:
@@ -73,3 +76,7 @@ def terminate_process_tree(proc: subprocess.Popen[Any], *, grace_seconds: float 
             proc.kill()
         except OSError:
             pass
+    try:
+        proc.wait(timeout=1.0)
+    except (OSError, subprocess.TimeoutExpired):
+        pass

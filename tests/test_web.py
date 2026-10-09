@@ -2,9 +2,42 @@
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from kite.tools import web
+
+
+@pytest.fixture(autouse=True)
+def _isolated_web_keys(monkeypatch, workspace, kite_home):
+    """Never inherit provider credentials or dotenv state from other tests."""
+    from kite.providers import credentials
+    from kite.tools.web_providers import WEB_TOOL_ENVS
+
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr(credentials, "_ENV_LOADED_KEY", None)
+    for name in WEB_TOOL_ENVS.values():
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+
+
+@pytest.fixture(autouse=True)
+def _public_dns(monkeypatch):
+    """Keep SSRF validation real without DNS; per-test resolver mocks win."""
+    def getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = ipaddress.ip_address("93.184.216.34")
+        resolved_family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+        sockaddr = (str(address), port, 0, 0) if address.version == 6 else (str(address), port)
+        return [(resolved_family, type or socket.SOCK_STREAM, proto or socket.IPPROTO_TCP, "", sockaddr)]
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+
 
 DDG_FIXTURE = """
 <div class="result results_links results_links_deep web-result">
@@ -47,7 +80,7 @@ HTML_PAGE = """
 """
 
 
-def _c_test_tracking_unwrap_search_parse_and_dedupe():
+def test_tracking_unwrap_search_parse_and_dedupe():
     wrapped = "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fgithub.com%2Ffoo%2Fbar"
     assert web.unwrap_tracking_url(wrapped) == "https://github.com/foo/bar"
     google = "https://www.google.com/url?q=https%3A%2F%2Fexample.com&sa=U"
@@ -76,7 +109,7 @@ def _c_test_tracking_unwrap_search_parse_and_dedupe():
     assert merged[0]["snippet"] == "instant"
 
 
-def _c_test_page_extract_strips_scripts_and_sniffs_charset():
+def test_page_extract_strips_scripts_and_sniffs_charset():
     title, description, text, links = web._extract_page(HTML_PAGE, "https://example.com/page")
     assert title == "Test Page Title"
     assert description == "A test page for extraction."
@@ -94,7 +127,7 @@ def _c_test_page_extract_strips_scripts_and_sniffs_charset():
 @patch("kite.tools.web._fetch_url")
 @patch("kite.tools.web._ddg_instant")
 @patch("kite.tools.web._ddg_html_search")
-def _c_test_private_urls_blocked_everywhere(mock_search, mock_instant, mock_fetch, _mock_paid):
+def test_private_urls_blocked_everywhere(mock_search, mock_instant, mock_fetch, _mock_paid):
     assert web._url_blocked("http://localhost/admin") is not None
     assert web._url_blocked("http://127.0.0.1/") is not None
     assert web._url_blocked("http://10.0.0.1/internal") is not None
@@ -128,7 +161,7 @@ def _c_test_private_urls_blocked_everywhere(mock_search, mock_instant, mock_fetc
 
 
 @patch("kite.tools.web._fetch_url")
-def _c_test_webfetch_modes_extract_links_json_preview_and_paging(mock_fetch):
+def test_webfetch_modes_extract_links_json_preview_and_paging(mock_fetch):
     mock_fetch.return_value = (HTML_PAGE.encode(), "text/html", "https://example.com/page", None)
     out = web.webfetch("https://example.com/page", max_chars=10_000)
     assert out["ok"] is True
@@ -163,7 +196,7 @@ def _c_test_webfetch_modes_extract_links_json_preview_and_paging(mock_fetch):
 @patch("kite.tools.web_providers.paid_websearch", return_value=None)
 @patch("kite.tools.web._ddg_instant")
 @patch("kite.tools.web._ddg_html_search")
-def _c_test_websearch_output_modes_format_merge_empty_urls_compact(mock_search, mock_instant, _mock_paid):
+def test_websearch_output_modes_format_merge_empty_urls_compact(mock_search, mock_instant, _mock_paid):
     mock_instant.return_value = []
     mock_search.return_value = (DDG_FIXTURE, "html", None)
     out = web.websearch("example docs")
@@ -193,6 +226,7 @@ def _c_test_websearch_output_modes_format_merge_empty_urls_compact(mock_search, 
     urls_only = web.websearch("example docs", urls_only=True)
     assert urls_only["ok"] is True
     assert "Example Docs" not in urls_only["output"]
+    assert "Official documentation" not in urls_only["output"]
     assert "https://example.com/docs" in urls_only["output"]
     assert urls_only.get("summary")
 
@@ -203,14 +237,14 @@ def _c_test_websearch_output_modes_format_merge_empty_urls_compact(mock_search, 
 
 
 @patch("kite.tools.web._fetch_url")
-def _c_test_webcrawl_fails_when_every_fetch_fails(mock_fetch):
+def test_webcrawl_fails_when_every_fetch_fails(mock_fetch):
     mock_fetch.return_value = (b"", "text/html", "https://example.com/", "connection failed")
     out = web.webcrawl("https://example.com/", max_pages=2, max_depth=1)
     assert out["ok"] is False
     assert out["pages"] and out["pages"][0]["error"] == "connection failed"
 
 
-def _c_test_extract_drops_boilerplate_text_but_keeps_links():
+def test_extract_drops_boilerplate_text_but_keeps_links():
     html = """<html><head><title>Page</title></head><body>
     <header><h1>Site Name</h1></header>
     <nav>Menu <a href="/docs">Docs</a> <a href="/api">API</a></nav>
@@ -225,7 +259,7 @@ def _c_test_extract_drops_boilerplate_text_but_keeps_links():
 
 
 @patch("kite.tools.web_providers._http_json")
-def _c_test_tavily_answer_surfaced(mock_http):
+def test_tavily_answer_surfaced(mock_http):
     from kite.tools.web_providers import search_tavily
 
     mock_http.return_value = (
@@ -244,7 +278,7 @@ def _c_test_tavily_answer_surfaced(mock_http):
 @patch("kite.tools.web_providers.paid_websearch")
 @patch("kite.tools.web._ddg_instant")
 @patch("kite.tools.web._ddg_html_search")
-def _c_test_websearch_tops_up_short_paid_results_and_notes_engine(mock_search, mock_instant, mock_paid):
+def test_websearch_tops_up_short_paid_results_and_notes_engine(mock_search, mock_instant, mock_paid):
     mock_paid.return_value = {
         "ok": True,
         "output": "paid",
@@ -276,7 +310,7 @@ def _c_test_websearch_tops_up_short_paid_results_and_notes_engine(mock_search, m
 
 
 @patch("kite.tools.web_providers._http_json")
-def _c_test_tinyfish_search_parsing_and_auth_failures(mock_http):
+def test_tinyfish_search_parsing_and_auth_failures(mock_http):
     from kite.tools.web_providers import resolve_search_engines, search_tinyfish
 
     seen: dict[str, object] = {}
@@ -319,7 +353,7 @@ def _c_test_tinyfish_search_parsing_and_auth_failures(mock_http):
 @patch("kite.tools.web._ddg_instant", return_value=[])
 @patch("kite.tools.web._ddg_html_search", return_value=("", "", "offline"))
 @patch("kite.tools.web_providers._http_json")
-def _c_test_websearch_tinyfish_preference(mock_http, _mock_search, _mock_instant):
+def test_websearch_tinyfish_preference(mock_http, _mock_search, _mock_instant):
     mock_http.return_value = (
         200,
         {"query": "q", "results": [{"title": "Fish", "url": "https://fish.example/", "snippet": "s"}]},
@@ -341,7 +375,7 @@ def _c_test_websearch_tinyfish_preference(mock_http, _mock_search, _mock_instant
 
 @patch("kite.tools.web.time.sleep")
 @patch("kite.tools.web._safe_opener")
-def _c_test_fetch_retries_transients_with_backoff(mock_opener_fn, mock_sleep):
+def test_fetch_retries_transients_with_backoff(mock_opener_fn, mock_sleep):
     from urllib.error import URLError
 
     good = MagicMock()
@@ -355,29 +389,3 @@ def _c_test_fetch_retries_transients_with_backoff(mock_opener_fn, mock_sleep):
     raw, _ctype, final, err = web._fetch_url("https://example.com/", retries=1)
     assert err is None and raw == b"hello" and final == "https://example.com/"
     mock_sleep.assert_called_once()
-
-
-def test_batch_00() -> None:
-    """Consolidated (bodies unchanged): test_tracking_unwrap_search_parse_and_dedupe, test_page_extract_strips_scripts_and_sniffs_charset, test_private_urls_blocked_everywhere."""
-    _c_test_tracking_unwrap_search_parse_and_dedupe()
-    _c_test_page_extract_strips_scripts_and_sniffs_charset()
-    _c_test_private_urls_blocked_everywhere()
-
-def test_batch_01() -> None:
-    """Consolidated (bodies unchanged): test_webfetch_modes_extract_links_json_preview_and_paging, test_websearch_output_modes_format_merge_empty_urls_compact, test_webcrawl_fails_when_every_fetch_fails."""
-    _c_test_webfetch_modes_extract_links_json_preview_and_paging()
-    _c_test_websearch_output_modes_format_merge_empty_urls_compact()
-    _c_test_webcrawl_fails_when_every_fetch_fails()
-
-def test_batch_02() -> None:
-    """Consolidated (bodies unchanged): test_extract_drops_boilerplate_text_but_keeps_links, test_tavily_answer_surfaced, test_websearch_tops_up_short_paid_results_and_notes_engine."""
-    _c_test_extract_drops_boilerplate_text_but_keeps_links()
-    _c_test_tavily_answer_surfaced()
-    _c_test_websearch_tops_up_short_paid_results_and_notes_engine()
-
-def test_batch_03() -> None:
-    """Consolidated (bodies unchanged): test_tinyfish_search_parsing_and_auth_failures, test_websearch_tinyfish_preference, test_fetch_retries_transients_with_backoff."""
-    _c_test_tinyfish_search_parsing_and_auth_failures()
-    _c_test_websearch_tinyfish_preference()
-    _c_test_fetch_retries_transients_with_backoff()
-

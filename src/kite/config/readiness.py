@@ -70,7 +70,9 @@ def assess_setup_status(
 
     cfg = config or UserConfig.load()
     ready_names = configured_provider_names()
-    resolved = resolve_model(provider=provider, model=model, config=cfg)
+    resolved = resolve_model(
+        provider=provider, model=model, config=cfg, ready_providers=ready_names,
+    )
     blockers: list[str] = []
     hints: list[str] = []
 
@@ -85,7 +87,7 @@ def assess_setup_status(
         return SetupStatus(
             ready=True,
             has_config_file=has_config_file(),
-            has_any_api_key=has_any_api_key(),
+            has_any_api_key=any(name != "ollama" for name in ready_names),
             configured_providers=ready_names,
             default_provider=resolved.provider,
             default_model=resolved.model or None,
@@ -108,7 +110,7 @@ def assess_setup_status(
     return SetupStatus(
         ready=False,
         has_config_file=has_config_file(),
-        has_any_api_key=has_any_api_key(),
+        has_any_api_key=any(name != "ollama" for name in ready_names),
         configured_providers=ready_names,
         default_provider=resolved.provider,
         default_model=resolved.model or None,

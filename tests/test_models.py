@@ -20,7 +20,6 @@ def _model(*, temperature: float | None = None, mode: str = "fast") -> LitellmMo
     model.resolved = SimpleNamespace(litellm_kwargs=lambda: {"model": "chatgpt/gpt-5.6-luna"})
     model.registry = None
     model.temperature = temperature
-    model.max_retries = 0
     model.stream = True
     model.reasoning_mode = mode
     model.reasoning_effort = "low" if mode == "fast" else ""
@@ -39,7 +38,69 @@ def _model(*, temperature: float | None = None, mode: str = "fast") -> LitellmMo
     return model
 
 
-def _c_test_completion_kwargs_temperature_without_reasoning() -> None:
+@pytest.mark.parametrize("raw", [None, {"supported_parameters": ["reasoning_effort"]}])
+def test_model_capabilities_wait_for_first_request(kite_home, monkeypatch, raw) -> None:
+    import builtins
+    import sys
+    from threading import current_thread
+
+    from kite.models import reasoning
+    from kite.providers import capabilities
+    from kite.providers.list_models import RemoteModel
+    from kite.providers.resolve import resolve_model
+    from kite.tools import ToolRegistry
+
+    resolved = resolve_model(provider="openai", model="deferred-capabilities-test")
+    if raw is not None:
+        from dataclasses import replace
+
+        resolved = replace(resolved, raw=raw)
+    monkeypatch.setattr(reasoning, "_cache", {})
+    monkeypatch.setattr(reasoning, "_litellm_reasoning_params", reasoning._litellm_reasoning_params.__wrapped__)
+    param_calls = []
+
+    def supported_params(model, provider):
+        param_calls.append((model, provider))
+        return frozenset({"tools", "parallel_tool_calls"})
+
+    # Stub below the reasoning detector, but above imports and the shared LRU.
+    # Replacing sys.modules can race an earlier test's in-flight prewarm import.
+    monkeypatch.setattr(capabilities, "_litellm_openai_params", supported_params)
+    lookups = []
+
+    def find_remote(provider, model, **_kwargs):
+        lookups.append((provider, model))
+        return RemoteModel(id=model, raw={"supported_parameters": ["reasoning_effort"]})
+
+    monkeypatch.setattr(sys.modules["kite.providers.list_models"], "find_remote_model", find_remote)
+    original_import = builtins.__import__
+    owner_thread = current_thread()
+
+    def no_litellm(name, *args, **kwargs):
+        if current_thread() is owner_thread and (name == "litellm" or name.startswith("litellm.")):
+            pytest.fail("model construction imported LiteLLM")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_litellm)
+    model = LitellmModel(resolved, registry=ToolRegistry(), reasoning="fast:low")
+    assert not lookups
+    assert not param_calls
+    assert reasoning.peek_reasoning(resolved.provider, resolved.model) is None
+    monkeypatch.setattr(builtins, "__import__", original_import)
+    request = model._completion_kwargs([], stream=False)
+    assert request["reasoning_effort"] == "low"
+    assert request["parallel_tool_calls"] is True
+    assert reasoning.peek_reasoning(resolved.provider, resolved.model) is model.reasoning_support
+    assert param_calls == [(resolved.litellm_model, "openai")] * 2
+    # Evict shared support: a repeat request must use the instance cache, not
+    # merely look cached because detect_reasoning's process cache is warm.
+    reasoning._cache.clear()
+    assert model._completion_kwargs([], stream=False) == request
+    assert param_calls == [(resolved.litellm_model, "openai")] * 2
+    assert lookups == ([] if raw is not None else [("openai", "deferred-capabilities-test")])
+
+
+def test_completion_kwargs_temperature_without_reasoning() -> None:
     request = _model()._completion_kwargs([], stream=True)
 
     assert "temperature" not in request
@@ -52,8 +113,12 @@ def _c_test_completion_kwargs_temperature_without_reasoning() -> None:
 
     assert plain_request["temperature"] == 0.0
 
+    # Only the agent loop retries: nested provider retries multiply delays.
+    assert request["num_retries"] == 0
+    assert plain._completion_kwargs([], stream=False)["num_retries"] == 0
 
-def _c_test_temperature_and_reasoning_error_fallbacks() -> None:
+
+def test_temperature_and_reasoning_error_fallbacks() -> None:
     assert looks_like_temperature_reasoning_error(RuntimeError(_REASONING_ERROR))
     assert not looks_like_temperature_reasoning_error(RuntimeError("provider unavailable"))
 
@@ -93,7 +158,7 @@ def _c_test_temperature_and_reasoning_error_fallbacks() -> None:
     assert fast._drop_reasoning is False
 
 
-def _c_test_stream_stall_falls_back_to_blocking() -> None:
+def test_stream_stall_falls_back_to_blocking() -> None:
     model = _model()
     calls: list[str] = []
 
@@ -111,58 +176,50 @@ def _c_test_stream_stall_falls_back_to_blocking() -> None:
     assert calls == ["stream", "blocking"]
 
 
-def _c_test_completion_kwargs_single_attempt_agent_loop_owns_retries() -> None:
-    """LiteLLM must not retry internally — the agent loop owns provider retries.
+def test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty pump queue still polls the first-token deadline without sleeping."""
+    import queue
+    from unittest.mock import MagicMock
 
-    Stacking both loops (3 LiteLLM attempts x 4 agent attempts) multiplies
-    user-visible delay and prints one raw error line per attempt.
-    """
-    request = _model()._completion_kwargs([], stream=True)
-    assert request["num_retries"] == 0
-    assert _model()._completion_kwargs([], stream=False)["num_retries"] == 0
+    from kite.models import litellm_model as lm
 
+    clock = [0.0]
+    polls = []
 
-def _c_test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A held-open stream must raise TimeoutError quickly, not hang the turn."""
-    import sys
-    import time
+    class EmptyStreamQueue:
+        def get(self, *, timeout):
+            polls.append(timeout)
+            clock[0] += 0.5
+            if clock[0] > 5:
+                pytest.fail("empty stream queue did not check the stall deadline")
+            raise queue.Empty
 
-    def _hanging():
-        time.sleep(20)
-        yield SimpleNamespace(choices=[])
-
-    class FakeLiteLLM:
-        suppress_debug_info = False
-
-        @staticmethod
-        def completion(**_kwargs):
-            return _hanging()
-
-    monkeypatch.setitem(sys.modules, "litellm", FakeLiteLLM)
+    # Leave the pump pending, just as when the provider is blocked in __next__.
+    # The consumer loop and its real timeout callback still run normally.
+    monkeypatch.setattr(lm, "threading", SimpleNamespace(Thread=MagicMock()))
+    monkeypatch.setattr(queue, "Queue", EmptyStreamQueue)
+    monkeypatch.setattr(lm, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     model = _model()
-    model.resolved = SimpleNamespace(
-        provider="nvidia",
-        model="deepseek-ai/deepseek-v4.1-flash",
-        litellm_kwargs=lambda: {"model": "nvidia_nim/deepseek-ai/deepseek-v4.1-flash"},
-    )
+    model.resolved = SimpleNamespace(provider="nvidia", model="test-model")
+    monkeypatch.setattr(model, "_bounded_completion", lambda **_: iter(()))
     model.timeout_seconds = 5
-    model.on_event = None
-    model.should_stop = lambda: False  # type: ignore[method-assign]
+    events = []
+    model.on_event = events.append
+    model.should_stop = lambda: False
 
-    started = time.monotonic()
-    with pytest.raises(TimeoutError, match="stalled|timed out") as exc_info:
+    with pytest.raises(StreamStalledError, match="stream stalled") as exc_info:
         model._query_stream([{"role": "user", "content": "hi"}])
+
+    assert clock[0] == 4.5, "stall at four seconds must beat the five-second overall timeout"
+    assert len(polls) == 9
     assert not is_transient_provider_error(exc_info.value)
-    assert time.monotonic() - started < 15.0
+    assert [(event.kind, event.payload.get("ok")) for event in events] == [
+        ("stream_start", None), ("stream_end", False)
+    ]
 
 
-def _c_test_kite_internal_timeouts_never_retry() -> None:
-    """Deterministic classification: Kite's own bounded timeouts fail fast.
-
-    The stall test above races the 4s stall against the 5s overall timeout —
-    either may win on a loaded runner, so both messages must classify the
-    same way. Provider-side timeouts stay retryable.
-    """
+def test_kite_internal_timeouts_never_retry() -> None:
+    """Kite's own bounded timeouts fail fast; provider timeouts remain retryable."""
     assert not is_transient_provider_error(TimeoutError("stream timed out after 5s without completing"))
     assert not is_transient_provider_error(StreamStalledError("stream stalled: no data for 30s"))
     assert is_transient_provider_error(TimeoutError("connection timed out"))
@@ -170,20 +227,18 @@ def _c_test_kite_internal_timeouts_never_retry() -> None:
     assert not is_transient_provider_error(RuntimeError("provider unavailable"))
 
 
-def _c_test_peek_reasoning_cache_only() -> None:
+def test_peek_reasoning_cache_only(monkeypatch) -> None:
     from kite.models import reasoning
 
+    monkeypatch.setattr(reasoning, "_cache", {})
     key = ("peek-provider-xyz", "peek-model-xyz")
     assert reasoning.peek_reasoning(*key) is None
     support = ReasoningSupport(False, False, False, False)
     reasoning._cache[key] = support
-    try:
-        assert reasoning.peek_reasoning("  peek-provider-xyz ", "peek-model-xyz") is support
-    finally:
-        reasoning._cache.pop(key, None)
+    assert reasoning.peek_reasoning("  peek-provider-xyz ", "peek-model-xyz") is support
 
 
-def _c_test_api_messages_repair_unanswered_tool_calls() -> None:
+def test_api_messages_repair_unanswered_tool_calls() -> None:
     model = object.__new__(LitellmModel)
     projected = model._api_messages(
         [
@@ -222,7 +277,7 @@ def _c_test_api_messages_repair_unanswered_tool_calls() -> None:
     assert repaired[1]["tool_call_id"] == "dangling"
 
 
-def _c_test_token_efficiency_reasoning_and_cache_breakpoints() -> None:
+def test_token_efficiency_reasoning_and_cache_breakpoints() -> None:
     from kite.models.cache import apply_cache_breakpoints
 
     model = object.__new__(LitellmModel)
@@ -270,9 +325,13 @@ def _c_test_token_efficiency_reasoning_and_cache_breakpoints() -> None:
     assert isinstance(setup_out[2]["content"], str)
 
 
-def _c_test_token_efficiency_report_and_routing() -> None:
+def test_token_efficiency_report_and_routing(monkeypatch) -> None:
+    import sys
+
     from kite.context.token_report import breakdown_request, price_weighted_cost, rank_opportunities, summarize_run
     from kite.models.routing import route_turn
+
+    monkeypatch.setitem(sys.modules, "litellm", SimpleNamespace(model_cost={}))
 
     msgs = [
         {"role": "user", "content": "# Setup (reference — not the task)\nx"},
@@ -280,40 +339,55 @@ def _c_test_token_efficiency_report_and_routing() -> None:
         {"role": "user", "content": "next"},
     ]
     breakdown = breakdown_request(system="sys", tool_schemas=[{"function": {"name": "read"}}], messages=msgs)
-    assert breakdown.static_tokens > 0 and breakdown.total_tokens > breakdown.static_tokens
-    assert price_weighted_cost(prompt_tokens=100, completion_tokens=10, cache_read_tokens=90, model_name="unknown-xyz") > 0
+    assert breakdown.static_tokens == breakdown.system_tokens + breakdown.tool_tokens
+    assert breakdown.total_tokens == sum((
+        breakdown.static_tokens, breakdown.setup_tokens, breakdown.history_tokens
+    ))
+    assert sum(breakdown.shares.values()) == pytest.approx(1.0)
+    assert price_weighted_cost(
+        prompt_tokens=100, completion_tokens=10, cache_read_tokens=90, model_name="unknown-xyz"
+    ) == 49
     ranked = rank_opportunities(breakdown)
-    assert [name for name, _ in ranked] and breakdown.shares["history"] >= 0
-    run = summarize_run(system="sys", messages=msgs, tool_counts={"read": 1}, tool_errors={}, total_runs=1)
-    assert run.turns_per_task == 1.0
+    assert {name for name, _ in ranked} == {"system", "tools", "setup", "history"}
+    assert [score for _, score in ranked] == sorted((score for _, score in ranked), reverse=True)
+    run = summarize_run(
+        system="sys", messages=msgs, tool_counts={"read": 3},
+        tool_errors={"read": 1}, total_runs=2,
+    )
+    assert run.turns_per_task == 0.5
+    assert run.per_tool_use_rate == {"read": 1.0}
+    assert run.per_tool_error_rate == {"read": pytest.approx(1 / 3)}
 
     assert route_turn("hi", enabled=False) == "frontier"
     assert route_turn("hi?", enabled=True) == "cheap"
     assert route_turn("implement auth fix", enabled=True) == "frontier"
 
 
-def _c_test_usage_tracking_and_litellm_serializer() -> None:
+def test_usage_tracking_and_litellm_serializer() -> None:
     import warnings
 
-    from litellm.types.llms.openai import ResponsesAPIResponse
+    from pydantic import BaseModel
 
     from kite.models.litellm_model import _quiet_litellm_usage_serialization
 
-    # Same shape LiteLLM builds: a chat-style usage dict on a ResponseAPIUsage field.
-    response = ResponsesAPIResponse.model_construct(
-        id="resp_test",
-        created_at=0,
-        output=[],
-        usage={"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
-    )
-    assert isinstance(response.usage, dict)
+    class Response(BaseModel):
+        usage: int
+
+    # Reproduce the malformed typed usage without importing the provider SDK.
+    response = Response.model_construct(usage={"prompt_tokens": 1})
+    with pytest.warns(UserWarning, match="Pydantic serializer warnings"):
+        response.model_dump()
 
     with warnings.catch_warnings(record=True) as seen:
         warnings.simplefilter("always")
         with _quiet_litellm_usage_serialization():
             response.model_dump()
+            warnings.warn("unrelated provider warning", UserWarning, stacklevel=1)
+        response.model_dump()
 
-    assert not [w for w in seen if "Pydantic serializer" in str(w.message)]
+    assert len(seen) == 2
+    assert str(seen[0].message) == "unrelated provider warning"
+    assert "Pydantic serializer warnings" in str(seen[1].message)
 
     totals = UsageTotals()
     totals.absorb({"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.02})
@@ -322,7 +396,7 @@ def _c_test_usage_tracking_and_litellm_serializer() -> None:
     assert totals.cost == pytest.approx(0.05)
 
 
-def _c_test_compaction_request_omits_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_compaction_request_omits_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
     from kite.agent import summarize
 
     captured: dict = {}
@@ -354,7 +428,7 @@ def _menu_support() -> ReasoningSupport:
     )
 
 
-def _c_test_thinking_level_clamp_and_apply(tmp_path, kite_home) -> None:
+def test_thinking_level_clamp_and_apply(workspace, kite_home, monkeypatch) -> None:
     from io import StringIO
 
     from rich.console import Console
@@ -374,7 +448,9 @@ def _c_test_thinking_level_clamp_and_apply(tmp_path, kite_home) -> None:
     assert clamp_thinking_level("turbo", info) is None
     assert clamp_thinking_level("high", ReasoningSupport(False, False, False, False)) is None
 
-    session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama")
+    monkeypatch.setattr(ChatSession, "_warm_auth_probes", lambda self: None)
+    monkeypatch.setattr("kite.models.litellm_model.prewarm_litellm", lambda: None)
+    session = ChatSession(cwd=str(workspace), provider="groq", model="llama")
     buf = StringIO()
     session.console = Console(file=buf, force_terminal=False)
     session._reasoning_support = _menu_support()
@@ -388,25 +464,38 @@ def _c_test_thinking_level_clamp_and_apply(tmp_path, kite_home) -> None:
 
     session._apply_thinking_level("high")
     assert session.state.reasoning == "thinking:high"
+    session.display.close()
 
-def _c_test_prewarm_litellm_idempotent_and_daemon() -> None:
+
+def test_prewarm_litellm_idempotent_and_daemon(monkeypatch) -> None:
     import sys
+    from unittest.mock import MagicMock
 
     from kite.models import litellm_model
 
+    worker = MagicMock()
+    worker.is_alive.return_value = True
+    thread = MagicMock(return_value=worker)
+    monkeypatch.delitem(sys.modules, "litellm", raising=False)
+    monkeypatch.setattr(litellm_model, "_prewarm_thread", None)
+    monkeypatch.setattr(litellm_model, "threading", SimpleNamespace(Thread=thread))
+
     litellm_model.prewarm_litellm()
-    first = litellm_model._prewarm_thread
     litellm_model.prewarm_litellm()
-    assert litellm_model._prewarm_thread is first
-    if first is None:
-        assert "litellm" in sys.modules  # already warm: no thread needed
-        return
-    assert first.daemon is True
-    first.join(timeout=90.0)
-    assert "litellm" in sys.modules
+    thread.assert_called_once()
+    worker.start.assert_called_once_with()
+    assert thread.call_args.kwargs["daemon"] is True
+    assert litellm_model._prewarm_thread is worker
+
+    # A loaded dependency needs no worker even if the old worker has ended.
+    monkeypatch.setitem(sys.modules, "litellm", SimpleNamespace())
+    monkeypatch.setattr(litellm_model, "_prewarm_thread", None)
+    litellm_model.prewarm_litellm()
+    assert litellm_model._prewarm_thread is None
+    thread.assert_called_once()
 
 
-def _c_test_agy_subscription_turn_is_text_only(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agy_subscription_turn_is_text_only(monkeypatch: pytest.MonkeyPatch) -> None:
     import sys
     from types import SimpleNamespace
 
@@ -429,12 +518,13 @@ def _c_test_agy_subscription_turn_is_text_only(monkeypatch: pytest.MonkeyPatch) 
     model.last_usage = {}
     assert lm._is_agy_subscription(model.resolved) is True
     assert lm._is_agy_subscription(SimpleNamespace(provider="antigravity", api_key="k")) is False
+    monkeypatch.setitem(sys.modules, "litellm", SimpleNamespace())
 
     monkeypatch.setattr(
         "kite.providers.auth.antigravity_exec.run_agy_turn",
         lambda **_k: AgyTurn(text="hello", input_tokens=3, output_tokens=2),
     )
-    msg = model._query_agy([{"role": "user", "content": "hi"}])
+    msg = model.query([{"role": "user", "content": "hi"}])
     assert msg["content"] == "hello" and msg["extra"]["actions"] == []
     assert "tool_calls" not in msg and msg["extra"]["cost"] == 0.0
     assert msg["extra"]["usage"]["total_tokens"] == 5
@@ -444,69 +534,7 @@ def _c_test_agy_subscription_turn_is_text_only(monkeypatch: pytest.MonkeyPatch) 
         raise AntigravityQuotaError("Antigravity subscription quota reached. Resets in 1h")
 
     monkeypatch.setattr("kite.providers.auth.antigravity_exec.run_agy_turn", _quota)
-    try:
-        model._query_agy([{"role": "user", "content": "hi"}])
-    except ProviderFault as exc:
-        assert "quota" in exc.error.lower()
-    else:
-        raise AssertionError("quota must surface as ProviderFault")
-
-    # query() routes subscription turns to agy before touching LiteLLM.
-    monkeypatch.setitem(sys.modules, "litellm", SimpleNamespace())
-    routed: list[list[dict]] = []
-    model._query_agy = lambda messages: routed.append(messages) or {"routed": True}  # type: ignore[method-assign]
-    assert model.query([{"role": "user", "content": "hi"}]) == {"routed": True}
-    assert routed and routed[0][0]["content"] == "hi"
-
-
-def test_batch_00() -> None:
-    """Consolidated (bodies unchanged): test_completion_kwargs_temperature_without_reasoning, test_temperature_and_reasoning_error_fallbacks, test_stream_stall_falls_back_to_blocking."""
-    _c_test_completion_kwargs_temperature_without_reasoning()
-    _c_test_temperature_and_reasoning_error_fallbacks()
-    _c_test_stream_stall_falls_back_to_blocking()
-
-def test_batch_01() -> None:
-    """Consolidated (bodies unchanged): test_completion_kwargs_single_attempt_agent_loop_owns_retries, test_stream_stall_fails_fast, test_kite_internal_timeouts_never_retry."""
-    _c_test_completion_kwargs_single_attempt_agent_loop_owns_retries()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _c_test_stream_stall_fails_fast(monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    _c_test_kite_internal_timeouts_never_retry()
-
-def test_batch_02() -> None:
-    """Consolidated (bodies unchanged): test_peek_reasoning_cache_only, test_api_messages_repair_unanswered_tool_calls, test_token_efficiency_reasoning_and_cache_breakpoints."""
-    _c_test_peek_reasoning_cache_only()
-    _c_test_api_messages_repair_unanswered_tool_calls()
-    _c_test_token_efficiency_reasoning_and_cache_breakpoints()
-
-def test_batch_03() -> None:
-    """Consolidated (bodies unchanged): test_token_efficiency_report_and_routing, test_usage_tracking_and_litellm_serializer, test_compaction_request_omits_temperature."""
-    _c_test_token_efficiency_report_and_routing()
-    _c_test_usage_tracking_and_litellm_serializer()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _c_test_compaction_request_omits_temperature(monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
-
-def test_batch_04(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_thinking_level_clamp_and_apply, test_prewarm_litellm_idempotent_and_daemon, test_agy_subscription_turn_is_text_only."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _t0 = tmp_path / "t4_0"
-        _t0.mkdir(parents=True, exist_ok=True)
-        _k0 = tmp_path / "k4_0"
-        _k0.mkdir(parents=True, exist_ok=True)
-        _mp0.setenv("KITE_HOME", str(_k0))
-        _c_test_thinking_level_clamp_and_apply(tmp_path=_t0, kite_home=_k0)
-    finally:
-        _mp0.undo()
-    _c_test_prewarm_litellm_idempotent_and_daemon()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _c_test_agy_subscription_turn_is_text_only(monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
+    with pytest.raises(ProviderFault) as exc_info:
+        model.query([{"role": "user", "content": "hi"}])
+    assert "quota" in exc_info.value.error.lower()
 

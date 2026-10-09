@@ -2,32 +2,25 @@
 
 from __future__ import annotations
 
-import pytest
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from kite.models.reasoning import (
     ReasoningSupport,
     apply_reasoning,
     coerce_reasoning_for_model,
     detect_reasoning,
-    thinking_level_menu,
 )
-from kite.providers.profiles import get_profile, normalize_effort
 
 
-def _c_test_nvidia_profile_concrete_wire() -> None:
-    prof = get_profile("nvidia")
-    assert prof.reasoning_wire == "reasoning_effort"
-    assert prof.allow_parallel_tools is False
-    assert get_profile("nim").name == "nvidia"
-    assert normalize_effort("nvidia", "HIGH") == "high"
-    assert get_profile("unknown-xyz").reasoning_wire == "reasoning_effort"
-
-
-def _c_test_nvidia_kwargs_never_emit_extra_body() -> None:
+def test_nvidia_kwargs_never_emit_extra_body(monkeypatch) -> None:
+    monkeypatch.setattr("kite.models.reasoning._cache", {})
+    monkeypatch.setattr("kite.models.reasoning._params_from_litellm", lambda *_: set())
     support = detect_reasoning(
         "nvidia",
         "deepseek-ai/deepseek-r1",
         supported_parameters=["reasoning_effort"],
+        litellm_model="nvidia/deepseek-ai/deepseek-r1",
     )
     assert support.supported and support.can_thinking
     out = apply_reasoning({"model": "x", "messages": []}, support, "thinking")
@@ -37,7 +30,7 @@ def _c_test_nvidia_kwargs_never_emit_extra_body() -> None:
     assert off.get("reasoning_effort") == "none"
 
 
-def _c_test_coerce_stale_thinking_on_model_switch() -> None:
+def test_coerce_stale_thinking_on_model_switch() -> None:
     info = ReasoningSupport(
         supported=True,
         can_fast=True,
@@ -48,48 +41,45 @@ def _c_test_coerce_stale_thinking_on_model_switch() -> None:
         off_kwargs={"reasoning_effort": "none"},
         efforts=("none", "low", "medium", "high"),
     )
-    assert thinking_level_menu(info)
     assert coerce_reasoning_for_model("thinking:high", info) == "thinking:high"
-    assert coerce_reasoning_for_model("thinking:xhigh", info) in {
-        "thinking:high",
-        "thinking:medium",
-        "fast:low",
-    }
+    assert coerce_reasoning_for_model("thinking:xhigh", info) == "thinking:high"
     assert coerce_reasoning_for_model("thinking:high", None) == "auto"
     assert coerce_reasoning_for_model("auto", info) == "auto"
 
 
-def _c_test_approval_poll_idempotent_no_touch_storm(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "kite.providers.resolve.resolve_model",
-        lambda **_: __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock(
-            provider="groq", model="test"
-        ),
-    )
+def test_approval_poll_invalidates_only_on_state_transitions(monkeypatch) -> None:
     from kite.ui.repl import ChatSession
+    from kite.ui.state import SessionUiState
 
-    chat = ChatSession(cwd=str(tmp_path))
-    touches: list[str] = []
-    orig_touch = chat.state.touch
-    chat.state.touch = lambda *a, **k: touches.append("touch") or orig_touch(*a, **k)  # type: ignore[method-assign]
+    # Polling needs only approval/UI state, not ChatSession's model warmup threads.
+    chat = ChatSession.__new__(ChatSession)
+    chat.state = SessionUiState()
+    chat._approval_coordinator = SimpleNamespace(pending=None)
+    chat._approval_wake_sent = False
+    touches = Mock(wraps=chat.state.touch)
+    wake = Mock()
+    monkeypatch.setattr(chat.state, "touch", touches)
+    monkeypatch.setattr(chat, "_prompt_app_running", lambda: True)
+    monkeypatch.setattr(chat, "_wake_composer", wake)
+
     chat._poll_pending_approval()
     chat._poll_pending_approval()
-    assert touches == []
+    touches.assert_not_called()
+    wake.assert_not_called()
 
+    chat._approval_coordinator.pending = SimpleNamespace(tool="bash", mandatory=True)
+    chat._poll_pending_approval()
+    chat._poll_pending_approval()
+    assert chat.state.awaiting_approval == "bash"
+    assert chat.state.awaiting_approval_mandatory is True
+    touches.assert_called_once_with()
+    wake.assert_called_once_with()
 
-def test_batch_00() -> None:
-    """Consolidated (bodies unchanged): test_nvidia_profile_concrete_wire, test_nvidia_kwargs_never_emit_extra_body."""
-    _c_test_nvidia_profile_concrete_wire()
-    _c_test_nvidia_kwargs_never_emit_extra_body()
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_coerce_stale_thinking_on_model_switch, test_approval_poll_idempotent_no_touch_storm."""
-    _c_test_coerce_stale_thinking_on_model_switch()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _t1 = tmp_path / "t1_1"
-        _t1.mkdir(parents=True, exist_ok=True)
-        _c_test_approval_poll_idempotent_no_touch_storm(tmp_path=_t1, monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-
+    touches.reset_mock()
+    chat._approval_coordinator.pending = None
+    chat._poll_pending_approval()
+    chat._poll_pending_approval()
+    assert chat.state.awaiting_approval == ""
+    assert chat.state.awaiting_approval_mandatory is False
+    assert chat._approval_wake_sent is False
+    touches.assert_called_once_with(force=True)

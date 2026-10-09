@@ -9,7 +9,7 @@ import time
 import traceback
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.markup import escape
 from rich.prompt import Prompt
@@ -21,16 +21,6 @@ from kite.commands.loader import project_commands_dir, write_command_stub
 from kite.config import UserConfig, kite_home
 from kite.plugins.loader import project_plugins_dir, write_plugin_stub
 from kite.tools.store import TodoStore
-from kite.ui.complete import (
-    BusyComposerHandlers,
-    ComposerResult,
-    SlashCompleter,
-    apply_busy_composer_result,
-    make_prompt_session,
-    make_repl_key_bindings,
-    read_repl_busy_composer,
-    read_repl_line,
-)
 from kite.ui.empty import render_empty
 from kite.ui.git import GitCheckpoints
 from kite.ui.inbox import MessageInbox
@@ -39,6 +29,9 @@ from kite.ui.state import SessionUiState
 from kite.ui.status import render_status
 from kite.ui.style import GUTTER, SYMBOL_FAIL, SYMBOL_PROMPT, SYMBOL_WARN, make_console
 from kite.ui.tables import kite_table
+
+if TYPE_CHECKING:
+    from kite.ui.complete import ComposerResult
 
 _GENERIC_LAUNCHERS = ("__main__", "pytest", "python", "uv", "_pytest", "-c")
 
@@ -1531,6 +1524,8 @@ class ChatSession:
     def _ensure_prompt(self):
         if self._prompt is not None:
             return self._prompt
+        from kite.ui.complete import SlashCompleter, make_prompt_session, make_repl_key_bindings
+
         completer = SlashCompleter(
             self._index,
             models_factory=self._model_ids,
@@ -1703,6 +1698,8 @@ class ChatSession:
         self.console.print(f"[{style}]{msg}[/]")
 
     def _read_input(self) -> ComposerResult:
+        from kite.ui.complete import read_repl_line
+
         session = self._ensure_prompt()
         return read_repl_line(
             session=session,
@@ -1854,12 +1851,12 @@ class ChatSession:
 
     def _slash_help(self, arg: str) -> None:
         show_all = (arg or "").strip().lower() in {"all", "full", "advanced"}
-        self.console.print(help_text(self._index(), all=show_all), style="kite.muted")
+        self.console.print(help_text(self._index(), all=show_all), style="kite.muted", soft_wrap=False, markup=False)
 
     def _slash_hotkeys(self, _arg: str) -> None:
         from kite.ui.shortcuts import shortcuts_help_text
 
-        self.console.print(shortcuts_help_text(), style="kite.muted")
+        self.console.print(shortcuts_help_text(), style="kite.muted", soft_wrap=False, markup=False)
 
     def _run_bang_command(self, line: str) -> None:
         """Pi-style `!cmd` (send to model) and `!!cmd` (local only)."""
@@ -2147,8 +2144,9 @@ class ChatSession:
         else:
             self.state.thinking_expanded = not self.state.thinking_expanded
         if self.state.thinking_expanded:
-            if self.state.last_thinking.strip():
-                self.console.print(render_reasoning_block(self.state.last_thinking), highlight=False)
+            thinking = self.display.thinking_text()
+            if thinking.strip():
+                self.console.print(render_reasoning_block(thinking), highlight=False)
             return "thinking expanded"
         return "thinking collapsed (summary only)"
 
@@ -2609,7 +2607,7 @@ class ChatSession:
             self.console.print("[kite.muted]privacy[/]")
             for key, value in summary.items():
                 self.console.print(f"  [kite.brand]{key.replace('_', ' ')}[/]  {value}")
-        self.console.print(shortcuts_help_text(), style="kite.muted")
+        self.console.print(shortcuts_help_text(), style="kite.muted", soft_wrap=False, markup=False)
 
     def _slash_privacy(self, arg: str) -> None:
         from kite.memory.session_policy import (
@@ -3733,6 +3731,12 @@ class ChatSession:
         from kite.config.runtime import load_runtime_config
         from kite.memory.continuity import build_continuity_brief, save_continuity
         from kite.memory.recovery import build_recovery_follow_up, decide_recovery_continue
+        from kite.ui.complete import (
+            BusyComposerHandlers,
+            apply_busy_composer_result,
+            busy_enter_queues_followup,
+            read_repl_busy_composer,
+        )
 
         try:
             max_continues = max(0, int(load_runtime_config(self.config_name).max_budget_continues))
@@ -3759,7 +3763,10 @@ class ChatSession:
         self.display.composer_owns_input = session is not None
 
         def _slash_busy_hint() -> None:
-            self._flash_note("Enter queues · Esc stop · Ctrl+G steer")
+            if busy_enter_queues_followup():
+                self._flash_note("Enter queues · Esc stop · Ctrl+G steer")
+            else:
+                self._flash_note("Enter steers · Alt+Enter queues · Esc stop")
 
         def _composer_empty() -> None:
             if getattr(self, "_composer_wake", False):
@@ -3767,7 +3774,7 @@ class ChatSession:
                 return
             if self.state.awaiting_approval:
                 return
-            self._flash_note("Enter queues · Esc stop · Ctrl+G steer")
+            _slash_busy_hint()
 
         def _spawn_and_wait(prompt_task: str) -> None:
             nonlocal box

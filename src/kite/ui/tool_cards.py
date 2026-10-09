@@ -11,7 +11,7 @@ from rich.text import Text
 
 from kite.tools.cues import tool_cue
 from kite.ui.diff import render_diff_stat
-from kite.ui.style import GUTTER, PANEL_BAR, PREVIEW_LINES
+from kite.ui.style import GUTTER, PANEL_BAR, PREVIEW_LINES, clip_text
 from kite.ui.theme import glyph
 
 # The overflow marker is the same sentence everywhere a body is cut: what is
@@ -55,7 +55,7 @@ def _clip_tail(text: str, limit: int) -> str:
     """Keep the TAIL of ``text`` and mark the cut at its FRONT.
 
     A value is recognised by its end: ``target_mo…`` names no file, and
-    ``…odule.py`` always does. Used for paths; ``_clip`` is the prose form.
+    ``…odule.py`` always does. Used for paths; ``clip_text`` is the prose form.
     """
     if cell_len(text) <= limit:
         return text
@@ -67,20 +67,6 @@ def _clip_tail(text: str, limit: int) -> str:
             break
         out = ch + out
     return f"\u2026{out}" if out else "\u2026"
-
-
-def _clip(text: str, limit: int) -> str:
-    """Cut to ``limit`` display columns with an ellipsis — never a silent slice."""
-    if cell_len(text) <= limit:
-        return text
-    if limit < 2:
-        return "\u2026"
-    out = ""
-    for ch in text:
-        if cell_len(out + ch) > limit - 1:
-            break
-        out += ch
-    return (out.rstrip() + "\u2026") if out else "\u2026"
 
 
 def _stat_columns(added: int, deleted: int, *, histogram: bool = True) -> int:
@@ -139,7 +125,7 @@ def overflow_marker(extra: int) -> str:
 
 def _body_line(text: str, width: int, *, prefix: str = "") -> str:
     """One body row, clipped to the live width minus its own prefix."""
-    return prefix + _clip(text, max(1, width - cell_len(prefix)))
+    return prefix + clip_text(text, max(1, width - cell_len(prefix)))
 
 
 def _looks_like_json(raw: str) -> bool:
@@ -212,7 +198,7 @@ def render_code_edit_preview(
         lines = content.splitlines() or [""]
         for line in lines[:max_lines]:
             block.append(f"{GUTTER}{TOOL_BAR}+ ", style="kite.diff.add")
-            block.append(_clip(line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.add")
+            block.append(clip_text(line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.add")
         if len(lines) > max_lines:
             # One printed row per raw content line, so the overflow is
             # len(lines) - max_lines: the unfiltered count, matching the rows
@@ -232,13 +218,13 @@ def render_code_edit_preview(
             if shown >= max_lines:
                 break
             block.append(f"{GUTTER}{TOOL_BAR}− ", style="kite.diff.del")
-            block.append(_clip(line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.del")
+            block.append(clip_text(line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.del")
             shown += 1
         for line in new_lines:
             if shown >= max_lines:
                 break
             block.append(f"{GUTTER}{TOOL_BAR}+ ", style="kite.diff.add")
-            block.append(_clip(line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.add")
+            block.append(clip_text(line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.add")
             shown += 1
         # The budget spans both sides: `shown` filled from old then new, so the
         # hidden count is the combined old+new total minus the rows printed.
@@ -268,7 +254,7 @@ def render_bash_command_block(
     for cmd_line in shown:
         block.append(f"{GUTTER}{TOOL_BAR}", style="kite.muted")
         block.append("$ ", style="kite.tool bold")
-        block.append(_clip(cmd_line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.terminal")
+        block.append(clip_text(cmd_line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.terminal")
     if len(lines) > max_lines:
         block.append(
             f"{GUTTER}{TOOL_BAR}{overflow_marker(len(lines) - max_lines)}\n",
@@ -358,7 +344,7 @@ def render_stream_tool_preview(
         room = _live_width(width) - line.cell_len - len(_META_GAP)
         if room >= _MIN_PREVIEW_COLUMNS:
             line.append(_META_GAP, style="kite.muted")
-            line.append(_clip(preview, room), style="kite.muted")
+            line.append(clip_text(preview, room), style="kite.muted")
     line.append("\n")
     return line
 
@@ -392,7 +378,7 @@ def render_tool_card_start(
         room = row_width - line.cell_len - reserve
         if room >= _MIN_DETAIL_COLUMNS:
             line.append(_sep_join(), style="kite.muted")
-            line.append(_clip(card.detail, room), style="kite.muted")
+            line.append(clip_text(card.detail, room), style="kite.muted")
     if running:
         line.append(_sep_join(), style="kite.muted")
         line.append("executing", style="kite.pending italic")
@@ -422,7 +408,7 @@ def render_tool_summary(
         room -= len(_META_GAP) + len(_META_GAP)
     line = Text()
     line.append(f"{GUTTER}{GUTTER}", style="kite.muted")
-    line.append(_clip(text, max(1, room)), style="kite.muted")
+    line.append(clip_text(text, max(1, room)), style="kite.muted")
     line.append("\n")
     return line
 
@@ -509,7 +495,7 @@ def render_tool_card_done(
     if note and not (added or deleted):
         room = row_width - line.cell_len - len(_META_GAP)
         if room >= _MIN_PREVIEW_COLUMNS:
-            line.append(f"{_META_GAP}{_clip(note, room)}", style="kite.muted")
+            line.append(f"{_META_GAP}{clip_text(note, room)}", style="kite.muted")
     line.append("\n")
     return line
 

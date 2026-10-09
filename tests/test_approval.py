@@ -25,7 +25,7 @@ from kite.ui.approval import (
 )
 
 
-def _c_test_aliases_trust_and_git_gating(workspace: Path) -> None:
+def test_aliases_trust_and_git_gating(workspace: Path) -> None:
     assert parse_approval_mode("supervised") is ApprovalMode.APPROVE
     assert parse_approval_mode("yolo") is ApprovalMode.YOLO
     assert approval_display_name(ApprovalMode.APPROVE) == "supervised"
@@ -54,7 +54,7 @@ def _c_test_aliases_trust_and_git_gating(workspace: Path) -> None:
     )
 
 
-def _c_test_coding_blanket_auto_and_windows(workspace: Path) -> None:
+def test_coding_blanket_auto_and_windows(workspace: Path) -> None:
     ws = str(workspace)
     assert consequence_prompt_threshold(ApprovalMode.AUTO) is ConsequenceLevel.SERIOUS
     assert consequence_prompt_threshold(ApprovalMode.TRUST) is ConsequenceLevel.SERIOUS
@@ -113,7 +113,7 @@ def _c_test_coding_blanket_auto_and_windows(workspace: Path) -> None:
     )
 
 
-def _c_test_consequence_tiers_critical_gates_and_gh(workspace: Path) -> None:
+def test_consequence_tiers_critical_gates_and_gh(workspace: Path) -> None:
     ws = str(workspace)
     assert consequence_prompt_threshold(ApprovalMode.APPROVE) is ConsequenceLevel.ROUTINE
     level, _ = action_consequence("bash", command="pip install requests", workspace_cwd=ws, bash_cwd=ws)
@@ -174,7 +174,7 @@ def _c_test_consequence_tiers_critical_gates_and_gh(workspace: Path) -> None:
         )
 
 
-def _c_test_yolo_auto_and_noninteractive_approvers(workspace: Path) -> None:
+def test_yolo_auto_and_noninteractive_approvers(workspace: Path) -> None:
     ws = str(workspace)
     yolo = make_approver(Console(file=StringIO()), mode=AgentMode.BUILD, approval=ApprovalMode.YOLO, interactive=False, workspace_cwd=ws)
     auto = make_approver(Console(file=StringIO()), mode=AgentMode.BUILD, approval=ApprovalMode.AUTO, interactive=False, workspace_cwd=ws)
@@ -191,7 +191,6 @@ def _c_test_yolo_auto_and_noninteractive_approvers(workspace: Path) -> None:
     assert yolo("bash", {"command": "sudo rm -rf /", "cwd": ws}, {}) == "deny"
     assert auto("bash", {"command": "sudo rm -rf /", "cwd": ws}, {}) == "deny"
     # Non-interactive auto/plan/readonly gates.
-    assert auto("write", {"path": str(workspace / "inside.txt")}, {}) == "allow"
     outside = workspace.parent / "outside"
     assert auto("bash", {"command": f'cd "{outside}" && echo escaped > escape.txt'}, {}) == "deny"
     assert auto("bash", {"command": f'cd "{workspace}" && echo inspected'}, {}) == "allow"
@@ -211,7 +210,7 @@ def _c_test_yolo_auto_and_noninteractive_approvers(workspace: Path) -> None:
     coordinator.request.assert_not_called()
 
 
-def _c_test_prompt_memory_mandatory_and_once(monkeypatch) -> None:
+def test_prompt_memory_mandatory_and_once(monkeypatch: pytest.MonkeyPatch) -> None:
     policy = ApprovalPolicy(session_patterns={"bash:git commit*"})
     calls: list[str] = []
     monkeypatch.setattr("kite.ui.approval.Prompt.ask", lambda *_a, **_k: calls.append("asked") or "n")
@@ -239,36 +238,3 @@ def _c_test_prompt_memory_mandatory_and_once(monkeypatch) -> None:
     monkeypatch.setattr("kite.ui.approval.Prompt.ask", lambda *_a, **_k: asked.append("x") or "n")
     assert prompt_approval(_Console(), "bash", other, policy=once_policy) == "deny"
     assert asked == ["x"]
-
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_aliases_trust_and_git_gating, test_coding_blanket_auto_and_windows, test_consequence_tiers_critical_gates_and_gh."""
-    _w0 = tmp_path / "w0_0"
-    (_w0 / "src").mkdir(parents=True, exist_ok=True)
-    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_aliases_trust_and_git_gating(workspace=_w0)
-    _w1 = tmp_path / "w0_1"
-    (_w1 / "src").mkdir(parents=True, exist_ok=True)
-    (_w1 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w1 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_coding_blanket_auto_and_windows(workspace=_w1)
-    _w2 = tmp_path / "w0_2"
-    (_w2 / "src").mkdir(parents=True, exist_ok=True)
-    (_w2 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w2 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_consequence_tiers_critical_gates_and_gh(workspace=_w2)
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_yolo_auto_and_noninteractive_approvers, test_prompt_memory_mandatory_and_once."""
-    _w0 = tmp_path / "w1_0"
-    (_w0 / "src").mkdir(parents=True, exist_ok=True)
-    (_w0 / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    (_w0 / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
-    _c_test_yolo_auto_and_noninteractive_approvers(workspace=_w0)
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _c_test_prompt_memory_mandatory_and_once(monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-

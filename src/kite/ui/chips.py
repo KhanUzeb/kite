@@ -15,7 +15,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from kite.ui.state import TodoItem
-from kite.ui.style import GUTTER
+from kite.ui.style import GUTTER, clip_text
 from kite.ui.theme import glyph
 
 # Caps chosen so the compact line still fits an 80-col terminal next to the bar.
@@ -30,20 +30,6 @@ def _item_sep() -> str:
 # Below this the clipped item stops saying anything useful, so the bar goes
 # before the item is squeezed down to a stub.
 _MIN_ITEM_COLUMNS = 28
-
-
-def _clip(text: str, limit: int) -> str:
-    """Cut to ``limit`` display columns with an ellipsis — never a silent slice."""
-    if cell_len(text) <= limit:
-        return text
-    if limit < 2:
-        return "…"
-    out = ""
-    for ch in text:
-        if cell_len(out + ch) > limit - 1:
-            break
-        out += ch
-    return (out.rstrip() + "…") if out else "…"
 
 
 def _live_width(width: int | None) -> int:
@@ -88,7 +74,7 @@ def _headline_item(todos: list[TodoItem], limit: int = _ACTIVE_MAX) -> str:
     for wanted in ("in_progress", "pending"):
         item = next((i for i in todos if i.status == wanted), None)
         if item is not None:
-            return _clip(item.content, limit)
+            return clip_text(item.content, limit)
     return ""
 
 
@@ -109,7 +95,7 @@ def render_task_row(
     badge, badge_style = _status_badge(item.status)
     # The badge rides at the row's right edge, so content gets what is left.
     room = _live_width(width) - cell_len(f"{GUTTER}{mark} ") - len(badge) - 2
-    content = _clip(item.content, max(1, min(_ROW_MAX, room)))
+    content = clip_text(item.content, max(1, min(_ROW_MAX, room)))
 
     line = Text()
     line.append(f"{GUTTER}{mark} ", style=mark_style)

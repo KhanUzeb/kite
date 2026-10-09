@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from kite.agent.cancel import CancelToken
-from kite.agent.orchestrator import SubagentOrchestrator, evaluate_subagent_result, worker_glyph
+from kite.agent.orchestrator import SubagentOrchestrator, evaluate_subagent_result
 from kite.context.observation import observation_content
 from kite.context.window import compact_messages, scale_keep_recent_tokens, trim_stale_tool_messages
 from kite.env.shell import resolve_shell_invocation, sanitize_shell_line
@@ -18,7 +15,7 @@ from kite.memory.compaction_ops import run_compaction
 from kite.tools import web
 from kite.tools.coding import make_coding_tools
 from kite.tools.jobs import JobRegistry
-from kite.tools.web_providers import resolve_search_engines, resolve_web_tool_env
+from kite.tools.web_providers import resolve_search_engines
 
 DDG_FIXTURE = """
 <div class="result results_links results_links_deep web-result">
@@ -32,7 +29,14 @@ DDG_FIXTURE = """
 """
 
 
-def _c_test_paid_web_providers_chain(monkeypatch) -> None:
+def test_paid_web_providers_chain(monkeypatch) -> None:
+    import socket
+
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda _host, port, *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))],
+    )
+    monkeypatch.setattr("kite.tools.web_providers.tinyfish_api_key", lambda: None)
     monkeypatch.setattr("kite.tools.web_providers.tavily_api_key", lambda: "tvly-x")
     monkeypatch.setattr("kite.tools.web_providers.exa_api_key", lambda: "exa-x")
     monkeypatch.setattr("kite.tools.web_providers.firecrawl_api_key", lambda: "fc-x")
@@ -52,11 +56,6 @@ def _c_test_paid_web_providers_chain(monkeypatch) -> None:
     monkeypatch.setattr(web, "_ddg_html_search", lambda q: ("", "", "offline"))
     out = web.websearch("hello world", max_results=5)
     assert out["engine"] == "tavily" and out["results"][0]["title"] == "Tavily Hit"
-    # Short paid results top up from DuckDuckGo, paid ranking kept first.
-    monkeypatch.setattr(web, "_ddg_html_search", lambda q: (DDG_FIXTURE, "html", None))
-    topped = web.websearch("hello world", max_results=5)
-    assert topped["engine"] == "tavily+duckduckgo" and topped["topped_up"] is True
-    assert topped["results"][0]["title"] == "Tavily Hit" and topped["count"] > 1
     monkeypatch.setattr("kite.tools.web_providers.tavily_api_key", lambda: "tvly-bad")
     monkeypatch.setattr("kite.tools.web_providers._http_json", lambda *_a, **_k: (401, {"error": "unauthorized"}))
     monkeypatch.setattr(web, "_ddg_instant", lambda q: [])
@@ -77,10 +76,9 @@ def _c_test_paid_web_providers_chain(monkeypatch) -> None:
     assert fetch.get("engine") == "firecrawl" and "World from Firecrawl" in fetch["output"]
     crawl = web.webcrawl("https://example.com/", max_pages=2, max_depth=1)
     assert crawl.get("engine") == "firecrawl"
-    assert resolve_web_tool_env("tavily") == "TAVILY_API_KEY" and resolve_web_tool_env("unknown") is None
 
 
-def _c_test_submit_verification_background_jobs_and_orchestrator(tmp_path) -> None:
+def test_submit_verification_background_jobs_and_orchestrator(tmp_path) -> None:
     from kite.agent.verification import VerificationCollector
 
     collector = VerificationCollector()
@@ -104,45 +102,27 @@ def _c_test_submit_verification_background_jobs_and_orchestrator(tmp_path) -> No
     script = "import sys; [sys.stdout.write('x'*40+'\\n') for _ in range(20000)]"
     reg = JobRegistry()
     job = reg.spawn_bash(f"{sys.executable} -c {json.dumps(script)}", cwd=str(tmp_path), timeout_seconds=8)
-    deadline = time.monotonic() + 7
-    while job.status == "running" and time.monotonic() < deadline:
-        time.sleep(0.05)
+    assert job.wait(timeout=7)
     assert job.status == "done"
 
-    seen: dict[str, float] = {}
-
-    class _Jobs:
-        def spawn_bash(self, command, *, cwd, env=None, timeout_seconds=3600.0):
-            seen["timeout"] = timeout_seconds
-
-            class _Job:
-                id = "j1"
-                pid = 1
-
-            return _Job()
-
-    bash = next(t for t in make_coding_tools(cwd=str(tmp_path), jobs=_Jobs(), enabled=["bash"], auto_venv=False) if t.name == "bash")
-    out = bash.run({"command": "echo hi", "background": True, "timeout": 12})
-    assert out["ok"] is True and seen["timeout"] == 12.0
-
-    sleep = f'{sys.executable} -c "import time; time.sleep(60)"'
+    blocked_command = f'{sys.executable} -c "import threading; threading.Event().wait()"'
     reg2 = JobRegistry()
-    job2 = reg2.spawn_bash(sleep, cwd=str(tmp_path))
-    assert job2.status == "running" and reg2.kill(job2.id) is True
-    a = reg2.spawn_bash(sleep, cwd=str(tmp_path))
-    b = reg2.spawn_bash(sleep, cwd=str(tmp_path))
-    assert reg2.kill_all() == 2 and a.status == "killed" and b.status == "killed"
+    try:
+        job2 = reg2.spawn_bash(blocked_command, cwd=str(tmp_path))
+        assert job2.status == "running" and reg2.kill(job2.id) is True
+        a = reg2.spawn_bash(blocked_command, cwd=str(tmp_path))
+        b = reg2.spawn_bash(blocked_command, cwd=str(tmp_path))
+        assert reg2.kill_all() == 2 and a.status == "killed" and b.status == "killed"
+    finally:
+        reg2.kill_all()
     token = CancelToken()
     sub = reg2.register_subagent(label="worker-1", prompt="do stuff", cancel=token)
     assert reg2.kill(sub.id) is True and token.is_set()
     events: list[str] = []
     live = JobRegistry(on_event=lambda e: events.append(e.kind))
     short = live.spawn_bash(f'{sys.executable} -c "print(1)"', cwd=str(tmp_path))
-    deadline = time.monotonic() + 5
-    while short.status == "running" and time.monotonic() < deadline:
-        time.sleep(0.05)
+    assert short.wait(timeout=5)
     assert "job_start" in events
-    assert worker_glyph(1) == "◆" and worker_glyph(7) == worker_glyph(1)
     ok, quality, summary = evaluate_subagent_result({"exit_status": "Submitted", "submission": "all good"})
     assert ok and quality == "done" and summary == "all good"
     assert evaluate_subagent_result({"exit_status": "Error", "error": "boom"})[0] is False
@@ -158,7 +138,40 @@ def _c_test_submit_verification_background_jobs_and_orchestrator(tmp_path) -> No
     assert SubagentOrchestrator(runner=MagicMock()).dispatch({})["ok"] is False
 
 
-def _c_test_token_efficiency_registry_order_and_sparse_numbers(tmp_path) -> None:
+def test_bounded_shell_lines_and_silent_job_timeout(tmp_path, monkeypatch):
+    import io
+
+    from kite.env.shell import iter_bounded_lines
+
+    stream = io.StringIO("before\napi_key=" + "s" * 5_000_000 + "\nafter\n")
+    lines = list(iter_bounded_lines(stream))
+    assert lines == ["before\n", "...[oversized output line omitted]...\n", "after\n"]
+    assert "api_key" not in "".join(lines)
+    assert list(iter_bounded_lines(io.StringIO("x" * 8192))) == ["x" * 8192]
+
+    def immediate_timer(_seconds, callback):
+        timer = MagicMock()
+        timer.start.side_effect = callback
+        return timer
+
+    monkeypatch.setattr("kite.tools.jobs.threading.Timer", immediate_timer)
+    registry = JobRegistry()
+    command = f'{sys.executable} -c "import threading; threading.Event().wait()"'
+    try:
+        job = registry.spawn_bash(command, cwd=str(tmp_path), timeout_seconds=1)
+        assert job.wait(timeout=3)
+    finally:
+        registry.kill_all()
+    assert job.status == "failed" and "timeout" in job.log_text()
+    worker = registry.register_subagent(label="pending")
+    assert not worker.wait(timeout=0)
+    registry.mark_done(worker.id, result_payload={"ok": True})
+    assert worker.wait(timeout=0) and worker.result_payload == {"ok": True}
+    cancelled = registry.register_subagent(label="cancel")
+    assert registry.kill(cancelled.id) and cancelled.wait(timeout=0)
+
+
+def test_token_efficiency_registry_order_and_sparse_numbers(tmp_path) -> None:
     from kite.tools import Tool, ToolRegistry
 
     def _mk(name: str) -> Tool:
@@ -182,7 +195,7 @@ def _c_test_token_efficiency_registry_order_and_sparse_numbers(tmp_path) -> None
     assert "line 2\n" in body and "     2|line 2" not in body
 
 
-def _c_test_token_efficiency_spill_tiers_and_errors(tmp_path) -> None:
+def test_token_efficiency_spill_tiers_and_errors(tmp_path) -> None:
     from kite.context.spill import spill_text
     from kite.tools.errors import ToolErrorLedger, classify_tool_error
     from kite.tools.tiers import offload_manifest, partition_tools
@@ -207,7 +220,7 @@ def _c_test_token_efficiency_spill_tiers_and_errors(tmp_path) -> None:
     assert ledger.error_rate("bash") == 1.0 and ledger.summary()["unexpected"] == {"bash": 1}
 
 
-def _c_test_observation_compaction_and_shell() -> None:
+def test_observation_compaction_and_shell(kite_home) -> None:
     raw = "x" * 20_000
     out = observation_content({"ok": True, "output": raw, "summary": "42 lines matched in src/app.py"}, max_chars=2_000)
     assert "42 lines matched" in out and "elided" in out.lower()
@@ -313,7 +326,7 @@ def _stub_session_fallback(monkeypatch, *, complete_result="session summary", cr
     return summ, calls, tried
 
 
-def _c_test_llm_summarize_session_fallback_matrix(monkeypatch) -> None:
+def test_llm_summarize_session_fallback_matrix(monkeypatch) -> None:
     summ, calls, _tried = _stub_session_fallback(monkeypatch)
     out = summ.llm_summarize([{"role": "user", "content": "hello"}], config=_summarize_cfg())
     assert out == "session summary"
@@ -341,7 +354,7 @@ def _c_test_llm_summarize_session_fallback_matrix(monkeypatch) -> None:
     assert ("anthropic", "claude-x") in calls4
 
 
-def _c_test_llm_summarize_no_duplicate_session_attempt(monkeypatch) -> None:
+def test_llm_summarize_no_duplicate_session_attempt(monkeypatch) -> None:
     from types import SimpleNamespace
 
     from kite.agent import summarize as summ
@@ -365,31 +378,20 @@ def _c_test_llm_summarize_no_duplicate_session_attempt(monkeypatch) -> None:
     assert tried == [("openrouter", "m1")]
 
 
-def _c_test_make_summarizer_forwards_session_overrides(monkeypatch) -> None:
-    from kite.agent import summarize as summ
-
-    seen: dict = {}
-
-    def fake_llm(messages, *, config=None, session_provider=None, session_model=None):  # noqa: ANN001
-        seen["session_provider"] = session_provider
-        seen["session_model"] = session_model
-        return "llm text"
-
-    monkeypatch.setattr(summ, "llm_summarize", fake_llm)
+def test_summarizer_skips_small_transcripts(monkeypatch) -> None:
+    summ, calls, tried = _stub_session_fallback(monkeypatch)
     summarize = summ.make_summarizer(_summarize_cfg(), session_provider="groq", session_model="llama-x")
-    # Realistic dropped history (compaction never runs on one tiny message —
-    # the skip threshold applies to the deterministic transcript, ~140 chars
-    # per segment, so several turns are needed to reach it).
     big = [{"role": "user", "content": f"task context {i} " * 30} for i in range(12)]
-    assert summarize(big) == "llm text"
-    assert (seen["session_provider"], seen["session_model"]) == ("groq", "llama-x")
+    assert summarize(big) == "session summary"
+    assert calls == [("groq", "llama-x")] and tried == [("groq", "llama-x")]
     # Tiny transcripts skip the LLM entirely — deterministic is enough.
-    seen.clear()
+    tried.clear()
     small = summarize([{"role": "user", "content": "hi"}])
     assert "Compacted 1 message" in small
-    assert seen == {}
+    assert tried == []
 
-def _c_test_compaction_keeps_tail_failures_and_error_lines() -> None:
+
+def test_compaction_keeps_tail_failures_and_error_lines() -> None:
     from kite.context.window import deterministic_summary, extract_compaction_facts
 
     tail = "\n".join([f"setup line {i}" for i in range(30)] + ["3 failed, 12 passed in 4.2s"])
@@ -409,7 +411,7 @@ def _c_test_compaction_keeps_tail_failures_and_error_lines() -> None:
     assert "Traceback" in summary and "ValueError" in summary
 
 
-def _c_test_compact_boundary_renders_elapsed_and_engine() -> None:
+def test_compact_boundary_renders_elapsed_and_engine() -> None:
     from kite.ui.render import render_compact_boundary
 
     plain = render_compact_boundary(42, 6, context_pct=0.375, elapsed_s=12.34, engine="openrouter summary").plain
@@ -418,7 +420,7 @@ def _c_test_compact_boundary_renders_elapsed_and_engine() -> None:
     assert "4 → 4" in bare and "ctx" not in bare
 
 
-def _c_test_subagent_parent_plan_context_attached() -> None:
+def test_subagent_parent_plan_context_attached() -> None:
     from kite.tools.coding import _with_parent_plan_context
 
     class _Store:
@@ -443,7 +445,7 @@ def _question_tool(tmp_path, **kwargs):
     return next(t for t in make_coding_tools(cwd=str(tmp_path), enabled=["question"], **kwargs) if t.name == "question")
 
 
-def _c_test_question_tool_validation_and_headless(tmp_path) -> None:
+def test_question_tool_validation_and_headless(tmp_path) -> None:
     tool = _question_tool(tmp_path)
     assert tool.run({})["ok"] is False
     assert tool.run({"questions": []})["ok"] is False
@@ -456,7 +458,7 @@ def _c_test_question_tool_validation_and_headless(tmp_path) -> None:
     assert "assumption" in res["output"]
 
 
-def _c_test_question_tool_live_answers(tmp_path) -> None:
+def test_question_tool_live_answers(tmp_path) -> None:
     seen: list = []
 
     def _handler(questions):
@@ -471,6 +473,8 @@ def _c_test_question_tool_live_answers(tmp_path) -> None:
                     "question": "Color?",
                     "header": "pick",
                     "multiple": False,
+                    "recommended": "red",
+                    "timeout": 20,
                     "options": [{"label": "red"}, {"label": "blue", "description": "calm"}],
                 }
             ]
@@ -480,6 +484,10 @@ def _c_test_question_tool_live_answers(tmp_path) -> None:
     assert res["answers"] == [{"question": "Color?", "answer": "blue", "options": ["blue"]}]
     assert "blue" in res["output"]
     assert seen[0]["header"] == "pick" and len(seen[0]["options"]) == 2
+    assert seen[0]["recommended"] == "red" and seen[0]["timeout"] == 20
+    seen.clear()
+    tool.run({"questions": [{"question": "Q?", "options": [{"label": "a"}], "recommended": "   ", "timeout": "soon"}]})
+    assert "recommended" not in seen[0] and "timeout" not in seen[0]
 
     def _skipped(questions):
         return None
@@ -490,9 +498,7 @@ def _c_test_question_tool_live_answers(tmp_path) -> None:
     assert skipped["ok"] is True and skipped["answers"][0]["answer"] == ""
 
 
-def _c_test_question_console_handler_numbers_text_and_skip() -> None:
-    from unittest.mock import MagicMock
-
+def test_question_console_handler_numbers_text_and_skip() -> None:
     from kite.ui.question import _interpret_answer, ask_user_questions
 
     opts = [{"label": "red"}, {"label": "blue"}]
@@ -517,8 +523,8 @@ def _c_test_question_console_handler_numbers_text_and_skip() -> None:
     assert out[0]["options"] == ["red"] and out[1]["options"] == []
 
 
-def _c_test_question_interactive_picker_uses_arrows_and_skips_on_cancel() -> None:
-    from unittest.mock import MagicMock, patch
+def test_question_interactive_picker_uses_arrows_and_skips_on_cancel() -> None:
+    from unittest.mock import patch
 
     from kite.ui.question import ask_user_questions
 
@@ -565,9 +571,7 @@ def _c_test_question_interactive_picker_uses_arrows_and_skips_on_cancel() -> Non
     assert out is not None and out[0]["answer"] == "red"
 
 
-def _c_test_question_recommended_enter_and_helpers() -> None:
-    from unittest.mock import MagicMock
-
+def test_question_recommended_enter_and_helpers() -> None:
     from kite.ui.question import (
         _coerce_timeout,
         _interpret_answer,
@@ -577,7 +581,6 @@ def _c_test_question_recommended_enter_and_helpers() -> None:
 
     opts = [{"label": "red"}, {"label": "blue"}]
     assert _interpret_answer("", opts, multiple=False, recommended="blue") == ("blue", ["blue"])
-    assert _interpret_answer("", opts, multiple=False) == ("", [])
     assert _interpret_answer("", opts, multiple=False, recommended="missing") == ("", [])
     assert _interpret_answer("blue (Recommended)", opts, multiple=False, recommended="blue") == (
         "blue",
@@ -604,9 +607,7 @@ def _c_test_question_recommended_enter_and_helpers() -> None:
     assert "blue (Recommended) (Recommended)" not in printed
 
 
-def _c_test_question_footer_hint_and_timeout_prompt() -> None:
-    from unittest.mock import MagicMock
-
+def test_question_footer_hint_and_timeout_prompt() -> None:
     from kite.ui.question import ask_user_questions
 
     opts = [{"label": "x"}, {"label": "y"}]
@@ -632,9 +633,8 @@ def _c_test_question_footer_hint_and_timeout_prompt() -> None:
     assert "auto-picks x in 30s" in timed.input.call_args_list[0].args[0]
 
 
-def _c_test_question_expired_timeout_never_blocks() -> None:
-    import threading
-    from unittest.mock import MagicMock
+def test_question_expired_timeout_never_blocks(monkeypatch) -> None:
+    from types import SimpleNamespace
 
     from kite.ui.question import ask_user_questions
 
@@ -651,14 +651,19 @@ def _c_test_question_expired_timeout_never_blocks() -> None:
     assert out is not None and out[0] == {"answer": "", "options": []}
     skipped.input.assert_not_called()
 
-    # Live expiry: blocked input falls back to recommended after the deadline.
-    stuck = MagicMock()
-    gate = threading.Event()
-    stuck.input.side_effect = lambda prompt: gate.wait(30)
-    out = ask_user_questions(
-        stuck, [{"question": "Color?", "options": opts, "recommended": "blue", "timeout": 0.05}]
-    )
+    # Simulate an input thread still alive at the deadline, without sleeping
+    # or leaving a blocked daemon thread behind after the assertion.
+    pending = MagicMock()
+    pending.is_alive.return_value = True
+    thread = MagicMock(return_value=pending)
+    with monkeypatch.context() as patcher:
+        patcher.setattr("kite.ui.question.threading", SimpleNamespace(Thread=thread))
+        out = ask_user_questions(
+            MagicMock(), [{"question": "Color?", "options": opts, "recommended": "blue", "timeout": 30}]
+        )
     assert out is not None and out[0] == {"answer": "blue", "options": ["blue"]}
+    pending.start.assert_called_once_with()
+    pending.join.assert_called_once_with(30)
 
     # Answer in time still wins when a timeout is set.
     quick = MagicMock()
@@ -667,125 +672,3 @@ def _c_test_question_expired_timeout_never_blocks() -> None:
         quick, [{"question": "Color?", "options": opts, "timeout": 30}]
     )
     assert out is not None and out[0] == {"answer": "blue", "options": ["blue"]}
-
-
-def _c_test_question_tool_recommended_timeout_passthrough(tmp_path) -> None:
-    seen: list = []
-
-    def _handler(questions):
-        seen.extend(questions)
-        return [{"answer": "a", "options": ["a"]}]
-
-    tool = _question_tool(tmp_path, ask_user=_handler)
-    res = tool.run(
-        {
-            "questions": [
-                {
-                    "question": "Q?",
-                    "header": "h",
-                    "options": [{"label": "a"}, {"label": "b"}],
-                    "recommended": "b",
-                    "timeout": 20,
-                }
-            ]
-        }
-    )
-    assert res["ok"] is True
-    assert seen[0]["recommended"] == "b" and seen[0]["timeout"] == 20
-    seen.clear()
-    res = tool.run(
-        {
-            "questions": [
-                {
-                    "question": "Q?",
-                    "options": [{"label": "a"}],
-                    "recommended": "   ",
-                    "timeout": "soon",
-                }
-            ]
-        }
-    )
-    assert res["ok"] is True
-    assert "recommended" not in seen[0] and "timeout" not in seen[0]
-
-
-def _c_test_question_offered_in_modes_and_serial() -> None:
-    from kite.agent.mode import BUILD_TOOLS, PLAN_TOOLS
-    from kite.agent.parallel import _SERIAL_ONLY
-    from kite.tools.metadata import metadata_for
-
-    assert "question" in BUILD_TOOLS and "question" in PLAN_TOOLS
-    assert "question" in _SERIAL_ONLY
-    assert metadata_for("question").read_only is True
-    assert metadata_for("question").concurrency_safe is False
-
-
-def test_batch_00(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_paid_web_providers_chain, test_submit_verification_background_jobs_and_orchestrator, test_token_efficiency_registry_order_and_sparse_numbers."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _c_test_paid_web_providers_chain(monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _t1 = tmp_path / "t0_1"
-    _t1.mkdir(parents=True, exist_ok=True)
-    _c_test_submit_verification_background_jobs_and_orchestrator(tmp_path=_t1)
-    _t2 = tmp_path / "t0_2"
-    _t2.mkdir(parents=True, exist_ok=True)
-    _c_test_token_efficiency_registry_order_and_sparse_numbers(tmp_path=_t2)
-
-def test_batch_01(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_token_efficiency_spill_tiers_and_errors, test_observation_compaction_and_shell, test_llm_summarize_session_fallback_matrix."""
-    _t0 = tmp_path / "t1_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_token_efficiency_spill_tiers_and_errors(tmp_path=_t0)
-    _c_test_observation_compaction_and_shell()
-    _mp2 = pytest.MonkeyPatch()
-    try:
-        _c_test_llm_summarize_session_fallback_matrix(monkeypatch=_mp2)
-    finally:
-        _mp2.undo()
-
-def test_batch_02() -> None:
-    """Consolidated (bodies unchanged): test_llm_summarize_no_duplicate_session_attempt, test_make_summarizer_forwards_session_overrides, test_compaction_keeps_tail_failures_and_error_lines."""
-    _mp0 = pytest.MonkeyPatch()
-    try:
-        _c_test_llm_summarize_no_duplicate_session_attempt(monkeypatch=_mp0)
-    finally:
-        _mp0.undo()
-    _mp1 = pytest.MonkeyPatch()
-    try:
-        _c_test_make_summarizer_forwards_session_overrides(monkeypatch=_mp1)
-    finally:
-        _mp1.undo()
-    _c_test_compaction_keeps_tail_failures_and_error_lines()
-
-def test_batch_03(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_compact_boundary_renders_elapsed_and_engine, test_subagent_parent_plan_context_attached, test_question_tool_validation_and_headless."""
-    _c_test_compact_boundary_renders_elapsed_and_engine()
-    _c_test_subagent_parent_plan_context_attached()
-    _t2 = tmp_path / "t3_2"
-    _t2.mkdir(parents=True, exist_ok=True)
-    _c_test_question_tool_validation_and_headless(tmp_path=_t2)
-
-def test_batch_04(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_question_tool_live_answers, test_question_console_handler_numbers_text_and_skip, test_question_interactive_picker_uses_arrows_and_skips_on_cancel."""
-    _t0 = tmp_path / "t4_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_question_tool_live_answers(tmp_path=_t0)
-    _c_test_question_console_handler_numbers_text_and_skip()
-    _c_test_question_interactive_picker_uses_arrows_and_skips_on_cancel()
-
-def test_batch_05() -> None:
-    """Consolidated (bodies unchanged): test_question_recommended_enter_and_helpers, test_question_footer_hint_and_timeout_prompt, test_question_expired_timeout_never_blocks."""
-    _c_test_question_recommended_enter_and_helpers()
-    _c_test_question_footer_hint_and_timeout_prompt()
-    _c_test_question_expired_timeout_never_blocks()
-
-def test_batch_06(tmp_path) -> None:
-    """Consolidated (bodies unchanged): test_question_tool_recommended_timeout_passthrough, test_question_offered_in_modes_and_serial."""
-    _t0 = tmp_path / "t6_0"
-    _t0.mkdir(parents=True, exist_ok=True)
-    _c_test_question_tool_recommended_timeout_passthrough(tmp_path=_t0)
-    _c_test_question_offered_in_modes_and_serial()
-

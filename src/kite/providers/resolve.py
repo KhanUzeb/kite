@@ -77,24 +77,13 @@ def _stock_cloud_base(provider: str, api_base: str | None) -> bool:
     return bool(needle and needle in api_base)
 
 
-def _first_configured_provider() -> str:
-    from kite.providers.credentials import configured_providers
-
-    rows = configured_providers()
-    usable = [name for name, ok, _env in rows if ok and name != "ollama"]
-    if usable:
-        return usable[0]
-    if any(name == "ollama" and ok for name, ok, _env in rows):
-        return "ollama"
-    return "openai"
-
-
 def resolve_model(
     *,
     provider: str | None = None,
     model: str | None = None,
     config: UserConfig | None = None,
     catalog: Catalog | None = None,
+    ready_providers: tuple[str, ...] | None = None,
 ) -> ResolvedModel:
     cfg = config or UserConfig.load()
     cat = catalog or load_catalog()
@@ -103,22 +92,23 @@ def resolve_model(
     load_kite_env()
     explicit = bool((provider or "").strip())
     requested = (provider or cfg.default_provider or "").strip()
-    rows = None
     if not explicit:
-        from kite.providers.credentials import configured_providers
+        from kite.providers.credentials import configured_providers, inspect_provider_credentials
 
-        rows = configured_providers()
-        ready = {name for name, ok, _env in rows if ok}
-        if not requested or requested not in ready:
-            usable = [name for name, ok, _env in rows if ok and name != "ollama"]
-            if usable:
-                requested = usable[0]
-            elif any(name == "ollama" and ok for name, ok, _env in rows):
-                requested = "ollama"
-            elif not requested:
-                requested = "openai"
-    if not requested:
-        requested = _first_configured_provider()
+        try:
+            preferred = cat.get(requested)
+        except KeyError:
+            preferred = None
+        if ready_providers is None and preferred is not None:
+            if inspect_provider_credentials(preferred).usable:
+                ready_providers = (preferred.name,)
+        if ready_providers is None:
+            ready_providers = tuple(name for name, ok, _ in configured_providers() if ok)
+        if preferred is None or preferred.name not in ready_providers:
+            requested = next(
+                (name for name in ready_providers if name != "ollama"),
+                ready_providers[0] if ready_providers else requested or "openai",
+            )
     spec = cat.get(requested)
     provider_name = spec.name
 
@@ -161,8 +151,6 @@ def resolve_model(
             extras = oauth_litellm_extras(spec)
             if extras.get("api_key"):
                 api_key = extras["api_key"]
-            elif extras.get("use_xai_oauth"):
-                api_key = None
             else:
                 api_key = None
             if spec.oauth_provider in {"anthropic", "antigravity"}:
@@ -236,6 +224,7 @@ def missing_credentials(resolved: ResolvedModel) -> str | None:
         names = " or ".join(f"${n}" for n in api_key_env_names(resolved.spec))
         return (
             f"Missing {names} for provider '{resolved.provider}'. "
+            f"Run `kite keys --set {resolved.provider}` or set {names}. "
             f"See {resolved.spec.docs_url or 'provider docs'}."
         )
     return None

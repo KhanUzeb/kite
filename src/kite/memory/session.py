@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from kite.config import ensure_home, kite_home
+from kite.memory.secure_io import secure_write_bytes
 from kite.memory.session_policy import (
     persistence_enabled,
     prepare_persisted_row,
@@ -21,26 +22,22 @@ from kite.memory.session_policy import (
 
 
 def format_meta_line(meta: SessionMeta) -> str:
-    """Canonical JSONL meta row — .6f timestamps keep line length stable for in-place patches."""
-    task = prepare_persisted_value(meta.task)
-    label = prepare_persisted_value(meta.label)
-    cwd = prepare_persisted_value(meta.cwd)
-    provider = prepare_persisted_value(meta.provider)
-    model = prepare_persisted_value(meta.model)
-    exit_status = prepare_persisted_value(meta.exit_status)
-    reasoning = prepare_persisted_value(meta.reasoning)
+    """Canonical JSONL meta row with fixed-precision timestamps."""
+    values = prepare_persisted_value(
+        {key: getattr(meta, key) for key in ("task", "label", "cwd", "provider", "model", "exit_status", "reasoning")}
+    )
     return (
         '{"type":"meta"'
         f',"id":{json.dumps(meta.id)}'
         f',"created_at":{meta.created_at:.6f}'
         f',"updated_at":{meta.updated_at:.6f}'
-        f',"cwd":{json.dumps(cwd)}'
-        f',"provider":{json.dumps(provider)}'
-        f',"model":{json.dumps(model)}'
-        f',"task":{json.dumps(task)}'
-        f',"label":{json.dumps(label)}'
-        f',"exit_status":{json.dumps(exit_status)}'
-        f',"reasoning":{json.dumps(reasoning)}'
+        f',"cwd":{json.dumps(values["cwd"])}'
+        f',"provider":{json.dumps(values["provider"])}'
+        f',"model":{json.dumps(values["model"])}'
+        f',"task":{json.dumps(values["task"])}'
+        f',"label":{json.dumps(values["label"])}'
+        f',"exit_status":{json.dumps(values["exit_status"])}'
+        f',"reasoning":{json.dumps(values["reasoning"])}'
         "}"
     )
 
@@ -49,27 +46,8 @@ def _meta_sidecar(path: Path) -> Path:
     return path.with_suffix(".meta")
 
 
-def _read_first_line_bytes(path: Path) -> tuple[int, str]:
-    """Read only the first line — O(meta line), not O(file)."""
-    with path.open("rb") as f:
-        raw = f.readline()
-        if not raw:
-            return 0, ""
-        if raw.endswith(b"\n"):
-            raw = raw[:-1]
-        return len(raw), raw.decode("utf-8")
-
-
 def _read_sidecar(path: Path) -> dict[str, Any] | None:
-    """Parse the ``.meta`` sidecar, or None when it is absent or corrupt.
-
-    Probes by reading rather than ``is_file()`` first: the open already fails
-    when the sidecar is gone, so the extra ``stat`` was pure overhead on every
-    candidate a ranking pass walked. Read exactly once — the timestamp and the
-    runtime identity live in the same row, so the former two readers
-    (``_session_updated_at`` and ``session_runtime_overlay``) were paying for
-    the same bytes twice.
-    """
+    """Parse the runtime metadata sidecar, or None when absent or corrupt."""
     try:
         row = json.loads(_meta_sidecar(path).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
@@ -108,35 +86,40 @@ def _clamp_updated_to_recency(path: Path, updated_at: float) -> float:
 
 
 def _read_session_meta(path: Path) -> SessionMeta | None:
+    """Read only the header; retain damaged transcripts under their filename id."""
     try:
-        _, first_line = _read_first_line_bytes(path)
-        if not first_line.strip():
-            return None
-        row = json.loads(first_line)
-        if not isinstance(row, dict):
-            return None
-        if row.get("type") != "meta":
-            return None
-        meta = SessionMeta.from_dict(row)
-        sidecar = _read_sidecar(path)
-        if sidecar is not None:
-            stamp = sidecar.get("updated_at")
-            if isinstance(stamp, (int, float)):
-                meta.updated_at = float(stamp)
-            _apply_sidecar_identity(meta, sidecar)
-        meta.updated_at = _clamp_updated_to_recency(path, meta.updated_at)
-        return meta
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        with path.open("rb") as handle:
+            first_line = handle.readline(1024 * 1024)
+    except OSError:
         return None
-
-
-def _session_updated_at(path: Path, meta: SessionMeta) -> float:
+    try:
+        row = json.loads(first_line)
+        if not isinstance(row, dict) or row.get("type") != "meta":
+            raise ValueError("missing meta row")
+        meta = SessionMeta.from_dict(row)
+    except (UnicodeDecodeError, ValueError, KeyError, TypeError):
+        try:
+            stamp = path.stat().st_mtime
+        except OSError:
+            return None
+        meta = SessionMeta(
+            id=path.stem,
+            created_at=stamp,
+            updated_at=stamp,
+            cwd="",
+            provider="",
+            model="",
+            task="",
+            label="Recovered session",
+        )
     sidecar = _read_sidecar(path)
     if sidecar is not None:
         stamp = sidecar.get("updated_at")
         if isinstance(stamp, (int, float)):
-            return _clamp_updated_to_recency(path, float(stamp))
-    return _clamp_updated_to_recency(path, meta.updated_at)
+            meta.updated_at = float(stamp)
+        _apply_sidecar_identity(meta, sidecar)
+    meta.updated_at = _clamp_updated_to_recency(path, meta.updated_at)
+    return meta
 
 
 def session_runtime_overlay(path: Path) -> dict[str, Any]:
@@ -158,32 +141,28 @@ def session_runtime_overlay(path: Path) -> dict[str, Any]:
     return out
 
 
-def _apply_runtime_overlay(meta: SessionMeta, path: Path) -> SessionMeta:
-    overlay = session_runtime_overlay(path)
-    for key in ("provider", "model", "reasoning"):
-        if key in overlay:
-            setattr(meta, key, overlay[key])
-    return meta
-
-
 def _iter_rows_reverse(path: Path) -> Iterator[dict[str, Any]]:
     """Yield parsed JSONL rows newest-first without reading the whole file.
 
-    Binary reverse-chunk scan: bounded memory even for hundred-MB transcripts.
+    Memory is bounded by the largest row, with linear copying for long rows.
     Skips blank/corrupt lines like the forward loader.
     """
     with path.open("rb") as f:
         f.seek(0, 2)
         pos = f.tell()
-        carry = b""
+        carry: list[bytes] = []
         while pos > 0:
             step = min(65536, pos)
             pos -= step
             f.seek(pos)
-            lines = (f.read(step) + carry).split(b"\n")
-            carry = lines[0]
+            lines = f.read(step).split(b"\n")
+            if len(lines) > 1:
+                if carry:
+                    lines[-1] += b"".join(reversed(carry))
+                    carry.clear()
+            carry.append(lines[0])
             for raw in reversed(lines[1:]):
-                if not raw.strip():
+                if not raw or raw.isspace():
                     continue
                 try:
                     row = json.loads(raw.decode("utf-8"))
@@ -191,9 +170,10 @@ def _iter_rows_reverse(path: Path) -> Iterator[dict[str, Any]]:
                     continue
                 if isinstance(row, dict):
                     yield row
-        if carry.strip():
+        first = b"".join(reversed(carry))
+        if first and not first.isspace():
             try:
-                row = json.loads(carry.decode("utf-8"))
+                row = json.loads(first.decode("utf-8"))
             except ValueError:
                 return
             if isinstance(row, dict):
@@ -240,60 +220,33 @@ DURABLE_EVENT_KINDS = frozenset(
 )
 
 
-def _read_existing_events(path: Path) -> list[dict[str, Any]]:
-    """Durable rows that must survive meta/message rewrites (F-03).
+def _iter_session_rows(path: Path) -> Iterator[dict[str, Any]]:
+    """Stream JSONL objects, skipping torn lines and non-object JSON values."""
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if line.isspace():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                yield row
 
-    Collects ``event`` rows with durable kinds plus ``context_checkpoint``
-    rows so ``_write_meta`` (via ``set_exit`` / ``replace_messages`` / ``save``)
-    can re-append them after rewriting meta+messages.
-    """
+
+def _read_existing_events(path: Path) -> list[dict[str, Any]]:
+    """Retain durable events and checkpoint audit rows across transcript rewrites."""
     preserved: list[dict[str, Any]] = []
     try:
-        with path.open(encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(row, dict):
-                    continue
-                rtype = row.get("type")
-                if rtype == "event" and row.get("kind") in DURABLE_EVENT_KINDS:
-                    preserved.append(row)
-                elif rtype == "context_checkpoint":
-                    preserved.append(row)
+        for row in _iter_session_rows(path):
+            rtype = row.get("type")
+            if rtype == "event" and row.get("kind") in DURABLE_EVENT_KINDS:
+                preserved.append(row)
+            elif rtype == "context_checkpoint":
+                preserved.append(row)
     except OSError:
         return []
     return preserved
-
-
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write ``data`` atomically via temp-file + os.replace (F-04).
-
-    Leaves the original intact on failure. Temp file gets owner-only perms
-    before the replace so the final file is 0o600.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
-    try:
-        with tmp.open("wb") as f:
-            f.write(data)
-            f.flush()
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                pass
-        secure_session_file(tmp)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
-    secure_session_file(path)
 
 
 @dataclass
@@ -381,7 +334,7 @@ class Session:
         self.messages = list(messages)
         self.meta.updated_at = time.time()
         if persistence_enabled():
-            self._persist_compact_snapshot(messages)
+            self._write_meta()
 
     def set_exit(self, status: str) -> None:
         self.meta.exit_status = status
@@ -403,7 +356,7 @@ class Session:
             lines.append(json.dumps(row, ensure_ascii=False))
         for row in preserved:
             lines.append(json.dumps(row, ensure_ascii=False))
-        _atomic_write_bytes(path, ("\n".join(lines) + "\n").encode("utf-8"))
+        secure_write_bytes(path, ("\n".join(lines) + "\n").encode("utf-8"))
         self._write_meta_sidecar(path, count=len(self.messages))
 
     def _persist_tail(self, messages: tuple[dict, ...] | list[dict]) -> None:
@@ -417,11 +370,7 @@ class Session:
                 row = {"type": "message", "message": prepare_persisted_value(m)}
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
         secure_session_file(path)
-        self._touch_meta_timestamp(path, count=len(self.messages))
-
-    def _persist_compact_snapshot(self, messages: list[dict]) -> None:
-        """Rewrite session file to current messages — avoids unbounded JSONL growth."""
-        self._write_meta()
+        self._write_meta_sidecar(path, count=len(self.messages))
 
     def record_context_checkpoint(self, checkpoint_id: str, *, label: str = "", reason: str = "manual") -> None:
         """Append checkpoint metadata to the session audit trail."""
@@ -445,7 +394,7 @@ class Session:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         secure_session_file(path)
         self.meta.updated_at = time.time()
-        self._touch_meta_timestamp(path, count=len(self.messages))
+        self._write_meta_sidecar(path, count=len(self.messages))
 
     def record_event(self, kind: str, payload: dict[str, Any] | None = None) -> None:
         """Append a durable rollout event — survives crashes between model turns."""
@@ -467,7 +416,7 @@ class Session:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         secure_session_file(path)
         self.meta.updated_at = time.time()
-        self._touch_meta_timestamp(path, count=len(self.messages))
+        self._write_meta_sidecar(path, count=len(self.messages))
 
     def _write_meta_sidecar(self, path: Path, *, count: int | None = None) -> None:
         side = _meta_sidecar(path)
@@ -478,34 +427,8 @@ class Session:
             value = getattr(self.meta, key, "")
             if value:
                 data[key] = value
-        side.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
-        secure_session_file(side)
-
-    def _touch_meta_timestamp(self, path: Path, *, count: int | None = None) -> None:
-        """Patch updated_at on line 1 — reads only the meta row, not the full transcript."""
-        self._write_meta_sidecar(path, count=count)
-        try:
-            line_len, old_line = _read_first_line_bytes(path)
-            if not old_line.strip():
-                return
-            row = json.loads(old_line)
-            if not isinstance(row, dict):
-                return
-            if row.get("type") != "meta":
-                return
-            new_line = format_meta_line(self.meta)
-            new_bytes = new_line.encode("utf-8")
-            if len(new_bytes) == line_len:
-                with path.open("r+b") as f:
-                    f.seek(0)
-                    f.write(new_bytes)
-                return
-            with path.open("rb") as f:
-                f.seek(line_len + 1)
-                tail = f.read()
-            _atomic_write_bytes(path, new_bytes + b"\n" + tail)
-        except (OSError, json.JSONDecodeError, ValueError):
-            pass
+        data = prepare_persisted_value(data)
+        secure_write_bytes(side, (json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8"))
 
     def save(self) -> Path:
         if persistence_enabled():
@@ -570,38 +493,18 @@ def resolve_session_path(session_id: str, *, unique: bool = False) -> Path:
     return matches[-1]
 
 
-def _apply_session_row(row: dict[str, Any], messages: list[dict]) -> list[dict]:
-    if not isinstance(row, dict):
-        return messages
-    if row.get("type") == "compact_snapshot":
-        return list(row.get("messages") or [])
-    if row.get("type") == "message":
-        messages.append(row["message"])
-    return messages
-
-
 def load_session(session_id: str, *, unique: bool = False) -> Session:
     path = resolve_session_path(session_id, unique=unique)
-    meta: SessionMeta | None = None
-    messages: list[dict] = []
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(row, dict):
-                continue
-            if row.get("type") == "meta":
-                meta = SessionMeta.from_dict(row)
-                meta.updated_at = _session_updated_at(path, meta)
-                meta = _apply_runtime_overlay(meta, path)
-            else:
-                messages = _apply_session_row(row, messages)
+    meta = _read_session_meta(path)
     if meta is None:
-        raise ValueError(f"Session file missing meta: {path}")
+        raise ValueError(f"Session file unreadable: {path}")
+    messages: list[dict] = []
+    for row in _iter_session_rows(path):
+        kind = row.get("type")
+        if kind == "compact_snapshot":
+            messages = list(row.get("messages") or [])
+        elif kind == "message":
+            messages.append(row["message"])
     return Session(meta=meta, messages=messages, path=path, total_messages=len(messages))
 
 
@@ -614,12 +517,9 @@ def load_session_tail(session_id: str, n: int) -> Session:
     known so renderers can note omitted history.
     """
     path = resolve_session_path(session_id)
-    _, first_line = _read_first_line_bytes(path)
-    row = json.loads(first_line) if first_line.strip() else {}
-    if not isinstance(row, dict) or row.get("type") != "meta":
-        raise ValueError(f"Session file missing meta: {path}")
-    meta = _apply_runtime_overlay(SessionMeta.from_dict(row), path)
-    meta.updated_at = _session_updated_at(path, meta)
+    meta = _read_session_meta(path)
+    if meta is None:
+        raise ValueError(f"Session file unreadable: {path}")
     total = session_runtime_overlay(path).get("messages")
     want = max(0, int(n))
     collected: list[dict] = []
@@ -628,7 +528,8 @@ def load_session_tail(session_id: str, n: int) -> Session:
             for entry in _iter_rows_reverse(path):
                 kind = entry.get("type")
                 if kind == "compact_snapshot":
-                    collected = list(entry.get("messages") or []) + collected
+                    snapshot = entry.get("messages") or []
+                    collected.extend(reversed(snapshot[-(want - len(collected)) :]))
                     break
                 if kind == "message":
                     collected.append(entry["message"])
@@ -758,8 +659,7 @@ def _ranked_transcripts(folder: Path) -> dict[str, float]:
     return {key: max(sidecars.get(key, 0.0), mtime) for key, mtime in transcripts.items()}
 
 
-# Head slack over ``limit``: covers candidates whose meta will not parse and
-# coarse-filesystem mtime ties at the cut, so the head can never come up short.
+# Extra candidates for files disappearing during a listing and mtime ties.
 _META_PARSE_SLACK = 32
 
 
@@ -959,19 +859,4 @@ def prune_sessions(keep: int = 20, *, dry_run: bool = True) -> list[DeletedSessi
 
 
 def iter_session_messages(session_id: str) -> Iterator[dict]:
-    path = resolve_session_path(session_id)
-    messages: list[dict] = []
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(row, dict):
-                continue
-            if row.get("type") == "meta":
-                continue
-            messages = _apply_session_row(row, messages)
-    yield from messages
+    yield from load_session(session_id).messages

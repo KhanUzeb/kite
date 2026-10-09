@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sys
+import time
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from kite.agent.cancel import CancelToken
 from kite.agent.events import Event
@@ -30,6 +33,7 @@ from kite.context.discovery import gather_project_context
 from kite.context.workspace import ExecutionMode, ExecutionSession, WorkspaceContext
 from kite.env.local import LocalEnvironment
 from kite.guardrails import GuardrailPolicy
+from kite.guardrails.redact import sanitize_value
 from kite.memory.audit import AuditLog
 from kite.memory.session import Session, create_session, load_session
 from kite.memory.store import MemoryStore
@@ -41,6 +45,89 @@ from kite.tools import ToolRegistry
 from kite.tools.coding import make_coding_tools
 from kite.tools.jobs import JobRegistry
 from kite.tools.store import TodoStore
+
+_TRACE_FIELD_CHARS = 4096
+_TRACE_TRUNCATED = "…[truncated]"
+
+
+class _JsonlTrace:
+    """Bounded event sink; owner-only on POSIX, best-effort permissions on Windows."""
+
+    def __init__(self, path: str) -> None:
+        from threading import Lock
+        from uuid import uuid4
+
+        self._started = time.monotonic()
+        self._run_id = uuid4().hex
+        self._lock = Lock()
+        self._handle: TextIO | None = None
+        self._warned = False
+        try:
+            # secure_io's atomic replacement helpers cannot append a live stream.
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            try:
+                if os.name == "nt":
+                    # Windows lacks fchmod and chmod only controls the read-only bit.
+                    try:
+                        os.chmod(path, 0o600)
+                    except OSError:
+                        pass
+                else:
+                    os.fchmod(fd, 0o600)
+                self._handle = os.fdopen(fd, "a", encoding="utf-8", buffering=1)
+            except BaseException:
+                os.close(fd)
+                raise
+        except Exception:
+            self._warn()
+
+    def _warn(self) -> None:
+        if self._warned:
+            return
+        self._warned = True
+        try:
+            # Do not echo paths or exception text that might contain a secret.
+            sys.stderr.write("[kite] warning: KITE_TRACE_JSONL failed; tracing disabled for this run\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
+
+    def __call__(self, event: Event) -> None:
+        with self._lock:
+            if self._handle is None:
+                return
+            try:
+                t = time.monotonic() - self._started
+                ts = time.time()
+                payload = sanitize_value(event.payload)
+                for key, value in payload.items():
+                    if isinstance(value, (dict, list, tuple, set)):
+                        preview = json.dumps(value, ensure_ascii=False, default=str)
+                    elif isinstance(value, str):
+                        preview = value
+                    else:
+                        continue
+                    if len(preview) > _TRACE_FIELD_CHARS:
+                        payload[key] = preview[: _TRACE_FIELD_CHARS - len(_TRACE_TRUNCATED)] + _TRACE_TRUNCATED
+                # Payload fields must never override the trace's identity/timing.
+                record = {"t": t, "ts": ts, "run_id": self._run_id, "type": event.kind}
+                record.update((key, value) for key, value in payload.items() if key not in record)
+                self._handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+            except Exception:
+                self._warn()
+                self._close()
+
+    def _close(self) -> None:
+        handle, self._handle = self._handle, None
+        if handle is not None:
+            try:
+                handle.close()
+            except Exception:
+                self._warn()
+
+    def close(self) -> None:
+        with self._lock:
+            self._close()
 
 
 def _format_subagent_log_line(kind: str, payload: dict[str, Any]) -> str:
@@ -139,6 +226,7 @@ class AgentRuntime:
     last_listener_error: str = field(default="", init=False)
     _listener_errors: int = field(default=0, init=False)
     _pending_listener_error: str = field(default="", init=False)
+    _trace_path: str = field(default_factory=lambda: os.environ.get("KITE_TRACE_JSONL", ""), init=False, repr=False)
 
     def invalidate_prepare_cache(self) -> None:
         """Drop cached project context / skills / resolve (e.g. after /reload)."""
@@ -419,6 +507,20 @@ class AgentRuntime:
         return rcfg, resolved, system
 
     def run(self, task: str) -> dict:
+        """Run with an optional trace listener, including setup and teardown events."""
+        if not self._trace_path:
+            return self._run(task)
+        trace = _JsonlTrace(self._trace_path)
+        # The existing fan-out is also the trace choke point: when disabled,
+        # _on_event does no extra work, not even an environment lookup/branch.
+        self._listeners.insert(0, trace)
+        try:
+            return self._run(task)
+        finally:
+            self._listeners.remove(trace)
+            trace.close()
+
+    def _run(self, task: str) -> dict:
         # Fresh per-turn listener-failure budget. REPL turns share one Harness
         # (and its runtime) across runs, so without this reset _listener_errors
         # never returns to 0 and the first-failure notice stops being parked

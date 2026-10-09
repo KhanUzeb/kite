@@ -139,6 +139,7 @@ SENSITIVE_NAMES = frozenset(
         "unattend.xml",
     }
 )
+_SENSITIVE_NAMES_LOWER = frozenset(name.lower() for name in SENSITIVE_NAMES)
 
 _SENSITIVE_ENV_FILE = re.compile(
     r"(?i)(?:^|[\\/'\"\s=])(?:\.env(?:\.[A-Za-z0-9_-]+)?|[A-Za-z0-9_.-]+\.env)\b"
@@ -157,7 +158,7 @@ def is_sensitive_basename(name: str) -> bool:
     low = (name or "").lower()
     if not low:
         return False
-    if low in {item.lower() for item in SENSITIVE_NAMES}:
+    if low in _SENSITIVE_NAMES_LOWER:
         return True
     return low == ".env" or low.startswith(".env.") or low.endswith(".env")
 
@@ -179,9 +180,8 @@ def workspace_root(cwd: str | Path) -> Path:
 
 def resolve_in_workspace(path: str | Path, cwd: str | Path) -> Path:
     p = Path(path).expanduser()
-    root = workspace_root(cwd)
     if not p.is_absolute():
-        p = root / p
+        p = workspace_root(cwd) / p
     return p.resolve()
 
 

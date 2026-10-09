@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 MAX_MEMORY_NOTE_CHARS = 2000
@@ -42,12 +44,28 @@ def storage_id(value: str, *, label: str = "id") -> str:
     return token
 
 
-def secure_memory_write(path: Path, text: str) -> None:
-    from kite.memory.session_policy import secure_session_file
-    from kite.util.atomic import atomic_write_text
+def secure_write_bytes(path: Path, data: bytes) -> None:
+    """Replace a file atomically, with owner-only permissions from creation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
-    atomic_write_text(path, text)
-    secure_session_file(path)
+
+def secure_memory_write(path: Path, text: str) -> None:
+    body = text if text.endswith("\n") else text + "\n"
+    secure_write_bytes(path, body.encode("utf-8"))
 
 
 def wrap_untrusted_user_content(content: str, *, source: str) -> str:

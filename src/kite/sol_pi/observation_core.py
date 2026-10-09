@@ -77,6 +77,7 @@ def create_observation(tool_name: str, tool_call_id: str, text: str, runtime_roo
 
 
 def ensure_stored(observation: Observation) -> None:
+    """Store exact UTF-8 bytes so content hashes and recall offsets remain valid."""
     observation.file_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if observation.file_path.exists():
         existing = observation.file_path.read_bytes()
@@ -85,7 +86,7 @@ def ensure_stored(observation: Observation) -> None:
         if len(existing) != observation.bytes:
             raise ValueError(f"Content-addressed observation size mismatch for {observation.id}")
         return
-    observation.file_path.write_text(observation.text, encoding="utf-8")
+    observation.file_path.write_bytes(observation.text.encode("utf-8"))
 
 
 def _complete_line_excerpt(text: str, budget_bytes: int, from_end: bool) -> str:
