@@ -1,5 +1,8 @@
 # kite-release-version: 1.0.7
-# Same gates as .github/workflows/tests.yml — run before push to main.
+1: # kite-release-version: 1.0.7
+# Core CI gates; run scripts/e2e_smoke.py separately for offline CLI/PTY QA.
+2: # kite-release-version: 1.0.7
+# Core CI gates; run scripts/e2e_smoke.py --headless-only separately for offline CLI QA.
 # Usage: .\scripts\ci_check.ps1 [-Release]  # -Release adds RELEASE doc + CHANGELOG check
 param([switch]$Release)
 $ErrorActionPreference = "Stop"
@@ -32,7 +35,7 @@ if ($Release) { & $Python scripts/sync_version.py --check --release }
 else { & $Python scripts/sync_version.py --check }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "== ruff"
-& $Python -m ruff check src tests
+& $Python -m ruff check src tests scripts
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "== pytest"
 & $Python -m pytest -q --tb=short -p faulthandler

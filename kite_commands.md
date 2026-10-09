@@ -4,7 +4,7 @@ Kite is a coding agent. **What lands in git is still yours.** These commands ste
 
 **New to Kite?** Start with the visual [guide.md](guide.md) (workflows, example Q&A). This file is the complete reference.
 
-**Help:** `kite --help` lists every shipped subcommand. `/help` stays brief in the REPL; `/help all` and `kite help all` print the full map.
+**Help:** `kite --help` lists every shipped subcommand; `kite <subcommand> --help` does not load credentials. `/help` stays brief in the REPL; `/help all` and `kite help all` print the full map. Missing-key errors point to `kite keys --set <provider>`.
 
 There are four surfaces:
 
@@ -56,6 +56,8 @@ kite sessions --no-pick                  # print table only (no picker)
 kite sessions --show <id> [--tail N]     # meta + transcript tail + resume hint (`--tail 0` = full)
 ```
 
+Sessions with a missing, corrupt, or oversized header remain listable, resumable, and eligible for pruning/deletion: fallback metadata is derived from the filename and labeled **Recovered session**. `kite sessions --limit 0` (or a negative limit) returns no rows; `--tail 0` still means the full transcript.
+
 Shared flags on `run` / `chat` / `resume`:
 
 | Flag | Meaning |
@@ -77,16 +79,20 @@ One-shot / headless flags (`kite run`, `kite resume <id> "continue"` — not `ki
 
 | Flag | Meaning |
 |------|---------|
-| `-q` | Quiet |
+| `-q` / `--quiet` | Suppress live events; still show the final run summary |
 | `--headless` | Line-oriented stderr log (`[tool]`, `[crew]`, `[out]`), no TTY prompts — CI / cloud agents |
 | `--no-stream` | With `--headless`, hide live bash/tool output lines |
-| `--json` `-o PATH` `--label` | Machine output / trajectory path / session label |
+| `--json` | Final run status and submission as JSON on stdout (not a stream of events) |
+| `-o PATH` / `--output PATH` | Write the trajectory |
+| `--label` | Session label |
 
 Persistent compaction is `kite config --auto-compact true|false` (not a run/chat flag).
 
 LLM compaction prefers OpenRouter free-tier (`compaction_provider` / `compaction_model` in `~/.kite/config.toml`); when OpenRouter is unavailable (no key, empty free list, all retries fail) it falls back to the session model — billed/metered, unlike free-tier. Opt out with `compaction_fallback_session = false` (or `compaction_use_llm = false` for deterministic summaries only).
 
 `--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto`/`yolo` permit routine in-workspace work (installs, tests, commits) while **SERIOUS** actions (network fetch, destructive delete, shell wrappers) prompt in `auto` and `yolo` skips those prompts; critical gates (outside workspace, sudo, remote shell) fail closed.
+
+One-shot `run` and `resume` share run-result exit codes: **0** submitted successfully, **1** other failure, **2** cancelled/interrupted, **3** approval denied, **4** verification failed. Leftover background jobs prevent a false success even when the model submitted.
 
 **Tool philosophy:** inspect with **bash** (`rg`, `head`, `sed -n`, `wc -l`) for token-efficient peeks; use `read` only for bounded slices; `set_cwd` when the user names another directory.
 
@@ -153,7 +159,7 @@ kite commands
 kite plugins
 kite memory [--remember text] [--forget query] [--project]
 kite runtime-config [--config name]
-kite bench [--json] [--save PATH] [--compare BASELINE.json] [--check] [--ab] [--stress]
+kite bench [--suite quick|full] [--json] [--save PATH] [--compare BASELINE.json] [--check] [--ab] [--stress]
 kite tasks init [--force] [path]              # write example ~/.kite/tasks/example.jsonl
 kite tasks run <file.jsonl> [--stdin] [--json] [--dry-run] [--continue-on-error]
                            [--steps N] [--cost USD] [--time SEC] [-p] [-m]
@@ -166,25 +172,34 @@ kite gh auth [login|status|logout]  # browser/device login, `--with-token` PAT-f
 
 ### Harness timing (`kite bench`)
 
-Repeatable micro-benchmarks for the **harness only** — no live LLM calls. Use before/after refactors to catch startup, context, and tool regressions.
+Repeatable benchmarks for the **harness only** — no live LLM calls. Use before/after refactors on the same machine, Python, and workspace.
 
 ```bash
-kite bench                      # table: name · category · median ms
-kite bench --json               # machine-readable report
-kite bench --save before.json   # baseline snapshot
-kite bench --compare before.json
-kite bench --check              # exit 1 if any case exceeds budget (CI gate)
+kite bench                         # quick suite: name · category · median ms
+kite bench --json                   # machine-readable report
+kite bench --check                  # quick CI timing budgets; exit 1 on failure
+kite bench --suite full --save before.json
+# apply a change, then compare and retain the new report
+kite bench --suite full --compare before.json --save after.json
 ```
 
-| Category | Benchmarks |
-|----------|------------|
-| **startup** | `cli_import`, `config_load`, `user_config_load`, `catalog_load`, `skills_load`, `repl_chat_init`, `model_resolve`, `slash_index`, `runtime_prepare` |
-| **context** | `repo_map`, `prompt_cache_prepare`, `context_gather`, `prompt_assembly` |
-| **tools** | `tool_registry`, `read_tool`, `grep_tool`, `bash_echo`, `subprocess_spawn` |
+The default **quick** suite covers startup, context, and tools with temporary fixtures; it never writes `src/app.py` into your cwd. `--cwd PATH` measures that workspace's context without modifying it. Budget ceilings live in `src/kite/bench/budgets.py`; `pytest tests/test_bench.py` exercises the quick budgets.
 
-Optional (not in CI pytest): `kite bench --ab` and `kite bench --stress`.
+The **full** suite has 43 measurements: cold-start subprocesses, 50/80/120-column streaming, 20k answer/reasoning events, 10k-option picker navigation, 50/200-turn stub-agent and prompt-cache growth, repo-map/grep/path completion on a generated 20,000-file tree, and large-session append/list/resume/reverse reads (2,000 metadata-only sessions and 50 MB transcripts). It also covers an explicit Console width without an explicit height under `TERM=dumb`. Session workloads use a temporary `KITE_HOME`; fixture setup/removal is outside individual timings. Cold means **process-cold**, not a flushed OS filesystem cache. Full-suite extras are diagnostic, not absolute CI budgets; the reasoning-volume workload measures accumulation, not final replay.
 
-Budget ceilings live in `src/kite/bench/budgets.py`. `pytest tests/test_bench.py` runs the same suite in CI.
+`--save PATH` writes a report with medians, samples, and median absolute deviation (MAD). `--compare PATH` exits 1 only when a slowdown exceeds **all three**: `--threshold` (default 20%), `--min-delta` (default 2 ms), and three times the sum of before/after MAD. Incompatible benchmark names, platform, Python minor version, or workspace also fail comparison. This is a noise guard, not a statistical significance claim: repeat isolated runs and never compare profiled timings against unprofiled baselines. `--save` works with `--compare`, including failed comparisons.
+
+Optional: `--ab` and `--stress` (outside CI pytest); neither combines with `--suite full`, `--compare`, or `--check`.
+
+### Runtime event tracing
+
+```bash
+KITE_TRACE_JSONL=/tmp/kite-trace.jsonl kite run --headless "fix the failing test"
+```
+
+`KITE_TRACE_JSONL` opts into an append-only JSONL record of every runtime event, independent of live terminal display. Each line has `t` (monotonic seconds since run start), `ts` (Unix timestamp), `run_id`, `type`, and the event's payload fields at the top level. Reserved timing/identity fields cannot be overwritten by payloads. An open/write failure emits one stderr warning and disables tracing for that run without failing the task. This is distinct from `/trace`, which shows the last traceback.
+
+For permissions, redaction, and field bounds see [SECURITY.md](SECURITY.md#runtime-trace-files); for lifecycle and event fan-out see [architecture.md](architecture.md#event-driven-ui).
 
 ### Headless tasks (`kite tasks`)
 
@@ -348,13 +363,19 @@ Ctrl+C stops the **current turn**, not the process.
 
 Slash completion menus highlight the first match automatically. `↑` / `↓` wrap through matches, Page Up/Down move by a page, and selection leaves the typed input unchanged until `Enter` accepts it.
 
+`@path` completion expands `~`, gives directories a trailing slash, and shows no candidates for a missing directory (rather than listing cwd). Multi-select pickers retain checked entries when a filter hides them.
+
 Model/provider/session pickers (`kite models --select`, `kite select`, `kite -r`, `/select`, setup, web-keys) use a **console list**. On a TTY: **↑↓**, Page Up/Down, **click or drag** a row then release to select, type to filter, type a **number** then Enter, `r` refresh, Esc/`q` cancel. CI/`KITE_TYPED_PICK=1` uses the typed prompt (`+/−` pages). Composer mouse capture is **off** by default so the welcome banner stays readable on Windows; `KITE_MOUSE=1` enables slash-menu wheel (Shift+drag to copy).
+
+The busy hint reads **Enter steers** by default, or **Enter queues** only with `KITE_BUSY_ENTER=queue`.
 
 While a turn runs, the bottom toolbar shows a **running line** (`[HH:MM:SS] label running`) and, when bash, background jobs, or the answer text stream output, the latest sanitized line as `› …`. The footer stays fed for the whole turn: the answer tail mirrors into the running line while it generates, and a finished tool hands the spinner straight to the next model call, so there is no silent window between events. Model streaming shows `streaming` with **ttft** (time-to-first-token) on early tokens, then **tok/s** from provider usage when available. Reasoning and answer text use separate channels; tool-call JSON streams as throttled `preparing` previews. Queued messages show separate **steer** and **follow-up** counts plus `next steer:` / `next follow-up:` preview. Provider retries tick down in the running line. Auto-compaction shows `compacting context`. A failed turn leaves a persistent error segment in the footer until the next turn starts. Metrics row: tok/s, cache %, context meter, and session cost.
 
 When stderr is not a TTY (pipe, relay, CI log) there is no `\r` animation to watch, so the loader emits newline-delimited heartbeat lines instead — starting at 2s and backing off to 15s. `tools.progress_interval_seconds` (default `2.0`) bounds the silence between `tool_progress` events; `KITE_TYPED_PICK=1` forces typed pickers and `KITE_NO_MOUSE_PICK=1` keeps the picker off the mouse.
 
 Diffs render with a dim **old/new line-number gutter** derived from the hunk headers, a paired `-`/`+` word-level highlight, and a `+adds,-dels` histogram in the header. `/collapse` and `/expand` switch the body between the first `DIFF_PREVIEW_LINES` rows and the full patch.
+
+Streamed paragraphs wrap to the terminal's cell width, including narrow 50/60/80/120-column layouts, wide Unicode characters, and expanded tabs; chunk boundaries do not split words. Deferred answers retain their opening chunks beyond 2,000 deltas, and expanded reasoning is not replayed twice.
 
 `/thinking` appears in the slash menu when the current model advertises reasoning/thinking support. Levels shown match what the API exposes (e.g. `off low medium high` on OpenRouter/Groq/Nemotron). Empty `/thinking` cycles like Pi; set explicitly with `/thinking high` or `/thinking off`. Unsupported levels clamp to the nearest supported one and report it.
 
@@ -448,18 +469,21 @@ List: `/commands` `/skills` `/plugins` or `kite commands` / `kite skills` / `kit
 | `question` | Clarifying questions for genuine ambiguity (opencode-style: header/question/options, number or free text, skippable). Interactive REPL answers live; headless runs get an empty set and proceed on assumptions |
 | `write` / `edit` | Edits preserve the file's on-disk line endings (no LF↔CRLF churn); new files default to CRLF on Windows / LF elsewhere unless `.gitattributes`/`editorconfig` say otherwise |
 | `bash` | Inspect (`rg`, `head`, `pytest`, …) or legacy `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. Runs with the project `.venv` first on PATH when one exists (system toolchains otherwise). Dynamic `gh` lives here too (no hardcoded tools needed): read-only `gh issue/pr view\|list` runs free in build AND plan mode; publishing commands (`create`/`comment`/`merge`/`close`) prompt for approval in auto mode |
+| `grep` | Search with a global `max_hits` limit and bounded context; colons in content remain intact, and a direct-file search shows that file's name in the heading |
 | `memory` | Durable notes (`list` / `remember` / `forget`), not the chat log |
 | `websearch` | Auto: Tavily → Exa → TinyFish → Firecrawl when keys set; else DuckDuckGo. Short paid results are topped up from DuckDuckGo; Tavily answers surfaced. Returns titles/URLs/snippets |
 | `webfetch` | Firecrawl scrape when `FIRECRAWL_API_KEY` set; else stdlib HTML extract (nav/footer chrome stripped) |
 | `webcrawl` | Firecrawl crawl when keyed; else same-origin stdlib crawl |
 | `gh_auth` | Read-only GitHub auth probe — call when `gh_*` tools report auth errors (hint points at `kite gh auth login` / `GH_TOKEN`) |
 
-Composer: `@path` completes attach paths (word-boundary `@`). Agent flow: `websearch` → pick URL → `webfetch`.
+Agent flow: `websearch` → pick URL → `webfetch`.
 Keys: `kite web-keys set tavily|exa|tinyfish|firecrawl` or `kite keys --set …` → `~/.kite/.env` (owner-only).
+
+Background bash jobs enforce their timeout even when the child produces no output, and retained logs preserve newlines. For output caps and omitted-line notices, see [SECURITY.md](SECURITY.md#bounded-output-capture).
 
 `KITE.md` / `AGENTS.md` are repo instructions; `/remember` is durable facts; `/user` + `/profile` + `/working` are global identity context. See [CONTEXT.md](CONTEXT.md) (Memory & persistence).
 
-**Verification:** after edits, run the applicable check for the touched package. Monorepos may need per-service checks. Override defaults in `.kite/verification.toml` (see `src/kite/data/verification.example.toml`).
+**Verification:** after edits, run the applicable check for the touched package. Monorepos may need per-service checks; nested Go modules suggest commands such as `cd services/api && go test ./...`. Override defaults in `.kite/verification.toml` (see `src/kite/data/verification.example.toml`). Narration and unsupported-verification-claim nudges consume bounded retry budgets. An edited session cannot bypass the submit gate with a casual-chat answer; exhausted-gate messages report the actual blocker.
 
 ---
 
@@ -553,7 +577,7 @@ irm https://raw.githubusercontent.com/KhanUzeb/kite/main/scripts/install.ps1 | i
 
 Needs `curl` + `git`. Update / uninstall: `kite update` · `kite uninstall` (`uv tool upgrade kite` / `uv tool uninstall kite` still work).
 
-Contributor (optional): `./scripts/install.sh --dev` still puts `kite` on PATH (editable). Update / uninstall: `kite update` · `kite uninstall`.
+Contributor installs (`scripts/install.sh --dev --local`, Windows `install.ps1 -Dev -Local`): see [CONTRIBUTING.md](CONTRIBUTING.md#how-to-set-up).
 
 Manual: `uv tool install "git+https://github.com/KhanUzeb/kite.git"` then `uv tool update-shell`. Then `kite setup`.
 
@@ -595,4 +619,4 @@ pytest -q
 kite bench --check
 ```
 
-See `tests/README.md` for the compact pytest map (~210 tests: security, approval, agent, CLI/UI, providers).
+See [tests/README.md](tests/README.md) for the pytest map and [AGENTS.md](AGENTS.md#tests--ci) for the dev loop (`ci_check.sh --fast`, `e2e_smoke.py`, `worktree.sh`, `profile_cli.py`).

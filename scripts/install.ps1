@@ -326,12 +326,27 @@ function Install-DevEditable {
     if (-not (Test-Path (Join-Path $installRoot ".venv"))) {
         uv venv --python $Python .venv
     }
-    $venvPy = Join-Path $installRoot ".venv\Scripts\python.exe"
-    if ($NoDev) {
+    $venvPy = Join-Path (Get-Location).Path ".venv\Scripts\python.exe"
+    if (Test-Path "uv.lock") {
+        $syncArgs = @("sync", "--frozen", "--python", $venvPy)
+        if ($NoDev) { $syncArgs += "--no-dev" }
+        else { $syncArgs += @("--extra", "dev") }
+        $previousProjectEnvironment = $env:UV_PROJECT_ENVIRONMENT
+        $previousVirtualEnv = $env:VIRTUAL_ENV
+        try {
+            $env:UV_PROJECT_ENVIRONMENT = Join-Path (Get-Location).Path ".venv"
+            $env:VIRTUAL_ENV = $env:UV_PROJECT_ENVIRONMENT
+            uv @syncArgs
+        } finally {
+            $env:UV_PROJECT_ENVIRONMENT = $previousProjectEnvironment
+            $env:VIRTUAL_ENV = $previousVirtualEnv
+        }
+    } elseif ($NoDev) {
         uv pip install --python $venvPy -e .
     } else {
         uv pip install --python $venvPy -e ".[dev]"
     }
+    if ($LASTEXITCODE -ne 0) { throw "Contributor environment installation failed" }
 
     $kiteHome = if ($env:KITE_HOME) { $env:KITE_HOME } else { Join-Path $env:USERPROFILE ".kite" }
     New-Item -ItemType Directory -Path $kiteHome -Force | Out-Null

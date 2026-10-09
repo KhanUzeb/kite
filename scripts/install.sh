@@ -17,6 +17,7 @@ REPO_REF="${KITE_REPO_REF:-main}"
 PYTHON="${KITE_PYTHON:-3.12}"
 INSTALL_DIR="${KITE_INSTALL_DIR:-}"
 DEV_MODE=0
+LOCAL_ONLY=0
 GLOBAL_MODE=0
 SKIP_CLONE=0
 DEV_EXTRAS=1
@@ -36,6 +37,7 @@ python tools.
 Options:
   --global         Same as default (CLI on PATH)
   --dev            Editable CLI from a kite checkout (+ local .venv for pytest)
+  --local          With --dev: only local .venv; leave global CLI and shell profiles alone
   --dir PATH       Checkout path for --dev (default: this repo or ~/kite)
   --repo URL       Git remote (default: KhanUzeb/kite on GitHub)
   --ref REF        Git branch/tag/commit for tool install (default: main)
@@ -60,6 +62,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --global) GLOBAL_MODE=1; DEV_MODE=0; shift ;;
     --dev) DEV_MODE=1; GLOBAL_MODE=0; shift ;;
+    --local) LOCAL_ONLY=1; DEV_MODE=1; GLOBAL_MODE=0; shift ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --repo) REPO_URL="$2"; shift 2 ;;
     --ref) REPO_REF="$2"; shift 2 ;;
@@ -252,7 +255,7 @@ bootstrap_kite_home() {
   elif [[ -f "${env_file}" ]]; then
     chmod 600 "${env_file}" 2>/dev/null || true
   fi
-  python -c "from kite.config import ensure_home; ensure_home()" 2>/dev/null || true
+  .venv/bin/python -c "from kite.config import ensure_home; ensure_home()"
 }
 
 install_global_cli() {
@@ -366,40 +369,40 @@ install_dev_editable() {
   ensure_uv
   cd "${INSTALL_DIR}"
 
-  # Editable CLI on PATH - opening `kite` uses this checkout; no activate needed.
-  echo "Installing editable kite CLI on PATH (uv tool --editable)..."
-  set +e
-  uv tool install --python "${PYTHON}" --force --editable "${INSTALL_DIR}"
-  rc=$?
-  set -e
-  if [[ "${rc}" -ne 0 ]]; then
-    echo "uv tool install --editable failed." >&2
-    exit 1
+  if [[ "${LOCAL_ONLY}" -eq 0 ]]; then
+    echo "Installing editable kite CLI on PATH (uv tool --editable)..."
+    uv tool install --python "${PYTHON}" --force --editable "${INSTALL_DIR}"
+    ensure_tool_path
   fi
-  ensure_tool_path
 
-  # Local .venv is only for pytest / IDE; not required to open kite.
-  echo "Creating contributor .venv for pytest (optional; kite CLI already on PATH)..."
+  echo "Installing contributor .venv..."
   if [[ ! -d .venv ]]; then
     uv venv --python "${PYTHON}" .venv
   fi
-  if [[ "${DEV_EXTRAS}" -eq 1 ]]; then
+  if [[ -f uv.lock ]]; then
+    local -a sync_args=(sync --frozen --python .venv/bin/python)
+    if [[ "${DEV_EXTRAS}" -eq 1 ]]; then
+      sync_args+=(--extra dev)
+    else
+      sync_args+=(--no-dev)
+    fi
+    VIRTUAL_ENV="$PWD/.venv" UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv "${sync_args[@]}"
+  elif [[ "${DEV_EXTRAS}" -eq 1 ]]; then
     uv pip install --python .venv/bin/python -e ".[dev]"
   else
     uv pip install --python .venv/bin/python -e .
   fi
 
-  export KITE_HOME="${KITE_HOME:-${HOME}/.kite}"
+  if [[ "${LOCAL_ONLY}" -eq 1 ]]; then
+    export KITE_HOME="${KITE_HOME:-${INSTALL_DIR}/.venv/kite-home}"
+  else
+    export KITE_HOME="${KITE_HOME:-${HOME}/.kite}"
+  fi
   mkdir -p "${KITE_HOME}"
   bootstrap_kite_home
 
-  ver="$(kite --version 2>/dev/null || true)"
-  if [[ -z "${ver}" ]]; then
-    echo "Warning: kite not on PATH in this shell yet." >&2
-    echo "Open a new terminal, or: export PATH=\"\$(uv tool dir --bin):\$PATH\"" >&2
-  else
-    echo "Installed ${ver} (editable on PATH - opening kite turns env on)"
-  fi
+  ver="$(.venv/bin/kite --version)"
+  echo "Installed ${ver} (editable)"
 
   if [[ "${VERIFY}" -eq 1 ]]; then
     echo "Running CI gates (sync_version, ruff, pytest, bench)..."
@@ -415,7 +418,7 @@ install_dev_editable() {
   if [[ "${RUN_SETUP}" -eq 1 ]] && [[ -t 0 ]] && [[ -t 1 ]]; then
     echo ""
     echo "Starting kite setup (Ctrl+C to skip)..."
-    kite setup || true
+    .venv/bin/kite setup
   fi
 
   cat <<EOF
@@ -423,13 +426,13 @@ install_dev_editable() {
 Dev checkout: ${INSTALL_DIR}
 Kite home:    ${KITE_HOME}
 
-Opening \`kite\` uses this editable install (env on automatically).
-Local .venv is only for pytest/IDE - you do not need to activate it to run kite.
-
+Use this checkout (activate it to put its CLI first on PATH):
+  source .venv/bin/activate
+  export KITE_HOME="${KITE_HOME}"
   kite
-  .venv/bin/pytest -q
+  ./scripts/ci_check.sh
 
-Update / uninstall: kite update | kite uninstall
+--local never replaces the global CLI or changes shell profiles.
 EOF
 }
 
