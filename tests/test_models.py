@@ -168,7 +168,7 @@ def test_stream_stall_falls_back_to_blocking() -> None:
 
     def blocking(_messages: list[dict], *, overrides=None, timeout_s=None) -> dict:
         calls.append("blocking")
-        assert timeout_s == 30.0
+        assert timeout_s == 180.0
         return {"role": "assistant", "content": "done"}
 
     model._query_stream = stalled_stream  # type: ignore[method-assign]
@@ -177,23 +177,23 @@ def test_stream_stall_falls_back_to_blocking() -> None:
     assert calls == ["stream", "blocking"]
 
 
-def test_stream_open_timeout_uses_one_short_blocking_recovery() -> None:
+def test_stream_open_timeout_does_not_start_another_30_second_request() -> None:
     model = _model()
     calls: list[str] = []
 
     def timed_out(_messages: list[dict], *, overrides=None) -> dict:
         calls.append("stream")
-        raise TimeoutError("provider request timed out after 30s without responding")
+        raise TimeoutError("provider request timed out after 180s without responding")
 
-    def blocking(_messages: list[dict], *, overrides=None, timeout_s=None) -> dict:
+    def blocking(*_args, **_kwargs) -> dict:
         calls.append("blocking")
-        assert timeout_s == 30.0
-        return {"role": "assistant", "content": "Hello!"}
+        pytest.fail("an exhausted stream deadline must not start a second request")
 
     model._query_stream = timed_out  # type: ignore[method-assign]
     model._query_blocking = blocking  # type: ignore[method-assign]
-    assert model._query_stream_with_fallback([])["content"] == "Hello!"
-    assert calls == ["stream", "blocking"]
+    with pytest.raises(TimeoutError, match="after 180s"):
+        model._query_stream_with_fallback([])
+    assert calls == ["stream"]
 
 
 def test_partial_stream_stall_does_not_append_a_second_answer() -> None:
@@ -260,11 +260,11 @@ def test_stream_opening_uses_first_token_deadline(monkeypatch: pytest.MonkeyPatc
         model._query_stream([])
 
     assert seen["stream"] is True
-    assert seen["timeout_s"] == 30.0
+    assert seen["timeout_s"] == 180.0
 
 
-def test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An empty pump queue still polls the first-token deadline without sleeping."""
+def test_stream_first_token_waits_for_configured_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty stream waits for the request deadline, not a 30-second cap."""
     import queue
     from unittest.mock import MagicMock
 
@@ -277,8 +277,8 @@ def test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
         def get(self, *, timeout):
             polls.append(timeout)
             clock[0] += 0.5
-            if clock[0] > 5:
-                pytest.fail("empty stream queue did not check the stall deadline")
+            if clock[0] > 5.5:
+                pytest.fail("empty stream queue did not check the configured deadline")
             raise queue.Empty
 
     # Leave the pump pending, just as when the provider is blocked in __next__.
@@ -294,11 +294,11 @@ def test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     model.on_event = events.append
     model.should_stop = lambda: False
 
-    with pytest.raises(StreamStalledError, match="stream stalled") as exc_info:
+    with pytest.raises(TimeoutError, match="stream timed out") as exc_info:
         model._query_stream([{"role": "user", "content": "hi"}])
 
-    assert clock[0] == 4.5, "stall at four seconds must beat the five-second overall timeout"
-    assert len(polls) == 9
+    assert clock[0] == 5.5, "stream wait must reach the configured five-second deadline"
+    assert len(polls) == 11
     assert not is_transient_provider_error(exc_info.value)
     assert [(event.kind, event.payload.get("ok")) for event in events] == [
         ("stream_start", None), ("stream_end", False)

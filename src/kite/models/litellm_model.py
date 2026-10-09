@@ -682,11 +682,11 @@ class LitellmModel:
         started = time.monotonic()
         last_progress = started
         first_token = False
-        # Fail fast on stalls: some gateways hold a stream open with no data.
-        # A stalled stream falls back once to a blocking request instead of
-        # retrying the same dead stream.
+        # Let the provider use the configured request deadline to open its
+        # stream and produce the first token. A hard-coded 30s cap caused
+        # slow cold starts to trigger a second request with another 30s cap.
         overall_limit = self._call_timeout_s()
-        first_token_limit = min(max(overall_limit - 1.0, 1.0), 30.0)
+        first_token_limit = overall_limit
         idle_limit = min(overall_limit, 60.0)
 
         def _check_timeouts() -> None:
@@ -892,24 +892,14 @@ class LitellmModel:
         except FormatError:
             raise
         except StreamStalledError:
-            # A stream that never produces chunks is not useful to the user;
-            # make one short non-streaming attempt. If text already escaped to
-            # the UI, do not append a second full answer after it: fail the
-            # turn rather than displaying a duplicated/contradictory response.
+            # A stalled stream may recover through one blocking request using
+            # the configured deadline. If answer text already escaped to the
+            # UI, avoid appending a second full response.
             if getattr(self, "_last_stream_emitted_answer", False):
                 raise
             return self._query_blocking(
-                messages, timeout_s=min(self._call_timeout_s(), 30.0)
+                messages, timeout_s=self._call_timeout_s()
             )
-        except TimeoutError as e:
-            # Stream acquisition is separately capped at the first-token
-            # deadline. Try the same short non-streaming recovery once when
-            # OAuth has failed to establish SSE; never stack the full timeout.
-            if "provider request timed out after" in str(e).lower():
-                return self._query_blocking(
-                    messages, timeout_s=min(self._call_timeout_s(), 30.0)
-                )
-            raise
         except Exception as e:
             if looks_like_temperature_reasoning_error(e) and self.temperature is not None:
                 no_temp = {"temperature": None}

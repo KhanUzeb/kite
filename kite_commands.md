@@ -75,6 +75,8 @@ Shared flags on `run` / `chat` / `resume`:
 | `--role` | `auto` / `architect` / `implementer` / `debugger` |
 | `-v` | Verbose tool bodies |
 
+Provider requests use the configured `[agent].model_timeout_seconds` from runtime TOML (default `180`). Stream startup and recovery requests use that timeout rather than an additional hard-coded 30-second limit.
+
 One-shot / headless flags (`kite run`, `kite resume <id> "continue"` — not `kite chat`):
 
 | Flag | Meaning |
