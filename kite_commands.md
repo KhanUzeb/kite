@@ -266,7 +266,7 @@ These never go to the model.
 | `/theme [auto\|kite\|dark\|light\|dim\|mono\|monochrome\|catppuccin\|ember\|forest\|hues\|transparent]` | Color palette. Empty: pick |
 | `/font [unicode\|ascii]` | Glyph pack. Empty: pick |
 | `/thinking` `[off\|minimal\|low\|medium\|high\|…]` | Pi-style thinking level for the current model. Empty: **cycle** to the next level. `off` hidden when the model cannot disable reasoning. Unsupported levels clamp to the nearest supported one with a notice (e.g. `xhigh` on a low/high-only model → `high`) |
-| `/variants [level]` | Thinking variant for the current model — **strictly** limited to levels it supports (no clamping; unsupported names are rejected with the offered list). Empty: typed pick. Saved as the default for fresh sessions; shown as `provider/model#variant` in the status line |
+| `/variants [level]` | Thinking variant for the current model — **strictly** limited to levels it supports (no clamping; unsupported names are rejected with the offered list). Empty: typed pick. `auto` clears the saved override. Saved as the default for fresh sessions; shown as `provider/model#variant` in the status line |
 | `/model [provider/id]` | Show or set model |
 | `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
 | `/select [provider]` | Pick provider if needed, login if unlinked, then pick a live model (saved) |

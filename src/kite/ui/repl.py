@@ -2424,6 +2424,10 @@ class ChatSession:
         from kite.models.reasoning import reasoning_to_thinking_level, thinking_level_menu
 
         self._ensure_model_resolved()
+        if arg.strip().lower() == "auto":
+            self._commit_reasoning("auto", label="variant")
+            self._save_reasoning_default("auto")
+            return
         info = self._reasoning_info_sync()
         if info is None:
             # Support unknown (detection timed out / errored): still offer

@@ -222,6 +222,8 @@ def test_kite_internal_timeouts_never_retry() -> None:
     """Kite's own bounded timeouts fail fast; provider timeouts remain retryable."""
     assert not is_transient_provider_error(TimeoutError("stream timed out after 5s without completing"))
     assert not is_transient_provider_error(StreamStalledError("stream stalled: no data for 30s"))
+    assert not is_transient_provider_error(TimeoutError("provider request timed out after 180s without responding"))
+    assert not is_transient_provider_error(TimeoutError("provider call timed out after 420s without responding"))
     assert is_transient_provider_error(TimeoutError("connection timed out"))
     assert is_transient_provider_error(TimeoutError("Read timed out."))
     assert not is_transient_provider_error(RuntimeError("provider unavailable"))

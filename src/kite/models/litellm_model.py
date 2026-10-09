@@ -824,6 +824,9 @@ class LitellmModel:
         except FormatError:
             raise
         except StreamStalledError:
+            # A stream that never produces chunks is not useful to the user;
+            # make one bounded non-streaming attempt rather than leaving the
+            # CLI waiting on a provider's broken SSE response.
             return self._query_blocking(messages)
         except Exception as e:
             if looks_like_temperature_reasoning_error(e) and self.temperature is not None:

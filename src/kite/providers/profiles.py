@@ -71,6 +71,14 @@ _PROFILES: dict[str, ProviderProfile] = {
         default_effort="medium",
         notes="OpenRouter-style extra_body.reasoning + top-level effort.",
     ),
+    # Codex subscription tool calls are safer serially; parallel calls can
+    # produce incomplete/interleaved tool results on the ChatGPT backend.
+    "chatgpt": ProviderProfile(
+        name="chatgpt",
+        allow_parallel_tools=False,
+        thinking_watchdog_chars=4_000,
+        notes="ChatGPT/Codex subscription backend; serialize tool calls.",
+    ),
     "anthropic": ProviderProfile(
         name="anthropic",
         reasoning_wire="thinking",

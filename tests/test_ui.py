@@ -1001,10 +1001,12 @@ def test_variants_strict_menu_persist_and_label(tmp_path, kite_home, reasoning_s
 
     assert session._handle_slash("/variants low") is True
     assert session.state.reasoning == "fast:low"
+    assert session._handle_slash("/variants auto") is True
+    assert session.state.reasoning == "auto"
 
     # Fresh sessions inherit the saved default; auto stays bare.
     fresh = ChatSession(cwd=str(tmp_path))
-    assert fresh.state.reasoning == "fast:low"
+    assert fresh.state.reasoning == "auto"
     assert format_model_label(SessionUiState(model="m", provider="p")) == "p/m"
 
 

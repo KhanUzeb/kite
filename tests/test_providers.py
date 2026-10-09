@@ -61,6 +61,16 @@ def _isolated_provider_state(monkeypatch, kite_home, workspace, tmp_path):
         monkeypatch.setenv(name, "")
 
 
+def test_chatgpt_subscription_serializes_tool_calls_even_when_litellm_advertises_parallel(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "kite.providers.capabilities._litellm_openai_params",
+        lambda *_args, **_kwargs: frozenset({"tools", "parallel_tool_calls"}),
+    )
+    assert not model_supports_parallel_tool_calls(
+        provider="chatgpt", model="gpt-5.6-luna", litellm_model="chatgpt/gpt-5.6-luna"
+    )
+
+
 def test_api_key_storage_and_env_precedence(tmp_path, workspace, kite_home, monkeypatch) -> None:
     env = tmp_path / ".env"
     env.write_text("OPENAI_API_KEY=old\nOTHER=1\n", encoding="utf-8")

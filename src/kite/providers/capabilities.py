@@ -20,7 +20,7 @@ _NON_AGENT_HINTS = (
 
 _TOOL_PARAM_NAMES = frozenset({"tools", "tool_choice", "functions", "parallel_tool_calls"})
 _TOOL_CAP_KEYS = frozenset({"tools", "function_calling", "tool_use", "tool_calls", "functions"})
-_STRICT_PARALLEL_PROVIDERS = frozenset({"nvidia", "nvidia_nim"})
+_STRICT_PARALLEL_PROVIDERS = frozenset({"nvidia", "nvidia_nim", "chatgpt"})
 
 
 def _parallel_from_raw(raw: dict[str, Any] | None) -> bool | None:
@@ -107,6 +107,9 @@ def model_supports_parallel_tool_calls(
     raw: dict[str, Any] | None = None,
 ) -> bool:
     """True when the provider API accepts parallel tool calls in one completion."""
+    key = (provider or "").strip().lower()
+    if key == "chatgpt":
+        return False
     from_meta = _tools_from_raw(raw)
     if _parallel_from_raw(raw) is True:
         return True

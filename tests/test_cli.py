@@ -224,6 +224,22 @@ def test_theme_font_subcommands(kite_home, monkeypatch) -> None:
     assert theme.current_font() == "ascii"
 
 
+def test_variants_auto_resets_persisted_default_without_live_detection(kite_home, monkeypatch, capsys) -> None:
+    import argparse
+
+    from kite.cli import run
+    from kite.config import UserConfig
+
+    cfg = UserConfig.load()
+    cfg.reasoning = "thinking:high"
+    cfg.save()
+    monkeypatch.setattr(run, "_detect_variants_support", lambda *_a, **_k: pytest.fail("auto needs no detection"))
+
+    assert run.cmd_variants(argparse.Namespace(provider=None, model=None, level="auto", list=False)) == 0
+    assert UserConfig.load().reasoning == "auto"
+    assert "variant" in capsys.readouterr().err
+
+
 def test_variants_list_distinguishes_timeout_from_unsupported(kite_home, monkeypatch, capsys) -> None:
     from types import SimpleNamespace
 

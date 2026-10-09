@@ -991,13 +991,18 @@ def cmd_variants(args: argparse.Namespace) -> int:
     if level in {"list", "ls"}:
         level = ""
     resolved = resolve_model(provider=provider, model=model, config=cfg)
+    tag = f"{resolved.provider}/{resolved.model}"
+    if level == "auto":
+        cfg.reasoning = "auto"
+        cfg.save()
+        console.print(f"[kite.muted]variant[/]  auto  ·  {tag}")
+        return 0
     info = _detect_variants_support(console, resolved)
     if info is None:
         console.print("[kite.muted]could not determine thinking variants (detection timed out) — try again[/]")
         return 1
     menu = thinking_level_menu(info) if info.supported else ()
     ids = [pi for pi, _ in menu]
-    tag = f"{resolved.provider}/{resolved.model}"
     if show_list:
         if not menu:
             console.print(f"[kite.muted]{tag} does not advertise thinking variants[/]")
