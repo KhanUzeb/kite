@@ -166,14 +166,101 @@ def test_stream_stall_falls_back_to_blocking() -> None:
         calls.append("stream")
         raise StreamStalledError("stream stalled: no data for 30s")
 
-    def blocking(_messages: list[dict], *, overrides=None) -> dict:
+    def blocking(_messages: list[dict], *, overrides=None, timeout_s=None) -> dict:
         calls.append("blocking")
+        assert timeout_s == 30.0
         return {"role": "assistant", "content": "done"}
 
     model._query_stream = stalled_stream  # type: ignore[method-assign]
     model._query_blocking = blocking  # type: ignore[method-assign]
     assert model._query_stream_with_fallback([]) == {"role": "assistant", "content": "done"}
     assert calls == ["stream", "blocking"]
+
+
+def test_stream_open_timeout_uses_one_short_blocking_recovery() -> None:
+    model = _model()
+    calls: list[str] = []
+
+    def timed_out(_messages: list[dict], *, overrides=None) -> dict:
+        calls.append("stream")
+        raise TimeoutError("provider request timed out after 30s without responding")
+
+    def blocking(_messages: list[dict], *, overrides=None, timeout_s=None) -> dict:
+        calls.append("blocking")
+        assert timeout_s == 30.0
+        return {"role": "assistant", "content": "Hello!"}
+
+    model._query_stream = timed_out  # type: ignore[method-assign]
+    model._query_blocking = blocking  # type: ignore[method-assign]
+    assert model._query_stream_with_fallback([])["content"] == "Hello!"
+    assert calls == ["stream", "blocking"]
+
+
+def test_partial_stream_stall_does_not_append_a_second_answer() -> None:
+    model = _model()
+    model._last_stream_emitted_answer = True
+
+    def stalled(_messages: list[dict], *, overrides=None) -> dict:
+        raise StreamStalledError("stream stalled after partial answer")
+
+    def blocking(*_args, **_kwargs) -> dict:
+        pytest.fail("blocking fallback would append a duplicate answer")
+
+    model._query_stream = stalled  # type: ignore[method-assign]
+    model._query_blocking = blocking  # type: ignore[method-assign]
+    with pytest.raises(StreamStalledError, match="partial answer"):
+        model._query_stream_with_fallback([])
+
+
+def test_stream_iterator_closes_transport_when_poll_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
+    import queue
+    from unittest.mock import MagicMock
+
+    from kite.models import litellm_model as lm
+
+    class EmptyQueue:
+        def get(self, *, timeout):
+            raise queue.Empty
+
+    class CloseableStream:
+        closed = False
+
+        def __iter__(self):
+            return iter(())
+
+        def close(self):
+            self.closed = True
+
+    stream = CloseableStream()
+    monkeypatch.setattr(lm, "threading", SimpleNamespace(Thread=MagicMock()))
+    monkeypatch.setattr(queue, "Queue", EmptyQueue)
+
+    def timeout():
+        raise TimeoutError("test timeout")
+
+    with pytest.raises(TimeoutError, match="test timeout"):
+        list(lm._iter_stream_chunks(stream, should_stop=lambda: False, poll=timeout))
+    assert stream.closed
+
+
+def test_stream_opening_uses_first_token_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = _model()
+    model.timeout_seconds = 180
+    model.resolved = SimpleNamespace(provider="chatgpt", model="gpt-5.6-luna")
+    seen: dict = {}
+    failure = RuntimeError("synthetic request failure")
+
+    def open_stream(**kwargs):
+        seen.update(kwargs)
+        raise failure
+
+    monkeypatch.setattr(model, "_bounded_completion", open_stream)
+    model.on_event = lambda _event: None
+    with pytest.raises(RuntimeError, match="synthetic request failure"):
+        model._query_stream([])
+
+    assert seen["stream"] is True
+    assert seen["timeout_s"] == 30.0
 
 
 def test_stream_stall_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:

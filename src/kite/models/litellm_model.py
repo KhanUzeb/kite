@@ -225,22 +225,33 @@ def _iter_stream_chunks(
 
     worker = threading.Thread(target=_pump, daemon=True, name="kite-stream-pump")
     worker.start()
-    while True:
-        try:
-            item = box.get(timeout=1.0)
-        except _queue.Empty:
-            if poll is not None:
-                poll()
+    try:
+        while True:
+            try:
+                item = box.get(timeout=1.0)
+            except _queue.Empty:
+                if poll is not None:
+                    poll()
+                if should_stop():
+                    return
+                continue
+            if item is _SENTINEL:
+                return
+            if isinstance(item, BaseException):
+                raise item
             if should_stop():
                 return
-            continue
-        if item is _SENTINEL:
-            return
-        if isinstance(item, BaseException):
-            raise item
-        if should_stop():
-            return
-        yield item
+            yield item
+    finally:
+        # Stop the underlying HTTP/SSE response on cancellation, timeout, or
+        # consumer failure; otherwise the daemon pump can keep a socket and
+        # provider request alive after Kite has already started a fallback.
+        close = getattr(stream, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
 
 
 class StreamStalledError(TimeoutError):
@@ -266,12 +277,39 @@ def _bounded_completion_call(
 
     bound = float(timeout_s) if timeout_s and timeout_s > 0 else 180.0
     box: _queue.Queue = _queue.Queue(maxsize=1)
+    gate = threading.Lock()
+    abandoned = False
+
+    def _close_late_result(payload: Any) -> None:
+        close = getattr(payload, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
+    def _abandon() -> None:
+        nonlocal abandoned
+        with gate:
+            abandoned = True
+            try:
+                status, payload = box.get_nowait()
+            except _queue.Empty:
+                return
+            if status == "ok":
+                _close_late_result(payload)
 
     def _run() -> None:
         try:
-            box.put(("ok", call()))
+            result = ("ok", call())
         except BaseException as exc:  # noqa: BLE001 — re-raised on the joiner
-            box.put(("err", exc))
+            result = ("err", exc)
+        with gate:
+            if abandoned:
+                if result[0] == "ok":
+                    _close_late_result(result[1])
+                return
+            box.put(result)
 
     worker = threading.Thread(target=_run, daemon=True, name="kite-completion-call")
     worker.start()
@@ -291,8 +329,10 @@ def _bounded_completion_call(
         except Exception:
             stop = False
         if stop:
+            _abandon()
             raise InterruptedError("interrupted")
         if time.monotonic() >= deadline:
+            _abandon()
             raise TimeoutError(
                 f"provider request timed out after {int(bound)}s without responding"
             )
@@ -436,7 +476,14 @@ class LitellmModel:
         timeout = getattr(self, "timeout_seconds", 0) or 0
         return float(timeout) if timeout > 0 else 180.0
 
-    def _bounded_completion(self, *, stream: bool, messages: list[dict], overrides: dict[str, Any] | None = None) -> Any:
+    def _bounded_completion(
+        self,
+        *,
+        stream: bool,
+        messages: list[dict],
+        overrides: dict[str, Any] | None = None,
+        timeout_s: float | None = None,
+    ) -> Any:
         import litellm
 
         stop = getattr(self, "should_stop", None)
@@ -446,7 +493,7 @@ class LitellmModel:
             lambda: litellm.completion(
                 **self._completion_kwargs(messages, stream=stream, overrides=overrides)
             ),
-            timeout_s=self._call_timeout_s(),
+            timeout_s=timeout_s if timeout_s is not None else self._call_timeout_s(),
             should_stop=stop,
         )
 
@@ -631,20 +678,20 @@ class LitellmModel:
         tool_calls_acc: dict[int, dict[str, Any]] = {}
         cost = 0.0
         self._thinking_warned = False
+        self._last_stream_emitted_answer = False
         started = time.monotonic()
         last_progress = started
         first_token = False
         # Fail fast on stalls: some gateways hold a stream open with no data.
         # A stalled stream falls back once to a blocking request instead of
         # retrying the same dead stream.
-        first_token_limit = min(max(float(self.timeout_seconds) - 1.0, 1.0), 30.0) if self.timeout_seconds > 0 else 0.0
-        idle_limit = min(float(self.timeout_seconds), 60.0) if self.timeout_seconds > 0 else 0.0
+        overall_limit = self._call_timeout_s()
+        first_token_limit = min(max(overall_limit - 1.0, 1.0), 30.0)
+        idle_limit = min(overall_limit, 60.0)
 
         def _check_timeouts() -> None:
-            if self.timeout_seconds <= 0:
-                return
             now = time.monotonic()
-            if now - started > float(self.timeout_seconds):
+            if now - started > overall_limit:
                 raise TimeoutError(
                     f"stream timed out after {int(now - started)}s without completing"
                 )
@@ -656,7 +703,16 @@ class LitellmModel:
 
         try:
             with _quiet_litellm_usage_serialization():
-                stream = self._bounded_completion(messages=messages, stream=True, overrides=overrides)
+                # Bound opening the streaming response too. Previously the
+                # first-token watchdog only started after this call returned,
+                # so OAuth transports could leave the CLI waiting for the full
+                # request timeout before Kite ever began polling the stream.
+                stream = self._bounded_completion(
+                    messages=messages,
+                    stream=True,
+                    overrides=overrides,
+                    timeout_s=first_token_limit,
+                )
                 chunks = _iter_stream_chunks(stream, should_stop=self.should_stop, poll=_check_timeouts)
                 for chunk in chunks:
                     _check_timeouts()
@@ -707,6 +763,7 @@ class LitellmModel:
                         except Exception:
                             pass
                     if answer_piece:
+                        self._last_stream_emitted_answer = True
                         first_token = self._emit_first_token(
                             started=started, channel="answer", seen=first_token
                         )
@@ -770,14 +827,25 @@ class LitellmModel:
             include_ttft=True,
         )
 
-    def _query_blocking(self, messages: list[dict], *, overrides: dict[str, Any] | None = None) -> dict:
+    def _query_blocking(
+        self,
+        messages: list[dict],
+        *,
+        overrides: dict[str, Any] | None = None,
+        timeout_s: float | None = None,
+    ) -> dict:
         self._emit(
             "stream_start",
             provider=self.resolved.provider,
             model=self.resolved.model,
         )
         with _quiet_litellm_usage_serialization():
-            response = self._bounded_completion(messages=messages, stream=False, overrides=overrides)
+            response = self._bounded_completion(
+                messages=messages,
+                stream=False,
+                overrides=overrides,
+                timeout_s=timeout_s,
+            )
         choice = response.choices[0]
         message = choice.message
         usage = getattr(response, "usage", None)
@@ -825,9 +893,23 @@ class LitellmModel:
             raise
         except StreamStalledError:
             # A stream that never produces chunks is not useful to the user;
-            # make one bounded non-streaming attempt rather than leaving the
-            # CLI waiting on a provider's broken SSE response.
-            return self._query_blocking(messages)
+            # make one short non-streaming attempt. If text already escaped to
+            # the UI, do not append a second full answer after it: fail the
+            # turn rather than displaying a duplicated/contradictory response.
+            if getattr(self, "_last_stream_emitted_answer", False):
+                raise
+            return self._query_blocking(
+                messages, timeout_s=min(self._call_timeout_s(), 30.0)
+            )
+        except TimeoutError as e:
+            # Stream acquisition is separately capped at the first-token
+            # deadline. Try the same short non-streaming recovery once when
+            # OAuth has failed to establish SSE; never stack the full timeout.
+            if "provider request timed out after" in str(e).lower():
+                return self._query_blocking(
+                    messages, timeout_s=min(self._call_timeout_s(), 30.0)
+                )
+            raise
         except Exception as e:
             if looks_like_temperature_reasoning_error(e) and self.temperature is not None:
                 no_temp = {"temperature": None}
