@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# kite-release-version: 1.0.7
 ## [Unreleased]
 
 ### Added

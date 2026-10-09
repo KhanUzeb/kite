@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kite-release-version: 1.0.6
+# kite-release-version: 1.0.7
 # Create an independent checkout, venv and Kite home without changing the global CLI.
 set -euo pipefail
 if [[ $# -ne 1 || ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
