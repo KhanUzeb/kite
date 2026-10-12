@@ -21,6 +21,7 @@ need GEMINI_API_KEY.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import threading
@@ -36,7 +37,54 @@ _MAX_PROMPT_CHARS = 24_000
 
 
 class AntigravityExecError(RuntimeError):
-    """`agy -p` failed (not linked, unknown model, bad output, ...)."""
+    """`agy -p` failed for a permanent or unclassified reason."""
+
+
+class AntigravityTransientError(AntigravityExecError):
+    """`agy` reported a retryable network, rate-limit, or service failure."""
+
+
+def _is_transient_agy_error(text: str) -> bool:
+    lowered = (text or "").lower()
+    permanent = (
+        "unauthorized",
+        "authentication",
+        "invalid api key",
+        "quota",
+        "unknown model",
+        "model not found",
+        "malformed",
+        "invalid request",
+    )
+    if any(marker in lowered for marker in permanent):
+        return False
+    transient = (
+        "timeout",
+        "timed out",
+        "connection",
+        "connect",
+        "network",
+        "unreachable",
+        "rate limit",
+        "too many requests",
+        "overloaded",
+        "service unavailable",
+        "temporarily unavailable",
+        "reset by peer",
+        "broken pipe",
+    )
+    if any(marker in lowered for marker in transient):
+        return True
+    return re.search(r"\b(?:429|5\d\d)\b", lowered) is not None
+
+
+def _agy_error(message: str) -> AntigravityExecError:
+    error_type = (
+        AntigravityTransientError
+        if _is_transient_agy_error(message)
+        else AntigravityExecError
+    )
+    return error_type(message)
 
 
 class AntigravityQuotaError(RuntimeError):
@@ -179,7 +227,7 @@ def parse_agy_payload(payload: dict) -> AgyTurn:
     if err and not response:
         if _is_quota_error(err):
             raise AntigravityQuotaError(f"Antigravity subscription quota reached. {err}")
-        raise AntigravityExecError(f"agy turn failed: {err[:300]}")
+        raise _agy_error(f"agy turn failed: {err[:300]}")
     if not response:
         raise AntigravityExecError("agy returned an empty response")
     usage = payload.get("usage") or {}
@@ -305,7 +353,7 @@ def _run_agy_process(
     except (OSError, subprocess.TimeoutExpired):
         pass
     if box.get("error") is not None:
-        raise AntigravityExecError(f"agy I/O failed: {box['error']}")
+        raise _agy_error(f"agy I/O failed: {box['error']}")
     out = str(box.get("out") or "")
     if proc.returncode not in (0, None) and not out.strip():
         raise AntigravityExecError(f"agy exited with status {proc.returncode} and no output")

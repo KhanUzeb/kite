@@ -97,7 +97,9 @@ def _setup_parts(
     if working_style and working_style.strip():
         parts.append(working_style.strip())
     if memory and memory.strip():
-        parts.append(memory.strip())
+        from kite.memory.secure_io import wrap_untrusted_memory_content
+
+        parts.append(wrap_untrusted_memory_content(memory))
     if continuity and continuity.strip():
         parts.append(continuity.strip())
     if config.skills.enabled and config.skills.auto_index_in_system_prompt and skills:

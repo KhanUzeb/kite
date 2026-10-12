@@ -3940,11 +3940,18 @@ class ChatSession:
             self.state.interrupted = True
             self.console.print("[kite.muted]session kept[/]  — type to continue, Ctrl+G after a stop to steer")
         if extra.get("exit_status") == "ProviderFault":
-            self.state.last_error = str(extra.get("error") or "provider fault")
+            from kite.providers.diagnostics import format_provider_failure
+
+            detail = format_provider_failure(
+                str(extra.get("error") or "provider request failed"),
+                provider=self.provider,
+            )
+            self.state.last_error = detail
             sid = self._session_id or ""
             hint = f"kite resume {sid} --retry" if sid else "type to continue"
             self.console.print(
-                f"[kite.pending]provider fault[/] — session saved. [kite.muted]{hint}[/]"
+                f"[kite.pending]{escape(detail)}[/] — session saved. "
+                f"[kite.muted]{hint}[/]"
             )
             return
         if extra.get("exit_status") in {"LimitsExceeded", "TimeExceeded"}:

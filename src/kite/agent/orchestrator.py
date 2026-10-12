@@ -157,8 +157,7 @@ def _normalize_scope(scope: list[str] | str | None) -> list[str] | None:
     if scope is None:
         return None
     items = [scope] if isinstance(scope, str) else list(scope)
-    cleaned = [str(s).strip() for s in items if str(s).strip()]
-    return cleaned or None
+    return [str(item).strip() for item in items if str(item).strip()]
 
 
 def _scope_arg_list(args: dict[str, Any], n: int) -> list[list[str] | None]:
@@ -465,6 +464,7 @@ class SubagentOrchestrator:
             "model": task.model,
             "model_role": profile.model_role if profile else "",
             "allowed_tools": worker_tool_allowlist(profile),
+            "write_scope": task.scope,
         }
         try:
             return self.runner(composed, **kwargs)

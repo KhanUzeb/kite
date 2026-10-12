@@ -352,8 +352,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     if run_result.blocked_reason:
         console.print(f"[kite.muted]blocked — {run_result.blocked_reason}[/]")
     if result.get("exit_status") == "ProviderFault":
+        from kite.providers.diagnostics import format_provider_failure
+
+        detail = format_provider_failure(
+            str(result.get("error") or "provider request failed"),
+            provider=getattr(args, "provider", "") or "",
+        )
         console.print(
-            f"[kite.pending]provider fault[/] — session saved. "
+            f"[kite.pending]{detail} Session saved. "
             f"[kite.muted]retry: kite resume {sid} \"continue\"[/]"
         )
     elif result.get("exit_status") in {"LimitsExceeded", "TimeExceeded"}:
@@ -548,14 +554,15 @@ def cmd_resume(args: argparse.Namespace) -> int:
     ok = exit_status == "Submitted" and killed == 0
     _report_listener_failure(harness, console)
     if getattr(args, "json", False):
+        from kite.guardrails.redact import redact_string
+
         print(
             json.dumps(
                 {
                     "ok": ok,
                     "exit_status": exit_status,
                     "session_id": sid,
-                    "submission": result.get("submission"),
-                    "error": result.get("error"),
+                    "error": redact_string(str(result.get("error") or "")),
                     "blocked_reason": run_result.blocked_reason or "",
                 },
                 indent=2,
@@ -566,8 +573,14 @@ def cmd_resume(args: argparse.Namespace) -> int:
     if run_result.blocked_reason:
         console.print(f"[kite.muted]blocked — {run_result.blocked_reason}[/]")
     if exit_status == "ProviderFault":
+        from kite.providers.diagnostics import format_provider_failure
+
+        detail = format_provider_failure(
+            str(result.get("error") or "provider request failed"),
+            provider=getattr(args, "provider", "") or "",
+        )
         console.print(
-            "[kite.pending]provider fault[/] — session saved. "
+            f"[kite.pending]{detail} Session saved. "
             f"[kite.muted]retry: kite resume {args.session} --retry[/]"
         )
     elif exit_status in {"LimitsExceeded", "TimeExceeded"}:

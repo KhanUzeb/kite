@@ -190,7 +190,7 @@ class RuntimeOptions:
     memory_in_prompt: bool = False
     goal_objective: str = ""
     allowed_tools: list[str] | None = None  # per-worker registry allowlist (None = inherit parent)
-
+    write_scope: list[str] | None = None  # filesystem mutation boundary for scoped subagents
 
 @dataclass
 class AgentRuntime:
@@ -625,6 +625,7 @@ class AgentRuntime:
             model: str = "",
             model_role: str = "",
             allowed_tools: list[str] | None = None,
+            write_scope: list[str] | None = None,
         ) -> dict:
             from kite.agent.harness import Harness
             from kite.agent.harness_build import build_harness_config
@@ -664,7 +665,7 @@ class AgentRuntime:
                 )
                 child_provider = child_resolved.provider
                 child_model = child_resolved.model
-            scope = list(allowed_tools) if allowed_tools else worker_tool_allowlist(prof)
+            tool_scope = list(allowed_tools) if allowed_tools else worker_tool_allowlist(prof)
             h = Harness(
                 build_harness_config(
                     cwd=cwd,
@@ -680,7 +681,8 @@ class AgentRuntime:
                     no_context=True,
                     label="subagent",
                     role=child_role,
-                    allowed_tools=scope,
+                    allowed_tools=tool_scope,
+                    write_scope=write_scope,
                 ),
                 user_config=ucfg,
             )
@@ -792,6 +794,7 @@ class AgentRuntime:
                 ),
                 policy_engine=self.policy_engine_override,
                 approval=approval.value,
+                write_scope=self.options.write_scope,
             )
 
         if self.slots.model is not None:

@@ -27,7 +27,7 @@ Kite runs tools against your local workspace. Its guardrails protect against **m
 
 ## Approval enforcement
 
-Tool calls marked as requiring approval fail closed when no approver is available. Non-interactive and headless runs preserve the requested approval mode: `readonly` blocks mutations, `approve` denies mutations because no prompt can be shown, and `auto`/`yolo` permit routine in-workspace work (installs, tests, local commits) while **SERIOUS** actions (network fetch via `curl`/`wget`, destructive deletes, `chmod`, shell wrappers) prompt in `auto` and are auto-allowed in `yolo`; critical gates (outside workspace, sudo, remote shell) are denied. Relative tool paths are authorized against the live execution cwd, so `set_cwd` cannot shift a later write outside the approval boundary; embedded shell path changes are checked against the same boundary. Interactive approval requires an explicit choice; pressing Enter alone does not authorize an action. Plan-mode inspection rejects command substitution, process substitution, and mutating `find` actions.
+Tool calls marked as requiring approval fail closed when no approver is available. Non-interactive and headless runs preserve the requested approval mode: `readonly` blocks mutations, `approve` denies mutations because no prompt can be shown, and `auto`/`yolo` permit routine in-workspace work (installs, tests, local commits) while **SERIOUS** actions (network fetch via `curl`/`wget`, `git push`, destructive deletes, `chmod`, shell wrappers) prompt in `auto` and are auto-allowed in `yolo`; critical gates (outside workspace, sudo, remote shell) are denied. In restricted mode, `git push` remains a gated network action rather than an unconditional sandbox denial; force-push remains hard-blocked. Relative tool paths are authorized against the live execution cwd, so `set_cwd` cannot shift a later write outside the approval boundary; embedded shell path changes are checked against the same boundary. Interactive approval requires an explicit choice; pressing Enter alone does not authorize an action. Plan-mode inspection rejects command substitution, process substitution, and mutating `find` actions.
 
 ### What gates a prompt
 
@@ -36,7 +36,7 @@ In the `auto`, `trust`, and `yolo` tiers the agent runs on its own. A prompt app
 | Effect | Gates in `auto`/`trust`/`yolo` |
 |--------|-------------------------------|
 | `destructive` (`rm -rf`, `chmod`, wrappers) | yes |
-| `network` (`curl`/`wget`, `gh` publish, cloud CLIs, `websearch`/`webfetch`) | yes |
+| `network` (`curl`/`wget`, `git push`, `gh` publish, cloud CLIs, `websearch`/`webfetch`) | prompt in `auto`/`trust`; may be auto-allowed in `yolo` |
 | `package_or_skill_install` | yes |
 | `durable_memory` | yes |
 | `nested_agent` | yes, unless the project is trusted |
@@ -95,6 +95,8 @@ Files under `~/.kite/memory/` (`USER.md`, `PROFILE.md`, `WORKING.md`, `MEMORY.md
 - Note/signal text is length-capped at write time.
 - Nested subagents (`no_context`) do **not** receive global user identity blocks.
 
+Automatically gathered repository metadata, toolchain details, repo maps, git status, trees, and suggested verification commands are marked as untrusted repository data in prompts. Designated project instruction files remain instructions; the marker prevents ordinary repository content from impersonating system or user instructions.
+
 ## Subagent profiles and orchestration
 
 | Control | Limit |
@@ -104,6 +106,7 @@ Files under `~/.kite/memory/` (`USER.md`, `PROFILE.md`, `WORKING.md`, `MEMORY.md
 | Crew size | Max **12** workers per `subagent` dispatch (sync or background) |
 | Nested tools | No `subagent` recursion; no `memory` writes from nested workers |
 | Live crew UI | `/live agents` redacts streamed output and prompt previews |
+| Worker filesystem `scope` | Out-of-scope writes are denied before execution; an explicitly empty scope permits no writes. Scoped workers cannot use bash mutations because shell targets cannot be reliably constrained. Post-run touched-file checks remain a quality signal, not the enforcement boundary. |
 
 Background job output follows the [bounded output capture](#bounded-output-capture) rules below.
 
@@ -144,16 +147,17 @@ Kite guardrails apply to **all tools**, not only web fetch/search:
 | **OS interfaces** | `/proc`, `/sys`, `/dev`, `\\.\` device paths blocked for read/write/bash; `/proc/*/environ` blocked |
 | **Bash** | Denylist for `sudo`, `docker run`, `kubectl apply`, `mount`, `iptables`, fork bombs, shutdown, registry edits, pipe-to-shell, etc. |
 | **Subprocess env** | Credential-like keys stripped from bash, `rg`, `gh`, background jobs, and `ProcessRunner` children |
-| **Network (restricted)** | `restricted` mode blocks **all** network side effects: bash curls, `webfetch`, `websearch`, `webcrawl`, Context7 |
+| **Network (restricted)** | `restricted` mode blocks outbound network except `git push`, which goes through the network approval gate; other bash networking, `webfetch`, `websearch`, `webcrawl`, and Context7 stay blocked |
 | **Web tools** | SSRF checks in `guardrails/ssrf.py` + `GuardrailPolicy.check_tool_call` + crawl/time/download budgets |
 
 Credential filenames (`.env`, `.env.*`, `*.env`, and the sensitive basename list) are refused by read/write/edit and omitted from `grep`. Bash that reads or sources those files is refused, including plan-mode inspection commands. Checkpoints and handoff files follow the session persistence mode (`redacted` by default) and are owner-only.
 
-**Execution mode:** default `host` keeps file and bash access outside the session cwd (protected paths above still blocked). `restricted` mode clamps paths to the session sandbox and blocks outbound network. Production tool calls also pass through **`PolicyEngine`** (path/network authorization). Toggle in the REPL with `/restricted on|off`, or set `[guardrails] execution_mode = "restricted"` in runtime config. Only use host mode when you understand the blast radius.
+**Execution mode:** default `host` keeps file and bash access outside the session cwd (protected paths above still blocked). `restricted` mode clamps paths to the session sandbox and blocks outbound network except an approval-gated `git push`. Production tool calls also pass through **`PolicyEngine`** (path/network authorization). Toggle in the REPL with `/restricted on|off`, or set `[guardrails] execution_mode = "restricted"` in runtime config. Only use host mode when you understand the blast radius.
 
 ## SSRF protections (HTTP tools)
 
 HTTP tools resolve hostnames, validate every resolved address against private/loopback/link-local/metadata ranges, reject URLs with embedded credentials (`user:pass@host`), re-validate immediately before connect (DNS TOCTOU mitigation), verify the connected peer IP is public, and re-check redirect targets (max 5 hops). Alternate IPv4 encodings (decimal, hex, octal) are blocked. Blocked hostnames include cloud metadata endpoints, Docker/Kubernetes internal hosts, and `.internal` / `.localhost` suffixes. Search redirect unwrap and crawl queues skip blocked destinations. Crawls enforce time and download budgets so agents cannot exhaust local network or CPU via unbounded fetches.
+Validated HTTP fetches connect directly so peer-IP validation observes the destination server. Proxy environment variables are not used for these guarded requests; configure network access at the operating-system or firewall layer if a proxy is required.
 
 API keys live in `~/.kite/.env` (or the repo `.env`, which is gitignored). Never commit keys. If a key is leaked, rotate it immediately.
 

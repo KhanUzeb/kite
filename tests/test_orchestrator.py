@@ -469,10 +469,11 @@ def test_dispatch_forwards_profile_allowlist() -> None:
         return {"exit_status": "Submitted", "submission": "ok"}
 
     orch = SubagentOrchestrator(runner=runner, timeout_seconds=0)
-    orch.run_one("survey", label="s", profile="scout")
+    orch.run_one("survey", label="s", profile="scout", scope=["src/kite"])
     assert seen[-1]["model_role"] == "fast"
     assert seen[-1]["allowed_tools"] == ["read", "grep", "glob", "ls"]
     assert "subagent" not in seen[-1]["allowed_tools"]
+    assert seen[-1]["write_scope"] == ["src/kite"]
 
     orch.run_one("build", label="b", profile="coder")
     assert seen[-1]["model_role"] == "coder"

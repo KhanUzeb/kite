@@ -59,6 +59,7 @@ DANGEROUS_BASH = (
     # Ordinary `git push`/`git clone` go through the approval flow (SERIOUS for
     # remote writes); only destructive force-pushes stay hard-blocked here.
     re.compile(r"(?i)\bgit\s+push\b.*(?:--force(?!-with-lease)|-f\b)"),
+     re.compile(r"(?i)\bgit\s+clean\s+-[^\n]*f"),
     re.compile(r"(?i)\bgit\s+clean\s+-[^\\n]*f"),
     re.compile(r"(?i)\bgit\s+reset\s+--hard\b"),
     re.compile(r"(?i)\bchmod\s+-R\s+/"),

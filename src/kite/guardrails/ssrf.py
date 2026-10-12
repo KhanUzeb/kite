@@ -7,7 +7,15 @@ import ipaddress
 import socket
 from urllib.error import URLError
 from urllib.parse import urlparse
-from urllib.request import HTTPHandler, HTTPRedirectHandler, HTTPSHandler, OpenerDirector, Request, build_opener
+from urllib.request import (
+    HTTPHandler,
+    HTTPRedirectHandler,
+    HTTPSHandler,
+    OpenerDirector,
+    ProxyHandler,
+    Request,
+    build_opener,
+)
 
 _BLOCKED_HOSTS = frozenset(
     {
@@ -212,10 +220,17 @@ class SafeRedirectHandler(HTTPRedirectHandler):
 
 
 def build_safe_opener(max_redirects: int = _DEFAULT_MAX_REDIRECTS) -> OpenerDirector:
-    """Opener with connect-time peer validation and redirect limits."""
+    """Open user-controlled URLs directly so peer validation checks the destination."""
     redirect_handler = SafeRedirectHandler()
     redirect_handler.max_redirects = max(0, int(max_redirects))
-    return build_opener(_ValidatedHTTPHandler(), _ValidatedHTTPSHandler(), redirect_handler)
+    # A proxy obscures the destination peer: the socket connects to the proxy,
+    # which can resolve an otherwise-public hostname to an internal target.
+    return build_opener(
+        ProxyHandler({}),
+        _ValidatedHTTPHandler(),
+        _ValidatedHTTPSHandler(),
+        redirect_handler,
+    )
 
 
 def validate_request_url(url: str) -> str | None:

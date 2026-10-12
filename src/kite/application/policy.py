@@ -61,12 +61,39 @@ class PolicyEngine:
         execution_mode: str = "restricted",
         no_guardrails: bool = False,
         approval: str = "auto",
+        write_scope: list[str] | None = None,
     ) -> None:
         self.workspace = str(Path(workspace).expanduser().resolve())
         self.execution_mode = execution_mode or "restricted"
         self.no_guardrails = no_guardrails
         self.approval = str(approval or "auto")
+        self.write_scope = (
+            tuple(resolve_in_workspace(path, self.workspace) for path in write_scope)
+            if write_scope is not None
+            else None
+        )
         self.policy_version = POLICY_VERSION
+
+    def _scope_denial(self, intent: ToolIntent) -> str:
+        if self.write_scope is None or "workspace_write" not in intent.side_effects:
+            return ""
+        if intent.tool == "bash":
+            return "bash mutations are blocked for filesystem-scoped workers"
+        if intent.tool not in {"write", "edit", "apply_patch"}:
+            return f"{intent.tool} mutations are blocked for filesystem-scoped workers"
+        if not intent.canonical_targets:
+            return "filesystem-scoped mutation requires an explicit target path"
+        for target in intent.canonical_targets:
+            try:
+                resolved = resolve_in_workspace(target, self.workspace)
+            except Exception as exc:
+                return str(exc)
+            if not any(
+                resolved == scope or is_inside(resolved, Path(scope))
+                for scope in self.write_scope
+            ):
+                return f"write target is outside worker scope: {resolved}"
+        return ""
 
     def derive_intent(self, call: ToolCall) -> ToolIntent:
         effects = derive_effects(call)
@@ -95,6 +122,13 @@ class PolicyEngine:
             tool=intent.tool,
             args=intent.normalized_arguments,
         )
+        scope_error = self._scope_denial(intent)
+        if scope_error:
+            return PolicyDecision(
+                allowed=False,
+                reason=scope_error,
+                policy_version=self.policy_version,
+            )
         if self.no_guardrails:
             return PolicyDecision(
                 allowed=True,
@@ -106,6 +140,13 @@ class PolicyEngine:
             )
 
         if self.execution_mode == "restricted" and "network" in intent.side_effects:
+            approved_push_candidate = (
+                intent.tool == "bash"
+                and str(intent.normalized_arguments.get("command") or "")
+                .strip()
+                .lower()
+                .startswith("git push")
+            )
             if intent.tool in {
                 "bash",
                 "webfetch",
@@ -115,7 +156,7 @@ class PolicyEngine:
                 "web_search",
                 "context7_resolve",
                 "context7_docs",
-            }:
+            } and not approved_push_candidate:
                 return PolicyDecision(
                     allowed=False,
                     reason="network access blocked in restricted mode",

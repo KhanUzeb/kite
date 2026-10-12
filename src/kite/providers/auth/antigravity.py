@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from kite.guardrails.redact import redact_string
 from kite.providers.auth.base import AuthStatus, LoginResult, sanitize_auth_message
 
 if TYPE_CHECKING:
@@ -109,21 +111,34 @@ def _mark_linked(account_label: str = "", *, models: tuple[str, ...] = ()) -> No
     atomic_write_json(_link_marker(), payload)  # type: ignore[arg-type]
 
 
-def probe_session(*, timeout: float = _PROBE_TIMEOUT) -> tuple[bool, tuple[str, ...]]:
+def probe_session(
+    *,
+    timeout: float = _PROBE_TIMEOUT,
+    on_error: Callable[[str], None] | None = None,
+) -> tuple[bool, tuple[str, ...]]:
     """Verify the agy keyring session via the documented `agy models` probe.
 
     Returns (ok, model_ids). Read-only: lists models, burns no credits.
     """
     from kite.providers.auth.cli import run_cli
 
-    if agy_cli_path() is None:
+    def fail(reason: str) -> tuple[bool, tuple[str, ...]]:
+        if on_error is not None:
+            on_error(redact_string(reason))
         return False, ()
+
+    if agy_cli_path() is None:
+        return fail("agy CLI is not installed.")
     try:
         proc = run_cli(_AGY_BIN, "models", timeout=timeout)
-    except (subprocess.TimeoutExpired, OSError):
-        return False, ()
+    except subprocess.TimeoutExpired:
+        return fail(f"agy models verification timed out after {timeout:g} seconds.")
+    except OSError as exc:
+        return fail(f"could not run agy models verification: {exc}")
     if proc.returncode != 0:
-        return False, ()
+        detail = redact_string((proc.stdout or "").strip())
+        reason = detail or f"agy models exited with status {proc.returncode}."
+        return fail(reason)
     models: list[str] = []
     for line in (proc.stdout or "").splitlines():
         stripped = line.strip()
@@ -134,7 +149,9 @@ def probe_session(*, timeout: float = _PROBE_TIMEOUT) -> tuple[bool, tuple[str, 
             models.append(first)
         elif "-" in first and " " not in first:
             models.append(first)
-    return (True, tuple(models)) if models else (False, ())
+    if not models:
+        return fail("agy models returned no model IDs.")
+    return True, tuple(models)
 
 
 def _auth_url_in_line(line: str) -> str:
@@ -162,24 +179,22 @@ class AntigravityAuthProvider:
         payload = _read_marker()
         if payload.get("linked") and _verification_fresh(payload):
             return AuthStatus(True, "Antigravity subscription linked.", method="subscription")
-        ok, _models = probe_session()
+        failures: list[str] = []
+        ok, _models = probe_session(on_error=failures.append)
         if ok:
             _mark_linked()
             return AuthStatus(True, "Antigravity subscription linked.", method="subscription")
-        if payload.get("linked"):
-            # Stale marker (e.g. `/logout` was run inside agy): the keyring
-            # session is gone, so stop claiming linked.
-            try:
-                path = _link_marker()  # type: ignore[assignment]
-                if path.is_file():
-                    path.unlink()
-            except OSError:
-                pass
-        return AuthStatus(
-            False,
-            "Antigravity is not linked. Run: kite login antigravity (or sign in via agy).",
-            method="subscription",
-        )
+        if failures:
+            # Keep a stale positive marker so a transient verification outage
+            # cannot erase evidence of an existing, previously verified link.
+            message = (
+                f"Antigravity link verification failed: {failures[0]} "
+                "Check the connection/provider status and retry. If you are not signed in, "
+                "run `kite login antigravity`."
+            )
+        else:
+            message = "Antigravity is not linked. Run: kite login antigravity (or sign in via agy)."
+        return AuthStatus(False, message, method="subscription")
 
     def login(self, *, device: bool = False, console: Console | None = None) -> LoginResult:
         from kite.providers.auth.ui import open_browser, show_byos_panel
@@ -274,8 +289,15 @@ class AntigravityAuthProvider:
 
         # Never trust the exit code: quitting agy without signing in still
         # exits 0. Verify the keyring session with the read-only probe.
-        ok, models = probe_session()
+        failures: list[str] = []
+        ok, models = probe_session(on_error=failures.append)
         if not ok:
+            if failures:
+                return LoginResult(
+                    2,
+                    f"Antigravity sign-in verification failed: {failures[0]} "
+                    f"Check connection/provider status, then retry `kite login antigravity`. {_KEYRING_HINT}",
+                )
             return LoginResult(
                 2,
                 "Antigravity sign-in did not complete (no valid session found). "

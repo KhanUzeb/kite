@@ -45,6 +45,7 @@ _TRANSIENT_TYPES = frozenset(
         "RateLimitError",
         "InternalServerError",
         "APIError",
+        "AntigravityTransientError",
     }
 )
 

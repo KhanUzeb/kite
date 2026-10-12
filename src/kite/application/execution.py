@@ -394,12 +394,14 @@ def build_tool_executor(
     runner: Callable[[ToolCall], dict[str, Any]],
     policy_engine: PolicyEngine | None = None,
     approval: str = "auto",
+    write_scope: list[str] | None = None,
 ) -> ToolExecutor:
     policy = policy_engine or PolicyEngine(
         workspace_root,
         execution_mode=execution_mode,
         no_guardrails=no_guardrails,
         approval=approval,
+        write_scope=write_scope,
     )
     return ToolExecutor(
         policy=policy,

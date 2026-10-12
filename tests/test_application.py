@@ -115,6 +115,88 @@ def test_approval_tiers_gate_only_risky_effects(tmp_path: Path) -> None:
     outside_read = ToolCall(call_id="r", name="read", arguments={"path": "../notes.txt"})
     allowed_read = auto.authorize(auto.derive_intent(outside_read))
     assert allowed_read.allowed and not allowed_read.requires_approval
+def test_policy_write_scope_allows_path_under_directory_scope(workspace: Path) -> None:
+    engine = PolicyEngine(workspace, write_scope=["src"])
+    path = workspace / "src" / "scoped.py"
+    write = ToolCall(call_id="scoped-write", name="write", arguments={"path": "src/scoped.py", "content": "x"})
+    executor = ToolExecutor(
+        policy=engine,
+        runner=lambda _call: (path.write_text("x", encoding="utf-8"), {"ok": True, "output": "written"})[1],
+    )
+
+    result = executor.execute(write)
+
+    assert result.ok
+    assert path.read_text(encoding="utf-8") == "x"
+
+
+@pytest.mark.parametrize(
+    ("approval", "no_guardrails"),
+    [("auto", False), ("yolo", False), ("auto", True)],
+)
+def test_policy_write_scope_denies_outside_target_before_approval(
+    workspace: Path,
+    approval: str,
+    no_guardrails: bool,
+) -> None:
+    engine = PolicyEngine(workspace, write_scope=["src"], approval=approval, no_guardrails=no_guardrails)
+    write = ToolCall(call_id="outside-scope", name="write", arguments={"path": "docs/notes.txt", "content": "x"})
+    outside_path = workspace / "docs" / "notes.txt"
+    calls: list[ToolCall] = []
+
+    def runner(call: ToolCall) -> dict:
+        calls.append(call)
+        outside_path.parent.mkdir(parents=True, exist_ok=True)
+        outside_path.write_text("x", encoding="utf-8")
+        return {"ok": True}
+
+    executor = ToolExecutor(policy=engine, runner=runner, approver=lambda *_: True)
+    result = executor.execute(write)
+
+    assert not result.ok
+    assert calls == []
+    assert not outside_path.exists()
+
+
+def test_policy_empty_write_scope_denies_workspace_mutations(workspace: Path) -> None:
+    engine = PolicyEngine(workspace, write_scope=[])
+
+    for name, arguments in (
+        ("write", {"path": "src/app.py", "content": "x"}),
+        ("edit", {"path": "src/app.py", "old": "a", "new": "b"}),
+        ("apply_patch", {"path": "src/app.py", "patch": "***"}),
+    ):
+        decision = engine.authorize(engine.derive_intent(ToolCall(call_id=name, name=name, arguments=arguments)))
+        assert not decision.allowed, (name, decision.reason)
+
+
+def test_policy_write_scope_rejects_writing_bash_but_allows_read_only_bash(workspace: Path) -> None:
+    engine = PolicyEngine(workspace, write_scope=["src"])
+    mutation = ToolCall(call_id="bash-write", name="bash", arguments={"command": "touch src/app.py"})
+    read_only = ToolCall(call_id="bash-read", name="bash", arguments={"command": "git status"})
+
+    denied = engine.authorize(engine.derive_intent(mutation))
+    allowed = engine.authorize(engine.derive_intent(read_only))
+
+    assert not denied.allowed
+    assert allowed.allowed
+
+def test_restricted_policy_allows_git_push_after_explicit_approval(workspace: Path) -> None:
+    engine = PolicyEngine(workspace, execution_mode="restricted")
+    call = ToolCall(call_id="git-push", name="bash", arguments={"command": "git push origin main"})
+    executed: list[ToolCall] = []
+    approved: list[bool] = []
+    executor = ToolExecutor(
+        policy=engine,
+        runner=lambda action: (executed.append(action), {"ok": True, "output": "pushed"})[1],
+        approver=lambda intent, decision: (approved.append(decision.requires_approval), True)[1],
+    )
+
+    result = executor.execute(call)
+
+    assert result.ok
+    assert approved == [True]
+    assert executed == [call]
 
 
 def test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path) -> None:

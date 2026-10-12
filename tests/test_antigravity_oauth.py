@@ -68,21 +68,116 @@ def test_status_states(monkeypatch: pytest.MonkeyPatch, kite_home: Path) -> None
     assert linked.authenticated is True
     assert calls == []
 
-    # Stale marker + failed probe: session is gone, marker is cleared.
+    # Stale marker + transient verification failure: retain the last known
+    # linkage instead of treating an inability to verify as a logout.
     stale = _marker(kite_home)
     stale.write_text(json.dumps({"linked": True, "verified_at": 0.0}), encoding="utf-8")
-    gone = AntigravityAuthProvider().status()
-    assert gone.authenticated is False
-    assert not stale.exists()
 
-    # Live probe success marks linked.
+    def failed_probe(*, on_error=None, **_k):
+        if on_error is not None:
+            on_error("timed out")
+        return False, ()
+
+    monkeypatch.setattr("kite.providers.auth.antigravity.probe_session", failed_probe)
+    unavailable = AntigravityAuthProvider().status()
+    assert unavailable.authenticated is False
+    assert "verification" in unavailable.message.lower()
+    assert "timed out" in unavailable.message.lower()
+    assert stale.is_file()
+    assert json.loads(stale.read_text(encoding="utf-8"))["verified_at"] == 0.0
+
+    # Successful re-verification refreshes the expired marker.
     monkeypatch.setattr(
         "kite.providers.auth.antigravity.probe_session",
         lambda **_k: (True, ("gemini-3.8-flash-medium",)),
     )
     verified = AntigravityAuthProvider().status()
     assert verified.authenticated is True
-    assert _marker(kite_home).is_file()
+    assert json.loads(stale.read_text(encoding="utf-8"))["verified_at"] > 0
+
+@pytest.mark.parametrize("failure_kind", ["timeout", "connection"])
+def test_probe_session_reports_verification_failure(
+    failure_kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kite.providers.auth.antigravity import probe_session
+
+    monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: "agy")
+    secret = "probe-secret-value"
+
+    def fail(*_args, **_kwargs):
+        if failure_kind == "timeout":
+            raise subprocess.TimeoutExpired("agy models", 5)
+        raise OSError(f"connection failed; Authorization: Bearer {secret}")
+
+    monkeypatch.setattr("kite.providers.auth.cli.run_cli", fail)
+    errors: list[str] = []
+    ok, models = probe_session(on_error=errors.append)
+
+    assert not ok and models == ()
+    assert errors
+    assert secret not in errors[0]
+    if failure_kind == "timeout":
+        assert "timed out" in errors[0]
+    else:
+        assert "connection failed" in errors[0]
+
+@pytest.mark.parametrize(
+    ("probe_error", "expected"),
+    [("timed out", "timed out"), ("could not run", "could not run")],
+)
+def test_status_reports_probe_failure_without_calling_account_unlinked(
+    probe_error: str, expected: str, monkeypatch: pytest.MonkeyPatch, kite_home: Path
+) -> None:
+    monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: "agy")
+
+    def failed_probe(*, on_error=None, **_k):
+        if on_error is not None:
+            on_error(probe_error)
+        return False, ()
+
+    monkeypatch.setattr("kite.providers.auth.antigravity.probe_session", failed_probe)
+    status = AntigravityAuthProvider().status()
+
+    assert status.authenticated is False
+    assert "verification" in status.message.lower()
+    assert expected in status.message.lower()
+    assert "is not linked" not in status.message.lower()
+
+
+def test_login_probe_timeout_does_not_suggest_finishing_sign_in(
+    kite_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: "agy")
+    monkeypatch.setattr("kite.util.tty.is_interactive_tty", lambda **_k: False)
+    probe_calls = 0
+
+    def failed_probe(*, on_error=None, **_k):
+        nonlocal probe_calls
+        probe_calls += 1
+        if probe_calls == 1:
+            return False, ()
+        if on_error is not None:
+            on_error("timed out")
+        return False, ()
+
+    monkeypatch.setattr("kite.providers.auth.antigravity.probe_session", failed_probe)
+    monkeypatch.setattr("kite.providers.auth.ui.open_browser", lambda _url: True)
+
+    def fake_stream(cmd, *args, timeout=0.0, on_line=None, env=None):
+        if on_line is not None:
+            on_line("Visit https://accounts.google.com/o/oauth2/auth?client_id=abc\n")
+        return subprocess.CompletedProcess([cmd, *args], 0, "ok", "")
+
+    monkeypatch.setattr("kite.providers.auth.cli.run_cli_streaming", fake_stream)
+    result = AntigravityAuthProvider().login(console=None)
+
+    assert result.exit_code == 2
+    assert "timed out" in result.message.lower()
+    assert "finish google sign-in" not in result.message.lower()
+    assert not _marker(kite_home).exists()
+
+
+
 
 
 def test_login_headless_verifies_probe(

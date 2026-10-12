@@ -67,7 +67,7 @@ Shared flags on `run` / `chat` / `resume`:
 | `--cwd` | Workspace |
 | `--config` | Runtime TOML name or path |
 | `--mode plan\|build` | Read-only checklist vs apply edits |
-| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | **Coding blanket** (default `auto`): in-workspace install/test/edit/commit auto-runs, including `powershell -Command` / `cmd /c` wrapping those tools. **SERIOUS** still prompts for network fetch, destructive deletes, `chmod`. **Enter** / `a` allows that exact command for the rest of the session; `s` allows the command family; `p` persists to `~/.kite/approvals.json`. CRITICAL (outside workspace, sudo) always prompts / denies headless. |
+| `--approval yolo\|auto\|supervised\|approve\|trust\|readonly` | **Coding blanket** (default `auto`): in-workspace install/test/edit/commit auto-runs, including `powershell -Command` / `cmd /c` wrapping those tools. **SERIOUS** actions include network fetch, `git push`, destructive deletes, `chmod`; `auto` prompts and `yolo` may auto-allow. Force-push remains blocked. **Enter** / `a` allows an approved command; `s` allows the command family; `p` persists to `~/.kite/approvals.json`. CRITICAL (outside workspace, sudo) always prompts / denies headless. |
 | `--steps` `--cost` `--time` | Limits (honored by `run`, `chat`, and one-shot `resume`) |
 | `--long` | Long-task mode: higher step/cost limits, phased checkpoints, long-task prompt |
 | `--no-context` `--no-compact` `--no-guardrails` | Opt out of injection, compaction, sandbox |
@@ -76,6 +76,8 @@ Shared flags on `run` / `chat` / `resume`:
 | `-v` | Verbose tool bodies |
 
 Provider requests use the configured `[agent].model_timeout_seconds` from runtime TOML (default `180`). Stream startup and recovery requests use that timeout rather than an additional hard-coded 30-second limit.
+
+Provider and model failures distinguish connection timeout, rate-limit/service failure, and authentication problems, and show the relevant next action. Antigravity (`agy`) is marked linked only after `agy models` succeeds; failed verification explains the cause rather than treating the session as connected.
 
 One-shot / headless flags (`kite run`, `kite resume <id> "continue"` — not `kite chat`):
 
@@ -92,7 +94,7 @@ Persistent compaction is `kite config --auto-compact true|false` (not a run/chat
 
 LLM compaction prefers OpenRouter free-tier (`compaction_provider` / `compaction_model` in `~/.kite/config.toml`); when OpenRouter is unavailable (no key, empty free list, all retries fail) it falls back to the session model — billed/metered, unlike free-tier. Opt out with `compaction_fallback_session = false` (or `compaction_use_llm = false` for deterministic summaries only).
 
-`--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto`/`yolo` permit routine in-workspace work (installs, tests, commits) while **SERIOUS** actions (network fetch, destructive delete, shell wrappers) prompt in `auto` and `yolo` skips those prompts; critical gates (outside workspace, sudo, remote shell) fail closed.
+`--headless` also activates when stdout is not a TTY or with `-q`. Approval policy is never weakened: `readonly` blocks mutations, `approve` denies mutations when no prompt is available, and `auto`/`yolo` permit routine in-workspace work (installs, tests, commits) while **SERIOUS** actions (network fetch, `git push`, destructive delete, shell wrappers) prompt in `auto`; `yolo` may auto-allow them. Force-push remains hard-blocked. Critical gates (outside workspace, sudo, remote shell) fail closed.
 
 One-shot `run` and `resume` share run-result exit codes: **0** submitted successfully, **1** other failure, **2** cancelled/interrupted, **3** approval denied, **4** verification failed. Leftover background jobs prevent a false success even when the model submitted.
 
@@ -246,6 +248,7 @@ kite subagents --init auditor --role debugger --label "Auditor"
 Dispatch at runtime: `subagent` tool with `profile=<id>` and `prompt=…`. Optional per-worker **`model=`** and **`provider=`** (or `models` / `providers` arrays for parallel crews). When you ask for crews or name profiles in plain language, the agent should dispatch `subagent` directly. User-authored profiles are wrapped as untrusted content.
 
 Crew execution notes: sibling sync `subagent` calls in one turn auto-merge into a single parallel crew (async/background and `wait_for` collects stay separate). Workers start with fresh context but receive the parent's open todos automatically (explicit `context=` wins). Handoffs carry `files_touched` + `cost`/`tokens`/`calls`: worker spend counts against the parent budget (`total_cost`), and worker-touched files join parent checkpoint tracking.
+For scoped worker tasks, pass `scope` as a list of workspace-relative paths. It bounds file mutations before execution; `scope=[]` allows no writes. Scoped workers cannot use mutating `bash` commands because shell write targets cannot be reliably constrained. Omit `scope` for the normal worker permissions.
 
 `kite dashboard` is per-user: it reads your local `~/.kite/sessions` (or `$KITE_HOME`). Overview: active/failed runs, exit statuses, provider/model usage, tool breakdown, cost, tokens, cache, subagents, and sessions needing attention. `--session <id>` drills into one run (cwd, mode, verification, tool failures, event timeline). `--watch 5` refreshes every 5 seconds.
 

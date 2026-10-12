@@ -136,6 +136,74 @@ def test_query_limits_retry_fault_and_budget_guard(monkeypatch) -> None:
         assert "budget" in blob
 
 
+@pytest.mark.parametrize(
+    "error_message",
+    ["authentication failed", "quota exhausted", "malformed response payload"],
+    ids=["authentication", "quota", "malformed-payload"],
+)
+def test_agy_permanent_failures_are_not_retried(monkeypatch, error_message) -> None:
+    class _AgyModel(_StubModel):
+        def __init__(self):
+            self.calls = 0
+
+        def query(self, messages):
+            self.calls += 1
+            raise _agy_error(error_message)
+
+    model = _AgyModel()
+    monkeypatch.setattr("kite.agent.loop.retry_delay_s", lambda attempt, **kwargs: pytest.fail("unexpected retry"))
+    agent = DefaultAgent(model, LocalEnvironment(registry=ToolRegistry([])), provider_max_retries=4)
+    agent.messages = [model.format_message("user", content="hi")]
+
+    from kite.providers.auth.antigravity_exec import AntigravityExecError, AntigravityQuotaError
+
+    with pytest.raises((AntigravityExecError, AntigravityQuotaError)):
+        agent.query()
+    assert model.calls == 1
+
+
+def _agy_error(message: str):
+    from kite.providers.auth.antigravity_exec import (
+        AntigravityExecError,
+        AntigravityQuotaError,
+        parse_agy_payload,
+    )
+
+    if "quota" in message:
+        return AntigravityQuotaError(message)
+    with pytest.raises(AntigravityExecError) as exc:
+        parse_agy_payload({"error": message})
+    return exc.value
+
+
+@pytest.mark.parametrize(
+    "error_message",
+    ["HTTP 500 upstream failure", "HTTP 503 service unavailable", "HTTP 429 rate limit"],
+    ids=["server-error-500", "service-unavailable", "rate-limit-429"],
+)
+def test_agy_transient_failure_retries_then_succeeds(monkeypatch, error_message) -> None:
+    class _AgyModel(_StubModel):
+        def __init__(self):
+            self.calls = 0
+
+        def query(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                raise _agy_error(error_message)
+            return {"role": "assistant", "content": "done", "extra": {"cost": 0.0}}
+
+    model = _AgyModel()
+    delays: list[int] = []
+    monkeypatch.setattr("kite.agent.loop.retry_delay_s", lambda attempt, **kwargs: delays.append(attempt) or 0)
+    agent = DefaultAgent(model, LocalEnvironment(registry=ToolRegistry([])), provider_max_retries=3)
+    agent.messages = [model.format_message("user", content="hi")]
+
+    assert agent.query()["content"] == "done"
+    assert model.calls == 2
+    assert delays == [1]
+
+
+
 def test_compaction_preserves_history(workspace: Path) -> None:
     from kite.memory.compaction_ops import run_compaction
 

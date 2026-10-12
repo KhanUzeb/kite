@@ -297,6 +297,30 @@ def test_byos_oauth_login_and_secret_hygiene(kite_home: Path, tmp_path: Path, mo
     assert secret not in caplog.text
 
 
+
+
+@pytest.mark.parametrize(
+    ("error", "provider", "category", "action"),
+    [
+        ("HTTP 401 unauthorized", "antigravity", "authentication", "kite login antigravity"),
+        ("HTTP 429 rate limit exceeded", "openai", "rate limit", "wait briefly"),
+        ("connection timed out", "openai", "connection", "check the network"),
+        ("HTTP 503 upstream error", "openai", "service failure", "check provider status"),
+    ],
+)
+def test_provider_failure_diagnostics_are_actionable_and_redacted(
+    error: str, provider: str, category: str, action: str
+) -> None:
+    from kite.providers.diagnostics import format_provider_failure
+
+    secret = "top-secret-credential-value"
+    message = format_provider_failure(
+        f"{error}; Authorization: Bearer {secret}", provider=provider
+    )
+
+    assert category in message.lower()
+    assert action in message
+    assert secret not in message
 def test_model_selection_and_reasoning_levels(kite_home, monkeypatch) -> None:
     monkeypatch.setattr("kite.providers.select.sys.platform", "win32")
     assert _can_use_radiolist() is False

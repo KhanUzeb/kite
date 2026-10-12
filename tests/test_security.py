@@ -31,6 +31,7 @@ from kite.guardrails.sandbox import (
 from kite.guardrails.ssrf import (
     SafeRedirectHandler,
     ValidatedHTTPConnection,
+    build_safe_opener,
     host_blocked,
     url_blocked,
 )
@@ -327,6 +328,24 @@ def test_ssrf_blocks_private_and_rebinding(monkeypatch) -> None:
     with pytest.raises(URLError, match="too many redirects"):
         handler.redirect_request(req, None, 302, "", {}, "https://example.com/next")
 
+
+
+def test_safe_opener_does_not_route_user_urls_through_configured_proxy(monkeypatch) -> None:
+    import urllib.request
+    from urllib.request import ProxyHandler
+    monkeypatch.setattr(
+        urllib.request,
+        "getproxies",
+        lambda: {"http": "http://proxy.example:8080", "https": "http://proxy.example:8080"},
+    )
+    opener = build_safe_opener()
+    proxies = [
+        handler.proxies
+        for handler in opener.handlers
+        if isinstance(handler, ProxyHandler)
+    ]
+
+    assert not proxies or all(not configured for configured in proxies)
 
 def test_nested_redaction_untrusted_content_and_crew_bounds(kite_home, tmp_path) -> None:
     payload = {

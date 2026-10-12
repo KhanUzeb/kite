@@ -57,7 +57,7 @@ class HarnessConfig:
     memory_in_prompt: bool = False
     goal_objective: str = ""
     allowed_tools: list | None = None  # per-worker registry allowlist (None = inherit)
-
+    write_scope: list[str] | None = None  # filesystem mutation boundary for scoped subagents
 
 def runtime_options_from_config(config: HarnessConfig) -> RuntimeOptions:
     """Map ``HarnessConfig`` onto ``RuntimeOptions`` (single field-mapping point)."""
@@ -90,6 +90,7 @@ def runtime_options_from_config(config: HarnessConfig) -> RuntimeOptions:
         memory_in_prompt=data["memory_in_prompt"],
         goal_objective=data["goal_objective"],
         allowed_tools=data["allowed_tools"],
+        write_scope=data["write_scope"],
     )
 
 
