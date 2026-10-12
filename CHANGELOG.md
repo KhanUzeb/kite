@@ -27,6 +27,20 @@ Representative before/after measurements from controlled optimization runs (not 
 ### Security
 - Bounded output capture, redaction-before-truncation, private trace files, and durable atomic writes: see [SECURITY.md](SECURITY.md).
 
+## [1.0.8] - 2026-10-12
+
+### Added
+- Filesystem write scopes for subagents; out-of-scope mutations are denied before execution, and scoped workers cannot use mutating bash commands.
+- Escaped untrusted prompt boundaries for user memory and automatically gathered repository data.
+
+### Changed
+- Antigravity transient service, network, rate-limit, and 5xx failures use the existing bounded retry; auth, quota, and malformed-response failures remain permanent.
+- Provider and model errors now show sanitized failure categories and next steps; Antigravity sessions are linked only after verification succeeds.
+- Restricted-mode `git push` goes through the network approval policy instead of being unconditionally blocked. Force-push remains blocked.
+
+### Fixed
+- Safe HTTP fetches no longer use environment-configured proxies, keeping DNS and connected-peer validation aligned with the requested destination.
+
 ## [1.0.7] - 2026-10-09
 
 ### Added

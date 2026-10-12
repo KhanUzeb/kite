@@ -1,4 +1,4 @@
-# kite-release-version: 1.0.7
+# kite-release-version: 1.0.8
 1: # kite-release-version: 1.0.7
 # Core CI gates; run scripts/e2e_smoke.py separately for offline CLI/PTY QA.
 2: # kite-release-version: 1.0.7
