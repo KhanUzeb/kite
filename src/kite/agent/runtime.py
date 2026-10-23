@@ -27,7 +27,6 @@ from kite.agent.orchestrator import SubagentOrchestrator
 from kite.agent.queue import RunMessageQueue
 from kite.agent.role import AgentRole, parse_role, tools_for_role
 from kite.agent.verification import VerificationCollector
-from kite.cli.slash import expand_prompt_slash
 from kite.config import AgentRuntimeConfig, UserConfig, ensure_home, load_runtime_config
 from kite.context.discovery import gather_project_context
 from kite.context.workspace import ExecutionMode, ExecutionSession, WorkspaceContext
@@ -572,9 +571,13 @@ class AgentRuntime:
                         )
                     )
 
-        # Expand /skill, /commit, custom commands, plugin commands
+        # Expand /skill, /commit, custom commands, plugin commands. Plain
+        # tasks (the common path) must not pay for the slash index imports.
         skills = self._prepared_skills
-        task = expand_prompt_slash(task, cwd, extra_skill_dirs=rcfg.skills.dirs)
+        if task.lstrip().startswith("/"):
+            from kite.cli.slash import expand_prompt_slash
+
+            task = expand_prompt_slash(task, cwd, extra_skill_dirs=rcfg.skills.dirs)
         mem = self.slots.memory or MemoryStore.open(cwd)
         self.hooks.fire("before_run", task=task, cwd=cwd)
         # Injected cancel (nested subagent) wins; otherwise fresh token per turn.

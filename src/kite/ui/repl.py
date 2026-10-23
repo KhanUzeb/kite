@@ -16,11 +16,10 @@ from rich.prompt import Prompt
 from rich.text import Text
 
 from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name, default_approval, parse_approval_mode
-from kite.cli.slash import CommandIndex, SlashResult, help_text, invalidate_command_index, resolve_slash
-from kite.commands.loader import project_commands_dir, write_command_stub
+from kite.cli.slash import CommandIndex, help_text, invalidate_command_index, resolve_slash
 from kite.config import UserConfig, kite_home
-from kite.plugins.loader import project_plugins_dir, write_plugin_stub
 from kite.tools.store import TodoStore
+from kite.ui.commands import SlashResult
 from kite.ui.empty import render_empty
 from kite.ui.git import GitCheckpoints
 from kite.ui.inbox import MessageInbox
@@ -3391,6 +3390,8 @@ class ChatSession:
 
     def _handle_commands(self, arg: str) -> None:
         if arg.startswith("new "):
+            from kite.commands.loader import project_commands_dir, write_command_stub
+
             name = arg[4:].strip()
             try:
                 path = write_command_stub(project_commands_dir(self.cwd), name)
@@ -3419,6 +3420,8 @@ class ChatSession:
 
     def _handle_plugins(self, arg: str) -> None:
         if arg.startswith("init "):
+            from kite.plugins.loader import project_plugins_dir, write_plugin_stub
+
             name = arg[5:].strip()
             try:
                 path = write_plugin_stub(project_plugins_dir(self.cwd), name)
@@ -4045,7 +4048,15 @@ class ChatSession:
             if str(line).lstrip().startswith("!"):
                 self._run_bang_command(str(line).lstrip())
                 continue
-            parsed = resolve_slash(line, self._index())
+            # Plain text is the common path; resolving it still built the full
+            # slash index (plugins, skills, commands) before parse_slash could
+            # reject it. Only pay for that work when the line looks like slash.
+            stripped_line = str(line).strip()
+            parsed = (
+                resolve_slash(line, self._index())
+                if stripped_line.startswith("/") and not stripped_line.startswith("//")
+                else SlashResult("not_slash")
+            )
             if parsed.kind != "not_slash":
                 if not self._handle_slash(line, parsed):
                     self._teardown_jobs()

@@ -4,19 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from kite.commands.loader import (
-    PromptCommand,
-    expand_arguments,
-    load_bundled_commands,
-    load_commands_from_dir,
-    project_commands_dir,
-    user_commands_dir,
-)
-from kite.plugins.loader import Plugin, load_plugins
-from kite.skills.loader import Skill, expand_skill_slash, format_skill_invocation, load_skills
-from kite.ui.commands import SlashResult, parse_slash
 from kite.util.cache import TtlCache
+
+if TYPE_CHECKING:
+    from kite.commands.loader import PromptCommand
+    from kite.plugins.loader import Plugin
+    from kite.skills.loader import Skill
+    from kite.ui.commands import SlashResult
 
 _INDEX_CACHE: TtlCache[tuple[str, tuple[str, ...]], CommandIndex] = TtlCache(120.0, maxsize=4)
 
@@ -71,6 +67,18 @@ class CommandIndex:
 
     @classmethod
     def _load_uncached(cls, cwd_path: Path, extra_skill_dirs: list[str] | None = None) -> CommandIndex:
+        # Plugin/skill discovery parses user and project files; importing that
+        # machinery at module scope made every `kite run` pay for features it
+        # only needs when the task actually starts with a slash command.
+        from kite.commands.loader import (
+            load_bundled_commands,
+            load_commands_from_dir,
+            project_commands_dir,
+            user_commands_dir,
+        )
+        from kite.plugins.loader import load_plugins
+        from kite.skills.loader import load_skills
+
         extra = list(extra_skill_dirs or [])
         plugins = load_plugins(cwd_path)
         plugin_skill_dirs = [p.skills_dir for p in plugins if p.skills_dir.is_dir()]
@@ -163,14 +171,21 @@ class CommandIndex:
         if spec is None or spec.kind != "prompt":
             return None
         if spec.source == "skill":
+            from kite.skills.loader import format_skill_invocation
+
             skill = next((s for s in self.skills if s.name.lower() == spec.name), None)
             if skill is None:
                 return None
             return format_skill_invocation(skill, arg or None)
+        from kite.commands.loader import expand_arguments
+
         return expand_arguments(spec.body, arg)
 
 
 def resolve_slash(raw: str, index: CommandIndex) -> SlashResult:
+    from kite.skills.loader import expand_skill_slash
+    from kite.ui.commands import SlashResult, parse_slash
+
     parsed = parse_slash(raw)
     if parsed.kind == "not_slash":
         return parsed
