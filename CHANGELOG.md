@@ -35,13 +35,14 @@ Representative before/after measurements from controlled optimization runs (not 
 - `KITE_HOME` overrides cache their resolved path, and `UserConfig.load` uses one stat instead of two, avoiding repeated filesystem round-trips on config/session reads.
 - REPL and headless startup load plugin, skill, and markdown-command machinery only when a slash command needs it. Plain REPL input no longer builds the full slash index, and plain `kite run` tasks skip the slash module entirely. Cold `import kite.ui.repl` fell from ~655 ms to ~590-630 ms locally; isolated `import kite.cli.slash` fell from ~333 ms to ~110 ms.
 - Windows session appends skip `chmod` (it only toggles the read-only bit there; inherited profile ACLs already restrict the file). Combined with the sidecar change, the local append path is ~7.3 → ~0.95 ms/event.
-- Test suite consolidated duplicate composer/persistence coverage and merged the question-tool, stream-stall, and diff-render cases into cohesive behavioral tests. Collected cases: 465 → 458.
+- Test suite consolidated duplicate composer/persistence coverage and merged the question-tool, stream-stall, and diff-render cases into cohesive behavioral tests. Collected cases: 465 → 460.
 
 ### Removed
 - Unwired application modules (`application/context.py`, `application/persistence.py`, `application/ui.py`, `application/event_payloads.py`), token-report/routing/tool-tier experiments, and dead UI wrappers.
 - Unused `HarnessDependencies` slots and miscellaneous dead helpers.
 
 ### Fixed
+- LiteLLM 1.106 compatibility: plain function-tool requests skip LiteLLM's MCP bridge, which otherwise imports the optional `mcp` package.
 - Test names that claimed "token efficiency" now describe the live behavior they exercise (reasoning/cache, registry/read, spill/errors).
 
 ## [1.0.8] - 2026-10-12

@@ -52,7 +52,14 @@ timing guarantee): ~7.3 ms/event before this release, ~0.95 ms/event after.
   modules were deleted.
 - Consolidated duplicate interrupt/persistence assertions and merged the
   question-tool, stream-stall, and diff-render tests into cohesive behavioral
-  cases. Collected cases: 465 → 458 (455 passed, 3 platform skips on Windows).
+  cases. Collected cases: 465 → 460 (457 passed, 3 platform skips on Windows).
+
+## Compatibility
+
+- LiteLLM 1.106 imports its MCP bridge for every non-empty tools list, even when
+  the tools are ordinary function tools. Kite now opts out of that bridge when
+  it is available, so the latest LiteLLM no longer triggers the optional `mcp`
+  dependency on tool calls.
 
 ## Upgrade
 
