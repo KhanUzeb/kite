@@ -8,7 +8,7 @@ import time
 import warnings
 from collections.abc import Callable
 from contextlib import contextmanager
-from functools import cached_property
+from functools import cached_property, lru_cache
 from typing import Any
 
 from kite.agent.events import Event
@@ -338,6 +338,26 @@ def _bounded_completion_call(
             )
 
 
+@lru_cache(maxsize=1)
+def _litellm_mcp_opt_out() -> dict[str, bool]:
+    """Skip LiteLLM's MCP bridge without requiring the optional ``mcp`` SDK.
+
+    LiteLLM 1.106 imports its MCP handler for any non-empty tools list before
+    checking whether a tool is actually an MCP tool. That handler imports the
+    optional ``mcp`` package, which Kite does not depend on, so every normal
+    tool call fails at provider dispatch. ``_skip_mcp_handler`` is LiteLLM's
+    internal opt-out; only send it to versions that actually have the handler,
+    since older releases would forward it as an unknown provider parameter.
+    """
+    try:
+        from importlib.util import find_spec
+
+        has_mcp_handler = find_spec("litellm.responses.mcp.chat_completions_handler") is not None
+    except (ImportError, ValueError):
+        has_mcp_handler = False
+    return {"_skip_mcp_handler": True} if has_mcp_handler else {}
+
+
 class LitellmModel:
     def __init__(
         self,
@@ -486,13 +506,18 @@ class LitellmModel:
     ) -> Any:
         import litellm
 
+        kwargs = self._completion_kwargs(messages, stream=stream, overrides=overrides)
+        if kwargs.get("tools"):
+            # LiteLLM's MCP bridge is imported for every tools list, even
+            # though Kite only exposes plain function tools. Keep the import
+            # out of the request path; litellm is already loaded here, so the
+            # handler probe does not trigger an eager LiteLLM import.
+            kwargs.update(_litellm_mcp_opt_out())
         stop = getattr(self, "should_stop", None)
         if not callable(stop):
             stop = None
         return _bounded_completion_call(
-            lambda: litellm.completion(
-                **self._completion_kwargs(messages, stream=stream, overrides=overrides)
-            ),
+            lambda: litellm.completion(**kwargs),
             timeout_s=timeout_s if timeout_s is not None else self._call_timeout_s(),
             should_stop=stop,
         )

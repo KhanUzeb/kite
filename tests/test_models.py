@@ -100,6 +100,50 @@ def test_model_capabilities_wait_for_first_request(kite_home, monkeypatch, raw) 
     assert lookups == ([] if raw is not None else [("openai", "deferred-capabilities-test")])
 
 
+def test_litellm_mcp_opt_out_gates_on_handler(monkeypatch) -> None:
+    import importlib.util
+
+    from kite.models import litellm_model
+
+    litellm_model._litellm_mcp_opt_out.cache_clear()
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
+    assert litellm_model._litellm_mcp_opt_out() == {}
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: object())
+    litellm_model._litellm_mcp_opt_out.cache_clear()
+    assert litellm_model._litellm_mcp_opt_out() == {"_skip_mcp_handler": True}
+    litellm_model._litellm_mcp_opt_out.cache_clear()
+
+
+def test_bounded_completion_skips_litellm_mcp_bridge(monkeypatch) -> None:
+    import sys
+    import types
+
+    from kite.models import litellm_model
+
+    fake = types.ModuleType("litellm")
+    calls: list[dict] = []
+    fake.completion = lambda **kwargs: calls.append(kwargs) or "ok"
+    monkeypatch.setitem(sys.modules, "litellm", fake)
+    monkeypatch.setattr(
+        litellm_model, "_litellm_mcp_opt_out", lambda: {"_skip_mcp_handler": True}
+    )
+
+    model = _model()
+    model.should_stop = lambda: False
+    model._completion_kwargs = lambda *_args, **_kwargs: {
+        "model": "chatgpt/gpt-5.6-luna",
+        "tools": [{"type": "function"}],
+    }
+
+    assert model._bounded_completion(messages=[], stream=False) == "ok"
+    assert calls[0]["_skip_mcp_handler"] is True
+
+    model._completion_kwargs = lambda *_args, **_kwargs: {"model": "chatgpt/gpt-5.6-luna"}
+    assert model._bounded_completion(messages=[], stream=False) == "ok"
+    assert "_skip_mcp_handler" not in calls[1]
+
+
 def test_completion_kwargs_temperature_without_reasoning() -> None:
     request = _model()._completion_kwargs([], stream=True)
 
