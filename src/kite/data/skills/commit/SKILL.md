@@ -5,18 +5,18 @@ description: Create a clean git commit following conventional message style.
 
 # Commit skill
 
-Use when the user asks to commit changes.
+Use only when the user asked to commit. Inspect first; never commit on your own initiative.
 
 ## Steps
-1. Run `git status` and `git diff` (and `git diff --staged` if needed).
-2. Run `git log -5 --oneline` to mirror the repo's commit style.
-3. Stage only relevant files. Never stage secrets (`.env`, credentials).
-4. Draft a concise 1–2 sentence commit message focusing on **why**.
-5. Commit with a HEREDOC-style message when possible.
-6. Run `git status` after to verify success.
+1. `git status` and `git diff` (plus `git diff --staged` if anything is already staged).
+2. `git log -5 --oneline` and match the repo's subject style (conventional commits if that is what history shows).
+3. Stage only the files that belong to this change. Never stage secrets (`.env`, credentials, keys) or unrelated edits.
+4. Write a 1–2 sentence message about **why**, not a file list.
+5. Commit with a HEREDOC so the message is not mangled by shell quoting.
+6. `git status` again and confirm the commit landed and the tree is as expected.
 
 ## Do not
-- Update git config
-- Push, force-push, or amend
-- Commit unless the user asked
-- Use `--no-verify` unless explicitly requested
+- Update git config, or touch hooks
+- Push, force-push, or `--amend` (including `--amend` to "fix" a hook failure)
+- Commit an empty or mixed-in-unrelated diff
+- Use `--no-verify` unless the user explicitly asked

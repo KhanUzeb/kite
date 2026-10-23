@@ -5,8 +5,14 @@ description: Bootstrap root AGENTS.md (agents.md). Use for /init, kite init --ch
 
 # Init
 
-Deliverable: **`AGENTS.md` at the repo root**. Optional short `KITE.md` for Kite-only notes.
+Deliverable: **`AGENTS.md` at the repo root** — commands, layout, and conventions an agent needs. Add a short `KITE.md` only for notes that are Kite-specific.
 
-Fast path: `kite init .` (add `--force` to overwrite with `.bak.<ts>` backup).
+## Fast path
+`kite init .` scaffolds it deterministically. Add `--force` to overwrite; that keeps a `.bak.<ts>` backup of the previous file.
 
-When editing by hand: inspect manifests and CI for install/test commands; ask before overwriting an existing `AGENTS.md`; do not commit unless the user asked.
+## By hand
+1. Inspect manifests (`pyproject.toml`, `package.json`, …), CI config, and existing docs for the real install, test, and lint commands. Do not invent commands.
+2. Cover: what the repo is, where to change what, how to run tests, and conventions that differ from defaults.
+3. Keep it short. Link to existing docs instead of duplicating them.
+4. If `AGENTS.md` already exists, show the user what would change and **ask before overwriting**.
+5. Do not commit unless the user asked.

@@ -5,7 +5,7 @@ description: Split multi-step work across todo_write, task, and parallel subagen
 
 # Orchestrate skill
 
-Use when a task has several independent workstreams or a long checklist.
+Use when a task has several independent workstreams or a long checklist. Do not orchestrate a single-file change.
 
 ## When to use what
 
@@ -15,49 +15,28 @@ Use when a task has several independent workstreams or a long checklist.
 | Read code and summarize tradeoffs | `subagent` with `profile=` |
 | Multi-step checklist | `todo_write` / `todo_read` |
 
-- `subagent`: nested LLM workers. **Prefer bundled profiles** (`scout`, `reviewer`, `shell`, `coder`, `context`) over microscopic JIT workers. **Sync by default** — parent waits for merged findings. `background=true` when the parent should keep working; collect with `wait_for: [job_id, ...]`. List profiles: `/agents profiles`. Monitor: `/agents`, `/live agents`. Stop: `/kill`. Max **12** workers per dispatch.
+Prefer bundled profiles (`scout`, `reviewer`, `shell`, `coder`, `context`) over one-off workers. Sync is the default — the parent waits. Use `background=true` only when the parent can keep working, then collect with `wait_for`. List profiles: `/agents profiles`. Monitor: `/agents`, `/live agents`. Stop: `/kill`. Hard max **12** workers per dispatch.
 
-## Sync vs async dispatch
+## Sync vs async
 
 | Situation | Dispatch |
 |-----------|----------|
-| Need findings before next edit | **sync** (default) |
-| Explore while parent continues | **async** — `background=true` or “in the background while I …” |
+| Need findings before the next edit | **sync** (default) |
+| Explore while the parent continues | **async** — `background=true` |
 | Parallel `prompts[]` crew | **sync** unless `background=true` |
 | Collect async workers | `subagent` with `wait_for: ["abc12345", ...]` |
 
 ## Split rules
-
-1. Write the plan with `todo_write` before spawning workers.
-2. Each subagent prompt must be self-contained: goal, paths/constraints, success check.
-3. Use short, distinctive `labels` (`scout-auth`, `map-tests`) — they appear in `/agents` and the crew board.
-4. Parallelize only independent items. Cap fan-out at ≈2–3 workers (hard max 12).
-5. Use `profile=` for role-shaped work (`scout` explore, `reviewer` diff review, `shell` diagnostics, `coder` implement).
-6. Subagents cannot spawn further subagents or write global memory.
-7. Integrate results yourself — merge findings, then edit.
-
-## Example crew (sync, with profiles)
-
-```
-profiles: ["scout", "scout"]
-labels: ["scout-auth", "scout-db"]
-prompts: [
-  "How does auth middleware work? List entrypoints under src/auth.",
-  "Where is the DB layer configured? List files and connection flow."
-]
-```
-
-## Example async + collect
-
-```
-subagent prompt="Survey auth routes in the background while I refactor CLI" label="scout-auth"
-# ... parent continues ...
-subagent wait_for=["a1b2c3d4"] timeout_seconds=120
-```
+1. Write the plan with `todo_write` before spawning anyone.
+2. Each prompt is self-contained: goal, paths, constraints, and how to tell it succeeded. Workers do not see this conversation.
+3. Give short, distinctive `labels` (`scout-auth`, `map-tests`) — they show in `/agents`.
+4. Parallelize only independent work. Aim for 2–3 workers; never the same files twice.
+5. Match the profile to the job: `scout` explore, `reviewer` diff review, `shell` diagnostics, `coder` implement, `context` gather a decision.
+6. Workers cannot spawn their own workers or write global memory.
+7. Integrate yourself: merge findings, resolve contradictions, then edit. Do not paste worker output through as the answer.
 
 ## Avoid
-
-- Subagents for tiny lookups (`task` is enough)
+- A subagent for a lookup `task` or `grep` can answer
 - Duplicate prompts that thrash the same files
-- Stale todos after workers finish
+- Leaving todos stale after workers finish
 - Combining `wait_for` with new `prompt` / `prompts` in one call
