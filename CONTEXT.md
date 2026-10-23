@@ -229,4 +229,4 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 - [AGENTS.md](AGENTS.md) — how to work on this repository
 - [kite_commands.md](kite_commands.md) — full CLI and slash map
 - [architecture.md](architecture.md) — layers and extension points
-- [docs/RELEASE-1.0.0.md](docs/RELEASE-1.0.0.md) — current release notes
+- [docs/RELEASE-1.0.9.md](docs/RELEASE-1.0.9.md) — current release notes

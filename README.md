@@ -12,7 +12,7 @@
     <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License">
   </a>
   <a href="CHANGELOG.md">
-    <img src="https://img.shields.io/badge/version-1.0.8-cyan.svg" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.0.9-cyan.svg" alt="Version">
   </a>
   <a href="https://www.python.org">
     <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
@@ -23,7 +23,7 @@
   Plan, build, review, and automate work across local repositories.
 </p>
 
-**Version:** 1.0.8
+**Version:** 1.0.9
 
 **Keywords:** coding agent, AI code assistant, terminal coding assistant, agent CLI, SWE-agent style loop, repository automation, code review automation
 
@@ -324,7 +324,7 @@ Canonical markdown:
 - [`architecture.md`](architecture.md): system overview — layers, lifecycle, memory, extension points
 - `CONTEXT.md`: domain glossary (terms agents and humans share)
 - `AGENTS.md`: how to hack on this repo (map, conventions, tests)
-- [`docs/RELEASE-1.0.0.md`](docs/RELEASE-1.0.0.md): latest release notes
+- [`docs/RELEASE-1.0.9.md`](docs/RELEASE-1.0.9.md): latest release notes
 - [`CHANGELOG.md`](CHANGELOG.md): version history
 
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# kite-release-version: 1.0.8
+# kite-release-version: 1.0.9
 """Profile the real CLI in-process; use cold_cli_help for interpreter/process startup cost."""
 
 from __future__ import annotations

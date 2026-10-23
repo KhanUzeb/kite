@@ -27,6 +27,21 @@ Representative before/after measurements from controlled optimization runs (not 
 ### Security
 - Bounded output capture, redaction-before-truncation, private trace files, and durable atomic writes: see [SECURITY.md](SECURITY.md).
 
+## [1.0.9] - 2026-10-23
+
+### Changed
+- Durable session events append to the transcript only; the sidecar's atomic write + fsync per tool event was unnecessary because events change neither runtime identity nor message count, and transcript mtime already carries recency. Illustrative local run: session event appends ~7.3 → ~1.1 ms/event.
+- `record_event` resolves the persistence policy once per event and reuses it for redaction.
+- `KITE_HOME` overrides cache their resolved path instead of re-running `Path.resolve()` on every config/session read.
+- Test suite counts are lower after removing tests for unwired modules; remaining suites are named for the live behavior they exercise.
+
+### Removed
+- Unwired application modules (`application/context.py`, `application/persistence.py`, `application/ui.py`, `application/event_payloads.py`), token-report/routing/tool-tier experiments, and dead UI wrappers.
+- Unused `HarnessDependencies` slots and miscellaneous dead helpers.
+
+### Fixed
+- Test names that claimed "token efficiency" now describe the live behavior they exercise (reasoning/cache, registry/read, spill/errors).
+
 ## [1.0.8] - 2026-10-12
 
 ### Added
