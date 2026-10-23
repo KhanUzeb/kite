@@ -59,6 +59,10 @@ class RecordedProvider(BaseHTTPRequestHandler):
             for delta, finish in (({"role": "assistant", "tool_calls": [call]}, None), ({}, "tool_calls")):
                 chunk = {**base, "object": "chat.completion.chunk",
                          "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+                if finish:
+                    # Keep the smoke loopback-only: without usage LiteLLM asks
+                    # tiktoken to download its tokenizer on the first stream.
+                    chunk["usage"] = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
                 self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
             self.wfile.write(b"data: [DONE]\n\n")
         else:
@@ -154,6 +158,12 @@ def main() -> int:
             workspace.mkdir()
             (workspace / "smoke.py").write_text("value = 'before'\n", encoding="utf-8")
             (workspace / "AGENTS.md").write_text("Use python -m py_compile smoke.py to verify edits.\n", encoding="utf-8")
+            # Keep project discovery inside the temp workspace. Otherwise a
+            # marker file in an ancestor (e.g. the user's home package.json)
+            # makes verification scope the wrong root.
+            (workspace / "pyproject.toml").write_text(
+                '[project]\nname = "kite-smoke"\nversion = "0.0.0"\n', encoding="utf-8"
+            )
             (home / "config.toml").write_text(
                 'default_provider = "openai-compatible"\ndefault_model = "gpt-4o-mini"\n'
                 f'[api_bases]\nopenai-compatible = "http://127.0.0.1:{server.server_port}/v1"\n', encoding="utf-8")
