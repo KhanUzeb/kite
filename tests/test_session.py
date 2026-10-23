@@ -265,6 +265,41 @@ def test_write_meta_preserves_durable_rows(kite_home) -> None:
     assert [m["content"] for m in loaded.messages] == ["compacted"]
 
 
+def test_record_event_writes_transcript_only(kite_home) -> None:
+    """Durable events must not pay an atomic sidecar rewrite.
+
+    An event changes neither runtime identity nor message count, so the sidecar
+    is a cache the append need not refresh. The transcript mtime it writes is
+    the recency key listing/pruning already rank on.
+    """
+    from kite.memory.session import list_sessions, session_runtime_overlay
+
+    session = create_session(task="demo", cwd="/tmp", provider="p", model="m")
+    session.append({"role": "user", "content": "hi"})
+    session.note_runtime("groq", "llama-x", "thinking:high")
+    assert session.path is not None
+    sidecar = session.path.with_suffix(".meta")
+    before = sidecar.read_bytes()
+
+    session.record_event("tool_start", {"tool": "bash"})
+    session.record_event("tool_end", {"tool": "bash"})
+
+    assert sidecar.read_bytes() == before
+    rows = [json.loads(line) for line in session.path.read_text(encoding="utf-8").splitlines()]
+    assert [(row["type"], row.get("kind")) for row in rows if row["type"] == "event"] == [
+        ("event", "tool_start"),
+        ("event", "tool_end"),
+    ]
+    # The untouched sidecar still describes the session correctly.
+    assert session_runtime_overlay(session.path) == {
+        "provider": "groq",
+        "model": "llama-x",
+        "reasoning": "thinking:high",
+        "messages": 1,
+    }
+    assert session.id in {meta.id for meta in list_sessions(limit=5)}
+
+
 def test_atomic_rewrite_failure_leaves_original(kite_home, monkeypatch) -> None:
     """F-04: failed rewrite must leave the original file intact."""
     import os as _os

@@ -24,20 +24,22 @@ def persistence_enabled() -> bool:
     return persistence_mode() != "disabled"
 
 
-def prepare_persisted_value(value: Any) -> Any:
-    """Sanitize a value before writing to session JSONL when mode is ``redacted``."""
-    mode = persistence_mode()
-    if mode == "full":
-        return value
-    if mode == "disabled":
+def prepare_persisted_value(value: Any, *, mode: str | None = None) -> Any:
+    """Sanitize a value before writing to session JSONL when mode is ``redacted``.
+
+    ``mode`` lets a caller that already resolved the policy reuse it for several
+    rows instead of re-reading ``config.toml`` per value.
+    """
+    resolved = persistence_mode() if mode is None else mode
+    if resolved in {"full", "disabled"}:
         return value
     from kite.guardrails.redact import sanitize_value
 
     return sanitize_value(value)
 
 
-def prepare_persisted_row(row: dict[str, Any]) -> dict[str, Any]:
-    prepared = prepare_persisted_value(row)
+def prepare_persisted_row(row: dict[str, Any], *, mode: str | None = None) -> dict[str, Any]:
+    prepared = prepare_persisted_value(row, mode=mode)
     return prepared if isinstance(prepared, dict) else {"value": prepared}
 
 

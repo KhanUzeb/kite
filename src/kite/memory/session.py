@@ -15,6 +15,7 @@ from kite.config import ensure_home, kite_home
 from kite.memory.secure_io import secure_write_bytes
 from kite.memory.session_policy import (
     persistence_enabled,
+    persistence_mode,
     prepare_persisted_row,
     prepare_persisted_value,
     secure_session_file,
@@ -397,12 +398,24 @@ class Session:
         self._write_meta_sidecar(path, count=len(self.messages))
 
     def record_event(self, kind: str, payload: dict[str, Any] | None = None) -> None:
-        """Append a durable rollout event — survives crashes between model turns."""
-        if kind not in DURABLE_EVENT_KINDS or not persistence_enabled():
+        """Append a durable rollout event — survives crashes between model turns.
+
+        Events never change runtime identity (provider/model/reasoning) or the
+        message count the sidecar carries, and the transcript mtime this append
+        sets is already the recency key ``list_sessions``/``prune_sessions``
+        rank on. Rewriting the sidecar here therefore bought no durability, but
+        cost one atomic write + fsync per tool event.
+        """
+        mode = persistence_mode()
+        if kind not in DURABLE_EVENT_KINDS or mode == "disabled":
             return
         path = self._session_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.is_file() or path.stat().st_size == 0:
+        try:
+            empty = path.stat().st_size == 0
+        except OSError:
+            empty = True
+        if empty:
+            # Creates the parent directory and stamps the header + sidecar.
             self._write_meta()
         row = prepare_persisted_row(
             {
@@ -410,13 +423,13 @@ class Session:
                 "kind": kind,
                 "ts": time.time(),
                 "payload": payload or {},
-            }
+            },
+            mode=mode,
         )
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         secure_session_file(path)
         self.meta.updated_at = time.time()
-        self._write_meta_sidecar(path, count=len(self.messages))
 
     def _write_meta_sidecar(self, path: Path, *, count: int | None = None) -> None:
         side = _meta_sidecar(path)
