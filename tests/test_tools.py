@@ -438,7 +438,7 @@ def _question_tool(tmp_path, **kwargs):
     return next(t for t in make_coding_tools(cwd=str(tmp_path), enabled=["question"], **kwargs) if t.name == "question")
 
 
-def test_question_tool_validation_and_headless(tmp_path) -> None:
+def test_question_tool_validation_headless_and_live_answers(tmp_path) -> None:
     tool = _question_tool(tmp_path)
     assert tool.run({})["ok"] is False
     assert tool.run({"questions": []})["ok"] is False
@@ -450,16 +450,14 @@ def test_question_tool_validation_and_headless(tmp_path) -> None:
     assert res["ok"] is True and res["answers"] == []
     assert "assumption" in res["output"]
 
-
-def test_question_tool_live_answers(tmp_path) -> None:
     seen: list = []
 
     def _handler(questions):
         seen.extend(questions)
         return [{"answer": "blue", "options": ["blue"]}]
 
-    tool = _question_tool(tmp_path, ask_user=_handler)
-    res = tool.run(
+    live = _question_tool(tmp_path, ask_user=_handler)
+    res = live.run(
         {
             "questions": [
                 {
@@ -479,7 +477,9 @@ def test_question_tool_live_answers(tmp_path) -> None:
     assert seen[0]["header"] == "pick" and len(seen[0]["options"]) == 2
     assert seen[0]["recommended"] == "red" and seen[0]["timeout"] == 20
     seen.clear()
-    tool.run({"questions": [{"question": "Q?", "options": [{"label": "a"}], "recommended": "   ", "timeout": "soon"}]})
+    live.run(
+        {"questions": [{"question": "Q?", "options": [{"label": "a"}], "recommended": "   ", "timeout": "soon"}]}
+    )
     assert "recommended" not in seen[0] and "timeout" not in seen[0]
 
     def _skipped(questions):
@@ -491,8 +491,13 @@ def test_question_tool_live_answers(tmp_path) -> None:
     assert skipped["ok"] is True and skipped["answers"][0]["answer"] == ""
 
 
-def test_question_console_handler_numbers_text_and_skip() -> None:
-    from kite.ui.question import _interpret_answer, ask_user_questions
+def test_question_console_answers_recommended_and_footer() -> None:
+    from kite.ui.question import (
+        _coerce_timeout,
+        _interpret_answer,
+        _resolve_recommended,
+        ask_user_questions,
+    )
 
     opts = [{"label": "red"}, {"label": "blue"}]
     assert _interpret_answer("2", opts, multiple=False) == ("blue", ["blue"])
@@ -515,8 +520,56 @@ def test_question_console_handler_numbers_text_and_skip() -> None:
     assert [a["answer"] for a in out] == ["red", "custom answer", ""]
     assert out[0]["options"] == ["red"] and out[1]["options"] == []
 
+    assert _interpret_answer("", opts, multiple=False, recommended="blue") == ("blue", ["blue"])
+    assert _interpret_answer("", opts, multiple=False, recommended="missing") == ("", [])
+    assert _interpret_answer("blue (Recommended)", opts, multiple=False, recommended="blue") == (
+        "blue",
+        ["blue"],
+    )
+    assert _resolve_recommended(opts, "blue") == "blue"
+    assert _resolve_recommended(opts, "") == ""
+    assert _resolve_recommended(opts, "missing") == ""
+    assert _resolve_recommended([{"label": "blue (Recommended)"}], "blue") == "blue (Recommended)"
+    assert _coerce_timeout(None) is None
+    assert _coerce_timeout("soon") is None
+    assert _coerce_timeout(True) is None
+    assert _coerce_timeout("30") == 30.0
+    assert _coerce_timeout(0) == 0.0
 
-def test_question_interactive_picker_uses_arrows_and_skips_on_cancel() -> None:
+    recommended = MagicMock()
+    recommended.input.side_effect = [""]
+    out = ask_user_questions(
+        recommended, [{"question": "Color?", "options": opts, "recommended": "blue"}]
+    )
+    assert out is not None and out[0] == {"answer": "blue", "options": ["blue"]}
+    printed = " ".join(str(c.args[0]) for c in recommended.print.call_args_list)
+    assert "blue (Recommended)" in printed
+    assert "blue (Recommended) (Recommended)" not in printed
+
+    footer = MagicMock()
+    footer.input.side_effect = ["1", "1"]
+    ask_user_questions(
+        footer,
+        [
+            {"question": "A?", "options": opts, "multiple": False},
+            {"question": "B?", "options": opts, "multiple": True},
+        ],
+    )
+    prompts = [c.args[0] for c in footer.input.call_args_list]
+    assert "number · text · empty skip" in prompts[0]
+    assert "comma for several" not in prompts[0]
+    assert "comma for several" in prompts[1]
+
+    timed = MagicMock()
+    timed.input.side_effect = ["1"]
+    ask_user_questions(
+        timed, [{"question": "A?", "options": opts, "recommended": "red", "timeout": 30}]
+    )
+    assert "auto-picks red in 30s" in timed.input.call_args_list[0].args[0]
+
+
+def test_question_picker_and_timeout_paths(monkeypatch) -> None:
+    from types import SimpleNamespace
     from unittest.mock import patch
 
     from kite.ui.question import ask_user_questions
@@ -563,75 +616,6 @@ def test_question_interactive_picker_uses_arrows_and_skips_on_cancel() -> None:
         )
     assert out is not None and out[0]["answer"] == "red"
 
-
-def test_question_recommended_enter_and_helpers() -> None:
-    from kite.ui.question import (
-        _coerce_timeout,
-        _interpret_answer,
-        _resolve_recommended,
-        ask_user_questions,
-    )
-
-    opts = [{"label": "red"}, {"label": "blue"}]
-    assert _interpret_answer("", opts, multiple=False, recommended="blue") == ("blue", ["blue"])
-    assert _interpret_answer("", opts, multiple=False, recommended="missing") == ("", [])
-    assert _interpret_answer("blue (Recommended)", opts, multiple=False, recommended="blue") == (
-        "blue",
-        ["blue"],
-    )
-    assert _resolve_recommended(opts, "blue") == "blue"
-    assert _resolve_recommended(opts, "") == ""
-    assert _resolve_recommended(opts, "missing") == ""
-    assert _resolve_recommended([{"label": "blue (Recommended)"}], "blue") == "blue (Recommended)"
-    assert _coerce_timeout(None) is None
-    assert _coerce_timeout("soon") is None
-    assert _coerce_timeout(True) is None
-    assert _coerce_timeout("30") == 30.0
-    assert _coerce_timeout(0) == 0.0
-
-    console = MagicMock()
-    console.input.side_effect = [""]
-    out = ask_user_questions(
-        console, [{"question": "Color?", "options": opts, "recommended": "blue"}]
-    )
-    assert out is not None and out[0] == {"answer": "blue", "options": ["blue"]}
-    printed = " ".join(str(c.args[0]) for c in console.print.call_args_list)
-    assert "blue (Recommended)" in printed
-    assert "blue (Recommended) (Recommended)" not in printed
-
-
-def test_question_footer_hint_and_timeout_prompt() -> None:
-    from kite.ui.question import ask_user_questions
-
-    opts = [{"label": "x"}, {"label": "y"}]
-    console = MagicMock()
-    console.input.side_effect = ["1", "1"]
-    ask_user_questions(
-        console,
-        [
-            {"question": "A?", "options": opts, "multiple": False},
-            {"question": "B?", "options": opts, "multiple": True},
-        ],
-    )
-    prompts = [c.args[0] for c in console.input.call_args_list]
-    assert "number · text · empty skip" in prompts[0]
-    assert "comma for several" not in prompts[0]
-    assert "comma for several" in prompts[1]
-
-    timed = MagicMock()
-    timed.input.side_effect = ["1"]
-    ask_user_questions(
-        timed, [{"question": "A?", "options": opts, "recommended": "x", "timeout": 30}]
-    )
-    assert "auto-picks x in 30s" in timed.input.call_args_list[0].args[0]
-
-
-def test_question_expired_timeout_never_blocks(monkeypatch) -> None:
-    from types import SimpleNamespace
-
-    from kite.ui.question import ask_user_questions
-
-    opts = [{"label": "red"}, {"label": "blue"}]
     frozen = MagicMock()
     out = ask_user_questions(
         frozen, [{"question": "Color?", "options": opts, "recommended": "red", "timeout": 0}]

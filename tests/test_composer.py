@@ -69,6 +69,9 @@ def test_composer_interrupt_kinds_queue_and_eof(monkeypatch) -> None:
     assert drained == [("now", True), ("later", False)]
     assert len(q) == 0
 
+    fallback = read_repl_line(session=None, state=SessionUiState(), fallback=lambda: "   ")
+    assert fallback.kind == "empty"
+
 
 def test_busy_enter_steer_queue_classification(chat, monkeypatch) -> None:
     chat._queue_message("later")

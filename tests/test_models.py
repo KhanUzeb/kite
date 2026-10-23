@@ -158,7 +158,7 @@ def test_temperature_and_reasoning_error_fallbacks() -> None:
     assert fast._drop_reasoning is False
 
 
-def test_stream_stall_falls_back_to_blocking() -> None:
+def test_stream_stall_falls_back_only_before_partial_output() -> None:
     model = _model()
     calls: list[str] = []
 
@@ -175,6 +175,17 @@ def test_stream_stall_falls_back_to_blocking() -> None:
     model._query_blocking = blocking  # type: ignore[method-assign]
     assert model._query_stream_with_fallback([]) == {"role": "assistant", "content": "done"}
     assert calls == ["stream", "blocking"]
+
+    partial = _model()
+    partial._last_stream_emitted_answer = True
+    partial._query_stream = lambda *_a, **_k: (_ for _ in ()).throw(
+        StreamStalledError("stream stalled after partial answer")
+    )
+    partial._query_blocking = lambda *_a, **_k: pytest.fail(
+        "blocking fallback would append a duplicate answer"
+    )
+    with pytest.raises(StreamStalledError, match="partial answer"):
+        partial._query_stream_with_fallback([])
 
 
 def test_stream_open_timeout_does_not_start_another_30_second_request() -> None:
@@ -194,22 +205,6 @@ def test_stream_open_timeout_does_not_start_another_30_second_request() -> None:
     with pytest.raises(TimeoutError, match="after 180s"):
         model._query_stream_with_fallback([])
     assert calls == ["stream"]
-
-
-def test_partial_stream_stall_does_not_append_a_second_answer() -> None:
-    model = _model()
-    model._last_stream_emitted_answer = True
-
-    def stalled(_messages: list[dict], *, overrides=None) -> dict:
-        raise StreamStalledError("stream stalled after partial answer")
-
-    def blocking(*_args, **_kwargs) -> dict:
-        pytest.fail("blocking fallback would append a duplicate answer")
-
-    model._query_stream = stalled  # type: ignore[method-assign]
-    model._query_blocking = blocking  # type: ignore[method-assign]
-    with pytest.raises(StreamStalledError, match="partial answer"):
-        model._query_stream_with_fallback([])
 
 
 def test_stream_iterator_closes_transport_when_poll_aborts(monkeypatch: pytest.MonkeyPatch) -> None:

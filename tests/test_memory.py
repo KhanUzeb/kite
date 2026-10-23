@@ -80,11 +80,16 @@ def test_session_persistence_modes(kite_home) -> None:
     full = create_session(task="full", cwd="/tmp", provider="p", model="m")
     full.append({"role": "user", "content": "Bearer FULLMODE-SECRET"})
     assert "FULLMODE-SECRET" in full.path.read_text(encoding="utf-8")
-    cfg.session_persistence = "disabled"
-    cfg.save()
+    from kite.memory.session_policy import persistence_summary, set_persistence_mode
+
+    assert set_persistence_mode("disabled") == "disabled"
+    assert UserConfig.load().session_persistence == "disabled"
+    summary = persistence_summary()
+    assert summary["session_persistence"] == "disabled" and "ssrf" in summary
     off = create_session(task="off", cwd="/tmp", provider="p", model="m")
     off.append({"role": "user", "content": "hello"})
     assert not off.path.is_file() or off.path.stat().st_size == 0
+    set_persistence_mode("redacted")
 
 
 def test_session_format_search_and_resume(kite_home, tmp_path) -> None:

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from kite.cli.apply_cmd import _path_inside_workspace, apply_unified_diff
-from kite.cli.slash import CommandIndex, help_text
+from kite.cli.slash import CommandIndex, help_text, resolve_slash
 from kite.tasks import (
     HeadlessTask,
     load_tasks_text,
@@ -292,7 +292,9 @@ def test_slash_help_and_legacy_routing(workspace) -> None:
     session = ChatSession.__new__(ChatSession)
     cmd, arg = session._apply_legacy_slash("model", "groq", "select")
     assert cmd == "model" and arg == "select groq"
-    text = help_text(CommandIndex.load(workspace))
+    index = CommandIndex.load(workspace)
+    assert resolve_slash("/exit", index).command == "quit"
+    text = help_text(index)
     assert "/plan" in text and "More: /help all" in text
     text_all = help_text(CommandIndex.load(workspace), all=True)
     assert "session" in text_all and "/select" in text_all

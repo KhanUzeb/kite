@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from io import StringIO
 from pathlib import Path
@@ -14,10 +13,7 @@ from rich.console import Console
 
 from kite.agent.events import Event
 from kite.agent.mode import AgentMode, ApprovalMode
-from kite.agent.queue import RunMessageQueue
-from kite.application.policy import ApprovalCoordinator
 from kite.config.user import UserConfig
-from kite.memory.session_policy import persistence_summary, set_persistence_mode
 from kite.ui.attach import (
     Attachment,
     clipboard_install_hint,
@@ -26,7 +22,7 @@ from kite.ui.attach import (
     read_clipboard_text,
     user_content_with_attachments,
 )
-from kite.ui.complete import make_repl_key_bindings, read_repl_line
+from kite.ui.complete import make_repl_key_bindings
 from kite.ui.diff import (
     PREVIEW_NOT_APPLIED,
     count_diff_lines,
@@ -291,40 +287,6 @@ def test_theme_palettes_and_status() -> None:
     assert "/kill all" in render_empty("no jobs", hint="/kill all").plain
 
 
-def test_composer_interrupt_kinds_aliases_and_empty(monkeypatch, workspace, kite_home) -> None:
-    monkeypatch.setattr("prompt_toolkit.patch_stdout.patch_stdout", lambda raw=False: nullcontext())
-    session = MagicMock()
-    session.prompt.side_effect = KeyboardInterrupt()
-    session.default_buffer.text = ""
-    assert read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None).kind == "empty"
-    session.default_buffer.text = "use grep not find"
-    steered = read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None, busy=True)
-    assert steered.kind == "steer" and steered.text == "use grep not find"
-    session.default_buffer.text = ""
-    assert read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None, busy=True).kind == "stop"
-    session.prompt.side_effect = EOFError()
-    assert read_repl_line(session=session, state=SessionUiState(), fallback=lambda: None).kind == "eof"
-    q = RunMessageQueue()
-    q.enqueue("later")
-    q.steer("now")
-    assert q.counts() == (1, 1) and q.drain_all() == [("now", True), ("later", False)]
-    assert set_persistence_mode("disabled") == "disabled"
-    assert UserConfig.load().session_persistence == "disabled"
-    set_persistence_mode("redacted")
-    summary = persistence_summary()
-    assert "ssrf" in summary and summary["session_persistence"] == "redacted"
-
-    from kite.cli.slash import CommandIndex, resolve_slash
-    from kite.ui.complete import classify_busy_line
-
-    parsed = resolve_slash("/exit", CommandIndex.load(workspace))
-    assert parsed.command == "quit"
-    assert classify_busy_line("/exit").kind == "eof"
-
-    got = read_repl_line(session=None, state=SessionUiState(), fallback=lambda: "   ")
-    assert got.kind == "empty"
-
-
 def test_live_streaming_paints_once_and_interrupt_is_quiet() -> None:
     """The turn must look alive, and never repeat itself."""
     buf = StringIO()
@@ -436,11 +398,6 @@ def test_repl_lazy_slash_and_jobs(monkeypatch, tmp_path, kite_home) -> None:
     live = ChatSession(cwd=str(tmp_path))
     live._ensure_model_resolved()
     assert live._make_harness() is live._make_harness()
-    repl = ChatSession(cwd=str(tmp_path), provider="fake", model="fake")
-    repl._approval_coordinator = ApprovalCoordinator(interactive=True)
-    repl._approval_coordinator._pending = MagicMock(tool="bash", request_id="r1", mandatory=True)
-    repl._poll_pending_approval()
-    assert repl.state.awaiting_approval == "bash"
 
 
 def test_attach_clipboard_and_diff_helpers(tmp_path, kite_home, monkeypatch) -> None:
@@ -512,7 +469,7 @@ def test_preview_builders_carry_not_applied_banner(tmp_path) -> None:
     assert PREVIEW_NOT_APPLIED in rendered
 
 
-def test_render_diff_shows_old_new_line_numbers() -> None:
+def test_render_diff_line_numbers_and_word_highlights() -> None:
     from kite.ui.diff import _line_numbers
 
     diff = make_unified_diff(
@@ -535,8 +492,6 @@ def test_render_diff_shows_old_new_line_numbers() -> None:
         (11, 21),
     ]
 
-
-def test_render_diff_word_highlights_mixed_indent() -> None:
     diff = make_unified_diff("x.py", "\tfoo bar\n", "  foo BAZ\n")
     body = render_diff(diff)
     plain = body.plain
