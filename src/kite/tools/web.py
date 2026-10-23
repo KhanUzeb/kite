@@ -283,14 +283,6 @@ def _format_json_text(raw: bytes, *, max_chars: int) -> str:
     return text
 
 
-def _truncate_middle(text: str, max_chars: int) -> tuple[str, bool]:
-    if len(text) <= max_chars:
-        return text, False
-    head = int(max_chars * 0.65)
-    tail = max_chars - head - 24
-    return text[:head] + "\n…[truncated]…\n" + text[-tail:], True
-
-
 def _result_key(url: str) -> str:
     return urlparse(url)._replace(fragment="").geturl()
 

@@ -47,16 +47,6 @@ def list_compaction_models(config: UserConfig | None = None) -> list[RemoteModel
     return rows
 
 
-def pick_openrouter_free(config: UserConfig | None = None) -> str | None:
-    """Return a live free model id (no `openrouter/` prefix), or a user override."""
-    cfg = config or UserConfig.load()
-    override = getattr(cfg, "compaction_model", None) or ""
-    if override:
-        return str(override).removeprefix("openrouter/")
-    models = list_compaction_models(cfg)
-    return models[0].id if models else None
-
-
 def _try_complete(resolved: Any, transcript: str) -> str | None:
     kwargs: dict[str, Any] = {
         **resolved.litellm_kwargs(),

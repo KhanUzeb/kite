@@ -117,7 +117,3 @@ def normalize_effort(provider: str | None, effort: str) -> str:
         if token == allowed.lower():
             return allowed
     return token
-
-
-def default_effort_for(provider: str | None) -> str:
-    return get_profile(provider).default_effort

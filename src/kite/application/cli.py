@@ -52,16 +52,6 @@ class CliResult:
         return CliResult(False, ExitCode.FAILURE, result.status, result.final_message or stop, run_id, result.legacy)
 
 
-def format_cli_output(result: CliResult, *, json_mode: bool = False) -> str:
-    if json_mode:
-        return result.to_json()
-    prefix = "OK" if result.ok else "ERROR"
-    return f"{prefix}: {result.message}"
-
-
-
-
-
 def build_run_spec(harness: Harness, task: str) -> RunSpec:
     """Build a canonical RunSpec from a wired harness and task string."""
     return run_spec_from_harness_config(harness.config, task)

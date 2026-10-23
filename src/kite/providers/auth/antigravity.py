@@ -79,10 +79,6 @@ def _read_marker() -> dict:
         return {}
 
 
-def _link_marked() -> bool:
-    return bool(_read_marker().get("linked"))
-
-
 def _verification_fresh(payload: dict) -> bool:
     import time
 

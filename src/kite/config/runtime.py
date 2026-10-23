@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tomllib
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -123,9 +123,6 @@ class AgentRuntimeConfig:
     provider_max_retries: int = 4
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     auto_venv: bool = True
-
-    def with_overrides(self, **kwargs: Any) -> AgentRuntimeConfig:
-        return replace(self, **{k: v for k, v in kwargs.items() if v is not None})
 
 
 def _from_dict(data: dict[str, Any]) -> AgentRuntimeConfig:

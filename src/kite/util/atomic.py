@@ -19,17 +19,3 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None
                 tmp.unlink()
             except OSError:
                 pass
-
-
-def atomic_write_bytes(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    try:
-        tmp.write_bytes(data)
-        tmp.replace(path)
-    finally:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass

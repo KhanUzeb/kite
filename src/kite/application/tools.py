@@ -75,40 +75,6 @@ class ToolResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-# Static scheduling hints — PolicyEngine.authorize remains authoritative.
-TOOL_SIDE_EFFECTS: dict[str, tuple[SideEffect, ...]] = {
-    "read": ("workspace_read",),
-    "grep": ("workspace_read",),
-    "glob": ("workspace_read",),
-    "ls": ("workspace_read",),
-    "write": ("workspace_write",),
-    "edit": ("workspace_write",),
-    "apply_patch": ("workspace_write",),
-    "bash": ("long_running", "workspace_write"),
-    "web_search": ("network", "workspace_read"),
-    "web_fetch": ("network", "workspace_read"),
-    "task": ("nested_agent", "long_running"),
-    "subagent": ("nested_agent", "long_running"),
-    "memory": ("workspace_read",),
-    "skill": ("workspace_read",),
-    "memory_write": ("durable_memory",),
-}
-
-
-def side_effects_for(tool_name: str) -> tuple[SideEffect, ...]:
-    """Default effects by tool name — use derive_effects(call) for authorization."""
-    return TOOL_SIDE_EFFECTS.get(tool_name, ("workspace_read", "workspace_write"))
-
-
-
-_LEGACY_EFFECT_MAP: dict[str, SideEffect] = {
-    "read": "workspace_read",
-    "process_control": "long_running",
-    "cost_bearing": "network",
-    "external_write": "destructive",
-    "sensitive_read": "durable_memory",
-}
-
 _DESTRUCTIVE_BASH = re.compile(
     r"(?i)\b("
     r"rm\b|rmdir\b|del\b|remove-item\b|erase\b"
@@ -134,13 +100,6 @@ _READ_ONLY_BASH = re.compile(
     r")\b"
 )
 _LONG_RUNNING = re.compile(r"(?i)\b(sleep\b|tail\s+-f|watch\b|while\s+true)\b")
-
-
-def normalize_legacy_effect(effect: str) -> SideEffect:
-    """Map serialized legacy effect names to canonical values."""
-    if effect in _LEGACY_EFFECT_MAP:
-        return _LEGACY_EFFECT_MAP[effect]
-    return effect  # type: ignore[return-value]
 
 
 def _bash_effects(command: str) -> set[SideEffect]:

@@ -873,10 +873,6 @@ def terminal_is_light() -> bool:
     return False
 
 
-def current_theme() -> str:
-    return _prefs.theme
-
-
 def current_font() -> str:
     return _prefs.font
 
@@ -923,10 +919,6 @@ def user_surface_styles(name: str | None = None) -> tuple[str, str, str]:
 
 def rich_theme(name: str | None = None) -> Theme:
     return Theme(dict(palette(name)["styles"]))
-
-
-def is_dark(name: str | None = None) -> bool:
-    return bool(palette(name)["dark"])
 
 
 def syntax_name(name: str | None = None) -> str:
@@ -1069,14 +1061,6 @@ def ensure_prefs() -> UiPrefs:
     _apply_pref(theme or "auto", _normalize_theme, "theme")
     _apply_pref(font or "unicode", _normalize_font, "font")
     return _prefs
-
-
-def reset_prefs(*, theme: str = "auto", font: str = "unicode") -> None:
-    """Tests: pin prefs without touching disk."""
-    global _loaded
-    _prefs.theme = theme
-    _prefs.font = font
-    _loaded = True
 
 
 def _save_prefs() -> None:

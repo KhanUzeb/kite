@@ -4055,4 +4055,3 @@ class ChatSession:
                 continue
             self.display.print_user_turn(str(line))
             self._run_task(line)
-        return 0

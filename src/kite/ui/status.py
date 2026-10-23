@@ -6,7 +6,7 @@ import shutil
 
 from rich.text import Text
 
-from kite.agent.mode import AgentMode, ApprovalMode, approval_display_name
+from kite.agent.mode import AgentMode, approval_display_name
 from kite.ui.state import SessionUiState
 from kite.ui.style import SYMBOL_SEP
 from kite.ui.theme import glyph
@@ -47,13 +47,6 @@ def cache_meter(ratio: float | None, *, width: int = _CONTEXT_BAR_WIDTH) -> str:
     filled = int(round(clamped * width))
     bar = glyph("bar_fill") * filled + glyph("bar_empty") * (width - filled)
     return f"cache {bar} {clamped:.0%}"
-
-
-def format_session_row(meta, *, current: str | None = None) -> str:
-    """One-line session picker label (date, title, model, id)."""
-    from kite.memory.session_format import format_session_picker_label
-
-    return format_session_picker_label(meta, current=current)
 
 
 def active_task_count(state: SessionUiState) -> int:
@@ -380,14 +373,6 @@ def render_status(state: SessionUiState) -> Text:
         line.append(_sep_join(), style="kite.muted")
         line.append(text, style=style)
     return line
-
-
-def approval_style(state: SessionUiState) -> str:
-    if state.approval in {ApprovalMode.APPROVE, ApprovalMode.YOLO}:
-        return "kite.pending" if state.approval is ApprovalMode.APPROVE else "kite.build"
-    if state.approval is ApprovalMode.READONLY:
-        return "kite.muted"
-    return "kite.muted"
 
 
 def mode_style(state: SessionUiState) -> str:

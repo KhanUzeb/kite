@@ -179,14 +179,3 @@ def agent_model_warning(
         return f"Model '{name}' reports no tool support in provider metadata."
     # Unknown or supported — no name-based allowlist; any provider/model may work.
     return None
-
-
-def platform_shell_hint() -> str:
-    import sys
-
-    if sys.platform == "win32":
-        return (
-            "Windows: prefer PowerShell/cmd, `rg` if installed, and Kite tools over Unix-only "
-            "assumptions (`sed`, `grep` without path). Use `dir`, `Get-Content`, or `type` when needed."
-        )
-    return "POSIX: prefer `rg`, `head`, `sed -n`, and Kite tools for inspection."

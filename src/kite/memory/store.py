@@ -100,9 +100,6 @@ class MemoryStore:
     def user_notes_path(self) -> Path:
         return self.semantic.user_path()
 
-    def project_notes_path(self) -> Path:
-        return self.semantic.project_path()
-
     def user_markdown_path(self) -> Path:
         return self.semantic.user_path()
 
