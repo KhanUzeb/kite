@@ -10,13 +10,22 @@ from pathlib import Path
 import tomli_w
 
 _ensured: set[str] = set()
+# KITE_HOME overrides keep their own resolved form: every config/session read
+# calls kite_home(), and Path.resolve() costs a filesystem round-trip on each
+# call when the override is set (fixtures, portable installs, server runs).
+_resolved_override: tuple[str, Path] | None = None
 
 
 def kite_home() -> Path:
     override = os.getenv("KITE_HOME")
-    if override:
-        return Path(override).expanduser().resolve()
-    return Path.home() / ".kite"
+    if not override:
+        return Path.home() / ".kite"
+    global _resolved_override
+    if _resolved_override is not None and _resolved_override[0] == override:
+        return _resolved_override[1]
+    home = Path(override).expanduser().resolve()
+    _resolved_override = (override, home)
+    return home
 
 
 def ensure_home() -> Path:

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from kite.config.user import kite_home
 from kite.context import discovery
 from kite.context.project_init import (
     _BRANCH_CACHE,
@@ -49,6 +50,21 @@ def _git_repo(root: Path) -> Path:
         capture_output=True,
     )
     return root
+
+
+def test_kite_home_override_is_cached_but_tracks_the_env(monkeypatch, tmp_path: Path) -> None:
+    """Resolving an override on every config read is filesystem work per call.
+
+    The resolved path is cached by raw override value, so it must still switch
+    when a fixture/exporter changes ``KITE_HOME``.
+    """
+    first, second = tmp_path / "first", tmp_path / "second"
+    monkeypatch.setenv("KITE_HOME", str(first))
+    resolved = kite_home()
+    assert resolved == first.resolve() and kite_home() is resolved
+
+    monkeypatch.setenv("KITE_HOME", str(second))
+    assert kite_home() == second.resolve()
 
 
 def test_rel_posix_matches_relative_to(workspace: Path) -> None:
