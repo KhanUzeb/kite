@@ -224,7 +224,7 @@ pytest                    # guardrails, agent, sessions, git-stat diffs, skills,
 pytest -v                 # verbose
 ```
 
-Coverage is a compact ~210-test suite: guardrails/SSRF, approval, agent loop, sessions, verification, orchestrator, credentials/BYOS, CLI/REPL, and `PolicyEngine`/`ToolExecutor`. It is not a full integration suite against live LLM APIs. See `tests/README.md`.
+Coverage is a focused behavioral suite: guardrails/SSRF, approval, agent loop, sessions, verification, orchestrator, credentials/BYOS, CLI/REPL, and `PolicyEngine`/`ToolExecutor`. It is not a full integration suite against live LLM APIs. See `tests/README.md`.
 
 ```bash
 python scripts/sync_version.py --check

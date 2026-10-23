@@ -5,7 +5,8 @@
 ## Highlights
 
 A performance and cleanup release. Session tool events no longer rewrite the
-metadata sidecar on every append, `KITE_HOME` resolution is cached, and roughly
+metadata sidecar on every append, slash/plugin/skill machinery loads only when
+needed, `KITE_HOME` and config reads avoid redundant filesystem work, and roughly
 1,000 lines of unwired modules, unused helpers, and misnamed tests are gone.
 CLI and REPL behavior is unchanged.
 
@@ -19,11 +20,26 @@ CLI and REPL behavior is unchanged.
   sidecar.
 - `record_event` resolves the persistence policy once per event and reuses it for
   redaction instead of re-reading `config.toml` for each row.
-- A `KITE_HOME` override caches its resolved path, avoiding a filesystem
-  round-trip on every config and session read.
+- Windows appends skip `Path.chmod(600)`: Windows only maps that to the read-only
+  attribute, while the inherited user-profile ACL already restricts the file.
+- A `KITE_HOME` override caches its resolved path, and `UserConfig.load` uses a
+  single stat rather than checking `is_file()` and then stat-ing again.
 
-Illustrative local measurement for the append path (2,500 events, same machine,
-not a portable timing guarantee): ~7.3 ms/event before, ~1.1 ms/event after.
+Illustrative local measurement for the append path (same machine, not a portable
+timing guarantee): ~7.3 ms/event before this release, ~0.95 ms/event after.
+
+## Startup and system performance
+
+- Plugin, skill, and markdown-command loaders are imported on demand instead of
+  at module import. The slash module no longer pulls in Rich/theme setup when a
+  plain task is about to run.
+- Plain REPL input is rejected before building the full slash index; only input
+  that starts with `/` pays for plugin/skill/command discovery.
+- Plain `kite run` tasks skip the slash module entirely; only prompts that start
+  with `/` import it.
+- Illustrative local measurements: cold `import kite.ui.repl` ~655 ms →
+  ~590-630 ms; isolated `import kite.cli.slash` ~333 ms → ~110 ms. Direct
+  verbatim commands on a quiet machine are the only reliable comparison.
 
 ## Cleanup
 
@@ -34,6 +50,9 @@ not a portable timing guarantee): ~7.3 ms/event before, ~1.1 ms/event after.
 - Renamed test bundles that said "token efficiency" while covering live
   reasoning/cache, registry, read, spill, and error behavior; tests for removed
   modules were deleted.
+- Consolidated duplicate interrupt/persistence assertions and merged the
+  question-tool, stream-stall, and diff-render tests into cohesive behavioral
+  cases. Collected cases: 465 → 458 (455 passed, 3 platform skips on Windows).
 
 ## Upgrade
 

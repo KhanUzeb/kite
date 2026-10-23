@@ -30,10 +30,12 @@ Representative before/after measurements from controlled optimization runs (not 
 ## [1.0.9] - 2026-10-23
 
 ### Changed
-- Durable session events append to the transcript only; the sidecar's atomic write + fsync per tool event was unnecessary because events change neither runtime identity nor message count, and transcript mtime already carries recency. Illustrative local run: session event appends ~7.3 → ~1.1 ms/event.
+- Durable session events append to the transcript only; the sidecar's atomic write + fsync per tool event was unnecessary because events change neither runtime identity nor message count, and transcript mtime already carries recency. Illustrative local run: session event appends ~7.3 → ~0.95 ms/event.
 - `record_event` resolves the persistence policy once per event and reuses it for redaction.
-- `KITE_HOME` overrides cache their resolved path instead of re-running `Path.resolve()` on every config/session read.
-- Test suite counts are lower after removing tests for unwired modules; remaining suites are named for the live behavior they exercise.
+- `KITE_HOME` overrides cache their resolved path, and `UserConfig.load` uses one stat instead of two, avoiding repeated filesystem round-trips on config/session reads.
+- REPL and headless startup load plugin, skill, and markdown-command machinery only when a slash command needs it. Plain REPL input no longer builds the full slash index, and plain `kite run` tasks skip the slash module entirely. Cold `import kite.ui.repl` fell from ~655 ms to ~590-630 ms locally; isolated `import kite.cli.slash` fell from ~333 ms to ~110 ms.
+- Windows session appends skip `chmod` (it only toggles the read-only bit there; inherited profile ACLs already restrict the file). Combined with the sidecar change, the local append path is ~7.3 → ~0.95 ms/event.
+- Test suite consolidated duplicate composer/persistence coverage and merged the question-tool, stream-stall, and diff-render cases into cohesive behavioral tests. Collected cases: 465 → 458.
 
 ### Removed
 - Unwired application modules (`application/context.py`, `application/persistence.py`, `application/ui.py`, `application/event_payloads.py`), token-report/routing/tool-tier experiments, and dead UI wrappers.
