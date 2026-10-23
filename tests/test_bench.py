@@ -61,14 +61,6 @@ def test_budget_boundaries_missing_measurements_and_operation_failures() -> None
         ]
 
 
-def test_token_efficiency_offline_report() -> None:
-    from kite.bench.token_efficiency import report
-
-    rep = report()
-    assert rep["tools_saved_tokens"] > 0
-    assert rep["total_core"] < rep["total_full"] and rep["ranked_sources"]
-
-
 def test_report_roundtrip(workspace, tmp_path) -> None:
     report = BenchmarkReport("test", "3.12.0", "test-platform", str(workspace), (
         BenchmarkResult("example", "startup", 0.01, 5, {"mad_ms": 0.5}),

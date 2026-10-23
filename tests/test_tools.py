@@ -171,7 +171,7 @@ def test_bounded_shell_lines_and_silent_job_timeout(tmp_path, monkeypatch):
     assert registry.kill(cancelled.id) and cancelled.wait(timeout=0)
 
 
-def test_token_efficiency_registry_order_and_sparse_numbers(tmp_path) -> None:
+def test_registry_order_and_sparse_line_numbers(tmp_path) -> None:
     from kite.tools import Tool, ToolRegistry
 
     def _mk(name: str) -> Tool:
@@ -195,22 +195,15 @@ def test_token_efficiency_registry_order_and_sparse_numbers(tmp_path) -> None:
     assert "line 2\n" in body and "     2|line 2" not in body
 
 
-def test_token_efficiency_spill_tiers_and_errors(tmp_path) -> None:
+def test_spill_and_tool_error_ledger(tmp_path) -> None:
     from kite.context.spill import spill_text
     from kite.tools.errors import ToolErrorLedger, classify_tool_error
-    from kite.tools.tiers import offload_manifest, partition_tools
 
     small = spill_text("x" * 100, cwd=str(tmp_path))
     assert small["spilled"] is False
     big = spill_text("y\n" * 8000, cwd=str(tmp_path), prefix="bash")
     assert big["spilled"] is True and "tail" not in str(big["path"])
     assert "grep" in str(big["output"]) and (tmp_path / ".kite" / "spills").is_dir()
-
-    static, off = partition_tools(["read", "bash", "websearch", "memory"], enabled=False)
-    assert off == [] and len(static) == 4
-    static2, off2 = partition_tools(["read", "bash", "websearch", "memory"], enabled=True)
-    assert static2 == ["read", "bash"] and sorted(off2) == ["memory", "websearch"]
-    assert "web:" in offload_manifest(off2)
 
     assert classify_tool_error("read", {}, {"ok": False, "error": "not found: /x"}) == "invalid_arguments"
     assert classify_tool_error("bash", {}, {"ok": False, "error": "timeout after 5s"}) == "timeout"

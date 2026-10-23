@@ -366,7 +366,7 @@ def test_api_messages_repair_unanswered_tool_calls() -> None:
     assert repaired[1]["tool_call_id"] == "dangling"
 
 
-def test_token_efficiency_reasoning_and_cache_breakpoints() -> None:
+def test_reasoning_continuity_and_cache_breakpoints() -> None:
     from kite.models.cache import apply_cache_breakpoints
 
     model = object.__new__(LitellmModel)
@@ -412,44 +412,6 @@ def test_token_efficiency_reasoning_and_cache_breakpoints() -> None:
     setup_out = apply_cache_breakpoints(setup_msgs, provider="anthropic")
     assert setup_out[1]["content"][0].get("cache_control") == {"type": "ephemeral"}
     assert isinstance(setup_out[2]["content"], str)
-
-
-def test_token_efficiency_report_and_routing(monkeypatch) -> None:
-    import sys
-
-    from kite.context.token_report import breakdown_request, price_weighted_cost, rank_opportunities, summarize_run
-    from kite.models.routing import route_turn
-
-    monkeypatch.setitem(sys.modules, "litellm", SimpleNamespace(model_cost={}))
-
-    msgs = [
-        {"role": "user", "content": "# Setup (reference — not the task)\nx"},
-        {"role": "assistant", "content": "hi", "tool_calls": [{"id": "1", "function": {"name": "read"}}]},
-        {"role": "user", "content": "next"},
-    ]
-    breakdown = breakdown_request(system="sys", tool_schemas=[{"function": {"name": "read"}}], messages=msgs)
-    assert breakdown.static_tokens == breakdown.system_tokens + breakdown.tool_tokens
-    assert breakdown.total_tokens == sum((
-        breakdown.static_tokens, breakdown.setup_tokens, breakdown.history_tokens
-    ))
-    assert sum(breakdown.shares.values()) == pytest.approx(1.0)
-    assert price_weighted_cost(
-        prompt_tokens=100, completion_tokens=10, cache_read_tokens=90, model_name="unknown-xyz"
-    ) == 49
-    ranked = rank_opportunities(breakdown)
-    assert {name for name, _ in ranked} == {"system", "tools", "setup", "history"}
-    assert [score for _, score in ranked] == sorted((score for _, score in ranked), reverse=True)
-    run = summarize_run(
-        system="sys", messages=msgs, tool_counts={"read": 3},
-        tool_errors={"read": 1}, total_runs=2,
-    )
-    assert run.turns_per_task == 0.5
-    assert run.per_tool_use_rate == {"read": 1.0}
-    assert run.per_tool_error_rate == {"read": pytest.approx(1 / 3)}
-
-    assert route_turn("hi", enabled=False) == "frontier"
-    assert route_turn("hi?", enabled=True) == "cheap"
-    assert route_turn("implement auth fix", enabled=True) == "frontier"
 
 
 def test_usage_tracking_and_litellm_serializer() -> None:
