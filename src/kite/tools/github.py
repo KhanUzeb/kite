@@ -92,6 +92,20 @@ def _run_gh(args: list[str], *, timeout: int = 30) -> dict[str, Any]:
         return {"ok": False, "error": str(e), "output": str(e)}
 
 
+def _gh_view_args(kind: str, number: object, repo: object, fields: str) -> list[str]:
+    cmd = [kind, "view", str(number), "--json", fields]
+    if repo:
+        cmd.extend(["--repo", str(repo)])
+    return cmd
+
+
+def _gh_list_args(kind: str, limit: object, repo: object, fields: str) -> list[str]:
+    cmd = [kind, "list", "--limit", str(limit), "--json", fields]
+    if repo:
+        cmd.extend(["--repo", str(repo)])
+    return cmd
+
+
 def make_github_tools(*, enabled: bool = True) -> list[Tool]:
     if not enabled:
         return []
@@ -100,47 +114,36 @@ def make_github_tools(*, enabled: bool = True) -> list[Tool]:
         num = str(args.get("number") or args.get("issue") or "")
         if not num:
             return {"ok": False, "error": "number required", "output": "number required"}
-        repo = args.get("repo")
-        cmd = ["issue", "view", num, "--json", "title,body,state,labels,url,comments"]
-        if repo:
-            cmd.extend(["--repo", str(repo)])
-        return _run_gh(cmd)
+        return _run_gh(_gh_view_args("issue", num, args.get("repo"), "title,body,state,labels,url,comments"))
 
     def pr_view(args: dict[str, Any]) -> dict[str, Any]:
         num = str(args.get("number") or args.get("pr") or "")
         if not num:
             return {"ok": False, "error": "number required", "output": "number required"}
-        repo = args.get("repo")
-        cmd = ["pr", "view", num, "--json", "title,body,state,url,commits,files,reviews"]
-        if repo:
-            cmd.extend(["--repo", str(repo)])
-        return _run_gh(cmd)
+        return _run_gh(_gh_view_args("pr", num, args.get("repo"), "title,body,state,url,commits,files,reviews"))
 
     def pr_list(args: dict[str, Any]) -> dict[str, Any]:
-        limit = int(args.get("limit") or 10)
-        repo = args.get("repo")
-        cmd = ["pr", "list", "--limit", str(limit), "--json", "number,title,state,url,headRefName"]
-        if repo:
-            cmd.extend(["--repo", str(repo)])
-        return _run_gh(cmd)
+        return _run_gh(
+            _gh_list_args(
+                "pr", int(args.get("limit") or 10), args.get("repo"), "number,title,state,url,headRefName"
+            )
+        )
 
     def run_list(args: dict[str, Any]) -> dict[str, Any]:
-        limit = int(args.get("limit") or 5)
-        repo = args.get("repo")
-        cmd = ["run", "list", "--limit", str(limit), "--json", "databaseId,status,conclusion,name,url,headBranch"]
-        if repo:
-            cmd.extend(["--repo", str(repo)])
-        return _run_gh(cmd)
+        return _run_gh(
+            _gh_list_args(
+                "run",
+                int(args.get("limit") or 5),
+                args.get("repo"),
+                "databaseId,status,conclusion,name,url,headBranch",
+            )
+        )
 
     def run_view(args: dict[str, Any]) -> dict[str, Any]:
         run_id = str(args.get("run_id") or args.get("id") or "")
         if not run_id:
             return {"ok": False, "error": "run_id required", "output": "run_id required"}
-        repo = args.get("repo")
-        cmd = ["run", "view", run_id, "--json", "status,conclusion,jobs,url"]
-        if repo:
-            cmd.extend(["--repo", str(repo)])
-        return _run_gh(cmd)
+        return _run_gh(_gh_view_args("run", run_id, args.get("repo"), "status,conclusion,jobs,url"))
 
     def auth_status(args: dict[str, Any]) -> dict[str, Any]:
         """Read-only auth probe — call before gh_* tools when auth is uncertain."""
