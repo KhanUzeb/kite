@@ -74,10 +74,13 @@ class UserConfig:
     def load(cls) -> UserConfig:
         global _USER_CONFIG_CACHE
         path = kite_home() / "config.toml"
-        mtime = path.stat().st_mtime if path.is_file() else 0.0
+        try:
+            mtime: float | None = path.stat().st_mtime
+        except OSError:
+            mtime = None
         if _USER_CONFIG_CACHE is not None and _USER_CONFIG_CACHE[0] == mtime:
             return _USER_CONFIG_CACHE[1]
-        if not path.is_file():
+        if mtime is None:
             cfg = cls()
         else:
             data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -151,7 +154,7 @@ class UserConfig:
         return path
 
 
-_USER_CONFIG_CACHE: tuple[float, UserConfig] | None = None
+_USER_CONFIG_CACHE: tuple[float | None, UserConfig] | None = None
 
 
 def _invalidate_user_config_cache() -> None:

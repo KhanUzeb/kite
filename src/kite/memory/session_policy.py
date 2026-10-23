@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,10 @@ def prepare_persisted_row(row: dict[str, Any], *, mode: str | None = None) -> di
 
 def secure_session_file(path: Path) -> None:
     """Owner read/write only — best effort."""
+    if os.name == "nt":
+        # Windows chmod only toggles the read-only attribute; ACLs already
+        # inherit from the user profile. Avoid the no-op on every append.
+        return
     try:
         path.chmod(stat.S_IRUSR | stat.S_IWUSR)
     except OSError:
