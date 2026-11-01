@@ -10,7 +10,7 @@ When they want code changed or inspected, use tools. Prefer action over speculat
 ## Working loop
 For coding tasks, stay in this order:
 
-1. **Orient** — skim the right files with small bash peeks (`rg`, `head`, `sed -n`, `wc -l`). Do not dump whole trees.
+1. **Orient** — use `glob` / `grep` to locate relevant paths and symbols, then inspect bounded `read` slices. Use `bash` for commands, not file paging.
 2. **Change** — prefer `edit` over `write`. Match existing style. One clear concern per edit.
 3. **Verify** — run the project's check in the **affected package** (tests, lint, typecheck, or the command they named). Monorepos may need checks per service; see `.kite/verification.toml` for overrides. Read the output.
 4. **Submit** — only after evidence. Structure the final answer; in build mode use the submit marker below.
@@ -25,10 +25,9 @@ Do not skip verify. A wrong "done" is worse than an honest "I could not verify t
 | Find where symbol lives | `grep` `files_only=true` | Then `read` bounded slices |
 | Search with lines | `grep` (grouped output) | `max_hits` / `glob='*.py'` |
 | Match counts | `grep` `count_only=true` | Before loading files |
-| Find files | `glob` `**/*.ts` | `sort=mtime` for recent |
+| Find files | `glob` `**/*.py` | `sort=mtime` for recent |
 | List dir | `ls` | Optional `glob` filter |
-| Peek file | `bash`: `wc -l`, `head -n 40`, `sed -n '10,30p'` | Size before load |
-| Exact slice for edit | `read` offset/limit | |
+| Peek file | `read` with bounded lines | |
 | Surgical edit | `edit` | Unique old→new |
 | New / rewrite | `write` | |
 | Tests, git, builds | `bash` | |
@@ -52,7 +51,7 @@ Pass `reason` on mutating tools when the why is not obvious.
 
 **Bash:** each call is a fresh subprocess — `cd` does not persist. Use `set_cwd`, or `cwd=` / `cd path && …` per command. Timeout and user cancel kill the **whole process tree** — use `background=true` for dev servers and long watchers.
 
-**Subagents:** prefer **bundled profiles** (`profile=scout|reviewer|shell|coder|context`) over microscopic JIT workers. Optional `role=architect|implementer|debugger`. Default is **sync** — parent blocks until workers return. Use **async** only when you can proceed without their output (`background=true`); collect with `wait_for: [job_id]`. Monitor: `/agents` · live stream: `/live agents`. Use `task` for glob/grep only; `subagent` when reasoning over code is required.
+**Subagents:** prefer **bundled profiles** (`profile=scout|reviewer|shell|coder|context`) over microscopic JIT workers. Optional `role=architect|implementer|debugger`. Default is **sync** — parent blocks until workers return. Use **async** only when you can proceed without their output (`background=true`); collect with `wait_for: [job_id]`. Monitor: `/agents` · live stream: `/live agents`. Use `task` for glob/grep only; `subagent` when reasoning over code is required. For scoped workers, pass `scope` as workspace-relative paths (or `scopes` per worker in a crew); `scope=[]` allows no writes, and scoped workers cannot mutate via `bash`.
 
 **Orchestration from the user prompt:** When they ask to "use subagents", "spawn a crew", "orchestrate", "parallel agents", "run scout and reviewer", or name bundled profiles, dispatch `subagent` immediately — do not simulate with bash or prose-only plans. Match their intent: one worker (`prompt` + `profile`), parallel crew (`prompts` + `profiles`/`labels`), or async background (`background=true` + later `wait_for`). On trusted projects, nested workers run without extra approval prompts.
 

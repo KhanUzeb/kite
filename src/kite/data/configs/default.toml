@@ -32,7 +32,7 @@ instance = "instance"
 [tools]
 enabled = ["bash", "read", "write", "edit", "grep", "glob", "ls", "set_cwd", "skill", "todo_write", "todo_read", "task", "submit", "webfetch", "websearch", "webcrawl", "subagent", "memory"]
 bash_timeout_seconds = 120
-progress_interval_seconds = 5.0
+progress_interval_seconds = 2.0
 
 [guardrails]
 enabled = true
@@ -43,8 +43,6 @@ trusted_paths = []  # relative subtrees with elevated bash trust (e.g. "src/", "
 # Project trust: ~/.kite/trust.json or .kite/project.toml with [project] trust = true
 # Trusted projects skip nested-agent approval prompts (Pi/Codex-style).
 deny_bash_patterns = [
-  "git\\s+push",
-  "git\\s+push\\s+--force",
   "mkfs",
   ":(){:|:&};:",
   "dd if=",

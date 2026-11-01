@@ -35,6 +35,16 @@ def test_dangerous_bash_and_destructive_git_combined() -> None:
     assert not check_dangerous("rm -rf .pytest_cache")
 
 
+def test_packaged_defaults_keep_push_approval_gated(workspace: Path, kite_home: Path) -> None:
+    from kite.config.runtime import load_runtime_config
+
+    config = load_runtime_config()
+    policy = GuardrailPolicy(config.guardrails, workspace)
+
+    assert config.tools.progress_interval_seconds == 2.0
+    assert policy.check_bash("git push origin main", cwd=str(workspace)).allowed
+    assert not policy.check_bash("git push --force origin main", cwd=str(workspace)).allowed
+
 def test_cache_delete_benign_vs_absolute_combined() -> None:
     # (merged from test_relative_cache_deletes_not_hard_blocked)
     for cmd in (

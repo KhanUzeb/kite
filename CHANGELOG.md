@@ -4,9 +4,13 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-11-01
+
 ### Added
 - Full benchmark baselines/comparison and runtime tracing: see [`kite bench`](kite_commands.md#harness-timing-kite-bench) and [`KITE_TRACE_JSONL`](kite_commands.md#runtime-event-tracing).
 - Isolated worktrees, fast gates, offline end-to-end QA, and CLI profiling: see [contributor workflows](CONTRIBUTING.md#fast-isolated-agent-loops).
+- `kite sessions --fork <id>` creates a separate resumable conversation with inherited runtime settings.
+- Unknown subagent profiles suggest close matches; profile details show model and tool settings.
 
 ### Changed
 Representative before/after measurements from controlled optimization runs (not portable timing guarantees):
@@ -19,8 +23,13 @@ Representative before/after measurements from controlled optimization runs (not 
 - Warm development install 0.77 → 0.12 s; see [locked development installs](CONTRIBUTING.md#how-to-set-up).
 - Startup/import boundaries, model capabilities, context/history processing, and session internals: see [architecture.md](architecture.md).
 - Named behavioral tests replace count-driven batching; see the [test policy and dev loop](AGENTS.md#tests--ci).
+- The system prompt uses bounded Kite reads/search on every platform and documents scoped-worker write limits.
+- Bundled progress interval matches the 2-second runtime default.
 
 ### Fixed
+- Prompt caching sends Anthropic `cache_control` blocks only to Anthropic-compatible routes.
+- Cache-hit ratios no longer double-count normalized cache-creation tokens; failed LiteLLM prewarm imports can retry.
+- Ordinary `git push` now reaches the serious-action approval flow; force-push remains blocked.
 - CLI/REPL rendering, completion, jobs, session recovery, and verification behavior: see [kite_commands.md](kite_commands.md).
 - Prompt-history correctness and episodic-store lock handling: see [architecture.md](architecture.md#startup-and-request-work) and [context & memory](architecture.md#context--memory).
 
