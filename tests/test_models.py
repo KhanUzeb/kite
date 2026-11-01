@@ -405,6 +405,42 @@ def test_api_messages_repair_unanswered_tool_calls() -> None:
     assert repaired[1]["tool_call_id"] == "dangling"
 
 
+@pytest.mark.parametrize(
+    ("provider", "uses_anthropic_blocks"),
+    [
+        ("anthropic", True),
+        ("claude", True),
+        ("openrouter", False),
+        ("xai", False),
+        ("azure", False),
+        ("bedrock", False),
+        ("vertex", False),
+    ],
+)
+def test_completion_kwargs_use_only_supported_prompt_cache_wire_format(
+    provider: str, uses_anthropic_blocks: bool
+) -> None:
+    from kite.models.cache import PromptCacheManager
+
+    model = _model()
+    model.prompt_cache = PromptCacheManager(provider)
+    request = model._completion_kwargs(
+        [{"role": "system", "content": "stable instructions"}], stream=False
+    )
+    content = request["messages"][0]["content"]
+
+    if uses_anthropic_blocks:
+        assert content == [
+            {
+                "type": "text",
+                "text": "stable instructions",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+    else:
+        assert content == "stable instructions"
+
+
 def test_reasoning_continuity_and_cache_breakpoints() -> None:
     from kite.models.cache import apply_cache_breakpoints
 
@@ -583,6 +619,44 @@ def test_prewarm_litellm_idempotent_and_daemon(monkeypatch) -> None:
     litellm_model.prewarm_litellm()
     assert litellm_model._prewarm_thread is None
     thread.assert_called_once()
+
+
+
+def test_prewarm_litellm_retries_after_failed_import(monkeypatch) -> None:
+    import builtins
+    import sys
+
+    from kite.models import litellm_model
+
+    monkeypatch.delitem(sys.modules, "litellm", raising=False)
+    monkeypatch.setattr(litellm_model, "_prewarm_thread", None)
+    original_import = builtins.__import__
+    attempts = 0
+
+    def import_litellm(name, *args, **kwargs):
+        nonlocal attempts
+        if name == "litellm":
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("synthetic import failure")
+            return SimpleNamespace()
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_litellm)
+
+    litellm_model.prewarm_litellm()
+    first = litellm_model._prewarm_thread
+    assert first is not None
+    first.join(timeout=5)
+    assert not first.is_alive()
+    assert litellm_model._prewarm_thread is None
+
+    litellm_model.prewarm_litellm()
+    second = litellm_model._prewarm_thread
+    assert second is not None
+    second.join(timeout=5)
+
+    assert not second.is_alive()
 
 
 def test_agy_subscription_turn_is_text_only(monkeypatch: pytest.MonkeyPatch) -> None:

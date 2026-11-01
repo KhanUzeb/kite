@@ -654,6 +654,19 @@ def cmd_sessions(args: argparse.Namespace) -> int:
             f"pruned {len(pruned)} session{'s' if len(pruned) != 1 else ''}  ·  kept newest {keep}"
         )
         return 0
+    fork_id = getattr(args, "fork", None)
+    if fork_id:
+        from kite.memory.session import fork_session
+
+        try:
+            fork = fork_session(fork_id)
+        except (OSError, ValueError) as e:
+            console.print(f"[red]{e}[/]")
+            return 2
+        console.print(f"forked session {fork.id}")
+        console.print(f"[dim]resume:[/] [bold]kite resume {fork.id}[/]")
+        return 0
+
     if args.show:
         try:
             session = load_session(args.show)
@@ -1634,6 +1647,8 @@ def build_parser() -> argparse.ArgumentParser:
     sessions.add_argument("query", nargs="?", help="Filter by id prefix, title, cwd, or date")
     sessions.add_argument("-q", "--query", dest="search", help="Filter sessions (same as positional query)")
     sessions.add_argument("--limit", type=int, default=30)
+    sessions.add_argument("--fork", metavar="ID", help="Create a new session with a copy of this conversation")
+
     sessions.add_argument("--show", help="Show session id (full transcript tail)")
     sessions.add_argument("--tail", type=int, default=12, help="Messages to show with --show (0 = full)")
     sessions.add_argument(

@@ -54,8 +54,12 @@ kite sessions humanize                   # filter by title, cwd, date, or id pre
 kite sessions -q docs                    # same filter flag
 kite sessions --no-pick                  # print table only (no picker)
 kite sessions --show <id> [--tail N]     # meta + transcript tail + resume hint (`--tail 0` = full)
+kite sessions --fork <id>                # copy conversation + runtime settings to a new session
+
 ```
 
+
+`kite sessions --fork <id>` creates a separately resumable session with the source conversation, cwd, provider, model, and reasoning level. The fork is labeled `Fork of <source-id>`; it does not copy source audit events, checkpoints, or sidecars. Persistence privacy settings still apply (redacted content is sanitized; disabled persistence keeps the fork in memory only).
 Sessions with a missing, corrupt, or oversized header remain listable, resumable, and eligible for pruning/deletion: fallback metadata is derived from the filename and labeled **Recovered session**. `kite sessions --limit 0` (or a negative limit) returns no rows; `--tail 0` still means the full transcript.
 
 Shared flags on `run` / `chat` / `resume`:

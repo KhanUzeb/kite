@@ -1,6 +1,6 @@
 """Prompt cache — pi-style prefix caching for cost-effective multi-turn runs.
 
-Applies provider-native cache breakpoints (Anthropic cache_control) and tracks
+Applies Anthropic cache breakpoints only on supported routes and tracks
 cache_read / cache_creation / cached_tokens from API usage for the status line.
 """
 
@@ -10,7 +10,7 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
-_CACHE_PROVIDERS = frozenset({"anthropic", "claude", "openrouter", "azure", "azure_ai", "bedrock", "vertex", "vertex_ai"})
+_CACHE_PROVIDERS = frozenset({"anthropic", "claude"})
 
 
 @dataclass

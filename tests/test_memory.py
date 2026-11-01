@@ -13,6 +13,7 @@ from kite.agent.subagent_profiles import (
     get_profile,
     init_user_profile,
     resolve_subagent_task,
+    suggest_profiles,
 )
 from kite.config.interactive_budget import resolve_interactive_limits
 from kite.config.runtime import AgentRuntimeConfig, MemoryConfig
@@ -201,6 +202,7 @@ def test_user_context_profiles_and_working_style(workspace, kite_home) -> None:
     assert get_profile("nonexistent-xyz") is None
     path = init_user_profile("my-auditor", label="Auditor", role="debugger", description="Security-focused review")
     assert path.is_file() and get_profile("my-auditor").label == "Auditor"
+    assert [profile.id for profile in suggest_profiles("my-aud", limit=1)] == ["my-auditor"]
     with pytest.raises(ValueError, match="invalid profile id"):
         init_user_profile("!!!")
     observe_session_turn(store, session_id="s1", mode="plan", approval="readonly", extra={"exit_status": "Submitted", "model_stats": {"write_edits": 6, "bash_calls": 1}})

@@ -356,3 +356,47 @@ def test_non_object_jsonl_rows_skipped(kite_home) -> None:
     loaded = load_session(session.id)
     assert [m["content"] for m in loaded.messages] == ["hello"]
     assert [m["content"] for m in iter_session_messages(session.id)] == ["hello"]
+
+def test_fork_copies_messages_and_runtime_without_source_audit(kite_home) -> None:
+    from kite.memory.session import fork_session
+
+    source = create_session(
+        task="original task",
+        cwd="/workspace",
+        provider="provider-x",
+        model="model-y",
+        label="source label",
+    )
+    source.append({"role": "user", "content": "question"})
+    source.append({"role": "assistant", "content": "answer"})
+    source.note_runtime("provider-z", "model-latest", "thinking:high")
+    source.record_event("turn_end", {"status": "ok"})
+    source.record_context_checkpoint("checkpoint-1", label="keep on source")
+    assert source.path is not None
+    source_path = source.path
+    source_bytes = source_path.read_bytes()
+    sidecar_path = source_path.with_suffix(".meta")
+    sidecar_bytes = sidecar_path.read_bytes()
+
+    fork = fork_session(source.id)
+    assert fork.id != source.id
+    assert fork.meta.cwd == "/workspace"
+    assert (fork.meta.provider, fork.meta.model, fork.meta.reasoning) == (
+        "provider-z",
+        "model-latest",
+        "thinking:high",
+    )
+    assert fork.meta.label == f"Fork of {source.id}"
+    assert fork.messages == [
+        {"role": "user", "content": "question"},
+        {"role": "assistant", "content": "answer"},
+    ]
+
+    fork.messages[0]["content"] = "changed"
+    assert load_session(source.id).messages[0]["content"] == "question"
+    resumed = load_session(fork.id)
+    assert [m["content"] for m in resumed.messages] == ["question", "answer"]
+    assert source_path.read_bytes() == source_bytes
+    assert sidecar_path.read_bytes() == sidecar_bytes
+    fork_rows = [json.loads(line) for line in fork.path.read_text(encoding="utf-8").splitlines()]
+    assert [row["type"] for row in fork_rows] == ["meta", "message", "message"]

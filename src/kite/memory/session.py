@@ -474,6 +474,23 @@ def create_session(
     return session
 
 
+def fork_session(session_id: str) -> Session:
+    """Create an independent session with the source conversation and runtime identity."""
+    source = load_session(session_id, unique=True)
+    fork = create_session(
+        task=source.meta.task,
+        cwd=source.meta.cwd,
+        provider=source.meta.provider,
+        model=source.meta.model,
+        label=f"Fork of {source.id}",
+    )
+    fork.meta.reasoning = source.meta.reasoning
+    fork.messages = list(source.messages)
+    if persistence_enabled():
+        fork._write_meta()
+    return fork
+
+
 def resolve_session_path(session_id: str, *, unique: bool = False) -> Path:
     """Exact id, or a filename prefix. `unique` refuses an ambiguous prefix."""
     from kite.memory.secure_io import storage_id
