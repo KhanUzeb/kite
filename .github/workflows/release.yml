@@ -75,3 +75,22 @@ jobs:
           else
             gh release create "$TAG" --title "Kite v${VERSION}" --generate-notes
           fi
+
+      - name: Mark highest stable release as latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST_TAG="$(
+            gh release list --limit 100 --json tagName,isDraft,isPrerelease |
+            python -c 'import json, re, sys
+            rows = json.load(sys.stdin)
+            versions = []
+            for row in rows:
+                match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", row["tagName"])
+                if match and not row["isDraft"] and not row["isPrerelease"]:
+                    versions.append((tuple(map(int, match.groups())), row["tagName"]))
+            if versions:
+                print(max(versions)[1])'
+          )"
+          test -n "$LATEST_TAG"
+          gh release edit "$LATEST_TAG" --latest
