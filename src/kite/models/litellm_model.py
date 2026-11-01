@@ -69,11 +69,20 @@ def prewarm_litellm() -> None:
                 import litellm  # noqa: F401
             except Exception:
                 pass
+            finally:
+                # Drop the (possibly finished) handle so a later call can
+                # retry after a failed/aborted import instead of waiting on a
+                # dead thread; never clobber a newer prewarm thread.
+                global _prewarm_thread
+                with _prewarm_lock:
+                    if _prewarm_thread is thread:
+                        _prewarm_thread = None
 
-        _prewarm_thread = threading.Thread(
+        thread = threading.Thread(
             target=_import, daemon=True, name="kite-litellm-prewarm"
         )
-        _prewarm_thread.start()
+        _prewarm_thread = thread
+        thread.start()
 
 
 @contextmanager

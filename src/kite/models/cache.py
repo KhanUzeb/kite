@@ -10,7 +10,7 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
-_CACHE_PROVIDERS = frozenset({"anthropic", "openrouter", "azure", "bedrock"})
+_CACHE_PROVIDERS = frozenset({"anthropic", "claude", "openrouter", "azure", "azure_ai", "bedrock", "vertex", "vertex_ai"})
 
 
 @dataclass
@@ -30,12 +30,13 @@ class CacheStats:
 
     @property
     def hit_ratio(self) -> float:
-        # OpenAI `cached_tokens` is a SUBSET of `prompt_tokens` (and Anthropic
-        # `cache_read` may already be included in the reported input total),
-        # so adding the hit count on top double-counts. Normalize with max():
-        # subset case -> prompt + creation; disjoint case -> hit + creation.
+        # LiteLLM reports `prompt_tokens` as the FULL input total, including
+        # cache-read and cache-creation tokens (Anthropic/OpenAI normalized
+        # usage), so cache hits are a subset of it. Adding cache_creation on
+        # top double-counts those tokens. `max()` keeps the disjoint/raw case
+        # (where the reported input excludes the hit count) from undercounting.
         hits = self.cache_hit_tokens
-        total_in = max(self.prompt_tokens, hits) + self.cache_creation_tokens
+        total_in = max(self.prompt_tokens, hits)
         if total_in <= 0:
             return 0.0
         return hits / total_in
