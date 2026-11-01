@@ -281,11 +281,15 @@ def init_user_profile(
     """Write ~/.kite/subagents/<id>.md stub; returns path."""
     raw = (profile_id or "").strip().lower()
     if not raw or not _ID_RE.match(raw):
-        raise ValueError(f"invalid profile id '{profile_id}' — use a-z, 0-9, _, - (max 32)")
+        suggested = _sanitize_id(profile_id, "profile")
+        hint = f" — try '{suggested}'" if suggested and suggested != "profile" else ""
+        raise ValueError(
+            f"invalid profile id '{profile_id}' — use a-z, 0-9, _, - (max 32){hint}"
+        )
     pid = raw
     path = user_profile_path(pid)
     if path.is_file() and not force:
-        raise FileExistsError(str(path))
+        raise FileExistsError(f"{path} — use --force to overwrite")
     resolved_label = _sanitize_label(label, pid.replace("-", " ").title())
     resolved_role = _sanitize_role(role)
     desc = (description or f"Custom {resolved_label} subagent persona.")[:200]
@@ -349,6 +353,34 @@ def get_profile(profile_id: str) -> SubagentProfile | None:
         return None
     key = _sanitize_id(raw, raw)
     return load_profiles().get(key)
+
+
+def suggest_profiles(query: str, *, limit: int = 5) -> list[SubagentProfile]:
+    """Best-effort profile suggestions for an unknown or partial id/label.
+
+    Used for actionable "did you mean?" feedback in CLI and REPL surfaces.
+    """
+    rows = list_profiles()
+    q = (query or "").strip().lower()
+    if not rows:
+        return []
+    if not q:
+        return rows[:limit]
+    prefix = [p for p in rows if p.id.lower().startswith(q)]
+    if prefix:
+        return prefix[:limit]
+    contains = [
+        p
+        for p in rows
+        if q in p.id.lower() or q in p.label.lower() or q in (p.description or "").lower()
+    ]
+    if contains:
+        return contains[:limit]
+    import difflib
+
+    close = difflib.get_close_matches(q, [p.id for p in rows], n=limit, cutoff=0.6)
+    by_id = {p.id: p for p in rows}
+    return [by_id[i] for i in close if i in by_id][:limit]
 
 
 def resolve_subagent_task(

@@ -9,6 +9,7 @@ from kite.agent.subagent_profiles import (
     list_profiles,
     profile_source_path,
     reload_profiles,
+    suggest_profiles,
     user_profiles_dir,
 )
 
@@ -49,11 +50,19 @@ def cmd_subagents(args) -> int:
         match = get_profile(args.show)
         if match is None:
             console.print(f"[red]unknown profile {args.show}[/]")
+            hints = suggest_profiles(args.show)
+            if hints:
+                console.print("[dim]did you mean:[/]")
+                for p in hints:
+                    console.print(f"  [bold]{p.id}[/]  — {p.label} ({format_profile_trust(p)})")
+            else:
+                console.print("[dim]list profiles:[/]  kite subagents")
             return 1
         src = profile_source_path(match)
         trust = format_profile_trust(match)
+        tools = ",".join(match.tools) if match.tools else "inherit"
         header = (
-            f"{match.id} — {match.label}  ·  role={match.role}  ·  trust={trust}"
+            f"{match.id} — {match.label}  ·  role={match.role}  ·  model={match.model_role}  ·  tools={tools}  ·  trust={trust}"
             + (f"\n{src}" if src else "")
         )
         body = match.prompt
