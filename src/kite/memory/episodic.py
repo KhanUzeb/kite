@@ -232,12 +232,11 @@ class EpisodicStore:
             if conn is None:
                 continue
             try:
-                cur = conn.execute("SELECT * FROM episodes")
-                hits = [
-                    _row(r)
-                    for r in cur.fetchall()
-                    if q == str(r["id"]).lower() or q in str(r["summary"]).lower()
-                ]
+                cur = conn.execute(
+                    "SELECT * FROM episodes WHERE lower(id) = ? OR instr(lower(summary), ?) > 0",
+                    (q, q),
+                )
+                hits = [_row(r) for r in cur.fetchall()]
                 if not hits:
                     continue
                 ids = [e.id for e in hits]

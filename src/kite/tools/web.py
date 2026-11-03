@@ -39,6 +39,14 @@ _DEFAULT_FETCH_CHARS = 16_000
 _MAX_REDIRECTS = 5
 _CRAWL_MAX_SECONDS = 90
 _CRAWL_MAX_TOTAL_BYTES = 500_000
+_DDG_RESULT_PATTERNS = tuple(
+    re.compile(pattern, re.DOTALL | re.IGNORECASE)
+    for pattern in (
+        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>',
+        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result-snippet"[^>]*>(.*?)</a>',
+        r'class="result-link"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+    )
+)
 
 
 def _safe_opener():
@@ -570,11 +578,7 @@ def _parse_ddg_html(body: str, max_results: int) -> list[dict[str, str]]:
         if lite_results:
             return lite_results
 
-    patterns = (
-        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>',
-        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result-snippet"[^>]*>(.*?)</a>',
-        r'class="result-link"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
-    )
+    patterns = _DDG_RESULT_PATTERNS
     results: list[dict[str, str]] = []
     seen: set[str] = set()
 
@@ -593,7 +597,7 @@ def _parse_ddg_html(body: str, max_results: int) -> list[dict[str, str]]:
         results.append({"title": title, "url": url, "snippet": snippet})
 
     for pattern in patterns:
-        for block in re.findall(pattern, body, flags=re.DOTALL | re.IGNORECASE):
+        for block in pattern.findall(body):
             if len(block) == 2:
                 _add(block[0], block[1])
             else:
@@ -850,7 +854,7 @@ def webcrawl(
     same_origin: bool = True,
 ) -> dict[str, Any]:
     """Crawl starting URL — Firecrawl when keyed, else stdlib fetch."""
-    start = unwrap_tracking_url(url.strip())
+    start = _result_key(unwrap_tracking_url(url.strip()))
     blocked = _url_blocked(start)
     if blocked:
         return {"ok": False, "error": blocked, "output": blocked}
@@ -886,7 +890,7 @@ def webcrawl(
             budget_exceeded = True
             break
         current, depth = queue.pop(0)
-        key = urlparse(current)._replace(fragment="").geturl()
+        key = current
         if key in visited:
             continue
         if not _url_allowed(current):
@@ -925,7 +929,7 @@ def webcrawl(
                 break
             if same_origin and not link.startswith(origin_key):
                 continue
-            lk = urlparse(link)._replace(fragment="").geturl()
+            lk = link
             if lk not in visited and _url_allowed(lk):
                 queue.append((lk, depth + 1))
 

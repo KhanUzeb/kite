@@ -29,6 +29,12 @@ _DEFAULT_MAX_SPAWNS = 64  # Pi-style cap on cumulative workers per run tree
 _MAX_PROMPT_CHARS = 8000
 _MAX_LABEL_CHARS = 80
 _MANAGER_EVENT_LIMIT = 8
+_SUMMARY_RESULT_RE = re.compile(r"##\s*result")
+_SUMMARY_FILES_RE = re.compile(r"##\s*files touched")
+_TOUCHED_SECTION_RE = re.compile(r"##\s*files touched(.*)", re.IGNORECASE | re.DOTALL)
+_NEXT_SECTION_RE = re.compile(r"\n##\s+")
+_VALID_PATH_RE = re.compile(r"^[\w\-./\\]+$")
+_VALID_TOUCHED_PATH_RE = re.compile(r"^[\w\-./\\:]+$")
 
 
 def worker_glyph(index: int) -> str:
@@ -73,8 +79,8 @@ def evaluate_subagent_result(result: dict[str, Any]) -> tuple[bool, str, str]:
 
 def _has_summary_sections(text: str) -> bool:
     lowered = (text or "").lower()
-    has_result = bool(re.search(r"##\s*result", lowered))
-    has_files = bool(re.search(r"##\s*files touched", lowered))
+    has_result = bool(_SUMMARY_RESULT_RE.search(lowered))
+    has_files = bool(_SUMMARY_FILES_RE.search(lowered))
     return has_result and has_files
 
 
@@ -103,17 +109,15 @@ def _extract_touched_paths(result: dict[str, Any]) -> list[str]:
     submission = str(result.get("submission") or result.get("content") or "")
     if not submission:
         return []
-    match = re.search(r"##\s*files touched(.*)", submission, re.IGNORECASE | re.DOTALL)
-    section = match.group(1) if match else ""
-    if match:
-        section = re.split(r"\n##\s+", section, maxsplit=1)[0]
+    match = _TOUCHED_SECTION_RE.search(submission)
+    section = _NEXT_SECTION_RE.split(match.group(1), maxsplit=1)[0] if match else ""
     paths: list[str] = []
     for line in section.splitlines():
         cleaned = line.strip().lstrip("-*•0123456789. ").strip().strip("`'\"")
         if not cleaned or len(cleaned) > 500 or " " in cleaned.strip().split("\n")[0] and "." not in cleaned:
-            if not re.match(r"^[\w\-./\\]+$", cleaned):
+            if not _VALID_PATH_RE.match(cleaned):
                 continue
-        if re.match(r"^[\w\-./\\:]+$", cleaned):
+        if _VALID_TOUCHED_PATH_RE.match(cleaned):
             paths.append(cleaned)
     return paths
 

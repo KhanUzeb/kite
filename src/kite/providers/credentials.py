@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import getpass
 import os
-import re
 import stat
 import sys
 from dataclasses import dataclass
@@ -22,6 +21,11 @@ if TYPE_CHECKING:
 
 def env_file_path() -> Path:
     return kite_home() / ".env"
+
+
+def _is_env_assignment(line: str, env_var: str) -> bool:
+    key, separator, _value = line.partition("=")
+    return bool(separator) and key.strip() == env_var
 
 
 _ENV_LOADED_KEY: tuple[str, float, int, str, float, int] | None = None
@@ -381,12 +385,11 @@ def write_api_key(env_var: str, value: str) -> Path:
         raise ValueError("API key cannot be empty")
     path = env_file_path()
     lines = read_env_lines(path)
-    pattern = re.compile(rf"^\s*{re.escape(env_var)}\s*=")
     new_line = f"{env_var}={_format_env_value(secret)}"
     replaced = False
     out: list[str] = []
     for line in lines:
-        if pattern.match(line):
+        if _is_env_assignment(line, env_var):
             out.append(new_line)
             replaced = True
         else:
@@ -409,14 +412,13 @@ def write_api_key(env_var: str, value: str) -> Path:
 def remove_api_key(env_var: str) -> bool:
     """Drop one env var from ~/.kite/.env and the current process."""
     path = env_file_path()
-    pattern = re.compile(rf"^\s*{re.escape(env_var)}\s*=")
     comment = f"# {env_var}"
     removed = False
     if path.is_file():
         lines = read_env_lines(path)
         drop: set[int] = set()
         for i, line in enumerate(lines):
-            if pattern.match(line):
+            if _is_env_assignment(line, env_var):
                 removed = True
                 drop.add(i)
                 # write_api_key stores a "# VAR" header above the value —
