@@ -18,6 +18,7 @@ from kite.guardrails.process import popen_process_group_kwargs, terminate_proces
 
 JobKind = Literal["bash", "subagent"]
 JobStatus = Literal["running", "done", "killed", "failed"]
+_TERMINAL_JOB_STATUSES = frozenset({"done", "killed", "failed"})
 
 _LOG_RING = 200
 _MAX_FINISHED_JOBS = 24
@@ -42,6 +43,16 @@ class BackgroundJob:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _done: threading.Event = field(default_factory=threading.Event, repr=False)
     _drained: threading.Event = field(default_factory=threading.Event, repr=False)
+
+    def finish(self, status: JobStatus) -> bool:
+        """Move a running job to one terminal state exactly once."""
+        if status not in _TERMINAL_JOB_STATUSES:
+            raise ValueError(f"job terminal status required, got {status!r}")
+        with self._lock:
+            if self.status != "running":
+                return False
+            self.status = status
+            return True
 
     def wait(self, timeout: float | None = None) -> bool:
         """Wait for terminal status and output; return False on timeout."""
@@ -204,10 +215,11 @@ class JobRegistry:
         if proc is None or proc.stdout is None:
             # Never leave a job "running" with no drain thread behind it —
             # headless teardown would otherwise report a phantom leftover.
-            with self._lock:
-                if job.status == "running":
-                    job.status = "failed"
-                status = job.status
+            if not job.finish("failed"):
+                job._drained.set()
+                job._done.set()
+                return  # another terminal transition already emitted job_end
+            status = job.status
             job.append_log("\n...[job failed: process unavailable]...\n")
             self._emit(
                 "job_end",
@@ -263,11 +275,10 @@ class JobRegistry:
                 rc = -1
                 job.append_log("\n...[job killed: timeout]...\n")
             job._drained.set()
-        with self._lock:
-            if job.status != "running":
-                return  # killed already emitted job_end
-            job.status = "done" if rc == 0 else "failed"
-            status = job.status
+        status = "done" if rc == 0 else "failed"
+        if not job.finish(status):
+            return  # another terminal transition already emitted job_end
+        status = job.status
         tail = self._job_tail(job)
         self._emit(
             "job_end",
@@ -337,9 +348,12 @@ class JobRegistry:
     ) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job.status != "running":
+            if job is None:
                 return
-            job.status = status or ("done" if ok else "failed")
+        terminal_status = status or ("done" if ok else "failed")
+        if not job.finish(terminal_status):
+            return
+        with self._lock:
             if result_payload is not None:
                 job.result_payload = dict(result_payload)
             kind = job.kind
@@ -379,10 +393,8 @@ class JobRegistry:
 
     def _kill_job(self, job: BackgroundJob) -> bool:
         # Mark killed before tearing down so the drain thread does not overwrite.
-        with self._lock:
-            if job.status != "running":
-                return False
-            job.status = "killed"
+        if not job.finish("killed"):
+            return False
         if job.kind == "bash" and job.proc is not None:
             terminate_process_tree(job.proc)
         elif job.cancel is not None:

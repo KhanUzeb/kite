@@ -461,8 +461,7 @@ class ChatSession:
         self._approval_coordinator.resolve(mapped, request_id=req.request_id)
         self._approval_panel_id = None
         self._approval_wake_sent = False
-        self.state.awaiting_approval = ""
-        self.state.awaiting_approval_mandatory = False
+        self.state.clear_approval_request()
         self.state.touch(force=True)
 
     def _handle_slash_while_busy(self, raw: str) -> None:
@@ -599,8 +598,7 @@ class ChatSession:
         if req is None:
             self._approval_wake_sent = False
             if self.state.awaiting_approval:
-                self.state.awaiting_approval = ""
-                self.state.awaiting_approval_mandatory = False
+                self.state.clear_approval_request()
                 self.state.touch(force=True)
             return
         # Idempotent: long runs poll every 250ms — only invalidate + wake on
@@ -611,8 +609,7 @@ class ChatSession:
             self.state.awaiting_approval != want_tool
             or self.state.awaiting_approval_mandatory != want_mandatory
         )
-        self.state.awaiting_approval = want_tool
-        self.state.awaiting_approval_mandatory = want_mandatory
+        self.state.set_approval_request(want_tool, mandatory=want_mandatory)
         if changed:
             self.state.touch()
         if self._prompt_app_running() and not self._approval_wake_sent:
@@ -638,8 +635,7 @@ class ChatSession:
             return
         if req is None:
             if self.state.awaiting_approval:
-                self.state.awaiting_approval = ""
-                self.state.awaiting_approval_mandatory = False
+                self.state.clear_approval_request()
             return
         want_tool = req.tool
         want_mandatory = bool(getattr(req, "mandatory", False))
@@ -647,8 +643,7 @@ class ChatSession:
             self.state.awaiting_approval != want_tool
             or self.state.awaiting_approval_mandatory != want_mandatory
         ):
-            self.state.awaiting_approval = want_tool
-            self.state.awaiting_approval_mandatory = want_mandatory
+            self.state.set_approval_request(want_tool, mandatory=want_mandatory)
 
     def _resolve_pending_approval(self) -> None:
         """Main-thread approval — composer keys when prompt_toolkit is active."""
@@ -680,8 +675,7 @@ class ChatSession:
             self._approval_resolving = False
             self._approval_panel_id = None
             self._approval_wake_sent = False
-            self.state.awaiting_approval = ""
-            self.state.awaiting_approval_mandatory = False
+            self.state.clear_approval_request()
             self.state.touch(force=True)
 
     def _harness_cache_key(self) -> tuple:

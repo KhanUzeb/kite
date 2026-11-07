@@ -10,7 +10,7 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from kite.agent.cancel import CancelToken
 from kite.agent.dispatch_mode import dispatch_hint, resolve_dispatch_mode
@@ -35,6 +35,8 @@ _TOUCHED_SECTION_RE = re.compile(r"##\s*files touched(.*)", re.IGNORECASE | re.D
 _NEXT_SECTION_RE = re.compile(r"\n##\s+")
 _VALID_PATH_RE = re.compile(r"^[\w\-./\\]+$")
 _VALID_TOUCHED_PATH_RE = re.compile(r"^[\w\-./\\:]+$")
+TaskStatus = Literal["queued", "running", "finished", "failed", "killed"]
+_TERMINAL_TASK_STATUSES = frozenset({"finished", "failed", "killed"})
 
 
 def worker_glyph(index: int) -> str:
@@ -250,7 +252,7 @@ class SubagentTask:
     label: str
     profile: str = ""
     role: str = ""
-    status: str = "queued"  # queued | running | finished | failed | killed
+    status: TaskStatus = "queued"
     exit_status: str = ""
     summary: str = ""
     ok: bool = False
@@ -270,6 +272,17 @@ class SubagentTask:
     run_id: str = ""
     timeout_s: float | None = None
     cancel: CancelToken | None = field(default=None, repr=False)
+    _status_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def finish(self, status: TaskStatus) -> bool:
+        """Set a terminal task status once, even when cancellation races completion."""
+        if status not in _TERMINAL_TASK_STATUSES:
+            raise ValueError(f"task terminal status required, got {status!r}")
+        with self._status_lock:
+            if self.status != "running":
+                return False
+            self.status = status
+            return True
 
     def to_dict(self) -> dict[str, Any]:
         row = {
@@ -515,8 +528,18 @@ class SubagentOrchestrator:
         started = task.started_at or time.monotonic()
         task.elapsed_ms = int((time.monotonic() - started) * 1000)
 
+        if task.status != "running":
+            return self._result_payload(
+                task,
+                ok=task.ok,
+                output=task.summary,
+                cancelled=task.status == "killed",
+                quality=task.quality or task.status,
+            )
+
         if cancelled:
-            task.status = "killed"
+            if not task.finish("killed"):
+                return self._result_payload(task, ok=task.ok, output=task.summary, quality=task.quality)
             task.quality = "killed"
             task.summary = "cancelled"
             task.ok = False
@@ -530,7 +553,8 @@ class SubagentOrchestrator:
             )
 
         if timed_out:
-            task.status = "failed"
+            if not task.finish("failed"):
+                return self._result_payload(task, ok=task.ok, output=task.summary, quality=task.quality)
             task.quality = "failed"
             limit = timeout_value if timeout_value is not None else self._effective_timeout(task)
             task.summary = f'"{task.label}" timed out after {limit}s'
@@ -544,7 +568,8 @@ class SubagentOrchestrator:
             )
 
         if error:
-            task.status = "failed"
+            if not task.finish("failed"):
+                return self._result_payload(task, ok=task.ok, output=task.summary, quality=task.quality)
             task.quality = "failed"
             task.summary = error
             task.ok = False
@@ -563,12 +588,14 @@ class SubagentOrchestrator:
             ok = False
             quality = "failed"
             summary = scope_reason
+        final_status: TaskStatus = "finished" if ok else "failed"
+        if not task.finish(final_status):
+            return self._result_payload(task, ok=task.ok, output=task.summary, quality=task.quality)
         status = str(result.get("exit_status") or "done")
         task.exit_status = status
         task.summary = summarize_result(summary, limit=4000) if summary else f"finished ({status})"
         task.quality = quality
         task.ok = ok
-        task.status = "finished" if ok else "failed"
         # Structured handoff: explicit worker paths beat regex parsing, and
         # usage survives so run_parallel.total_cost and parent budgets are real.
         files_touched = _extract_touched_paths(result)
@@ -1337,10 +1364,11 @@ class SubagentOrchestrator:
 
     def kill(self, task_id: str) -> bool:
         for task in self.tasks:
-            if task.id == task_id and task.status == "running" and task.cancel is not None:
+            if task.id == task_id and task.cancel is not None and task.finish("killed"):
                 task.cancel.request()
-                task.status = "killed"
                 task.quality = "killed"
+                task.summary = "cancelled"
+                task.ok = False
                 if self.jobs is not None:
                     self.jobs.mark_done(task_id, ok=False, status="killed")
                 return True

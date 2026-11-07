@@ -96,6 +96,32 @@ class SessionUiState:
     _last_touch_at: float = field(default=0.0, repr=False, compare=False)
     _touch_pending: bool = field(default=False, repr=False, compare=False)
 
+    def __post_init__(self) -> None:
+        # Keep legacy constructor fields coherent at the boundary; runtime
+        # transitions use the paired operations below.
+        if not self.awaiting_approval:
+            self.awaiting_approval_mandatory = False
+        if self.retry_until is None:
+            self.retry_label = ""
+        if not self.running_label:
+            self.running_since = ""
+            self.running_kind = ""
+
+    def set_approval_request(self, tool: str, *, mandatory: bool) -> None:
+        self.awaiting_approval = tool
+        self.awaiting_approval_mandatory = bool(tool and mandatory)
+
+    def clear_approval_request(self) -> None:
+        self.set_approval_request("", mandatory=False)
+
+    def set_retry(self, *, until: float, label: str) -> None:
+        self.retry_until = until
+        self.retry_label = label
+
+    def clear_retry(self) -> None:
+        self.retry_until = None
+        self.retry_label = ""
+
     def touch(self, *, force: bool = False) -> None:
         self.maybe_clear_flash()
         import time

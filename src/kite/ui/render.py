@@ -1163,8 +1163,7 @@ class RunDisplay:
 
     def _on_stream_start(self, p: dict[str, Any]) -> None:
         self._end_stream_line()
-        self.state.retry_until = None
-        self.state.retry_label = ""
+        self.state.clear_retry()
         self.state.reset_stream_stats()
         self.state.provider = str(p.get("provider") or self.state.provider)
         self._channel = None
@@ -1711,8 +1710,10 @@ class RunDisplay:
         delay = float(p.get("delay_s") or 0)
         attempt = p.get("attempt")
         max_attempts = p.get("max_attempts")
-        self.state.retry_until = time.monotonic() + max(0.0, delay)
-        self.state.retry_label = f"{attempt}/{max_attempts}"
+        self.state.set_retry(
+            until=time.monotonic() + max(0.0, delay),
+            label=f"{attempt}/{max_attempts}",
+        )
         self.state.set_running(label=f"retry {attempt}/{max_attempts}", kind="retry")
         line = Text()
         line.append(f"{GUTTER}{SYMBOL_WARN} ", style="kite.pending")
