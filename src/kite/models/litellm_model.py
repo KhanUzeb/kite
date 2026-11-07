@@ -255,12 +255,29 @@ def _iter_stream_chunks(
         # Stop the underlying HTTP/SSE response on cancellation, timeout, or
         # consumer failure; otherwise the daemon pump can keep a socket and
         # provider request alive after Kite has already started a fallback.
-        close = getattr(stream, "close", None)
-        if callable(close):
-            try:
-                close()
-            except Exception:
-                pass
+        _close_stream(stream)
+
+
+def _close_stream(stream: Any) -> None:
+    """Close provider streams without letting a stuck transport delay cancel.
+
+    Most iterators close immediately. A few HTTP/SSE transports can block while
+    unwinding a pending read, so wait briefly for the normal case and leave a
+    blocked close on a daemon thread.
+    """
+    close = getattr(stream, "close", None)
+    if not callable(close):
+        return
+
+    def _close() -> None:
+        try:
+            close()
+        except Exception:
+            pass
+
+    worker = threading.Thread(target=_close, daemon=True, name="kite-stream-close")
+    worker.start()
+    worker.join(timeout=0.05)
 
 
 class StreamStalledError(TimeoutError):
@@ -290,12 +307,7 @@ def _bounded_completion_call(
     abandoned = False
 
     def _close_late_result(payload: Any) -> None:
-        close = getattr(payload, "close", None)
-        if callable(close):
-            try:
-                close()
-            except Exception:
-                pass
+        _close_stream(payload)
 
     def _abandon() -> None:
         nonlocal abandoned

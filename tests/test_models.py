@@ -253,6 +253,7 @@ def test_stream_open_timeout_does_not_start_another_30_second_request() -> None:
 
 def test_stream_iterator_closes_transport_when_poll_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
     import queue
+    import threading as real_threading
     from unittest.mock import MagicMock
 
     from kite.models import litellm_model as lm
@@ -271,7 +272,13 @@ def test_stream_iterator_closes_transport_when_poll_aborts(monkeypatch: pytest.M
             self.closed = True
 
     stream = CloseableStream()
-    monkeypatch.setattr(lm, "threading", SimpleNamespace(Thread=MagicMock()))
+
+    def thread_factory(*args, **kwargs):
+        if kwargs.get("name") == "kite-stream-close":
+            return real_threading.Thread(*args, **kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(lm, "threading", SimpleNamespace(Thread=thread_factory))
     monkeypatch.setattr(queue, "Queue", EmptyQueue)
 
     def timeout():
