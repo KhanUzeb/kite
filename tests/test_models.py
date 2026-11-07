@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from kite.models.litellm_model import LitellmModel, StreamStalledError
+from kite.models.litellm_model import LitellmModel, LongThinkingError, StreamStalledError
 from kite.models.reasoning import ReasoningSupport, looks_like_reasoning_error, looks_like_temperature_reasoning_error
 from kite.models.retry import is_transient_provider_error
 from kite.models.usage import UsageTotals
@@ -230,6 +230,56 @@ def test_stream_stall_falls_back_only_before_partial_output() -> None:
     )
     with pytest.raises(StreamStalledError, match="partial answer"):
         partial._query_stream_with_fallback([])
+
+
+def test_long_reasoning_falls_back_once_with_reasoning_disabled() -> None:
+    model = _model()
+    calls: list[dict] = []
+
+    def long_thinking(_messages: list[dict], *, overrides=None) -> dict:
+        raise LongThinkingError("reasoning-only output exceeded the limit")
+
+    def blocking(_messages: list[dict], *, overrides=None, timeout_s=None) -> dict:
+        calls.append({"overrides": overrides, "timeout_s": timeout_s})
+        return {"role": "assistant", "content": "answer"}
+
+    model._query_stream = long_thinking  # type: ignore[method-assign]
+    model._query_blocking = blocking  # type: ignore[method-assign]
+
+    assert model._query_stream_with_fallback([])["content"] == "answer"
+    assert calls == [
+        {
+            "overrides": {"reasoning_mode": "off", "drop_reasoning": True},
+            "timeout_s": 45.0,
+        }
+    ]
+
+
+def test_stream_stops_when_reasoning_only_output_exceeds_profile_limit() -> None:
+    from kite.providers.profiles import get_profile
+
+    model = _model()
+    model.resolved = SimpleNamespace(provider="grok", model="grok-4.6")
+    threshold = get_profile("grok").thinking_watchdog_chars
+    chunk = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    reasoning_content="x" * threshold,
+                    content=None,
+                    tool_calls=[],
+                )
+            )
+        ],
+        usage=None,
+        _hidden_params={},
+    )
+    model._bounded_completion = lambda **_kwargs: [chunk]  # type: ignore[method-assign]
+    model.on_event = lambda _event: None
+    model.should_stop = lambda: False
+
+    with pytest.raises(LongThinkingError, match="reasoning-only"):
+        model._query_stream([])
 
 
 def test_stream_open_timeout_does_not_start_another_30_second_request() -> None:

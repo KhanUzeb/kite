@@ -284,6 +284,13 @@ class StreamStalledError(TimeoutError):
     pass
 
 
+class LongThinkingError(TimeoutError):
+    """A reasoning-only response exceeded Kite's bounded thinking budget."""
+
+
+_LONG_THINKING_FALLBACK_TIMEOUT_S = 45.0
+
+
 def _bounded_completion_call(
     call: Callable[[], Any],
     *,
@@ -786,28 +793,33 @@ class LitellmModel:
                         )
                         reasoning += think_piece
                         self._emit("stream_reasoning", text=think_piece)
-                        # Long-thinking watchdog: reasoning tokens reset the
-                        # stall timer, so an unbounded NIM thinker would look
-                        # "infinite". Surface progress (Esc still stops) once
-                        # per turn instead of hanging silently.
+                        # Reasoning tokens reset the idle timer. Cap reasoning-
+                        # only output so a model cannot keep the turn open until
+                        # the much longer overall request timeout.
                         try:
                             from kite.providers.profiles import get_profile
 
                             watchdog = get_profile(self.resolved.provider).thinking_watchdog_chars
-                            if (
-                                len(reasoning) >= watchdog
-                                and not content
-                                and not tool_calls_acc
-                                and not getattr(self, "_thinking_warned", False)
-                            ):
-                                self._thinking_warned = True
-                                self._emit(
-                                    "stream_thinking_long",
-                                    reasoning_chars=len(reasoning),
-                                    hint="extended thinking — Esc stops, /thinking low shortens",
-                                )
                         except Exception:
-                            pass
+                            watchdog = 0
+                        if (
+                            watchdog > 0
+                            and len(reasoning) >= watchdog
+                            and not content
+                            and not answer_piece
+                            and not tool_calls_acc
+                            and not tool_deltas
+                            and not getattr(self, "_thinking_warned", False)
+                        ):
+                            self._thinking_warned = True
+                            self._emit(
+                                "stream_thinking_long",
+                                reasoning_chars=len(reasoning),
+                                hint="long reasoning — retrying once with reasoning disabled",
+                            )
+                            raise LongThinkingError(
+                                f"reasoning-only output exceeded {watchdog} characters"
+                            )
                     if answer_piece:
                         self._last_stream_emitted_answer = True
                         first_token = self._emit_first_token(
@@ -937,6 +949,15 @@ class LitellmModel:
             return self._query_stream(messages)
         except FormatError:
             raise
+        except LongThinkingError:
+            # This request already spent its thinking budget. Avoid another
+            # reasoning-enabled attempt and give the provider one short chance
+            # to answer with reasoning disabled.
+            return self._query_blocking(
+                messages,
+                overrides={"reasoning_mode": "off", "drop_reasoning": True},
+                timeout_s=min(self._call_timeout_s(), _LONG_THINKING_FALLBACK_TIMEOUT_S),
+            )
         except StreamStalledError:
             # A stalled stream may recover through one blocking request using
             # the configured deadline. If answer text already escaped to the
