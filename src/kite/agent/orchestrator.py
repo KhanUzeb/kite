@@ -35,7 +35,7 @@ _TOUCHED_SECTION_RE = re.compile(r"##\s*files touched(.*)", re.IGNORECASE | re.D
 _NEXT_SECTION_RE = re.compile(r"\n##\s+")
 _VALID_PATH_RE = re.compile(r"^[\w\-./\\]+$")
 _VALID_TOUCHED_PATH_RE = re.compile(r"^[\w\-./\\:]+$")
-TaskStatus = Literal["queued", "running", "finished", "failed", "killed"]
+TaskStatus = Literal["queued", "running", "revising", "finished", "failed", "killed"]
 _TERMINAL_TASK_STATUSES = frozenset({"finished", "failed", "killed"})
 
 
@@ -274,15 +274,23 @@ class SubagentTask:
     cancel: CancelToken | None = field(default=None, repr=False)
     _status_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
-    def finish(self, status: TaskStatus) -> bool:
-        """Set a terminal task status once, even when cancellation races completion."""
-        if status not in _TERMINAL_TASK_STATUSES:
-            raise ValueError(f"task terminal status required, got {status!r}")
+    def transition(self, status: TaskStatus) -> bool:
+        """Advance the task lifecycle once, even when cancellation races completion."""
         with self._status_lock:
-            if self.status != "running":
+            allowed = {
+                "running": {"revising", "finished", "failed", "killed"},
+                "revising": {"running", "failed", "killed"},
+            }
+            if status not in allowed.get(self.status, set()):
                 return False
             self.status = status
             return True
+
+    def finish(self, status: TaskStatus) -> bool:
+        """Move an active task to one terminal state exactly once."""
+        if status not in _TERMINAL_TASK_STATUSES:
+            raise ValueError(f"task terminal status required, got {status!r}")
+        return self.transition(status)
 
     def to_dict(self) -> dict[str, Any]:
         row = {
@@ -426,8 +434,8 @@ class SubagentOrchestrator:
         return [t.to_dict() for t in self.tasks]
 
     def _manager_payload(self, *, limit: int = _MANAGER_EVENT_LIMIT) -> list[dict[str, Any]]:
-        running = [t for t in self.tasks if t.status == "running"]
-        finished = [t for t in self.tasks if t.status not in {"running", "queued"}]
+        running = [t for t in self.tasks if t.status in {"running", "revising"}]
+        finished = [t for t in self.tasks if t.status not in {"running", "revising", "queued"}]
         finished.sort(key=lambda t: t.started_at, reverse=True)
         combined = running + finished
         return [t.to_dict() for t in combined[:limit]]
@@ -588,8 +596,10 @@ class SubagentOrchestrator:
             ok = False
             quality = "failed"
             summary = scope_reason
-        final_status: TaskStatus = "finished" if ok else "failed"
-        if not task.finish(final_status):
+        retry_expected = task.retryable and not task.retried and quality in {"failed", "partial"}
+        final_status: TaskStatus = "revising" if retry_expected else ("finished" if ok else "failed")
+        transition = task.transition if final_status == "revising" else task.finish
+        if not transition(final_status):
             return self._result_payload(task, ok=task.ok, output=task.summary, quality=task.quality)
         status = str(result.get("exit_status") or "done")
         task.exit_status = status
@@ -627,7 +637,7 @@ class SubagentOrchestrator:
         )
 
     def _prune_finished_tasks(self) -> None:
-        finished = [t for t in self.tasks if t.status not in {"running", "queued"}]
+        finished = [t for t in self.tasks if t.status not in {"running", "revising", "queued"}]
         if len(finished) <= _MAX_FINISHED_TASKS:
             return
         finished.sort(key=lambda t: t.started_at)
@@ -705,6 +715,14 @@ class SubagentOrchestrator:
         reason = gate_result(task, result) or f"quality={task.quality}: {task.summary[:500]}"
         task.retried = True
         task.prompt = _revise_prompt(task.prompt, reason)
+        if not task.transition("running"):
+            return self._result_payload(
+                task,
+                ok=task.ok,
+                output=task.summary,
+                cancelled=task.status == "killed",
+                quality=task.quality or task.status,
+            )
         try:
             retry_result = self._run_with_timeout(task)
         except FuturesTimeout:
@@ -933,7 +951,7 @@ class SubagentOrchestrator:
         while pending and time.monotonic() < deadline:
             for jid in list(pending):
                 task = self._task_by_id(jid)
-                if task is not None and task.status not in {"running", "queued"}:
+                if task is not None and task.status not in {"running", "revising", "queued"}:
                     collected[jid] = task.as_result()
                     pending.discard(jid)
                     continue
@@ -1078,7 +1096,7 @@ class SubagentOrchestrator:
                     results[idx] = {"ok": False, "output": str(e), "quality": "failed"}
                 if abort_on_failure and not results[idx].get("ok"):
                     for sib in crew:
-                        if sib.status in {"running", "queued"}:
+                        if sib.status in {"running", "revising", "queued"}:
                             self.kill(sib.id)
 
         succeeded = sum(1 for r in results.values() if r.get("ok"))
@@ -1375,7 +1393,9 @@ class SubagentOrchestrator:
         return False
 
     def kill_all(self) -> int:
-        running = [t.id for t in self.tasks if t.status == "running" and t.cancel is not None]
+        running = [
+            t.id for t in self.tasks if t.status in {"running", "revising"} and t.cancel is not None
+        ]
         n = 0
         for task_id in running:
             if self.kill(task_id):
