@@ -263,6 +263,7 @@ class FileSnapshot:
     content: bytes | None
     mode: int | None
     hash: str
+    oversized: bool = False
 
 
 @dataclass
@@ -289,23 +290,29 @@ class ChangeJournal:
     records: list[ChangeRecord] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    @staticmethod
-    def _hash(data: bytes) -> str:
-        return hashlib.sha256(data).hexdigest()
-
     def _snapshot(self, path: Path) -> FileSnapshot:
         rel = str(path.relative_to(self.workspace)) if path.is_relative_to(self.workspace) else str(path)
         if not path.exists():
             return FileSnapshot(path=rel, existed=False, content=None, mode=None, hash="")
-        data = path.read_bytes()
-        if len(data) > _MAX_SNAPSHOT_BYTES:
-            data = data[:_MAX_SNAPSHOT_BYTES]
+        digest = hashlib.sha256()
+        kept = bytearray()
+        total = 0
+        # Hash the whole file for conflict detection, but retain at most the
+        # cap in memory: a truncated preimage cannot be restored byte-for-byte.
+        with path.open("rb") as handle:
+            while chunk := handle.read(1 << 20):
+                total += len(chunk)
+                digest.update(chunk)
+                if len(kept) < _MAX_SNAPSHOT_BYTES:
+                    kept.extend(chunk[: _MAX_SNAPSHOT_BYTES - len(kept)])
+        oversized = total > _MAX_SNAPSHOT_BYTES
         return FileSnapshot(
             path=rel,
             existed=True,
-            content=data,
+            content=None if oversized else bytes(kept),
             mode=path.stat().st_mode,
-            hash=self._hash(data),
+            hash=digest.hexdigest(),
+            oversized=oversized,
         )
 
     def record_write(self, path: str | Path, *, agent_owned: bool = True) -> None:
@@ -364,6 +371,18 @@ class ChangeJournal:
                         except OSError:
                             pass
                     restored.append(rec.path)
+                else:
+                    # An oversized preimage was never retained in full: writing
+                    # its first _MAX_SNAPSHOT_BYTES would silently destroy the
+                    # rest of the file. Leave it untouched and report instead.
+                    conflicts.append(
+                        RestoreConflict(
+                            path=rec.path,
+                            reason=f"preimage over {_MAX_SNAPSHOT_BYTES} bytes cannot be restored safely",
+                            current_hash=current.hash,
+                            expected_hash=rec.postimage_hash,
+                        ),
+                    )
             elif target.exists():
                 try:
                     if not target.resolve().is_relative_to(self.workspace.resolve()):

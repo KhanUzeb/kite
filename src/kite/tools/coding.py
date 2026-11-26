@@ -79,16 +79,25 @@ def _todo_view(items: list[Any]) -> dict[str, Any]:
 
 
 def _list_dir_names(path: Path) -> tuple[list[str], str | None]:
+    # One scandir pass: DirEntry.is_dir() uses the type cached with the
+    # directory entry, while Path.is_dir() stats every entry twice (once for
+    # the sort key, once for the '/' suffix). Large directory reads are a
+    # common agent step, so the extra syscalls are pure overhead.
     try:
-        entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        with os.scandir(path) as scan:
+            entries: list[tuple[str, bool]] = []
+            for entry in scan:
+                if entry.name in _SKIP_NAMES:
+                    continue
+                try:
+                    is_dir = entry.is_dir()
+                except OSError:
+                    is_dir = False  # Path.is_dir() also treats stat failure as "not a dir"
+                entries.append((entry.name, is_dir))
     except OSError as e:
         return [], str(e)
-    names = []
-    for e in entries:
-        if e.name in _SKIP_NAMES:
-            continue
-        names.append(e.name + ("/" if e.is_dir() else ""))
-    return names, None
+    entries.sort(key=lambda item: (not item[1], item[0].lower()))
+    return [name + ("/" if is_dir else "") for name, is_dir in entries], None
 
 
 def _unified_diff(path: str, before: str, after: str) -> str:

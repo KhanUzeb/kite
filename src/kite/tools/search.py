@@ -430,20 +430,23 @@ def ls_search(
         return {"ok": False, "error": str(e), "output": str(e)}
 
     lines: list[str] = []
+    hidden = 0
     for e in entries:
         if e.name in _SKIP_PARTS:
             continue
         if glob_pat and not e.match(glob_pat):
             continue
+        if len(lines) >= max_entries:
+            # Count only eligible entries: skipped caches and glob-filtered
+            # names are deliberately hidden, not "more entries" to show.
+            hidden += 1
+            continue
         suffix = "/" if e.is_dir() else ""
         lines.append(e.name + suffix)
-        if len(lines) >= max_entries:
-            break
 
     body = "\n".join(lines) if lines else "(empty)"
-    truncated = len(entries) > len(lines)
-    if truncated:
-        body += f"\n… +{len(entries) - len(lines)} more entries …"
+    if hidden:
+        body += f"\n… +{hidden} more entries …"
     return {
         "ok": True,
         "output": body,

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import re
 
-_MARKER_RE = re.compile(r"<!--\s*/?\s*kite:untrusted\b.*?-->", re.IGNORECASE)
+# DOTALL matters: a forged closing marker split across lines
+# ("<!-- /kite:untrusted\n-->") must be neutralized too, or it escapes the
+# wrapper and lets disk-sourced text masquerade as harness instructions.
+_MARKER_RE = re.compile(r"<!--\s*/?\s*kite:untrusted\b.*?-->", re.IGNORECASE | re.DOTALL)
 
 
 def wrap_untrusted_context(

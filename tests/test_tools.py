@@ -195,6 +195,39 @@ def test_registry_order_and_sparse_line_numbers(tmp_path) -> None:
     assert "line 2\n" in body and "     2|line 2" not in body
 
 
+def test_directory_listing_uses_one_scan_pass(tmp_path, monkeypatch) -> None:
+    """Directory reads must not stat every entry twice to sort and suffix it."""
+    import os
+
+    from kite.tools import coding
+
+    root = tmp_path / "tree"
+    root.mkdir()
+    (root / "b.txt").write_text("x", encoding="utf-8")
+    (root / "A.txt").write_text("x", encoding="utf-8")
+    (root / "adir").mkdir()
+    (root / ".git").mkdir()
+    (root / "node_modules").mkdir()
+
+    real_scandir = os.scandir
+    calls: list[object] = []
+
+    def counting_scandir(path):  # noqa: ANN001, ANN202
+        calls.append(path)
+        return real_scandir(path)
+
+    monkeypatch.setattr(coding.os, "scandir", counting_scandir)
+    names, err = coding._list_dir_names(root)
+    assert err is None
+    assert names == ["adir/", "A.txt", "b.txt"]
+    assert len(calls) == 1  # one pass, not a stat per entry per sort/suffix step
+
+    read = next(t for t in make_coding_tools(cwd=str(tmp_path), enabled=["read"]) if t.name == "read")
+    out = read.run({"path": str(root)})
+    assert out["ok"] and out["directory"] is True
+    assert "adir/" in out["output"] and ".git" not in out["output"]
+
+
 def test_spill_and_tool_error_ledger(tmp_path) -> None:
     from kite.context.spill import spill_text
     from kite.tools.errors import ToolErrorLedger, classify_tool_error

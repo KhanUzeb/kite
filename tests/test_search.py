@@ -52,6 +52,22 @@ def test_glob_and_ls(tmp_path: Path) -> None:
     assert "b.py" in listed["output"]
 
 
+def test_ls_truncation_counts_only_eligible_entries(tmp_path: Path) -> None:
+    """Skipped caches and glob-filtered names are not 'more entries' to show."""
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "notes.txt").write_text("x\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("x\n", encoding="utf-8")
+
+    shown = ls_search(path=tmp_path, glob_pat="*.py")
+    assert shown["output"].splitlines() == ["a.py", "b.py"]
+    assert "more entries" not in shown["output"]
+
+    capped = ls_search(path=tmp_path, glob_pat="*.py", max_entries=1)
+    assert capped["output"].splitlines()[:2] == ["a.py", "… +1 more entries …"]
+    assert capped["count"] == 1
+
+
 def test_glob_mtime_sort_skips_unreadable_files(tmp_path: Path, monkeypatch) -> None:
     """Permission-denied entries must not crash glob (is_file re-raises EACCES)."""
     (tmp_path / "a.py").write_text("x\n", encoding="utf-8")

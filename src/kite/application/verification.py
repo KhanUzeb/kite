@@ -8,6 +8,7 @@ import json
 import re
 import tomllib
 import uuid
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal
@@ -22,6 +23,7 @@ PACKAGE_MARKERS: dict[str, tuple[str, ...]] = {
     "go": ("go.mod",),
 }
 
+_ALL_PACKAGE_MARKERS = frozenset(m for markers in PACKAGE_MARKERS.values() for m in markers)
 _PYTHON_TEST_SUFFIXES = ("_test.py", "test_.py")
 _MAX_SCAN_DEPTH = 8
 _MAX_PACKAGES = 64
@@ -93,13 +95,6 @@ def _read_toml(path: Path) -> dict:
         return {}
 
 
-def _is_file(path: Path) -> bool:
-    try:
-        return path.is_file()
-    except OSError:
-        return False
-
-
 def _is_dir(path: Path) -> bool:
     try:
         return path.is_dir()
@@ -107,10 +102,24 @@ def _is_dir(path: Path) -> bool:
         return False
 
 
-def _ecosystems_at(directory: Path) -> frozenset[str]:
+def _ecosystems_at(directory: Path, names: frozenset[str] | None = None) -> frozenset[str]:
+    """Detect build systems from marker filenames.
+
+    ``names`` is the caller's already-listed directory, so a repository scan
+    does not re-stat up to six marker paths for every directory it visits.
+    """
+    if names is None:
+        try:
+            names = frozenset(
+                entry.name
+                for entry in directory.iterdir()
+                if entry.name in _ALL_PACKAGE_MARKERS and entry.is_file()
+            )
+        except OSError:
+            names = frozenset()
     found: set[str] = set()
     for eco, markers in PACKAGE_MARKERS.items():
-        if any(_is_file(directory / marker) for marker in markers):
+        if any(marker in names for marker in markers):
             found.add(eco)
     return frozenset(found)
 
@@ -230,14 +239,22 @@ def _python_command_for_paths(
 
 def _scan_packages(workspace: Path, user_packages: dict[str, dict[str, str]]) -> list[PackageUnit]:
     found: list[PackageUnit] = []
-    queue: list[tuple[Path, int]] = [(workspace, 0)]
+    queue: deque[tuple[Path, int]] = deque([(workspace, 0)])
     seen_roots: set[Path] = set()
 
     while queue and len(found) < _MAX_PACKAGES:
-        directory, depth = queue.pop(0)
+        directory, depth = queue.popleft()
         if depth > _MAX_SCAN_DEPTH:
             continue
-        ecosystems = _ecosystems_at(directory)
+        try:
+            entries = sorted(directory.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            entries = []
+        names = frozenset(
+            entry.name for entry in entries
+            if entry.name in _ALL_PACKAGE_MARKERS and entry.is_file()
+        )
+        ecosystems = _ecosystems_at(directory, names=names)
         if ecosystems:
             rel = directory.relative_to(workspace).as_posix() if directory != workspace else ""
             key = rel or "."
@@ -270,10 +287,6 @@ def _scan_packages(workspace: Path, user_packages: dict[str, dict[str, str]]) ->
             except OSError:
                 pass
         if depth >= _MAX_SCAN_DEPTH:
-            continue
-        try:
-            entries = sorted(directory.iterdir(), key=lambda p: p.name.lower())
-        except OSError:
             continue
         for entry in entries:
             if not _is_dir(entry) or entry.name in SKIP_DIRS or entry.name.startswith("."):

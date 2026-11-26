@@ -52,6 +52,16 @@ EventKind = Literal[
     "compaction_start",
     "compaction_end",
     "queue_update",
+    # Emitted by the loop/orchestrator but previously missing here, so the
+    # type claimed a narrower stream than the one frontends actually see.
+    "limits",
+    "loop_hard_stop",
+    "provider_fault",
+    "provider_retry",
+    "submit_blocked",
+    "verification_status",
+    "orchestrator_start",
+    "orchestrator_end",
 ]
 
 

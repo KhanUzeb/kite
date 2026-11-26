@@ -285,6 +285,34 @@ def test_policy_paths_glob_executor_and_journal(workspace: Path, tmp_path: Path)
         assert decision.allowed and not decision.requires_approval, (name, decision.reason)
 
 
+def test_change_journal_never_restores_a_truncated_large_file(tmp_path: Path) -> None:
+    """Byte caps must not hide tail edits or turn restore into a data loss."""
+    from kite.application.execution import _MAX_SNAPSHOT_BYTES
+
+    target = tmp_path / "large.bin"
+    size = _MAX_SNAPSHOT_BYTES + 1000
+    target.write_bytes(b"a" * size)
+    journal = ChangeJournal(tmp_path)
+    journal.record_write(target)
+    agent_bytes = b"b" * size
+    target.write_bytes(agent_bytes)
+    journal.record_after_write(target)
+    target.write_bytes(agent_bytes + b"Z")  # user edit past the snapshot cap
+    restored, conflicts = journal.restore()
+    assert not restored and len(conflicts) == 1
+    assert target.read_bytes() == agent_bytes + b"Z"
+
+    # Even without a user edit, a truncated preimage must not overwrite the
+    # full file: that would discard everything beyond the cap.
+    journal = ChangeJournal(tmp_path)
+    journal.record_write(target)
+    target.write_bytes(b"c" * size)
+    journal.record_after_write(target)
+    restored, conflicts = journal.restore()
+    assert not restored and len(conflicts) == 1
+    assert target.read_bytes() == b"c" * size
+
+
 def test_verification_plans_replay_and_package_paths(workspace: Path, tmp_path: Path) -> None:
     vc = VerificationCollector(workspace_root=str(workspace))
     vc.on_tool_end("bash", {"command": "pytest tests/ -q"}, {"ok": True, "returncode": 0, "output": "out"})
@@ -366,6 +394,37 @@ def test_verification_plans_replay_and_package_paths(workspace: Path, tmp_path: 
     )
     assert collector.paths_touched == {"packages/foo/src/app.py"}
     assert collector.artifacts[-1].path == str(absolute)
+
+
+def test_workspace_scan_lists_each_directory_once(tmp_path: Path, monkeypatch) -> None:
+    """Package discovery must share one directory listing per visited folder."""
+    from kite.application import verification as ver
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='root'\n", encoding="utf-8")
+    for i in range(4):
+        package = tmp_path / "svc" / f"p{i}"
+        package.mkdir(parents=True)
+        (package / "package.json").write_text("{}", encoding="utf-8")
+    # A directory named like a marker is not a package marker.
+    (tmp_path / "rogue" / "Cargo.toml").mkdir(parents=True)
+
+    listed: list[Path] = []
+    original_iterdir = Path.iterdir
+
+    def counting_iterdir(self):  # noqa: ANN001, ANN202
+        listed.append(self)
+        return original_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", counting_iterdir)
+    packages = ver._scan_packages(tmp_path, {})
+    by_key = {p.key: p for p in packages}
+
+    assert "python" in by_key["."].ecosystems
+    assert "js" in by_key["svc/p0"].ecosystems
+    assert "rogue" not in by_key
+    # One walk pass serves both marker detection and child enumeration; the
+    # old code listed every directory twice and stat-ed six markers each time.
+    assert len(listed) == len(set(listed))
 
 
 def test_effects_coordinator_runner_and_cli_result(tmp_path: Path) -> None:

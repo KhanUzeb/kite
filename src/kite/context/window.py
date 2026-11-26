@@ -20,6 +20,17 @@ COMPACTION_PREFIX = "Previous conversation summary:\n"
 FACTS_PREFIX = "## Preserved facts\n"
 
 
+def _normalize_fact_line(text: str, *, limit: int) -> str:
+    """Collapse whitespace for a fact bullet, bounded to what can be kept.
+
+    Only ``limit`` normalized characters survive into the summary, so joining
+    an entire multi-megabyte tool output just to slice its head is wasted work
+    on exactly the histories compaction runs on. The 8x raw allowance keeps
+    normal prose identical to a full ``" ".join(text.split())``.
+    """
+    return " ".join(text[: limit * 8].split())[:limit]
+
+
 def extract_compaction_facts(messages: list[dict]) -> list[str]:
     """Deterministic bullets to keep across compaction — paths, failures, constraints."""
     paths: list[str] = []
@@ -43,13 +54,11 @@ def extract_compaction_facts(messages: list[dict]) -> list[str]:
                 tools.append(name)
             if name == "bash":
                 try:
-                    import json as _json
-
-                    args = _json.loads(str(fn.get("arguments") or "{}"))
+                    args = json.loads(str(fn.get("arguments") or "{}"))
                     cmd = str(args.get("command") or "").strip().replace("\n", " ")
                     if cmd:
                         commands.append(cmd[:160])
-                except (TypeError, ValueError, _json.JSONDecodeError):
+                except (TypeError, ValueError, json.JSONDecodeError):
                     pass
         if role == "tool" and content:
             # Test runners print verdicts at the tail (pytest summary), so
@@ -68,13 +77,13 @@ def extract_compaction_facts(messages: list[dict]) -> list[str]:
                     if token.endswith((".py", ".ts", ".tsx", ".js", ".md", ".toml", ".rs", ".go")):
                         paths.append(token.strip("`'\"(),"))
         if role == "user" and any(w in content.lower() for w in ("must", "never", "don't", "do not", "important")):
-            line = " ".join(content.split())
+            line = _normalize_fact_line(content, limit=240)
             if len(line) > 20:
-                failures.append(f"constraint: {line[:240]}")
+                failures.append(f"constraint: {line}")
         if any(tok in content.lower() for tok in ("error", "failed", "traceback", "exception")):
-            line = " ".join(content.split())
+            line = _normalize_fact_line(content, limit=280)
             if len(line) > 30:
-                failures.append(line[:280])
+                failures.append(line)
     facts: list[str] = []
     if paths:
         uniq = list(dict.fromkeys(paths))[:24]
