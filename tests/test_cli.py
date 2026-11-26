@@ -418,6 +418,27 @@ def test_cli_help_documents_accepted_flags_without_loading_credentials(monkeypat
         assert exc.value.code == 0
 
 
+def test_web_keys_alias_dispatches_without_implicit_prompt(kite_home, monkeypatch) -> None:
+    from kite.cli.help_map import CLI_COMMANDS
+    from kite.cli.run import build_parser, main, rewrite_implicit_task
+
+    parser = build_parser()
+    commands = parser._subparsers._group_actions[0].choices
+    # Every registered name, including argparse aliases, must be recognised
+    # before the implicit-task rewrite turns it into a chat prompt.
+    assert set(commands) <= CLI_COMMANDS
+    assert rewrite_implicit_task(["web_keys", "status"]) == ["web_keys", "status"]
+    implicit = rewrite_implicit_task(["fix", "the", "bug"])
+    assert implicit[0] in {"chat", "run"} and implicit[1:] == ["fix", "the", "bug"]
+
+    import kite.cli.web_keys as web_keys_cmd
+
+    seen: list[argparse.Namespace] = []
+    monkeypatch.setattr(web_keys_cmd, "cmd_web_keys", lambda args: seen.append(args) or 0)
+    assert main(["web_keys", "status"]) == 0
+    assert len(seen) == 1 and seen[0].web_keys_cmd == "status"
+
+
 def test_resume_requires_session_without_prompt(monkeypatch, kite_home) -> None:
     from kite.cli.run import cmd_resume
 

@@ -112,6 +112,11 @@ def test_completion_cues_and_variants_when_reasoning_is_unavailable(workspace, k
     )
     completion_names = {completion.text for completion in bare_completions}
     assert {"model", "plan", "compact", "explain", "commit", "tools", "variants", "thinking"} <= completion_names
+    # /reasoning is a documented builtin even though it stays out of the
+    # redesigned level picker; hidden aliases must not crowd the menu.
+    assert "reasoning" in completion_names
+    assert {"effort", "fast"}.isdisjoint(completion_names)
+    assert {c.text for c in bare_completer.get_completions(Document("/reas"), None)} == {"reasoning"}
 
     args = {
         completion.text

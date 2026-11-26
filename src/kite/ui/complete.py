@@ -701,7 +701,9 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
             continue
         if ":" in spec.name:
             continue
-        if spec.name in {"reasoning", "effort", "fast"}:
+        # /reasoning is a documented builtin, so it belongs in the menu even
+        # though its /effort alias and the /fast legacy shortcut stay hidden.
+        if spec.name in {"effort", "fast"}:
             continue
         seen.add(spec.name)
         rows.append(spec)

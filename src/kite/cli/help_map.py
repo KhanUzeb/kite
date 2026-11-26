@@ -18,6 +18,9 @@ CLI_COMMANDS: frozenset[str] = frozenset({
     "logout",
     "keys",
     "web-keys",
+    # argparse alias from build_parser(); rewrite_implicit_task() must not
+    # mistake `kite web_keys status` for an opening prompt.
+    "web_keys",
     "models",
     "theme",
     "font",
