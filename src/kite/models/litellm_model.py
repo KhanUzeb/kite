@@ -401,6 +401,10 @@ class LitellmModel:
     ):
         self.resolved = resolved
         self.model_name = resolved.litellm_model
+        # The agy subscription route is text-only: no tool calls, no submit
+        # action. Harness nudges asking for either are unanswerable, so the
+        # loop must not send them (see DefaultAgent._handle_no_actions).
+        self.text_only_subscription = _is_agy_subscription(resolved)
         self.registry = registry
         self.temperature = temperature
         self.on_event = on_event
@@ -741,6 +745,14 @@ class LitellmModel:
         overall_limit = self._call_timeout_s()
         first_token_limit = overall_limit
         idle_limit = min(overall_limit, 60.0)
+        # Static provider lookup — resolve once per stream instead of on every
+        # reasoning chunk, which is a hot path for long-thinking models.
+        try:
+            from kite.providers.profiles import get_profile
+
+            thinking_watchdog = get_profile(self.resolved.provider).thinking_watchdog_chars
+        except Exception:
+            thinking_watchdog = 0
 
         def _check_timeouts() -> None:
             now = time.monotonic()
@@ -796,15 +808,9 @@ class LitellmModel:
                         # Reasoning tokens reset the idle timer. Cap reasoning-
                         # only output so a model cannot keep the turn open until
                         # the much longer overall request timeout.
-                        try:
-                            from kite.providers.profiles import get_profile
-
-                            watchdog = get_profile(self.resolved.provider).thinking_watchdog_chars
-                        except Exception:
-                            watchdog = 0
                         if (
-                            watchdog > 0
-                            and len(reasoning) >= watchdog
+                            thinking_watchdog > 0
+                            and len(reasoning) >= thinking_watchdog
                             and not content
                             and not answer_piece
                             and not tool_calls_acc
@@ -818,7 +824,7 @@ class LitellmModel:
                                 hint="long reasoning — retrying once with reasoning disabled",
                             )
                             raise LongThinkingError(
-                                f"reasoning-only output exceeded {watchdog} characters"
+                                f"reasoning-only output exceeded {thinking_watchdog} characters"
                             )
                     if answer_piece:
                         self._last_stream_emitted_answer = True
@@ -1030,8 +1036,6 @@ class LitellmModel:
         )
 
     def query(self, messages: list[dict]) -> dict:
-        import litellm
-
         if is_oauth_provider(self.resolved.spec):
             ensure_oauth_env(self.resolved.spec)
 
@@ -1039,7 +1043,12 @@ class LitellmModel:
             # Linked subscription, no API key: the turn runs through the
             # signed-in agy CLI (text-only — agy cannot return Kite tool
             # calls). Tool-driven agent runs still need GEMINI_API_KEY.
+            # Importing LiteLLM here would block the first response on its
+            # ~7s cold import even though the agy path never uses it (a
+            # background prewarm only moves the wait onto the import lock).
             return self._query_agy(messages)
+
+        import litellm
 
         litellm.suppress_debug_info = True
         # LiteLLM logs every failed attempt straight to stderr ("Provider

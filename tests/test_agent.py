@@ -260,6 +260,77 @@ def test_unexpected_stop_classifier() -> None:
     assert not is_unexpected_stop("Should I continue?")
 
 
+def test_text_only_subscription_answer_is_not_nudged_into_empty_response() -> None:
+    """A text-only subscription route (agy CLI) cannot act on an idle nudge.
+
+    The real agy CLI answers harness nudges with an empty SUCCESS payload,
+    which used to abort the run and hide the answer already produced.
+    """
+    from kite.providers.auth.antigravity_exec import AntigravityExecError
+
+    class _AgyLikeModel(_TextOnlyModel):
+        text_only_subscription = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def query(self, messages):
+            self.calls += 1
+            if self.calls > 1:
+                # Faithful to the observed second turn: agy returns an empty
+                # response for "No tool calls. Use tools or submit ...".
+                raise AntigravityExecError("agy returned an empty response")
+            return {"role": "assistant", "content": "pong", "extra": {"actions": [], "cost": 0.0}}
+
+    model = _AgyLikeModel()
+    agent = DefaultAgent(model, _StubEnv(), interactive=False, mode=AgentMode.BUILD, provider_max_retries=1)
+    result = agent.run("Reply with the single word: pong")
+    assert model.calls == 1, "the harness must not nudge a model that has no tools or submit action"
+    assert result.get("exit_status") == "Submitted"
+    assert "pong" in str(result.get("submission") or "")
+
+
+def test_text_only_blocked_submit_keeps_blocked_reason_and_event() -> None:
+    """A blocked text-only submit must be as observable as the normal submit gate."""
+
+    class _AgyLikeModel(_TextOnlyModel):
+        text_only_subscription = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def query(self, messages):
+            self.calls += 1
+            if self.calls > 1:
+                raise AssertionError("a blocked text-only turn must not be nudged again")
+            return {
+                "role": "assistant",
+                "content": "All tests pass.",  # claim without a check -> gate blocks
+                "extra": {"actions": [], "cost": 0.0},
+            }
+
+    events = []
+    model = _AgyLikeModel()
+    agent = DefaultAgent(
+        model,
+        _StubEnv(),
+        interactive=False,
+        mode=AgentMode.BUILD,
+        verify_before_submit=True,
+        on_event=events.append,
+        provider_max_retries=1,
+    )
+    agent.verification.on_tool_end("edit", {"path": "a.py"}, {"ok": True, "path": "a.py", "diff": "d"})
+    result = agent.run("fix the bug")
+
+    assert model.calls == 1
+    assert result.get("exit_status") == "Stalled"
+    assert result.get("submission") == "All tests pass."
+    reason = result.get("blocked_reason")
+    assert reason and "verification" in str(reason).lower()
+    assert any(event.kind == "submit_blocked" for event in events)
+
+
 def test_informational_turn_returns_answer_not_report() -> None:
     # Issue #81: informational turns end with the answer, not a turn report.
     agent = DefaultAgent(_TextOnlyModel(), _StubEnv(), interactive=True, mode=AgentMode.BUILD, provider_max_retries=1)

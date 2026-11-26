@@ -125,7 +125,7 @@ api_key_env = ""
 auth_kind = "oauth"
 oauth_provider = "antigravity"
 models = []
-default_model = "gemini-3.7-flash-medium"
+default_model = "gemini-3.8-flash-medium"
 docs_url = "https://antigravity.google/docs/cli/install/"
 billing_note = "OAuth — chat runs on your Google subscription via the signed-in agy CLI; GEMINI_API_KEY adds tool-driven agent runs"
 

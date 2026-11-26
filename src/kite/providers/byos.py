@@ -38,7 +38,19 @@ class OAuthSession:
 
 def clear_oauth_model_cache(provider: str | None = None) -> None:
     if provider:
-        _oauth_model_cache.pop(provider, None)
+        # Model lists are cached under the canonical oauth key (spec.oauth_provider
+        # or spec.name), while callers pass a catalog name or login alias. Clear
+        # both spellings so e.g. "grok" also drops the "xai"-keyed entry.
+        keys = {provider}
+        try:
+            from kite.providers.catalog import load_catalog
+
+            spec = load_catalog().get(resolve_login_provider(provider))
+            keys.add(spec.oauth_provider or spec.name)
+        except Exception:  # cache invalidation must never fail a caller
+            pass
+        for key in keys:
+            _oauth_model_cache.pop(key, None)
         return
     _oauth_model_cache.clear()
 

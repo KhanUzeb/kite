@@ -384,3 +384,23 @@ def test_agy_turn_retries_without_model_on_unknown_model(monkeypatch: pytest.Mon
     assert turn.text == "hi"
     assert len(seen) == 2 and "--model" not in seen[1][0]
     assert all("User: hi" in stdin for _, stdin in seen)  # prompt via stdin
+
+
+def test_antigravity_default_model_uses_live_fallback_ids() -> None:
+    from kite.providers.auth.antigravity import _FALLBACK_MODELS
+    from kite.providers.catalog import load_catalog
+
+    spec = load_catalog().get("antigravity")
+    assert spec.default_model in _FALLBACK_MODELS
+    # Both ids were rejected by the real `agy --model` CLI; do not offer them.
+    assert "gemini-3.7-flash-medium" not in _FALLBACK_MODELS
+    assert "gemini-3.1-pro-high" not in _FALLBACK_MODELS
+
+
+def test_clear_oauth_model_cache_normalizes_catalog_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    from kite.providers import byos
+
+    # `grok` is a catalog name; model lists are cached under its oauth id `xai`.
+    monkeypatch.setattr(byos, "_oauth_model_cache", {"xai": (0.0, ("grok-model",))})
+    byos.clear_oauth_model_cache("grok")
+    assert "xai" not in byos._oauth_model_cache

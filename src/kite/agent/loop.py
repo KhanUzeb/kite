@@ -1036,6 +1036,14 @@ class DefaultAgent:
             # An explicit submit marker is an intent, not narration — run the same
             # gate the `submit` tool does instead of nudging for more tool calls.
             return self._submit_text(explicit)
+        if content and getattr(self.model, "text_only_subscription", False):
+            # Subscription text-only routes (agy CLI) cannot call tools or submit.
+            # The idle nudge below asks for exactly those, and agy answers it with
+            # an empty SUCCESS payload that aborts the turn and hides the answer
+            # already produced. Accept the prose answer through the same gate as
+            # every other text submission, but stop on a block: no further model
+            # turn can run the required check.
+            return self._submit_text(content, terminal_on_block=True)
         if _allow_text_submit(
             content,
             mode=self.mode,
@@ -1115,8 +1123,14 @@ class DefaultAgent:
                 return self.add_messages({"role": "user", "content": reason})
         return self.add_messages({"role": "user", "content": _IDLE_NUDGE})
 
-    def _submit_text(self, submission: str) -> list[dict]:
-        """Gate a text-only submission the same way the `submit` tool is gated."""
+    def _submit_text(self, submission: str, *, terminal_on_block: bool = False) -> list[dict]:
+        """Gate a text-only submission the same way the `submit` tool is gated.
+
+        ``terminal_on_block`` is for routes that cannot act on a nudge (text-only
+        subscriptions): the gate still emits ``submit_blocked`` and the exit still
+        carries ``blocked_reason``, but a blocked submission stops here instead
+        of handing an unanswerable reason back to the model.
+        """
         self._consecutive_no_tool_turns = 0
         self._last_idle_content = ""
         reason = self.verification.submit_block_reason(
@@ -1126,13 +1140,18 @@ class DefaultAgent:
         )
         if reason:
             self._emit("submit_blocked", reason=reason, verification=self.verification.summary())
-            if self.verification.submit_exhausted:
-                # The gate has spent every retry. Stop rather than hand back the
-                # same block again, but keep the report so the work stays visible.
+            if terminal_on_block or self.verification.submit_exhausted:
+                # Retries are spent (or impossible): stop rather than hand back
+                # the same block again, keeping the report and block reason visible.
+                detail = reason
+                if not terminal_on_block:
+                    detail += f"\n\nStopped after {self.verification.blocked_submits} blocked submissions."
+                else:
+                    detail += "\n\nText-only subscription turn cannot run tools or submit; stopping with the report above."
                 self.add_messages(
                     _exit_msg(
                         "Stalled",
-                        content=f"{reason}\n\nStopped after {self.verification.blocked_submits} blocked submissions.",
+                        content=detail,
                         submission=submission,
                         blocked_reason=reason,
                     )

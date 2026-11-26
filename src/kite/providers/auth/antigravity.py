@@ -33,8 +33,7 @@ _AGY_BIN = "agy"
 # Unauthenticated fallback only — the live list comes from `agy models`.
 _FALLBACK_MODELS = (
     "gemini-3.8-flash-medium",
-    "gemini-3.7-flash-medium",
-    "gemini-3.1-pro-high",
+    "gemini-4-hydrogen-high",
     "claude-sonnet-4-6",
 )
 _INSTALL_HINT = (

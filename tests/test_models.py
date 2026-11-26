@@ -759,3 +759,44 @@ def test_agy_subscription_turn_is_text_only(monkeypatch: pytest.MonkeyPatch) -> 
         model.query([{"role": "user", "content": "hi"}])
     assert "quota" in exc_info.value.error.lower()
 
+
+def test_agy_turn_does_not_import_litellm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Subscription turns use the agy CLI, so a cold first response must not
+    block on LiteLLM's ~7s import (nor wait on the background prewarm's lock)."""
+    import builtins
+    import sys
+
+    from kite.providers.auth.antigravity_exec import AgyTurn
+
+    model = object.__new__(LitellmModel)
+    model.resolved = SimpleNamespace(
+        provider="antigravity",
+        model="gemini-3.7-flash-medium",
+        api_key=None,
+        spec=SimpleNamespace(auth_kind="oauth", oauth_provider="antigravity", name="antigravity"),
+    )
+    model.on_event = None
+    model.should_stop = lambda: False
+    model.timeout_seconds = 0
+    model.cost = 0.0
+    model.last_usage = {}
+    monkeypatch.setattr(
+        "kite.providers.auth.antigravity_exec.run_agy_turn",
+        lambda **_k: AgyTurn(text="hi", input_tokens=1, output_tokens=1),
+    )
+
+    real_import = builtins.__import__
+    attempts: list[str] = []
+
+    def guard(name: str, *args: object, **kwargs: object) -> object:
+        if name == "litellm" or name.startswith("litellm."):
+            attempts.append(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.delitem(sys.modules, "litellm", raising=False)
+    monkeypatch.setattr(builtins, "__import__", guard)
+
+    msg = model.query([{"role": "user", "content": "hi"}])
+    assert msg["content"] == "hi"
+    assert attempts == []
+
