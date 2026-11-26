@@ -26,6 +26,17 @@ SECRET_PATTERNS = [
     re.compile(r"(?i)-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"(?i)\b(sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|xox[baprs]-[a-zA-Z0-9-]{20,})\b"),
     re.compile(r"(?i)(?:key|token|secret|password)\s*[:=]\s*['\"]?[A-Za-z0-9+/]{24,}={0,2}"),
+    # Provider-prefixed credentials embed '-'/'_' in the prefix, so the plain
+    # `sk-<alnum>` rule above cannot see them when they appear on their own
+    # (logs, pasted errors, tool output) without a `key=`-style label.
+    re.compile(
+        r"\b(?:sk-(?:proj|ant|or-v1)-[A-Za-z0-9_-]{16,}"
+        r"|github_pat_[A-Za-z0-9_]{16,}"
+        r"|gsk_[A-Za-z0-9]{16,}"
+        r"|AKIA[0-9A-Z]{16}"
+        r"|AIza[A-Za-z0-9_-]{35}"
+        r"|xapp-[A-Za-z0-9_-]{20,})\b"
+    ),
 ]
 
 # Literal prefilters avoid regex scans of ordinary large outputs. Non-ASCII text
@@ -35,6 +46,9 @@ _SECRET_MARKERS = (
     ("-----begin ",),
     ("sk-", "ghp_", "xox"),
     ("key", "token", "secret", "password"),
+    (
+        "sk-proj", "sk-ant", "sk-or-v1", "github_pat", "gsk_", "akia", "aiza", "xapp-",
+    ),
 )
 
 _ENV_DUMP_PATTERNS = (

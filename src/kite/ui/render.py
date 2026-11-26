@@ -1291,6 +1291,8 @@ class RunDisplay:
                 self._print(meter)
 
     def _on_tool_start(self, p: dict[str, Any]) -> None:
+        from kite.guardrails.redact import redact_string
+
         self._flush_stream_buffers()
         self._flush_tool_preview()
         self._end_stream_line()
@@ -1298,7 +1300,10 @@ class RunDisplay:
         args = p.get("arguments") or {}
         if not isinstance(args, dict):
             args = {}
-        reason = str(args.get("reason") or p.get("reason") or "")
+        # Tool args come from the model: a command or reason may embed a live
+        # credential. Redact at the display boundary — approvals still show the
+        # exact command inside approval.py, where the human must read it.
+        reason = redact_string(str(args.get("reason") or p.get("reason") or ""))
         batch = int(p.get("parallel_batch") or 0)
         pindex = int(p.get("parallel_index") or 1)
         if self._saw_answer:
@@ -1318,7 +1323,7 @@ class RunDisplay:
         )
         detail = card.detail
         if tool == "bash" and args.get("command"):
-            detail = str(args["command"]).replace("\n", " ").strip()[:72]
+            detail = redact_string(str(args["command"]).replace("\n", " ").strip())[:72]
         elif not detail:
             detail = tool
         self.state.set_running(label=detail, kind=tool)
@@ -1334,7 +1339,7 @@ class RunDisplay:
             if reason:
                 self._print(Text(f"{GUTTER}{GUTTER}{reason}", style="kite.muted italic"))
             if tool == "bash" and args.get("command"):
-                self._print(render_bash_command_block(str(args["command"])))
+                self._print(render_bash_command_block(redact_string(str(args["command"]))))
             elif tool in {"write", "edit"}:
                 preview = render_code_edit_preview(tool, args)
                 if preview is not None:

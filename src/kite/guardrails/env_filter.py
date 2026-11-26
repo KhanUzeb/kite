@@ -45,7 +45,9 @@ _DROP_ENV_PREFIXES = (
     "AWS_",
 )
 
-_SENSITIVE_SUFFIX = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)$")
+# `_PWD` is a credential suffix (MYSQL_PWD, DB_PWD, ...) but bare `PWD` is the
+# shell's working directory, so require the separator before it.
+_SENSITIVE_SUFFIX = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|_PWD)$")
 
 
 # Single-purpose GitHub tokens the gh CLI consumes itself. Re-injected only

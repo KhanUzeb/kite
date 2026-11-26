@@ -63,7 +63,7 @@ session_persistence = "redacted"  # full | redacted | disabled (default: redacte
 | `full` | Persist raw payloads (opt-in; may retain secrets and proprietary content). |
 | `disabled` | No session file writes; in-memory session only for the current run. |
 
-Redaction uses the same recursive sanitizer as audit logs and event persistence. Sensitive key names (token, password, authorization, etc.) and inline patterns (Bearer tokens, cookies, PKCE verifiers) are replaced with `[REDACTED]`.
+Redaction uses the same recursive sanitizer as audit logs and event persistence. Sensitive key names (token, password, authorization, etc.) and inline patterns (Bearer tokens, cookies, PKCE verifiers, and provider-prefixed keys such as `sk-proj-`, `sk-ant-`, `github_pat_`, `AKIA…`, and `AIza…`) are replaced with `[REDACTED]`.
 
 ### Atomic writes
 

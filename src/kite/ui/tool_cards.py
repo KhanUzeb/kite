@@ -159,6 +159,8 @@ def render_code_edit_preview(
     the rest is one command away instead of simply missing. Rows are clipped to
     the live width so a long path or line never wraps the block raggedly.
     """
+    from kite.guardrails.redact import redact_string
+
     path = str(args.get("path") or args.get("file_path") or "")
     if not path:
         return None
@@ -197,8 +199,9 @@ def render_code_edit_preview(
         content = str(args.get("content") or "")
         lines = content.splitlines() or [""]
         for line in lines[:max_lines]:
+            safe = redact_string(line)
             block.append(f"{GUTTER}{TOOL_BAR}+ ", style="kite.diff.add")
-            block.append(clip_text(line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.add")
+            block.append(clip_text(safe, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.add")
         if len(lines) > max_lines:
             # One printed row per raw content line, so the overflow is
             # len(lines) - max_lines: the unfiltered count, matching the rows
@@ -217,14 +220,16 @@ def render_code_edit_preview(
         for line in old_lines:
             if shown >= max_lines:
                 break
+            safe = redact_string(line)
             block.append(f"{GUTTER}{TOOL_BAR}− ", style="kite.diff.del")
-            block.append(clip_text(line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.del")
+            block.append(clip_text(safe, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.del")
             shown += 1
         for line in new_lines:
             if shown >= max_lines:
                 break
+            safe = redact_string(line)
             block.append(f"{GUTTER}{TOOL_BAR}+ ", style="kite.diff.add")
-            block.append(clip_text(line, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.add")
+            block.append(clip_text(safe, max(1, row_width - _BODY_INDENT_COLUMNS - 2)) + "\n", style="kite.diff.add")
             shown += 1
         # The budget spans both sides: `shown` filled from old then new, so the
         # hidden count is the combined old+new total minus the rows printed.
@@ -508,12 +513,14 @@ def line_count_from_output(output: str) -> int | None:
 
 
 def detail_from_args(tool: str, args: dict[str, Any], *, limit: int = 60) -> str:
+    from kite.guardrails.redact import redact_string
+
     if not isinstance(args, dict):
         return ""
     for key in ("path", "command", "pattern", "query", "name", "prompt", "url"):
         if key in args and args[key] is not None:
-            val = str(args[key]).replace("\n", " ")
+            val = redact_string(str(args[key]).replace("\n", " "))
             if len(val) > limit:
                 val = val[: limit - 1] + "…"
             return val
-    return truncate_preview(json.dumps(args, ensure_ascii=False), limit)
+    return truncate_preview(redact_string(json.dumps(args, ensure_ascii=False)), limit)
