@@ -370,7 +370,9 @@ def test_model_selection_and_reasoning_levels(kite_home, monkeypatch) -> None:
     }
     index = CommandIndex(specs=specs)
     names = {s.name for s in _visible_specs(index, support=ReasoningSupport(True, False, True, True))}
-    assert "thinking" in names and "reasoning" not in names and "fast" not in names
+    # /reasoning is a documented builtin; only its /effort alias and the
+    # /fast legacy shortcut stay out of the bare-slash menu.
+    assert {"thinking", "reasoning"} <= names and "fast" not in names
     names_off = {s.name for s in _visible_specs(index, support=ReasoningSupport(False, False, False, False))}
     # /thinking stays visible before detection warms — only levels are gated.
     assert "thinking" in names_off
