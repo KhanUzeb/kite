@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# kite-release-version: 1.0.10
+# kite-release-version: 1.0.11
 """Real CLI QA against a loopback-only recorded OpenAI server; no provider credentials."""
 
 from __future__ import annotations

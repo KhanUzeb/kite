@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# kite-release-version: 1.0.10
+# kite-release-version: 1.0.11
 """Conservative changed-file pytest selection; unknown/shared changes run the full suite."""
 
 from __future__ import annotations

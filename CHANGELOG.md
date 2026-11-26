@@ -4,6 +4,31 @@ All notable changes to Kite are documented here. The format is based on [Keep a 
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-11-26
+
+### Added
+- Explicit task/job status transitions and a `revising` state keep scoped worker retries active across cancellation, timeout, and completion races.
+- GitHub latest-release selection uses semantic version ordering instead of publish order.
+- Antigravity catalog default is now `gemini-3.8-flash-medium`; fallback IDs rejected by the real `agy --model` CLI were removed.
+- The `kite web_keys` alias dispatches to the web-keys command instead of an implicit chat prompt, and `/reasoning` is visible in slash completion while `/effort` and `/fast` remain hidden.
+- Behavioral coverage for long-reasoning fallback, status transitions, search truncation, secret redaction, untrusted markers, oversized journal snapshots, git dirty-count invalidation, and text-only subscription turns.
+
+### Changed
+- Reasoning-only streams retry once with reasoning disabled under a bounded fallback instead of waiting for the full request deadline; stream close and watchdog lookups are bounded and hoisted out of the per-chunk path.
+- Precompiled patterns and SQL-side episodic filtering reduce repeated work in orchestration, web search, and credential updates; package scanning shares one directory pass and listing uses one `scandir` pass with unchanged outputs.
+- `uv.lock` refreshed for the 1.0.11 project stamp with no dependency upgrades; stray numbered marker lines removed from `scripts/ci_check.ps1`.
+- Secret redaction, untrusted-context handling, journal snapshots, and UI display hardening are included in this patch; see [RELEASE-1.0.11](docs/RELEASE-1.0.11.md).
+
+### Fixed
+- Text-only `agy` turns keep the answer they produced instead of being aborted by an idle nudge that returned an empty success payload; OAuth model caches clear canonical oauth keys as well as login aliases.
+- Scoped retries no longer lose the `revising` state during a retry, and terminal job/task events are emitted once.
+- `EventKind` now declares the event kinds already emitted by the loop and orchestrator.
+- `ls_search` truncation counts only eligible entries; cached git dirty counts refresh after checkpoints and restores.
+
+### Security
+- Bare provider-prefixed keys and `_PWD` credentials are redacted; forged multiline untrusted-context markers are neutralized.
+- Model-supplied tool arguments are redacted in tool cards and previews while approval views keep the exact command.
+
 ## [1.0.10] - 2026-11-01
 
 ### Added
