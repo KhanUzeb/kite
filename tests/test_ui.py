@@ -1146,6 +1146,78 @@ def test_git_dirty_tracking_and_branch_marker(tmp_path, kite_home, monkeypatch) 
     assert "main*" not in status_context_parts(chat.state)
 
 
+def test_checkpoint_commit_refreshes_cached_dirty_count(tmp_path) -> None:
+    """A commit must invalidate the 4s TTL snapshot the footer reads."""
+    import shutil
+    import subprocess
+
+    from kite.ui import git as git_ui
+
+    if shutil.which("git") is None:
+        pytest.skip("git not on PATH")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=60)
+    for key, value in (("user.email", "t@t"), ("user.name", "t")):
+        subprocess.run(["git", "-C", str(repo), "config", key, value], check=True, timeout=60)
+    (repo / "a.txt").write_text("x", encoding="utf-8")
+
+    assert git_ui.git_dirty_count(repo) == 1
+    assert git_ui.GitCheckpoints.open(repo).commit(["a.txt"], "msg")
+    assert git_ui.git_dirty_count(repo) == 0  # no manual cache clear, TTL still live
+
+
+def test_pending_undo_refreshes_cached_dirty_count(tmp_path, monkeypatch) -> None:
+    """Pending-edit undo (including a partial failure) must refresh the footer count."""
+    import shutil
+    import subprocess
+
+    from kite.ui import git as git_ui
+
+    if shutil.which("git") is None:
+        pytest.skip("git not on PATH")
+
+    def make_repo(name: str) -> Path:
+        repo = tmp_path / name
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=60)
+        for key, value in (("user.email", "t@t"), ("user.name", "t")):
+            subprocess.run(["git", "-C", str(repo), "config", key, value], check=True, timeout=60)
+        (repo / "tracked.txt").write_text("original\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True, timeout=60)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True, timeout=60)
+        (repo / "tracked.txt").write_text("modified\n", encoding="utf-8")
+        (repo / "untracked.txt").write_text("new\n", encoding="utf-8")
+        return repo
+
+    repo = make_repo("full")
+    assert git_ui.git_dirty_count(repo) == 2
+    cp = git_ui.GitCheckpoints.open(repo)
+    cp.record("tracked.txt", "task")
+    cp.record("untracked.txt", "task")
+    assert cp.undo() == (True, "reverted 2 uncommitted edit(s)")
+    assert git_ui.git_dirty_count(repo) == 0
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "original\n"
+    assert not (repo / "untracked.txt").exists()
+
+    partial = make_repo("partial")
+    assert git_ui.git_dirty_count(partial) == 2
+    real_run = git_ui._run
+
+    def flaky(cwd, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        if len(args) > 1 and args[1] == "checkout" and any("tracked.txt" in str(a) for a in args):
+            return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="simulated failure")
+        return real_run(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(git_ui, "_run", flaky)
+    cp = git_ui.GitCheckpoints.open(partial)
+    cp.record("tracked.txt", "task")
+    cp.record("untracked.txt", "task")
+    assert cp.undo() == (True, "reverted 1 uncommitted edit(s)")
+    assert git_ui.git_dirty_count(partial) == 1
+    assert (partial / "tracked.txt").read_text(encoding="utf-8") == "modified\n"
+
+
 def test_git_helpers_survive_missing_binary_and_cache_repo(tmp_path, monkeypatch) -> None:
     from kite.ui import git as git_ui
 

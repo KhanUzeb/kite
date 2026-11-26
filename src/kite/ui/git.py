@@ -98,6 +98,19 @@ def git_dirty_count(cwd: str | Path) -> int:
     return count
 
 
+def invalidate_git_status_cache(cwd: str | Path | None = None) -> None:
+    """Drop memoized dirty counts after a git mutation.
+
+    The footer reads a 4s TTL snapshot. A checkpoint commit inside that window
+    would otherwise leave the pre-commit count visible for the rest of the
+    idle turn, since ``git_dirty_count`` is only probed at turn boundaries.
+    """
+    if cwd is None:
+        _status_cache.clear()
+    else:
+        _status_cache.pop(str(cwd), None)
+
+
 def _short_task(text: str, limit: int = 72) -> str:
     line = " ".join((text or "").strip().split())
     if len(line) <= limit:
@@ -171,6 +184,7 @@ class GitCheckpoints:
             return None
         digest = sha.stdout.strip()
         self.shas.append(digest)
+        invalidate_git_status_cache(self.cwd)
         return digest
 
     def commit(self, paths: list[str], message: str) -> str | None:
@@ -195,6 +209,7 @@ class GitCheckpoints:
             return False, (reset.stderr or "git reset failed").strip()
         if self.shas:
             self.shas.pop()
+        invalidate_git_status_cache(self.cwd)
         return True, "reverted last kite commit"
 
     def _restore_pending(self) -> tuple[bool, str]:
@@ -216,6 +231,9 @@ class GitCheckpoints:
                     restored += 1
                 except OSError:
                     pass
+        # Even a partial restore changed the work tree, so the TTL-cached
+        # dirty count must be re-derived on the next footer read.
+        invalidate_git_status_cache(self.cwd)
         self._pending = []
         self._bucket = ""
         if not restored:
