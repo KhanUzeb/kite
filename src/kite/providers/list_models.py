@@ -482,12 +482,12 @@ def list_models_for_provider(
     cat = catalog or load_catalog()
     spec = provider if isinstance(provider, ProviderSpec) else cat.get(provider)
 
-    from kite.providers.byos import fetch_oauth_model_ids, has_oauth_session, is_oauth_provider
+    from kite.providers.byos import fetch_oauth_model_ids, is_oauth_provider, oauth_model_source
 
     if is_oauth_provider(spec):
         ids = fetch_oauth_model_ids(spec, refresh=refresh)
         models = tuple(RemoteModel(id=m) for m in ids)
-        source = "oauth" if has_oauth_session(spec.oauth_provider or spec.name) else "catalog-fallback"
+        source = oauth_model_source(spec)
         if not models:
             return ListModelsResult(spec.name, (), source, error="No models — run: kite login " + spec.name)
         return ListModelsResult(spec.name, models, source)

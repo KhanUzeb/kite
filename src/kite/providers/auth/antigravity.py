@@ -319,21 +319,24 @@ class AntigravityAuthProvider:
             return False
         return True
 
-    def fetch_model_ids(self) -> tuple[str, ...]:
+    def fetch_model_snapshot(self) -> tuple[tuple[str, ...], str]:
         payload = _read_marker()
         if payload.get("linked"):
             cached = payload.get("models")
             if isinstance(cached, list) and cached and all(isinstance(m, str) for m in cached):
-                return tuple(cached)
+                return tuple(cached), "oauth"
             ok, models = probe_session()
             if ok:
-                return models
+                return models, "oauth"
         elif agy_cli_path() is not None:
             ok, models = probe_session()
             if ok:
-                return models
+                return models, "oauth"
         # No undocumented model API from Kite — static fallback.
-        return _FALLBACK_MODELS
+        return _FALLBACK_MODELS, "catalog-fallback"
+
+    def fetch_model_ids(self) -> tuple[str, ...]:
+        return self.fetch_model_snapshot()[0]
 
     def litellm_env(self) -> dict[str, str]:
         return {}

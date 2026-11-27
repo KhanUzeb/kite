@@ -378,6 +378,17 @@ def _secure_env_file(path: Path) -> None:
             warnings.warn(f"could not secure env file {path}: {exc}", stacklevel=2)
 
 
+def _invalidate_model_caches(env_var: str) -> None:
+    """Drop cached model lists when a credential for them changes."""
+    from kite.providers.catalog import load_catalog
+    from kite.providers.keys import api_key_env_names
+    from kite.providers.list_models import clear_model_list_cache
+
+    for spec in load_catalog().list():
+        if env_var in api_key_env_names(spec):
+            clear_model_list_cache(spec.name)
+
+
 def write_api_key(env_var: str, value: str) -> Path:
     """Set or replace one env var in ~/.kite/.env without touching other keys."""
     secret = value.strip()
@@ -403,6 +414,7 @@ def write_api_key(env_var: str, value: str) -> Path:
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
     _secure_env_file(path)
     os.environ[env_var] = secret
+    _invalidate_model_caches(env_var)
     from kite.config.onboarding import mark_setup_complete
 
     mark_setup_complete()
@@ -436,6 +448,7 @@ def remove_api_key(env_var: str) -> bool:
             else:
                 path.unlink(missing_ok=True)
     os.environ.pop(env_var, None)
+    _invalidate_model_caches(env_var)
     return removed
 
 

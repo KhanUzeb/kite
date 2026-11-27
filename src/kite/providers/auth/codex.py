@@ -14,7 +14,10 @@ if TYPE_CHECKING:
 
 _CODEX_PACKAGE = "openai-codex"
 _MIN_CODEX_VERSION = (0, 144, 4)
-_FALLBACK_MODELS = ("gpt-5.6-luna", "gpt-5.4", "gpt-5.3-codex")
+# Last-resort only: `codex.models()` returns the linked account's entitlement.
+# Keep one conservative id rather than treating one account's full list as
+# universal; stale ids here would be offered as if they were still available.
+_FALLBACK_MODELS = ("gpt-5.6-luna",)
 
 
 class CodexSdkError(Exception):
@@ -79,6 +82,21 @@ def _account_authenticated(account_response) -> bool:
     return root is not None
 
 
+def _account_source(account_response) -> str:
+    """Distinguish a ChatGPT subscription from SDK API-key / Bedrock accounts.
+
+    The Codex SDK accepts several ``Account`` variants; ``_account_authenticated``
+    only checks that one is present. Treating every variant as a subscription
+    would label API-key entitlements as ChatGPT ones.
+    """
+    account = getattr(account_response, "account", None)
+    root = getattr(account, "root", account) if account is not None else None
+    kind = str(getattr(root, "type", "") or "").strip().lower()
+    if kind in {"apikey", "api_key", "amazonbedrock", "amazon_bedrock"}:
+        return "api-key"
+    return "oauth"
+
+
 def _account_label(account_response) -> str:
     account = getattr(account_response, "account", None)
     if account is None:
@@ -109,10 +127,15 @@ class CodexAuthProvider:
 
         if _account_authenticated(resp):
             label = _account_label(resp)
-            msg = "ChatGPT / Codex subscription linked."
+            source = _account_source(resp)
+            msg = (
+                "ChatGPT / Codex subscription linked."
+                if source == "oauth"
+                else "Codex is linked with an API key (not a ChatGPT subscription)."
+            )
             if label:
                 msg += f" Account: {label}."
-            return AuthStatus(True, msg, account_label=label, method="subscription")
+            return AuthStatus(True, msg, account_label=label, method=source)
         return AuthStatus(
             False,
             "Codex is not linked. Run: kite login codex (or kite login chatgpt).",
@@ -207,11 +230,12 @@ class CodexAuthProvider:
         except Exception:
             return False
 
-    def fetch_model_ids(self) -> tuple[str, ...]:
+    def fetch_model_snapshot(self) -> tuple[tuple[str, ...], str]:
         try:
             with _open_codex() as codex:
-                if not _account_authenticated(codex.account()):
-                    return _FALLBACK_MODELS
+                account = codex.account()
+                if not _account_authenticated(account):
+                    return _FALLBACK_MODELS, "catalog-fallback"
                 resp = codex.models()
                 rows = getattr(resp, "models", None) or getattr(resp, "data", None) or []
                 ids: list[str] = []
@@ -233,10 +257,13 @@ class CodexAuthProvider:
                             continue
                     ids.append(text)
                 if ids:
-                    return tuple(dict.fromkeys(ids))
+                    return tuple(dict.fromkeys(ids)), _account_source(account)
         except Exception:
             pass
-        return _FALLBACK_MODELS
+        return _FALLBACK_MODELS, "catalog-fallback"
+
+    def fetch_model_ids(self) -> tuple[str, ...]:
+        return self.fetch_model_snapshot()[0]
 
     def litellm_env(self) -> dict[str, str]:
         # Codex CLI stores nested tokens under ~/.codex/auth.json; LiteLLM needs a

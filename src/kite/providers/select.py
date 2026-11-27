@@ -115,6 +115,11 @@ def select_model_interactive(
         if not result.models:
             console.print("[red]No models available[/]")
             return 1, None, None
+        if result.source == "catalog-fallback":
+            console.print(
+                "[yellow]Live discovery unavailable — showing a conservative fallback list; "
+                "press r to retry.[/]"
+            )
 
         from kite.models.reasoning import peek_reasoning
         from kite.providers.capabilities import model_supports_tools
@@ -145,7 +150,11 @@ def select_model_interactive(
             console,
             values,
             current=current,
-            title=f"Select a {provider} model",
+            title=f"Select a {provider} model"
+            + {
+                "api-key": " (API key)",
+                "catalog-fallback": " (fallback)",
+            }.get(result.source, ""),
             noun="model",
             refreshable=True,
         )

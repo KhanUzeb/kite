@@ -364,18 +364,19 @@ def test_model_selection_and_reasoning_levels(kite_home, monkeypatch) -> None:
     assert fallback_thinking_level("high") == "thinking:high"
     assert resolve_thinking_level("high", None) == "thinking:high"
     specs = {
+        "variant": SlashSpec("variant", "control", "builtin", "v"),
+        "variants": SlashSpec("variants", "control", "builtin", "vs"),
         "thinking": SlashSpec("thinking", "control", "builtin", "t"),
         "fast": SlashSpec("fast", "control", "builtin", "f"),
         "reasoning": SlashSpec("reasoning", "control", "builtin", "r"),
+        "effort": SlashSpec("effort", "control", "builtin", "e"),
     }
     index = CommandIndex(specs=specs)
     names = {s.name for s in _visible_specs(index, support=ReasoningSupport(True, False, True, True))}
-    # /reasoning is a documented builtin; only its /effort alias and the
-    # /fast legacy shortcut stay out of the bare-slash menu.
-    assert {"thinking", "reasoning"} <= names and "fast" not in names
+    assert names == {"variant"}
     names_off = {s.name for s in _visible_specs(index, support=ReasoningSupport(False, False, False, False))}
-    # /thinking stays visible before detection warms — only levels are gated.
-    assert "thinking" in names_off
+    # /variant stays visible before detection warms — only levels are gated.
+    assert names_off == {"variant"}
 
 
 def test_codex_litellm_flattens_and_materializes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -652,5 +653,264 @@ def test_antigravity_rides_on_gemini_key(kite_home, monkeypatch) -> None:
     resolved = resolve_model(provider="antigravity", catalog=cat)
     assert resolved.api_key is None
     assert missing_credentials(resolved) is None
+
+
+def test_codex_model_list_uses_live_entitlement_and_conservative_fallback(monkeypatch) -> None:
+    """Live SDK models win; the fallback is not a universal entitlement claim."""
+    from types import SimpleNamespace
+
+    class FakeCodex:
+        authenticated = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+        def account(self):
+            root = object() if self.authenticated else None
+            return SimpleNamespace(account=SimpleNamespace(root=root))
+
+        def models(self):
+            return SimpleNamespace(
+                models=[
+                    SimpleNamespace(slug="gpt-6.0-alpha"),
+                    {"slug": "gpt-5.6-luna", "visibility": "hidden"},
+                ]
+            )
+
+    fake = FakeCodex()
+    monkeypatch.setattr("kite.providers.auth.codex._open_codex", lambda: fake)
+
+    # A different account's entitlement must be reported as-is, not merged
+    # with a hardcoded list.
+    assert CodexAuthProvider().fetch_model_ids() == ("gpt-6.0-alpha",)
+
+    fake.authenticated = False
+    fallback = CodexAuthProvider().fetch_model_ids()
+    assert fallback == ("gpt-5.6-luna",)
+    assert "gpt-5.4" not in fallback and "gpt-5.3-codex" not in fallback
+
+
+def test_claude_subscription_models_use_api_when_key_is_configured(monkeypatch) -> None:
+    """Claude subscription listing uses the documented API when a key exists."""
+    from importlib import import_module
+
+    from kite.providers.auth.claude import ClaudeCodeAuthProvider
+    from kite.providers.list_models import ListModelsResult, RemoteModel
+
+    def _fake_list(spec, **_kwargs: object):
+        assert spec.name == "anthropic"
+        return ListModelsResult(
+            "anthropic",
+            (RemoteModel("claude-live-1"), RemoteModel("claude-live-2")),
+            "live",
+        )
+
+    monkeypatch.setattr("kite.providers.keys.api_key_for", lambda _spec: "test-key")
+    monkeypatch.setattr(
+        import_module("kite.providers.list_models"), "list_models_for_provider", _fake_list
+    )
+    assert ClaudeCodeAuthProvider().fetch_model_ids() == ("claude-live-1", "claude-live-2")
+
+    monkeypatch.setattr("kite.providers.keys.api_key_for", lambda _spec: "")
+    fallback = ClaudeCodeAuthProvider().fetch_model_ids()
+    assert "claude-live-1" not in fallback
+    assert load_catalog().get("claude").default_model in fallback
+
+
+def test_claude_api_key_discovery_is_labeled_api_key_not_subscription(monkeypatch) -> None:
+    """An ANTHROPIC_API_KEY list must not be presented as a subscription list."""
+    from importlib import import_module
+
+    from kite.providers.auth.claude import ClaudeCodeAuthProvider
+    from kite.providers.byos import (
+        clear_oauth_model_cache,
+        fetch_oauth_model_ids,
+        oauth_model_source,
+    )
+    from kite.providers.list_models import ListModelsResult, RemoteModel
+
+    monkeypatch.setattr("kite.providers.keys.api_key_for", lambda _spec: "test-key")
+    monkeypatch.setattr(
+        import_module("kite.providers.list_models"),
+        "list_models_for_provider",
+        lambda *_a, **_k: ListModelsResult(
+            "anthropic", (RemoteModel("claude-api-model"),), "live"
+        ),
+    )
+    monkeypatch.setattr(
+        "kite.providers.byos.get_auth_provider", lambda _key: ClaudeCodeAuthProvider()
+    )
+    spec = load_catalog().get("claude")
+    clear_oauth_model_cache("claude")
+
+    assert fetch_oauth_model_ids(spec, refresh=True) == ("claude-api-model",)
+    assert oauth_model_source(spec) == "api-key"
+
+
+def test_codex_api_key_account_is_not_a_subscription(monkeypatch) -> None:
+    """Codex SDK API-key / Bedrock accounts are classified and labeled as such."""
+    from types import SimpleNamespace
+
+    from kite.providers.byos import (
+        clear_oauth_model_cache,
+        fetch_oauth_model_ids,
+        oauth_model_source,
+    )
+
+    class FakeCodex:
+        account_kind = "apiKey"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+        def account(self):
+            root = (
+                SimpleNamespace(type=self.account_kind) if self.account_kind else None
+            )
+            return SimpleNamespace(account=SimpleNamespace(root=root))
+
+        def models(self):
+            return SimpleNamespace(models=[SimpleNamespace(slug="gpt-api-model")])
+
+    fake = FakeCodex()
+    monkeypatch.setattr("kite.providers.auth.codex._open_codex", lambda: fake)
+    monkeypatch.setattr("kite.providers.byos.get_auth_provider", lambda _k: CodexAuthProvider())
+
+    status = CodexAuthProvider().status()
+    assert status.authenticated is True
+    assert status.method == "api-key"
+    assert "not a ChatGPT subscription" in status.message
+
+    spec = load_catalog().get("chatgpt")
+    clear_oauth_model_cache("chatgpt")
+    assert fetch_oauth_model_ids(spec, refresh=True) == ("gpt-api-model",)
+    assert oauth_model_source(spec) == "api-key"
+
+    fake.account_kind = "chatgpt"
+    assert CodexAuthProvider().status().method == "oauth"
+    clear_oauth_model_cache("chatgpt")
+    fetch_oauth_model_ids(spec, refresh=True)
+    assert oauth_model_source(spec) == "oauth"
+
+
+def test_subscription_defaults_survive_discovery_failure(monkeypatch) -> None:
+    """Every subscription fallback still offers its configured default model."""
+    from types import SimpleNamespace
+
+    from kite.providers.auth.antigravity import AntigravityAuthProvider
+    from kite.providers.auth.claude import ClaudeCodeAuthProvider
+    from kite.providers.auth.codex import CodexAuthProvider
+    from kite.providers.auth.grok import GrokCliAuthProvider
+
+    monkeypatch.setattr("kite.providers.auth.grok.grok_cli_path", lambda: None)
+    monkeypatch.setattr("kite.providers.auth.antigravity.agy_cli_path", lambda: None)
+    monkeypatch.setattr("kite.providers.keys.api_key_for", lambda _spec: "")
+
+    class _Unlinked:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+        def account(self):
+            return SimpleNamespace(account=SimpleNamespace(root=None))
+
+    monkeypatch.setattr("kite.providers.auth.codex._open_codex", _Unlinked)
+
+    for name, provider in (
+        ("antigravity", AntigravityAuthProvider()),
+        ("claude", ClaudeCodeAuthProvider()),
+        ("chatgpt", CodexAuthProvider()),
+        ("grok", GrokCliAuthProvider()),
+    ):
+        assert load_catalog().get(name).default_model in provider.fetch_model_ids()
+
+
+def test_auth_status_cache_invalidation_normalizes_login_aliases(monkeypatch) -> None:
+    """Alias/catalog spellings clear the same canonical verdict entry."""
+    from kite.providers import byos
+    from kite.providers.auth import _PROVIDERS
+    from kite.providers.byos import has_oauth_session
+
+    class FakeAuth:
+        provider_key = "xai"
+
+        def __init__(self) -> None:
+            self.authenticated = True
+
+        def status(self) -> AuthStatus:
+            return AuthStatus(self.authenticated, "status")
+
+    auth = FakeAuth()
+    monkeypatch.setitem(_PROVIDERS, "xai", auth)
+    monkeypatch.setattr("kite.providers.auth.get_auth_provider", _PROVIDERS.get)
+    monkeypatch.setattr("kite.providers.byos.get_auth_provider", _PROVIDERS.get)
+
+    assert has_oauth_session("grok") is True
+    assert has_oauth_session("xai") is True
+    auth.authenticated = False
+    # Both spellings share the "xai" cache entry and stay stale within the TTL.
+    assert has_oauth_session("grok") is True
+    byos.invalidate_auth_status_cache("grok")
+    assert has_oauth_session("grok") is False
+    assert has_oauth_session("xai") is False
+
+    for alias, canonical in (
+        ("codex", "chatgpt"),
+        ("chatgpt-sub", "chatgpt"),
+        ("claude-sub", "anthropic"),
+        ("antigravity-sub", "antigravity"),
+        ("xai", "xai"),
+    ):
+        byos._auth_status_cache[byos._status_cache_key(canonical)] = (
+            1000.0,
+            AuthStatus(True, "stale"),
+        )
+        byos.invalidate_auth_status_cache(alias)
+        assert all(key[1] != canonical for key in byos._auth_status_cache), alias
+
+
+def test_model_picker_marks_fallback_list(monkeypatch) -> None:
+    """Selection surfaces when the model list came from a fallback, not live discovery."""
+    from importlib import import_module
+
+    from kite.providers import select as select_mod
+    from kite.providers.list_models import ListModelsResult, RemoteModel
+
+    console = MagicMock()
+    monkeypatch.setattr("kite.providers.byos.has_oauth_session", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        import_module("kite.providers.list_models"),
+        "list_models_for_provider",
+        lambda *_a, **_k: ListModelsResult(
+            "grok", (RemoteModel("grok-4.7"),), "catalog-fallback"
+        ),
+    )
+    titles: list[str] = []
+
+    def _fake_pick(_console, items, *, title, **_kwargs):
+        titles.append(title)
+        return items[0][0]
+
+    monkeypatch.setattr(select_mod, "_numbered_pick", _fake_pick)
+
+    code, provider, model = select_mod.select_model_interactive(
+        console, "grok", persist=False
+    )
+
+    assert (code, provider, model) == (0, "grok", "grok-4.7")
+    assert any("fallback" in title for title in titles)
+    assert any(
+        isinstance(item, str) and "conservative fallback" in item
+        for call in console.print.call_args_list
+        for item in call.args
+    )
 
 

@@ -67,7 +67,7 @@ api_key_env = ""
 auth_kind = "oauth"
 oauth_provider = "xai"
 models = []
-default_model = "grok-4.6"
+default_model = "grok-4.7"
 docs_url = "https://x.ai"
 billing_note = "OAuth — uses your SuperGrok plan, not API credits"
 

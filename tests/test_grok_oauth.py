@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import stat
+import subprocess
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
@@ -48,6 +49,14 @@ def _write_grok_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, payload: d
     (grok_home / "auth.json").write_text(json.dumps(payload), encoding="utf-8")
     monkeypatch.setenv("GROK_HOME", str(grok_home))
     return grok_home
+
+
+def _use_real_auth_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bypass conftest's autouse OAuth stub so real providers resolve."""
+    from kite.providers.auth import _PROVIDERS
+
+    monkeypatch.setattr("kite.providers.auth.get_auth_provider", _PROVIDERS.get)
+    monkeypatch.setattr("kite.providers.byos.get_auth_provider", _PROVIDERS.get)
 
 
 def _offline_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -231,3 +240,105 @@ def test_logout_clears_materialized_xai_oauth(kite_home: Path, monkeypatch) -> N
     assert logout_oauth(spec) is True
     assert not (folder / "auth.json").exists()
     assert "XAI_OAUTH_TOKEN_DIR" not in os.environ
+
+
+def test_grok_parser_ignores_url_versions_and_banners() -> None:
+    """A proxy URL's /v1 segment and header text must never become model ids."""
+    from kite.providers.auth.grok import parse_grok_model_ids
+
+    output = (
+        "Proxy endpoint https://cli-chat-proxy.grok.com/v1 is active\n"
+        "v1\n"
+        "You are logged in with grok.com.\n\n"
+        "Default model: grok-4.7\n\n"
+        "Available models:\n"
+        "  * grok-4.7 (default)\n"
+        "  * grok-5.0-preview\n"
+    )
+    assert parse_grok_model_ids(output) == ("grok-4.7", "grok-5.0-preview")
+    assert parse_grok_model_ids("https://proxy.example/v1") == ()
+    assert parse_grok_model_ids("v1\nv2") == ()
+
+
+def test_grok_model_discovery_uses_account_entitlement_and_caches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`grok models` wins over the static fallback; results are cached and refreshable."""
+    from kite.providers.auth import grok as grok_auth
+    from kite.providers.byos import (
+        clear_oauth_model_cache,
+        fetch_oauth_model_ids,
+        oauth_model_source,
+    )
+    from kite.providers.catalog import load_catalog
+
+    _use_real_auth_registry(monkeypatch)
+    _write_grok_home(monkeypatch, tmp_path, _nested_payload())
+    monkeypatch.setattr(grok_auth, "grok_cli_path", lambda: "grok")
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run_cli(command: str, *args: str, timeout: float = 0.0):
+        calls.append((command, *args))
+        return subprocess.CompletedProcess(
+            [command, *args],
+            0,
+            "You are logged in with grok.com.\n\nDefault model: grok-4.7\n\n"
+            "Available models:\n  * grok-4.7 (default)\n  * grok-5.0-preview\n",
+            "",
+        )
+
+    monkeypatch.setattr(grok_auth, "run_cli", fake_run_cli)
+    spec = load_catalog().get("grok")
+    clear_oauth_model_cache("grok")
+
+    ids = fetch_oauth_model_ids(spec, refresh=True)
+
+    assert ids == ("grok-4.7", "grok-5.0-preview")
+    assert calls == [("grok", "models")]
+    # A fresh discovery call is cached; refresh=True bypasses that cache.
+    assert fetch_oauth_model_ids(spec) == ids
+    assert calls == [("grok", "models")]
+    assert fetch_oauth_model_ids(spec, refresh=True) == ids
+    assert calls == [("grok", "models"), ("grok", "models")]
+    assert oauth_model_source(spec) == "oauth"
+
+
+def test_grok_model_discovery_falls_back_when_cli_unavailable_or_failing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Offline/timeout/failed probes yield a conservative, clearly smaller list."""
+    from kite.providers.auth import grok as grok_auth
+    from kite.providers.byos import (
+        clear_oauth_model_cache,
+        fetch_oauth_model_ids,
+        oauth_model_source,
+    )
+    from kite.providers.catalog import load_catalog
+
+    _use_real_auth_registry(monkeypatch)
+    _write_grok_home(monkeypatch, tmp_path, _nested_payload())
+    spec = load_catalog().get("grok")
+
+    monkeypatch.setattr(grok_auth, "grok_cli_path", lambda: None)
+    clear_oauth_model_cache("grok")
+    assert fetch_oauth_model_ids(spec, refresh=True) == ("grok-4.7",)
+    assert spec.default_model in fetch_oauth_model_ids(spec)
+    assert "grok-4.6" not in fetch_oauth_model_ids(spec)
+
+    monkeypatch.setattr(grok_auth, "grok_cli_path", lambda: "grok")
+
+    def _timeout(*_args: object, **_kwargs: object):
+        raise subprocess.TimeoutExpired("grok", 20.0)
+
+    monkeypatch.setattr(grok_auth, "run_cli", _timeout)
+    clear_oauth_model_cache("grok")
+    assert fetch_oauth_model_ids(spec, refresh=True) == ("grok-4.7",)
+
+    def _failed(*_args: object, **_kwargs: object):
+        return subprocess.CompletedProcess(["grok", "models"], 1, "login required", "")
+
+    monkeypatch.setattr(grok_auth, "run_cli", _failed)
+    clear_oauth_model_cache("grok")
+    assert fetch_oauth_model_ids(spec, refresh=True) == ("grok-4.7",)
+    # The account is linked, but discovery failed: never label this as live.
+    assert oauth_model_source(spec) == "catalog-fallback"

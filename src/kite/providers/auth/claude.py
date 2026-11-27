@@ -154,9 +154,30 @@ class ClaudeCodeAuthProvider:
         except Exception:
             return False
 
+    def fetch_model_snapshot(self) -> tuple[tuple[str, ...], str]:
+        # Claude Code has no `models` subcommand and its subscription tokens
+        # must never be scraped. Kite's Claude subscription calls use the
+        # BYOK ANTHROPIC_API_KEY, so that key's documented /v1/models listing
+        # is the authoritative entitlement when it is configured.
+        from kite.config import UserConfig
+        from kite.providers.catalog import load_catalog
+        from kite.providers.keys import api_key_for
+        from kite.providers.list_models import list_models_for_provider
+
+        try:
+            spec = load_catalog().get("anthropic")
+            if api_key_for(spec):
+                result = list_models_for_provider(spec, config=UserConfig.load(), refresh=True)
+                if result.ok:
+                    # These ids belong to the ANTHROPIC_API_KEY entitlement,
+                    # not to the linked Claude Code subscription.
+                    return tuple(m.id for m in result.models), "api-key"
+        except Exception:  # noqa: BLE001 — offline/error paths keep the fallback
+            pass
+        return _FALLBACK_MODELS, "catalog-fallback"
+
     def fetch_model_ids(self) -> tuple[str, ...]:
-        # Subscription models are not fetched with scraped OAuth tokens — catalog fallback.
-        return _FALLBACK_MODELS
+        return self.fetch_model_snapshot()[0]
 
     def litellm_env(self) -> dict[str, str]:
         return {}

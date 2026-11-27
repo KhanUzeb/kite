@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,11 +15,56 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 _GROK_BIN = "grok"
-_FALLBACK_MODELS = ("grok-4.6", "grok-4", "grok-3")
+# Last-resort only: `grok models` is the authoritative, account-specific list.
+# Keep this minimal rather than presenting one account's entitlement as universal.
+_FALLBACK_MODELS = ("grok-4.7",)
+_MODELS_TIMEOUT = 20.0
+# Parse model ids from their lines, not from arbitrary tokens anywhere in the
+# output: a URL path such as ".../v1" is not a model id.
+_DEFAULT_LINE_RE = re.compile(r"^\s*default model:\s*(\S+)", re.IGNORECASE)
+_BULLET_LINE_RE = re.compile(r"^\s*[-*+]\s+(\S+)")
+_MODEL_ID_RE = re.compile(r"[A-Za-z][A-Za-z0-9._-]*")
+_VERSION_TOKEN_RE = re.compile(r"v\d+(?:\.\d+)*", re.IGNORECASE)
 
 
 def grok_cli_path() -> str | None:
     return shutil.which(_GROK_BIN)
+
+
+def _is_model_id(token: str) -> bool:
+    """A model slug (letter-led, versioned), not a URL segment or banner word."""
+    if not _MODEL_ID_RE.fullmatch(token):
+        return False
+    if not any(char.isdigit() for char in token):
+        return False
+    return _VERSION_TOKEN_RE.fullmatch(token) is None
+
+
+def parse_grok_model_ids(text: str) -> tuple[str, ...]:
+    """Read model ids from `grok models` output (the signed-in account's list).
+
+    Only bullets and the "Default model:" line are considered; a bare token
+    list is accepted as a last resort. Order is preserved and duplicates are
+    dropped, so a URL such as ``https://proxy/v1`` can never become a model.
+    """
+    ids: list[str] = []
+    lines = (text or "").splitlines()
+
+    def add(token: str) -> None:
+        candidate = token.rstrip(".,):")
+        if _is_model_id(candidate) and candidate not in ids:
+            ids.append(candidate)
+
+    for line in lines:
+        match = _DEFAULT_LINE_RE.match(line) or _BULLET_LINE_RE.match(line)
+        if match is not None:
+            add(match.group(1))
+    if not ids:  # tolerate a plain one-id-per-line listing
+        for line in lines:
+            parts = line.strip().split()
+            if len(parts) == 1:
+                add(parts[0])
+    return tuple(ids)
 
 
 def grok_home() -> Path:
@@ -169,11 +215,28 @@ class GrokCliAuthProvider:
                 pass
         return removed
 
+    def fetch_model_snapshot(self) -> tuple[tuple[str, ...], str]:
+        if grok_cli_path() is None or not self.status().authenticated:
+            return _FALLBACK_MODELS, "catalog-fallback"
+        # `grok models` is a documented, read-only subcommand: it lists the
+        # signed-in account's entitlement. Never substitute a hardcoded list
+        # when it succeeds; fall back only when the CLI is unavailable/fails.
+        try:
+            proc = run_cli(_GROK_BIN, "models", timeout=_MODELS_TIMEOUT)
+            if proc.returncode == 0:
+                ids = parse_grok_model_ids(proc.stdout or "")
+                if ids:
+                    return ids, "oauth"
+        except subprocess.TimeoutExpired:
+            pass
+        except OSError:
+            pass
+        except Exception:  # noqa: BLE001 — a CLI quirk must not break model listing
+            pass
+        return _FALLBACK_MODELS, "catalog-fallback"
+
     def fetch_model_ids(self) -> tuple[str, ...]:
-        if not self.status().authenticated:
-            return _FALLBACK_MODELS
-        # No undocumented model API from Kite — static fallback when CLI cannot list models.
-        return _FALLBACK_MODELS
+        return self.fetch_model_snapshot()[0]
 
     def litellm_env(self) -> dict[str, str]:
         # Grok CLI nests tokens under an issuer URL; LiteLLM needs a flat

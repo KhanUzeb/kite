@@ -41,6 +41,43 @@ def _isolate_credentials(workspace, kite_home, monkeypatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
+def test_credential_changes_invalidate_affected_model_caches(monkeypatch) -> None:
+    """Saving/removing a key drops cached discovery for providers using it."""
+    from importlib import import_module
+
+    from kite.providers import byos
+
+    lm = import_module("kite.providers.list_models")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        lm,
+        "_LIST_CACHE",
+        {"openai": (0.0, object()), "groq": (0.0, object()), "anthropic": (0.0, object())},
+    )
+    monkeypatch.setattr(
+        byos,
+        "_oauth_model_cache",
+        {
+            "anthropic": (0.0, ("claude-old",), "api-key"),
+            "xai": (0.0, ("grok-old",), "oauth"),
+        },
+    )
+
+    write_api_key("OPENAI_API_KEY", "new-key")
+    assert "openai" not in lm._LIST_CACHE
+    assert "groq" in lm._LIST_CACHE  # unrelated provider untouched
+    assert "anthropic" in byos._oauth_model_cache
+
+    write_api_key("ANTHROPIC_API_KEY", "new-key")
+    assert "anthropic" not in lm._LIST_CACHE
+    assert "anthropic" not in byos._oauth_model_cache  # Claude subscription discovery
+    assert "xai" in byos._oauth_model_cache
+
+    monkeypatch.setattr(lm, "_LIST_CACHE", {"anthropic": (0.0, object())})
+    assert remove_api_key("ANTHROPIC_API_KEY") is True
+    assert "anthropic" not in lm._LIST_CACHE
+
+
 def test_write_api_key_replaces_existing_and_secures_files(kite_home, monkeypatch) -> None:
     env = kite_home / ".env"
     env.write_text("OPENAI_API_KEY=old\nOTHER=1\n", encoding="utf-8")

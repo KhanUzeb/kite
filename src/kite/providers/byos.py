@@ -16,7 +16,8 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 _OAUTH_MODEL_TTL = 300.0
-_oauth_model_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
+# (timestamp, ids, discovery source: oauth | api-key | catalog-fallback)
+_oauth_model_cache: dict[str, tuple[float, tuple[str, ...], str]] = {}
 
 # OAuth status probes are slow (Codex SDK ~1.4s, `claude auth status` up to
 # ~25s on hangs) — `configured_providers()` runs them concurrently, caches
@@ -25,7 +26,9 @@ _oauth_model_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
 _AUTH_STATUS_TTL = 120.0
 _auth_status_cache: dict[tuple[str, str], tuple[float, Any]] = {}
 
-OAuthModelFetcher = Callable[[], tuple[str, ...]]
+# A fetcher returns ids alone, or ids plus an explicit discovery source so a
+# fallback list and an API-key list are never presented as a subscription.
+OAuthModelFetcher = Callable[[], tuple[str, ...] | tuple[tuple[str, ...], str]]
 
 
 @dataclass(frozen=True)
@@ -108,11 +111,30 @@ def _cached_status(key: str) -> Any | None:
 
 
 def invalidate_auth_status_cache(provider: str | None = None) -> None:
-    """Drop cached OAuth verdicts — call after login/logout transitions."""
+    """Drop cached OAuth verdicts — call after login/logout transitions.
+
+    Verdicts are cached under the auth provider's canonical key (chatgpt,
+    anthropic, xai, antigravity) while callers use catalog names or login
+    aliases (codex, claude, grok, ...). Resolve every spelling before matching,
+    the same way ``clear_oauth_model_cache`` normalizes model-list entries.
+    """
     if provider is None:
         _auth_status_cache.clear()
         return
-    for cache_key in [k for k in _auth_status_cache if k[1] == provider]:
+    raw = (provider or "").strip().lower()
+    keys = {raw}
+    try:
+        auth = _auth(raw)
+        canonical = getattr(auth, "provider_key", "") if auth is not None else ""
+        if canonical:
+            keys.add(str(canonical).strip().lower())
+        from kite.providers.catalog import load_catalog
+
+        spec = load_catalog().get(resolve_login_provider(raw))
+        keys.add((spec.oauth_provider or spec.name).strip().lower())
+    except Exception:  # cache invalidation must never fail a caller
+        pass
+    for cache_key in [k for k in _auth_status_cache if k[1] in keys]:
         _auth_status_cache.pop(cache_key, None)
 
 
@@ -266,9 +288,18 @@ _OAUTH_MODEL_FETCHERS: dict[str, OAuthModelFetcher] = {}
 
 
 def _default_fetcher(key: str) -> OAuthModelFetcher:
-    def _fetch() -> tuple[str, ...]:
+    def _fetch() -> tuple[str, ...] | tuple[tuple[str, ...], str]:
         auth = get_auth_provider(key)
-        return auth.fetch_model_ids() if auth else ()
+        if auth is None:
+            return ()
+        # Providers that can report where ids came from opt in with
+        # fetch_model_snapshot(); legacy ones are treated as subscription.
+        snapshot = getattr(auth, "fetch_model_snapshot", None)
+        if callable(snapshot):
+            result = snapshot()
+            if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], str):
+                return result
+        return auth.fetch_model_ids()
 
     return _fetch
 
@@ -287,9 +318,24 @@ def fetch_oauth_model_ids(spec: ProviderSpec, *, refresh: bool = False) -> tuple
         if hit and now - hit[0] < _OAUTH_MODEL_TTL:
             return hit[1]
 
-    models = fetcher()
-    _oauth_model_cache[key] = (now, models)
+    result = fetcher()
+    # A linked session alone does not prove discovery succeeded, and a live
+    # list can come from an API key rather than a subscription. Honor the
+    # provider's explicit source; legacy fetchers default to subscription.
+    if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], str):
+        models, source = result
+    else:
+        models, source = result, "oauth"
+    _oauth_model_cache[key] = (now, models, source if models else "catalog-fallback")
     return models
+
+
+def oauth_model_source(spec: ProviderSpec) -> str:
+    """Discovery source of the cached ids: oauth, api-key or catalog-fallback."""
+    hit = _oauth_model_cache.get(_provider_key(spec))
+    if hit and len(hit) > 2:
+        return str(hit[2])
+    return "catalog-fallback"
 
 
 def login_oauth(
