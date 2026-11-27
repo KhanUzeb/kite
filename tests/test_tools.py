@@ -195,6 +195,37 @@ def test_registry_order_and_sparse_line_numbers(tmp_path) -> None:
     assert "line 2\n" in body and "     2|line 2" not in body
 
 
+def test_tool_schemas_are_deep_isolated_from_cache() -> None:
+    """Nested schema mutation must not leak into later requests or the Tool."""
+    from kite.tools import Tool, ToolRegistry
+
+    parameters = {
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "original"}},
+    }
+    tool = Tool("read", "desc", parameters, lambda _a: {"ok": True})
+    reg = ToolRegistry([tool])
+
+    first = reg.tool_schemas()
+    again = reg.tool_schemas()
+    assert first is not again
+    assert first[0] is not again[0]
+    assert first[0]["function"] is not again[0]["function"]
+    assert first[0]["function"]["parameters"] is not again[0]["function"]["parameters"]
+
+    first[0]["function"]["name"] = "tampered"
+    first[0]["function"]["parameters"]["properties"]["path"]["description"] = "tampered"
+
+    for schema in reg.tool_schemas() + reg.openai_schemas():
+        assert schema["function"]["name"] == "read"
+        assert schema["function"]["parameters"]["properties"]["path"]["description"] == "original"
+    assert parameters["properties"]["path"]["description"] == "original"
+
+    # register() must still invalidate the cached prefix.
+    reg.register(Tool("write", "desc", {"type": "object", "properties": {}}, lambda _a: {"ok": True}))
+    assert [s["function"]["name"] for s in reg.tool_schemas()] == ["read", "write"]
+
+
 def test_directory_listing_uses_one_scan_pass(tmp_path, monkeypatch) -> None:
     """Directory reads must not stat every entry twice to sort and suffix it."""
     import os

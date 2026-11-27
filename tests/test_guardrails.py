@@ -216,3 +216,66 @@ def test_bash_traversal_and_outside_roots_combined(workspace: Path) -> None:
         verdict = policy.check_bash(cmd)
         assert not verdict.allowed, cmd
     assert policy.check_bash("echo hello").allowed
+
+
+def test_protected_roots_tracks_new_and_retargeted_home_aliases(tmp_path, monkeypatch) -> None:
+    """A ~/.ssh junction created or retargeted after a warm probe must protect its alias."""
+    import os
+    import subprocess
+
+    from kite.application.policy import check_path_access
+    from kite.guardrails import sandbox
+
+    home = tmp_path / "home"
+    vault_a = tmp_path / "vault-a"
+    vault_b = tmp_path / "vault-b"
+    workspace = tmp_path / "workspace"
+    for directory in (home, vault_a, vault_b, workspace):
+        directory.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    alias = home / ".ssh"
+
+    def link_alias(target: Path) -> None:
+        if os.name == "nt":
+            # Windows junctions do not need developer mode or elevation.
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(alias), str(target)],
+                check=True, capture_output=True, text=True, timeout=30,
+            )
+        else:
+            alias.symlink_to(target, target_is_directory=True)
+
+    def unlink_alias() -> None:
+        if not (alias.is_symlink() or alias.exists()):
+            return
+        if os.name == "nt":
+            # rmdir removes only the junction, never the target's contents.
+            subprocess.run(
+                ["cmd", "/c", "rmdir", str(alias)],
+                check=True, capture_output=True, text=True, timeout=30,
+            )
+        else:
+            alias.unlink()
+
+    try:
+        # Warm probe while ~/.ssh is absent — nothing stale may be retained.
+        assert alias.resolve() not in sandbox.protected_roots()
+        assert check_path_access(workspace / "ok.txt", workspace, execution_mode="host")[0]
+
+        link_alias(vault_a)
+        assert vault_a.resolve() in sandbox.protected_roots()
+        assert sandbox.is_protected(alias / "secret")
+        assert sandbox.is_protected(vault_a / "secret")
+        assert not check_path_access(alias / "secret", workspace, execution_mode="host")[0]
+        assert not check_path_access(vault_a / "secret", workspace, execution_mode="host")[0]
+
+        # Retarget the alias: the new target must be denied immediately too.
+        unlink_alias()
+        link_alias(vault_b)
+        assert vault_b.resolve() in sandbox.protected_roots()
+        assert sandbox.is_protected(alias / "secret")
+        assert sandbox.is_protected(vault_b / "secret")
+        assert not check_path_access(vault_b / "secret", workspace, execution_mode="host")[0]
+    finally:
+        unlink_alias()

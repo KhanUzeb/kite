@@ -179,10 +179,19 @@ def workspace_root(cwd: str | Path) -> Path:
     return Path(cwd).expanduser().resolve()
 
 
-def resolve_in_workspace(path: str | Path, cwd: str | Path) -> Path:
+def resolve_in_workspace(
+    path: str | Path, cwd: str | Path, *, cwd_is_root: bool = False
+) -> Path:
+    """Resolve *path* relative to a workspace root.
+
+    ``cwd_is_root=True`` skips re-resolving the base when the caller already
+    holds a root returned by :func:`workspace_root` (a per-tool-call hot path).
+    The target itself is always resolved, so symlink escapes are still caught.
+    """
     p = Path(path).expanduser()
     if not p.is_absolute():
-        p = workspace_root(cwd) / p
+        base = Path(cwd) if cwd_is_root else workspace_root(cwd)
+        p = base / p
     return p.resolve()
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from typing import Any
 
@@ -63,8 +64,10 @@ class ToolRegistry:
         """Provider-neutral tool definitions (OpenAI function schema via LiteLLM)."""
         if self._schema_cache is None:
             self._schema_cache = [t.schema() for t in self.list()]
-        # Return a copy so callers can't mutate the cached prefix in place.
-        return [dict(s) for s in self._schema_cache]
+        # Deep copy: a shallow dict() leaves the nested "function"/"parameters"
+        # dicts shared with the cache, so one caller mutating a property could
+        # silently rewrite the schemas every later request receives.
+        return copy.deepcopy(self._schema_cache)
 
     def openai_schemas(self) -> list[dict[str, Any]]:
         """Alias for tool_schemas — kept for callers expecting the legacy name."""

@@ -231,7 +231,7 @@ def _targets_outside_workspace(tool: str, arguments: dict[str, Any], workspace_c
         cwd = str(arguments.get("cwd") or "").strip()
         if cwd:
             try:
-                resolved_target = resolve_in_workspace(cwd, root)
+                resolved_target = resolve_in_workspace(cwd, root, cwd_is_root=True)
                 if not resolved_target.is_relative_to(root):
                     return True
             except OSError:
@@ -243,7 +243,7 @@ def _targets_outside_workspace(tool: str, arguments: dict[str, Any], workspace_c
         if not value:
             continue
         try:
-            resolved_target = resolve_in_workspace(str(value), root)
+            resolved_target = resolve_in_workspace(str(value), root, cwd_is_root=True)
             if not resolved_target.is_relative_to(root):
                 return True
         except OSError:
