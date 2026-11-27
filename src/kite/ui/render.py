@@ -791,6 +791,18 @@ class RunDisplay:
         if emit_after:
             self._emit_fence_truncated()
 
+    def _end_stream_line_for_scrollback(self) -> None:
+        """Close an open answer row before painting a scrollback line.
+
+        ``_end_stream_line`` clears ``_need_prefix`` because a normal stream
+        continuation resumes the row it just closed. A scrollback line replaces
+        that row instead, so the next fragment has to write its own cell indent;
+        otherwise a continuation without a newline paints at column 0 with no
+        gutter.
+        """
+        self._end_stream_line()
+        self._need_prefix = True
+
     def _write_answer_line(self, line: str) -> None:
         """Close a line — markdown/fence cues apply only to whole lines."""
         block = Text()
@@ -1368,6 +1380,11 @@ class RunDisplay:
         self.state.set_activity_preview(line)
         if not _live_stream_enabled(self.state, p):
             return
+        # Live output is scrollback, like the todo checklist: painting it while
+        # an answer row is still open appends the line mid-sentence. Close the
+        # row and re-arm the cell prefix so a later partial (no newline yet)
+        # still gets its indent; only handlers that print need to do this.
+        self._end_stream_line_for_scrollback()
         prefix = _subagent_prefix(p)
         self._print(
             Text(f"{prefix}{line}", style="kite.terminal"),
@@ -1384,6 +1401,10 @@ class RunDisplay:
         self.state.set_activity_preview(line)
         if not _live_stream_enabled(self.state, p):
             return
+        # Same row-ownership rule as tool_output: a background job can emit a
+        # line while the model is mid-answer, so end the open row and keep the
+        # next fragment's cell indent armed.
+        self._end_stream_line_for_scrollback()
         job_id = str(p.get("id") or "")
         prefix = _subagent_prefix(p) or (f"[{job_id}] " if job_id else "")
         self._print(
