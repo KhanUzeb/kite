@@ -31,18 +31,17 @@ def test_stop_at_pending_approval_unblocks_worker_and_clears_gate(chat, monkeypa
     """Esc / /stop must resolve the parked approval, not just flag an interrupt."""
     from kite.application.policy import ApprovalCoordinator
 
-    coord = ApprovalCoordinator(interactive=True)
+    pending = threading.Event()
+    coord = ApprovalCoordinator(interactive=True, wake_main=pending.set)
     chat._approval_coordinator = coord
     chat.state.set_approval_request("bash", mandatory=True)
     harness = MagicMock()
     chat._harness = harness
     chat._busy = True
 
-    pending = threading.Event()
     decisions: list[str] = []
 
     def _worker() -> None:
-        pending.set()
         decisions.append(coord.request("bash", {"command": "long"}, mandatory=True))
 
     thread = threading.Thread(target=_worker, daemon=True, name="kite-approval-probe")
