@@ -1,10 +1,18 @@
 # Kite v1.0.11
 
-**Date:** 2026-11-26
+**Date:** 2026-11-27
 
 ## Highlights
 
 A reliability and hardening patch. Reasoning-only model turns fail over quickly instead of holding a stream open; stream cancellation and worker lifecycle transitions are bounded and race-safe; the GitHub "latest" release is selected by semantic version. Antigravity subscription turns keep the answer they already produced, and package scanning and directory listing do substantially less filesystem work. Secret redaction, untrusted-context wrappers, snapshot restore, and the display boundary where model-produced text reaches logs and screens are hardened as well.
+
+## Commands, models, and the terminal
+
+- Use `/variant` or `kite variant` to select a reasoning level. Existing `/thinking`, `/reasoning`, `/effort`, and `/variants` commands remain available as hidden aliases. Model switches adjust unsupported levels when model capabilities are known.
+- Model selection uses live discovery where available and labels API-key, subscription, and fallback results. Available models depend on the account and provider. Saving or removing credentials clears the relevant model caches.
+- `/stop`, Escape, `/quit`, and Ctrl+D handle active turns and pending approvals. Live tool output no longer interrupts an answer line or removes the indentation from its continuation.
+- `kite help` accepts command names. Invalid configuration values are rejected, and unknown commands can suggest close matches.
+- Git status displays share a cached probe. Tool schemas return independent copies, and workspace resolution avoids redundant work while retaining path checks.
 
 ## Streaming and model reliability
 
@@ -31,7 +39,8 @@ A reliability and hardening patch. Reasoning-only model turns fail over quickly 
 - `uv.lock` is refreshed for the 1.0.11 project stamp with no dependency version upgrades; `uv lock --check` passes.
 - `scripts/ci_check.ps1` contained two stray numbered `1.0.7` marker lines left by an old merge; they were removed so the script parses and its single release stamp is unambiguous.
 - The `kite web_keys` argparse alias is now recognized as a CLI command, so `kite web_keys status` dispatches to the web-keys command instead of being misread as an implicit chat prompt.
-- `/reasoning` is visible in slash completion again as a documented builtin; the `/effort` alias and legacy `/fast` shortcut stay hidden from the menu.
+- `/variant` appears in slash completion. The older reasoning commands remain available as hidden aliases.
+- The approval-stop test waits for the approval request to be registered before issuing stop, avoiding a scheduling race on Linux.
 
 ## Metrics
 
