@@ -182,9 +182,17 @@ class CommandIndex:
         return expand_arguments(spec.body, arg)
 
 
+def _unknown_suffix(name: str, candidates, *, bare: str, tail: str) -> str:
+    """Append a close-match hint, keeping the original 'how to list them' fallback."""
+    from kite.util.suggest import did_you_mean
+
+    hint = did_you_mean(name, candidates)
+    return f"  — {hint}  ·  {tail}" if hint else f"  — {bare}"
+
+
 def resolve_slash(raw: str, index: CommandIndex) -> SlashResult:
     from kite.skills.loader import expand_skill_slash
-    from kite.ui.commands import SlashResult, parse_slash
+    from kite.ui.commands import LEGACY_ALIASES, SlashResult, parse_slash
 
     parsed = parse_slash(raw)
     if parsed.kind == "not_slash":
@@ -204,11 +212,12 @@ def resolve_slash(raw: str, index: CommandIndex) -> SlashResult:
                     expanded = None
                 if expanded:
                     return SlashResult("prompt", command=name.lower(), arg=extra.strip(), prompt=expanded, source="skill")
+                suffix = _unknown_suffix(name, [s.name for s in index.skills], bare="/skills", tail="/skills")
                 return SlashResult(
                     "unknown",
                     command="skill",
                     arg=parsed.arg,
-                    message=f"unknown skill '{name}'  — /skills",
+                    message=f"unknown skill '{name}'{suffix}",
                 )
             source = (index.get(f"skill:{name}") or index.get(name) or SlashSpec(name, "prompt", "skill", "")).source
             return SlashResult("prompt", command=name.lower(), arg=extra.strip(), prompt=prompt, source=source)
@@ -233,7 +242,20 @@ def resolve_slash(raw: str, index: CommandIndex) -> SlashResult:
         return SlashResult("unknown", command=name, arg=arg, message=str(e) + "  — /skills")
     if expanded is not None:
         return SlashResult("prompt", command=name, arg=arg, prompt=expanded, source="skill")
-    return parsed
+    base = parsed.message.rsplit("  — ", 1)[0] if parsed.message else f"unknown command /{name}"
+    # Only suggest names the user can discover: alias keys point at a spec
+    # with a different (canonical) name, and legacy shortcuts are hidden too.
+    candidates = [
+        f"/{key}"
+        for key, spec in index.specs.items()
+        if ":" not in key and spec.name == key and key not in LEGACY_ALIASES
+    ]
+    return SlashResult(
+        "unknown",
+        command=name,
+        arg=arg,
+        message=base + _unknown_suffix(f"/{name}", candidates, bare="type /help", tail="/help"),
+    )
 
 
 def expand_prompt_slash(

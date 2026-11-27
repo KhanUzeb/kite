@@ -24,6 +24,7 @@ CLI_COMMANDS: frozenset[str] = frozenset({
     "models",
     "theme",
     "font",
+    "variant",
     "variants",
     "config",
     "privacy",
@@ -83,7 +84,7 @@ self-manage
 setup
   kite setup | login | logout | keys | web-keys | providers | models
   kite theme [name] [--list] | kite font [name] [--list]
-  kite variants [level] [--list] [-p provider] [-m model]
+  kite variant [level] [--list] [-p provider] [-m model]  (alias: variants)
   kite config | privacy
 
 project
@@ -110,6 +111,7 @@ def cli_help_brief() -> str:
   kite models | keys | config | skills | …
 
   kite --help                every subcommand
+  kite help run              one command's help
   kite help all              this map plus flags
   kite update | uninstall    upgrade / remove the installed CLI
   REPL: /help  ·  /help all
@@ -140,7 +142,7 @@ Setup & model
   kite models [-p groq]         pick a model (--list to dump)
   kite theme [name] [--list]  color palette (same as /theme)
   kite font [name] [--list]   glyph pack: unicode|ascii (same as /font)
-  kite variants [level]       thinking variant for this model (same as /variants)
+  kite variant [level]        thinking variant for this model (same as /variant)
   kite config [--select-model] [--session-persistence full|redacted|disabled]
   kite privacy                  security policy summary
 

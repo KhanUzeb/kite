@@ -4,7 +4,7 @@ Kite is a coding agent. **What lands in git is still yours.** These commands ste
 
 **New to Kite?** Start with the visual [guide.md](guide.md) (workflows, example Q&A). This file is the complete reference.
 
-**Help:** `kite --help` lists every shipped subcommand; `kite <subcommand> --help` does not load credentials. `/help` stays brief in the REPL; `/help all` and `kite help all` print the full map. Missing-key errors point to `kite keys --set <provider>`.
+**Help:** `kite --help` lists every shipped subcommand; `kite <subcommand> --help` does not load credentials. `kite help <subcommand>` prints just that subcommand's help (e.g. `kite help run`); a mistyped topic gets a did-you-mean hint before the brief map. `/help` stays brief in the REPL; `/help all` and `kite help all` print the full map. Missing-key errors point to `kite keys --set <provider>`.
 
 There are four surfaces:
 
@@ -94,7 +94,7 @@ One-shot / headless flags (`kite run`, `kite resume <id> "continue"` — not `ki
 | `-o PATH` / `--output PATH` | Write the trajectory |
 | `--label` | Session label |
 
-Persistent compaction is `kite config --auto-compact true|false` (not a run/chat flag).
+Persistent compaction is `kite config --auto-compact true|false` (not a run/chat flag). `true|false` also accepts `yes|no`, `on|off` and `1|0`; other values are rejected with exit 2 instead of silently turning compaction off.
 
 LLM compaction prefers OpenRouter free-tier (`compaction_provider` / `compaction_model` in `~/.kite/config.toml`); when OpenRouter is unavailable (no key, empty free list, all retries fail) it falls back to the session model — billed/metered, unlike free-tier. Opt out with `compaction_fallback_session = false` (or `compaction_use_llm = false` for deterministic summaries only).
 
@@ -151,13 +151,20 @@ kite web-keys logout [name]    # remove a web tool key
 kite keys --logout [provider]  # unlink BYOK keys, web keys, or BYOS (omit provider to pick)
 kite providers                 # status; TTY then pick to connect
 kite models [-p provider]      # TTY: pick a live model (saved). --list dumps the table
-kite models --refresh          # bypass cache; re-fetch from the provider API
+                                 # Models come from live provider discovery: provider APIs for BYOK keys,
+                                 # and the linked account for subscriptions (Codex SDK, `grok models`,
+                                 # `agy models`; Claude uses ANTHROPIC_API_KEY's /v1/models when set).
+                                 # Entitlements differ per account — the list is never assumed universal.
+                                 # When discovery is unavailable/fails, a conservative fallback is shown
+                                 # and clearly labeled "fallback"; --refresh retries.
+kite models --refresh          # bypass cache; re-fetch from the provider API/account
 kite models --select           # same picker
 kite theme [name] [--list]     # TTY: typed number/name pick (same as /theme)
 kite font [name] [--list]      # TTY: typed unicode|ascii pick (same as /font)
-kite variants [level] [--list] [-p provider] [-m model]  # thinking variant (same as /variants)
+kite variant [level] [--list] [-p provider] [-m model]   # thinking variant (same as /variant); alias: kite variants
 kite config [--set-provider …] [--set-model …] [--select-model] [--set-api-base …]
-              [--session-persistence full|redacted|disabled]
+              [--auto-compact true|false] [--session-persistence full|redacted|disabled]
+              # unknown --set-provider values are rejected before saving (with a close-match hint)
 kite privacy [--session-persistence full|redacted|disabled]   # security policy summary
 kite context [--json] [--refresh]
 kite init [dir] [--force] [--chat] [--agents-only|--kite-only]  # scaffold AGENTS.md (+ KITE.md)
@@ -260,7 +267,7 @@ For scoped worker tasks, pass `scope` as a list of workspace-relative paths. It 
 
 ## 2. REPL control slashes
 
-These never go to the model.
+These never go to the model. A mistyped `/command` or `/skill` name gets a did-you-mean hint from the loaded command set; `//text` stays a literal prompt.
 
 | Command | What it does |
 |---------|----------------|
@@ -274,8 +281,7 @@ These never go to the model.
 | `/privacy sessions redacted\|full\|disabled` | Set session JSONL persistence (default **redacted**) |
 | `/theme [auto\|kite\|dark\|light\|dim\|mono\|monochrome\|catppuccin\|ember\|forest\|hues\|transparent]` | Color palette. Empty: pick |
 | `/font [unicode\|ascii]` | Glyph pack. Empty: pick |
-| `/thinking` `[off\|minimal\|low\|medium\|high\|…]` | Pi-style thinking level for the current model. Empty: **cycle** to the next level. `off` hidden when the model cannot disable reasoning. Unsupported levels clamp to the nearest supported one with a notice (e.g. `xhigh` on a low/high-only model → `high`) |
-| `/variants [level]` | Thinking variant for the current model — **strictly** limited to levels it supports (no clamping; unsupported names are rejected with the offered list). Empty: typed pick. `auto` clears the saved override. Saved as the default for fresh sessions; shown as `provider/model#variant` in the status line |
+| `/variant [level]` | Unified thinking variant for the current model — **strictly** limited to levels it supports (no clamping; unsupported names are rejected with the offered list). Empty: typed pick. `auto` clears the saved override. Saved as the default for fresh sessions; shown as `provider/model#variant` in the status line. Retired aliases `/thinking`, `/variants`, `/reasoning`, `/effort` and the `/fast` shortcut still resolve here but are hidden from the menu |
 | `/model [provider/id]` | Show or set model |
 | `/model provider/id --save` | Set model and persist to `~/.kite/config.toml` |
 | `/select [provider]` | Pick provider if needed, login if unlinked, then pick a live model (saved) |
@@ -288,15 +294,14 @@ These never go to the model.
 | `/session open [id]` `/resume [id]` | Continue that chat (prints last 30 of the transcript — full history still loads for the turn); omit id to pick a card — prompt on top, project · age · size · status beneath; current folder first |
 | `/session prune [N]` | Delete all but the newest N sessions (default 20, confirms first) |
 | `/keys` | Credential status with type (BYOK/BYOS), masked key fingerprint, OAuth link state |
-| `/reasoning` `/effort` | Legacy effort modes (`auto\|off\|fast\|thinking`) — prefer `/thinking` |
-| `/fast` | Legacy shortcut → `/thinking low` |
+| `/fast` | Hidden legacy shortcut → `/variant low`; rejected when the model does not offer `low` |
 | `/undo` | Revert last **kite:** git checkpoint (agent edits only) |
 | `/clear` | Fresh chat session (memory notes stay) |
 | `/new` | Start a new session — clears history and pending state, keeps provider/model/config |
 | `/usage [session\|provider\|all]` | Token, cache, cost, context, and provider limits (missing provider data never errors) |
 | `/compact` | Summarize older turns now; ctx meter updates immediately |
 | `/cost` | Legacy alias → `/status` (includes cost) |
-| `/stop` | Stop the current turn; session stays open |
+| `/stop` | Stop the current turn — also releases a pending approval gate so the worker wakes immediately; session stays open |
 | `/steer text` | Inject `text` into the running turn (queues when idle); the turn continues with the correction |
 | `/tasks` | Show the running turn and queued follow-ups, plus the full itemized task checklist (the live line shows one compact row) |
 | `/last` | Re-print the last tool call’s full output or diff (tool bodies print capped to 5 lines) |
@@ -342,7 +347,7 @@ These never go to the model.
 | `/detach [name\|all]` | Drop queued attachments |
 | `/attachments` | List queued files |
 | `/help` `/h` | Essential commands (15). `/help all` adds legacy aliases, shortcuts, and doc pointers (`kite_commands.md`, `CONTEXT.md`, …) |
-| `/quit` `/q` `/exit` | Leave the REPL |
+| `/quit` `/q` `/exit` | Leave the REPL; during a turn it stops that turn and background jobs rather than waiting for the model |
 
 Ctrl+C stops the **current turn**, not the process.
 
@@ -351,7 +356,7 @@ Ctrl+C stops the **current turn**, not the process.
 | Shortcut | Action |
 |----------|--------|
 | `Esc` / `Ctrl+C` | Stop the running turn (session stays). Idle `Ctrl+C` clears the line; does not quit |
-| `Ctrl+D` / `/quit` | Leave the REPL |
+| `Ctrl+D` / `/quit` | Leave the REPL (stops the running turn first) |
 | `Ctrl+V` / `Shift+Insert` | Paste OS clipboard into the composer |
 | `F8` / `Esc` then `v` | Attach clipboard to the next turn (same as `/clip`) |
 | `Ctrl+Insert` | Copy composer selection to OS clipboard |
@@ -386,7 +391,7 @@ Diffs render with a dim **old/new line-number gutter** derived from the hunk hea
 
 Streamed paragraphs wrap to the terminal's cell width, including narrow 50/60/80/120-column layouts, wide Unicode characters, and expanded tabs; chunk boundaries do not split words. Deferred answers retain their opening chunks beyond 2,000 deltas, and expanded reasoning is not replayed twice.
 
-`/thinking` appears in the slash menu when the current model advertises reasoning/thinking support. Levels shown match what the API exposes (e.g. `off low medium high` on OpenRouter/Groq/Nemotron). Empty `/thinking` cycles like Pi; set explicitly with `/thinking high` or `/thinking off`. Unsupported levels clamp to the nearest supported one and report it.
+`/variant` is always visible in the slash menu, even before live support detection warms; only the offered levels are gated by what the model advertises (e.g. `off low medium high` on OpenRouter/Groq/Nemotron). Empty `/variant` opens the typed picker; set explicitly with `/variant high` or `/variant off`, or clear the override with `/variant auto`. Unsupported levels are rejected with the offered list — they are never silently clamped. Clamping is reserved for model switches and session resume: a saved level that the new model cannot honour is moved to the nearest supported one (or reset to `auto` when the model offers none), with a short notice.
 
 ---
 

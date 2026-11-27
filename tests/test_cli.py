@@ -22,6 +22,41 @@ from kite.ui.pick import numbered_pick
 from kite.ui.repl import ChatSession
 
 
+def test_models_command_labels_fallback_source(monkeypatch) -> None:
+    """`kite models --list` must not present a fallback list as live discovery."""
+    from importlib import import_module
+
+    from rich.table import Table
+
+    from kite.cli import run as cli_run
+    from kite.config import UserConfig
+    from kite.providers.list_models import ListModelsResult, RemoteModel
+
+    console = MagicMock()
+    monkeypatch.setattr(cli_run, "_console", lambda: console)
+    monkeypatch.setattr("kite.ui.pick.can_prompt", lambda: False)
+    monkeypatch.setattr(
+        UserConfig,
+        "load",
+        lambda: MagicMock(provider_defaults={}, default_provider="", default_model=""),
+    )
+    monkeypatch.setattr(
+        import_module("kite.providers.list_models"),
+        "list_models_for_provider",
+        lambda *_a, **_k: ListModelsResult(
+            "grok", (RemoteModel("grok-4.7"),), "catalog-fallback"
+        ),
+    )
+
+    args = argparse.Namespace(provider="grok", select=False, list=True, refresh=False)
+    assert cli_run.cmd_models(args) == 0
+    printed = [call.args[0] for call in console.print.call_args_list if call.args]
+    assert any(isinstance(item, Table) and "fallback" in item.title for item in printed)
+    assert any(
+        isinstance(item, str) and "conservative fallback" in item for item in printed
+    )
+
+
 def test_apply_diff_stays_inside_workspace(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
@@ -240,6 +275,17 @@ def test_variants_auto_resets_persisted_default_without_live_detection(kite_home
     assert "variant" in capsys.readouterr().err
 
 
+def test_cli_variant_subcommand_and_legacy_alias(kite_home) -> None:
+    from kite.cli.run import build_parser
+
+    parser = build_parser()
+    canonical = parser.parse_args(["variant", "high"])
+    legacy = parser.parse_args(["variants", "high"])
+    assert canonical.command == "variant" and canonical.level == "high"
+    assert legacy.command == "variants" and legacy.level == "high"
+    assert canonical.func is legacy.func
+
+
 def test_variants_list_distinguishes_timeout_from_unsupported(kite_home, monkeypatch, capsys) -> None:
     from types import SimpleNamespace
 
@@ -285,7 +331,9 @@ def test_variants_list_distinguishes_timeout_from_unsupported(kite_home, monkeyp
 
 def test_slash_help_and_legacy_routing(workspace) -> None:
     assert parse_slash("/select groq").command == "select"
-    assert parse_slash("/thinking").command == "thinking"
+    assert parse_slash("/thinking").command == "variant"
+    for canonical in ("/variant", "/variants", "/reasoning", "/effort", "/fast"):
+        assert parse_slash(canonical).command == "variant"
     assert parse_slash("/skill commit").command == "skill"
     assert parse_slash("/collapse").command == "collapse"
     assert "skill" not in LEGACY_ALIASES

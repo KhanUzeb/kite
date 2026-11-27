@@ -275,7 +275,7 @@ class SlashCompleter(Completer):  # type: ignore[misc]
                     continue
                 seen.add(name)
                 extra = ""
-                if spec.name in {"thinking", "variants"}:
+                if spec.name == "variant":
                     from kite.models.reasoning import thinking_level_menu
 
                     extra = " ".join(pi for pi, _ in thinking_level_menu(self._support()))
@@ -316,14 +316,12 @@ class SlashCompleter(Completer):  # type: ignore[misc]
         choices: list[tuple[str, str]] = []
         routed = legacy_cmd or cmd
 
-        if cmd in {"thinking", "variants"} or routed == "fast":
+        if cmd == "variant":
             from kite.models.reasoning import thinking_level_menu
 
             info = self._support()
             menu = thinking_level_menu(info)
             choices = [(pi, _LEVEL_META.get(pi, pi)) for pi, _ in menu] if menu else list(ARG_CHOICES.get("thinking", ()))
-        elif routed in {"reasoning", "effort"}:
-            choices = list(ARG_CHOICES.get("reasoning", ()))
         elif cmd == "model" or routed in {"models", "select", "provider", "refresh"}:
             yield from self._model_arg_completions(cmd, rest, routed=routed)
             return
@@ -686,9 +684,10 @@ _ORIGIN_RANK = {
 def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[SlashSpec]:
     """Specs shown in the bare-slash menu.
 
-    `/thinking` and `/variants` are always visible — `support` only gates
-    which *levels* are offered (menu rows / `#variant` suffixes), never the
-    commands themselves, so the UI appears before live detection warms.
+    `/variant` is always visible — `support` only gates which *levels* are
+    offered (menu rows / `#variant` suffixes), never the command itself, so
+    the UI appears before live detection warms. Retired names and /fast live
+    in the legacy/alias maps, not in the spec list, so they stay hidden.
     """
     from kite.ui.commands import LEGACY_ALIASES
 
@@ -701,9 +700,7 @@ def _visible_specs(index: CommandIndex, *, support: ReasoningSupport) -> list[Sl
             continue
         if ":" in spec.name:
             continue
-        # /reasoning is a documented builtin, so it belongs in the menu even
-        # though its /effort alias and the /fast legacy shortcut stay hidden.
-        if spec.name in {"effort", "fast"}:
+        if spec.name in {"thinking", "variants", "reasoning", "effort", "fast"}:
             continue
         seen.add(spec.name)
         rows.append(spec)

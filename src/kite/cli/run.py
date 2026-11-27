@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from kite.agent.mode import AgentMode, ApprovalMode, default_approval, parse_approval_mode
+from kite.cli import fast_argparse_gettext
 
 
 def _lazy_cmd(module: str, attr: str):
@@ -42,6 +43,16 @@ def _parse_approval(raw: str | None, mode: AgentMode) -> ApprovalMode:
     if raw:
         return parse_approval_mode(raw, default=default_approval(mode))
     return fallback
+
+
+def _parse_bool_flag(raw: str) -> bool:
+    """argparse type for explicit true/false config values — no silent False."""
+    value = (raw or "").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"expected true|false, got {raw!r}")
 
 
 def _load_attachments(paths: list[str], task: str, cwd: str):
@@ -849,7 +860,17 @@ def cmd_models(args: argparse.Namespace) -> int:
             catalog=catalog,
             refresh=bool(getattr(args, "refresh", False)),
         )
-        table = Table(title=f"{spec.display_name} ({spec.name}) — live")
+        source_label = {
+            "oauth": "live (subscription account)",
+            "api-key": "live (API key entitlement)",
+            "catalog-fallback": "fallback (live list unavailable)",
+        }.get(result.source, "live")
+        table = Table(title=f"{spec.display_name} ({spec.name}) — {source_label}")
+        if result.source == "catalog-fallback":
+            console.print(
+                "[yellow]Live discovery unavailable — showing a conservative fallback list; "
+                "use --refresh to retry.[/]"
+            )
         table.add_column("model")
         table.add_column("context")
         table.add_column("owned_by")
@@ -998,7 +1019,7 @@ def _detect_variants_support(console, resolved):
 
 
 def cmd_variants(args: argparse.Namespace) -> int:
-    """Show or set the thinking variant — `kite variants`, same source as /variants.
+    """Show or set the thinking variant — `kite variant[s]`, same source as /variant.
 
     Strictly gated: only levels from the model's live Pi menu are accepted.
     Full picker (see cmd_theme): arrows, wheel, click, typed fallback.
@@ -1081,6 +1102,20 @@ def cmd_config(args: argparse.Namespace) -> int:
 
     console = _console()
     cfg = UserConfig.load()
+    if getattr(args, "set_provider", None):
+        from kite.providers.catalog import load_catalog
+        from kite.util.suggest import did_you_mean
+
+        requested = args.set_provider.strip()
+        catalog = load_catalog()
+        try:
+            catalog.get(requested)
+        except KeyError:
+            hint = did_you_mean(requested, [p.name for p in catalog.list()])
+            suffix = f"  — {hint}" if hint else "  — kite providers"
+            console.print(f"[red]unknown provider[/] {requested}{suffix}")
+            return 2
+        args.set_provider = requested
     if args.select_model:
         provider = args.set_provider or cfg.default_provider or "openai"
         return _select_model_interactive(console, provider)
@@ -1555,16 +1590,27 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
 
 
 def cmd_help(args: argparse.Namespace) -> int:
-    from kite.cli.help_map import cli_help_brief, cli_help_text
+    from kite.cli.help_map import CLI_COMMANDS, cli_help_brief, cli_help_text
+    from kite.util.suggest import did_you_mean
 
     topic = (getattr(args, "topic", None) or "").strip().lower()
     if topic == "all":
         print(cli_help_text())
-    else:
-        print(cli_help_brief())
+        return 0
+    if topic:
+        parser = build_parser()
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction) and topic in action.choices:
+                action.choices[topic].print_help()
+                return 0
+        hint = did_you_mean(topic, sorted(CLI_COMMANDS - {"maintainer"}))
+        if hint:
+            print(f"No command {topic!r} — {hint}\n")
+    print(cli_help_brief())
     return 0
 
 
+@fast_argparse_gettext
 def build_parser() -> argparse.ArgumentParser:
     from kite.cli.help_map import CLI_EPILOG
 
@@ -1602,7 +1648,7 @@ def build_parser() -> argparse.ArgumentParser:
         "topic",
         nargs="?",
         default="",
-        help="Use 'all' for the full command map",
+        help="Subcommand name for its own help; 'all' for the full command map",
     )
     help_p.set_defaults(func=cmd_help)
 
@@ -1792,7 +1838,9 @@ def build_parser() -> argparse.ArgumentParser:
     font_p.add_argument("--list", action="store_true", help="List glyph packs")
     font_p.set_defaults(func=cmd_font)
 
-    variants_p = sub.add_parser("variants", help="Show or set the thinking variant (same as /variants)")
+    variants_p = sub.add_parser(
+        "variant", aliases=["variants"], help="Show or set the thinking variant (same as /variant)"
+    )
     variants_p.add_argument("level", nargs="?", help="Pi level, e.g. low|medium|high (omit to pick)")
     variants_p.add_argument("--list", action="store_true", help="List levels this model supports")
     variants_p.add_argument("-p", "--provider", help="Provider name from catalog")
@@ -1808,7 +1856,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fetch live models and interactively select one",
     )
     config.add_argument("--set-api-base", help="Override provider base URL")
-    config.add_argument("--auto-compact", type=lambda s: s.lower() in {"1", "true", "yes"}, default=None)
+    config.add_argument("--auto-compact", type=_parse_bool_flag, default=None, metavar="true|false")
     config.add_argument(
         "--session-persistence",
         choices=["full", "redacted", "disabled"],

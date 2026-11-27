@@ -39,6 +39,13 @@ _GENERIC_LAUNCHERS = ("__main__", "pytest", "python", "uv", "_pytest", "-c")
 # explicit commands run it on a daemon thread and fall back to the unknown
 # path instead of hanging the REPL.
 _REASONING_DETECT_TIMEOUT_S = 20.0
+# A model switch / resume must not stall on a cold models API. Coercion first
+# uses the cached support and only waits this long when the cache is empty.
+_VARIANT_HANDOFF_TIMEOUT_S = 0.5
+# A deferred handoff validates generation/state before publishing. Serialize
+# that critical section with every generation bump so a switch or explicit
+# commit cannot interleave between the checks and the state/support writes.
+_VARIANT_HANDOFF_LOCK = threading.RLock()
 
 
 def _resume_exe() -> str:
@@ -1026,7 +1033,13 @@ class ChatSession:
     def _commit_reasoning(self, encoded: str, *, label: str = "thinking", badge: str = "") -> None:
         from kite.models.reasoning import reasoning_badge, reasoning_to_thinking_level
 
-        self.state.reasoning = encoded
+        # Any explicit commit — including /variant auto — supersedes a pending
+        # deferred handoff. Without this bump, "auto" looks identical to the
+        # interim value a cold handoff parked on and a late worker would
+        # overwrite the user's choice with a clamped level.
+        with _VARIANT_HANDOFF_LOCK:
+            self._variant_handoff_generation = getattr(self, "_variant_handoff_generation", 0) + 1
+            self.state.reasoning = encoded
         self._invalidate_harness()
         self.state.touch()
         if not badge:
@@ -1414,7 +1427,7 @@ class ChatSession:
         if legacy == "cost":
             return "status", arg
         if legacy == "fast":
-            return "thinking", arg or "low"
+            return "variant", arg or "low"
         return cmd, arg
 
     def _model_cmd(self, arg: str) -> None:
@@ -1492,6 +1505,13 @@ class ChatSession:
             self._model_resolved = True
             self._invalidate_harness()
             self._invalidate_reasoning_support()
+            # Direct /model switches bypass _apply_connected, so re-clamp the
+            # saved variant here too (thinking:high must not leak to a model
+            # that only offers low/medium).
+            self._handoff_reasoning_for_model(
+                self.provider or self.state.provider or "",
+                self.model or self.state.model or "",
+            )
             if save:
                 cfg = UserConfig.load()
                 cfg.default_provider = self.provider or cfg.default_provider
@@ -1636,20 +1656,129 @@ class ChatSession:
         self._model_resolved = True
         self._invalidate_harness()
         self._invalidate_reasoning_support()
-        # Stale effort (e.g. thinking:high from the previous model) must not
-        # leak into the new provider — NIM reasoners would then think far
-        # longer than asked. Clamp to the new model's menu, else auto.
-        try:
-            from kite.models.reasoning import coerce_reasoning_for_model, peek_reasoning
+        self._handoff_reasoning_for_model(provider, model)
 
+    def _handoff_reasoning_for_model(
+        self, provider: str, model: str, *, preserve_unknown: bool = False
+    ) -> None:
+        """Re-clamp a stale variant when the model changes or a session opens.
+
+        Cached support handles the common case; a short bounded detect covers
+        a cold cache. When support is still unknown, the requested level is
+        remembered and re-clamped by a non-blocking background worker once
+        detection resolves. A generation counter plus a state check stop a
+        late worker from overriding a newer switch or a user's own choice.
+        """
+        from kite.models.reasoning import coerce_reasoning_for_model, peek_reasoning
+
+        # Invalidate any earlier deferred handoff before starting a new one.
+        # Under the same lock the worker uses for its guard/publication, this
+        # bump cannot slip between its checks and its writes.
+        with _VARIANT_HANDOFF_LOCK:
+            self._variant_handoff_generation = getattr(self, "_variant_handoff_generation", 0) + 1
+            generation = self._variant_handoff_generation
+
+        raw = self.state.reasoning or "auto"
+        if raw == "auto":
+            return
+        try:
             info = peek_reasoning(provider, model)
-            if info is not None and (self.state.reasoning or "auto") != "auto":
-                coerced = coerce_reasoning_for_model(self.state.reasoning, info)
-                if coerced != self.state.reasoning:
+            if info is None:
+                info = self._reasoning_info_sync(
+                    announce=False, timeout=_VARIANT_HANDOFF_TIMEOUT_S
+                )
+            if info is None:
+                if preserve_unknown:
+                    # Resume restores the saved value verbatim, then defers
+                    # the clamp so it still happens once levels are known.
+                    expected = raw
+                else:
+                    # No menu yet: park on auto so no unsupported reasoning
+                    # params are sent, but remember the preference.
+                    self.state.reasoning = "auto"
+                    self._invalidate_harness()
+                    self.state.touch()
+                    expected = "auto"
+                    try:
+                        self.console.print(
+                            f"[kite.muted]variant[/]  auto  ·  {provider}/{model}  "
+                            "[kite.muted](levels pending — clamp when known)[/]"
+                        )
+                    except Exception:
+                        pass
+                self._defer_variant_handoff(
+                    provider, model, raw, generation, expected=expected
+                )
+                return
+            coerced = coerce_reasoning_for_model(raw, info)
+        except Exception:
+            return
+        if coerced != raw:
+            self.state.reasoning = coerced
+            self._invalidate_harness()
+            self.state.touch()
+            try:
+                self.console.print(f"[kite.muted]variant[/]  {coerced}  ·  {provider}/{model}")
+            except Exception:
+                pass
+
+    def _defer_variant_handoff(
+        self, provider: str, model: str, requested: str, generation: int, *, expected: str
+    ) -> None:
+        """Resolve support off-thread and clamp the remembered level.
+
+        Applies only when no newer handoff started and state still holds the
+        value this handoff set, so a later user choice is never overridden.
+        Detection uses the explicit provider/model pair rather than
+        ``_reasoning_info_sync``: that path calls ``_ensure_model_resolved``,
+        which has no timeout and would mutate session provider/model from
+        this background thread.
+        """
+        import threading
+
+        def _work() -> None:
+            try:
+                info = self._detect_reasoning_bounded(
+                    provider, model, timeout=_REASONING_DETECT_TIMEOUT_S
+                )
+            except Exception:
+                return
+            if info is None:
+                return
+            from kite.models.reasoning import coerce_reasoning_for_model
+
+            def _still_current() -> bool:
+                return (
+                    getattr(self, "_variant_handoff_generation", None) == generation
+                    and (self.state.reasoning or "auto") == expected
+                    and (self.provider or "", self.model or "") == (provider or "", model or "")
+                )
+
+            with _VARIANT_HANDOFF_LOCK:
+                if not _still_current():
+                    return
+                coerced = coerce_reasoning_for_model(requested, info)
+                # Re-check after computing: a reentrant switch/commit (or a
+                # UI action that took the lock first) must not be overwritten
+                # by a publication prepared for the previous model.
+                if not _still_current():
+                    return
+                # Publish support and state together under the lock so the key
+                # always belongs to the model the harness is rebuilt for.
+                self._reasoning_support = info
+                self._reasoning_support_key = (provider or "", model or "")
+                applied = coerced != (self.state.reasoning or "auto")
+                if applied:
                     self.state.reasoning = coerced
                     self._invalidate_harness()
-        except Exception:
-            pass
+                    self.state.touch()
+            if applied:
+                try:
+                    self.console.print(f"[kite.muted]variant[/]  {coerced}  ·  {provider}/{model}")
+                except Exception:
+                    pass
+
+        threading.Thread(target=_work, daemon=True, name="kite-variant-handoff").start()
 
     def _connect_flow(self, provider: str | None = None, *, force_login: bool = False) -> None:
         from kite.providers.select import connect_interactive
@@ -1774,10 +1903,7 @@ class ChatSession:
             "models": self._slash_model_list,
             "provider": self._slash_model_provider,
             "refresh": self._slash_refresh_models,
-            "thinking": self._slash_thinking,
-            "variants": self._slash_variants,
-            "fast": self._slash_fast,
-            "reasoning": self._slash_reasoning,
+            "variant": self._slash_variant,
             "compact": self._compact_now,
             "checkpoint": self._checkpoint_cmd,
             "handoff": self._handoff_cmd,
@@ -2337,109 +2463,45 @@ class ChatSession:
             return
         self._connect_flow()
 
-    def _thinking_picker_choices(self) -> list[tuple[str, str]]:
+    def _slash_variant(self, arg: str) -> None:
+        """Unified thinking-variant command — strict Pi menu, typed pick.
+
+        Retired names (/thinking, /variants, /reasoning, /effort) and the
+        /fast shortcut all resolve here through the command map. Only levels
+        the live model advertises can be applied; unsupported names are
+        rejected with the offered list rather than silently clamped.
+        """
         from kite.models.reasoning import thinking_level_menu
-        from kite.ui.commands import ARG_CHOICES
-        from kite.ui.complete import _LEVEL_META
-
-        info = self._reasoning_info()
-        if info is None or not info.supported:
-            return list(ARG_CHOICES["thinking"])
-        menu = thinking_level_menu(info)
-        if not menu:
-            return list(ARG_CHOICES["thinking"])
-        return [(pi, _LEVEL_META.get(pi, pi)) for pi, _ in menu]
-
-    def _apply_thinking_level(self, raw: str) -> None:
-        from kite.models.reasoning import (
-            clamp_thinking_level,
-            cycle_thinking_level,
-            fallback_thinking_level,
-            resolve_thinking_level,
-            thinking_level_menu,
-        )
 
         self._ensure_model_resolved()
-        info = self._reasoning_info_sync()
-        token = raw.strip()
-        if not token:
-            if info is None or not info.supported:
-                self.console.print("[kite.muted]this model does not advertise thinking levels[/]")
-                return
-            next_enc = cycle_thinking_level(self.state.reasoning, info)
-            if next_enc is None:
-                self.console.print("[kite.muted]this model does not advertise thinking levels[/]")
-                return
-            self._commit_reasoning(next_enc)
-            return
-        encoded = resolve_thinking_level(token, info)
-        if encoded is None and (info is None or not info.supported):
-            encoded = fallback_thinking_level(token)
-        if info is not None and info.supported:
-            if (
-                encoded is None
-                and token.lower() in {"off", "none", "disable", "disabled"}
-                and not info.can_disable
-            ):
-                self.console.print("[kite.muted]this model cannot disable thinking[/]")
-                return
-            clamped = clamp_thinking_level(token, info)
-            if clamped is not None:
-                enc, effective = clamped
-                if enc != encoded:
-                    # Pi parity: unsupported level clamps to nearest, reported.
-                    self._commit_reasoning(enc)
-                    if effective != token.lower():
-                        self.console.print(
-                            f"[kite.muted]{token} unavailable on this model — using {effective}[/]"
-                        )
-                    return
-        if encoded is None:
-            menu = thinking_level_menu(info) if info is not None and info.supported else ()
-            hint = "|".join(pi for pi, _ in menu) or "off|low|medium|high"
-            self.console.print(f"[kite.muted]/thinking {hint}[/]")
-            return
-        # Bare mode tokens keep legacy behavior: /reasoning fast →
-        # fast:low, /reasoning thinking → thinking:high.
-        if encoded in {"fast", "thinking"} and info is not None and info.supported:
-            default = info.default_effort(encoded)
-            if default:
-                from kite.models.reasoning import encode_reasoning
-
-                encoded = encode_reasoning(encoded, default)
-        self._commit_reasoning(encoded)
-
-    def _slash_thinking(self, arg: str) -> None:
-        self._apply_thinking_level(arg)
-
-    def _slash_variants(self, arg: str) -> None:
-        """Pi-style variant menu, strictly gated to what the model supports."""
-        from kite.models.reasoning import reasoning_to_thinking_level, thinking_level_menu
-
-        self._ensure_model_resolved()
-        if arg.strip().lower() == "auto":
+        token = (arg or "").strip().lower()
+        if token == "auto":
             self._commit_reasoning("auto", label="variant")
             self._save_reasoning_default("auto")
             return
         info = self._reasoning_info_sync()
         if info is None:
-            # Support unknown (detection timed out / errored): still offer
-            # the generic Pi list, but validate strictly before applying.
-            self._slash_variants_unknown(arg)
+            # Support unknown (detection timed out / errored): keep the menu
+            # discoverable, but validate strictly before applying anything.
+            self._slash_variant_unknown(token)
             return
         if not info.supported:
             self.console.print("[kite.muted]this model does not advertise thinking variants[/]")
             return
-        menu = thinking_level_menu(info) if info is not None and info.supported else ()
+        menu = thinking_level_menu(info)
         if not menu:
             self.console.print("[kite.muted]this model does not advertise thinking variants[/]")
             return
-        ids = [pi for pi, _ in menu]
-        token = arg.strip().lower()
-        if not token:
-            from kite.ui.complete import _LEVEL_META
-            from kite.ui.pick import pick_one
+        self._commit_variant_pick(token, menu, info)
 
+    def _commit_variant_pick(self, token: str, menu, info) -> None:
+        """Apply a Pi level from *menu*, or print the strict rejection."""
+        from kite.models.reasoning import reasoning_to_thinking_level
+        from kite.ui.complete import _LEVEL_META
+        from kite.ui.pick import pick_one
+
+        ids = [pi for pi, _ in menu]
+        if not token:
             current = reasoning_to_thinking_level(self.state.reasoning, info)
             picked = pick_one(
                 self.console,
@@ -2451,20 +2513,25 @@ class ChatSession:
             if not picked:
                 self.console.print(f"[kite.muted]variant[/]  {current}  ·  {self.model}")
                 return
-            token = picked
+            token = picked.strip().lower()
+        if token in {"list", "ls"}:
+            self.console.print(f"[kite.muted]{'|'.join(ids)}[/]")
+            return
         for pi, enc in menu:
             if token == pi:
                 self._commit_reasoning(enc, label="variant")
                 self._save_reasoning_default(enc)
                 return
+        # /fast maps to "low"; on a model without fast support "low" is not in
+        # the menu, so the shortcut is conditional without a special case.
         self.console.print(
-            f"[kite.muted]{arg} is not offered by {self.model} — pick: {'|'.join(ids)}[/]"
+            f"[kite.muted]{token} is not offered by {self.model} — pick: {'|'.join(ids)}[/]"
         )
 
-    def _slash_variants_unknown(self, arg: str) -> None:
+    def _slash_variant_unknown(self, arg: str) -> None:
         """Unknown-support path: generic Pi levels, strict commit-time check.
 
-        The menu stays offered so /variants is discoverable before live
+        The menu stays offered so /variant is discoverable before live
         detection warms — but nothing is applied unless a bounded re-detect
         proves the picked level is in the model's supported menu. Known-absent
         support keeps the "does not advertise" message instead.
@@ -2496,14 +2563,7 @@ class ChatSession:
             return
         info = self._reasoning_info_sync(announce=False)
         if info is not None and info.supported:
-            menu = thinking_level_menu(info)
-            for pi, enc in menu:
-                if token == pi:
-                    self._commit_reasoning(enc, label="variant")
-                    self._save_reasoning_default(enc)
-                    return
-            ids = "|".join(pi for pi, _ in menu) or "—"
-            self.console.print(f"[kite.muted]{token} is not offered by {self.model} — pick: {ids}[/]")
+            self._commit_variant_pick(token, thinking_level_menu(info), info)
             return
         if info is not None:
             self.console.print("[kite.muted]this model does not advertise thinking variants[/]")
@@ -2518,39 +2578,6 @@ class ChatSession:
             cfg.save()
         except OSError:
             pass
-
-    def _slash_fast(self, arg: str) -> None:
-        self._apply_thinking_level(arg or "low")
-
-    def _reasoning_picker_choices(self) -> list[tuple[str, str]]:
-        from kite.ui.commands import ARG_CHOICES
-
-        choices = list(ARG_CHOICES["reasoning"])
-        info = self._reasoning_info_sync()
-        if info is not None and not info.can_disable:
-            choices = [(key, label) for key, label in choices if key != "off"]
-        return choices
-
-    def _slash_reasoning(self, arg: str) -> None:
-        # Pi parity: /reasoning, /effort, /thinking and /fast share one Pi
-        # level menu (off/minimal/low/medium/high/xhigh/max). Legacy
-        # fast/thinking tokens still resolve via the same path.
-        if not arg:
-            picked = self._pick(
-                self._thinking_picker_choices(),
-                title="Thinking level",
-                current=self.state.reasoning,
-                noun="level",
-            )
-            if not picked:
-                from kite.models.reasoning import reasoning_badge
-
-                badge = reasoning_badge(self.state.reasoning) or self.state.reasoning
-                self.console.print(f"[kite.muted]thinking[/]  {badge}")
-                return
-            self._apply_thinking_level(picked)
-            return
-        self._apply_thinking_level(arg)
 
     def _slash_memory(self, arg: str) -> None:
         which = arg.strip().lower()
@@ -3178,6 +3205,10 @@ class ChatSession:
             self.state.model = session.meta.model
         if session.meta.reasoning and session.meta.reasoning != "auto":
             self.state.reasoning = session.meta.reasoning
+            if session.meta.provider and session.meta.model:
+                self._handoff_reasoning_for_model(
+                    session.meta.provider, session.meta.model, preserve_unknown=True
+                )
         self._print_session(session, tail=30)
         self.console.print(
             f"[kite.success]opened[/] {session.id}  — type to continue  "
@@ -3587,18 +3618,34 @@ class ChatSession:
 
     def _sync_queue_count(self) -> None:
         steer, follow = self._inbox.counts()
-        self.state.queued = len(self._inbox)
-        self.state.queue_steer = steer
-        self.state.queue_follow = follow
+        queued = len(self._inbox)
         entry = self._inbox.peek_entry()
         if entry is None:
-            self.state.queue_head = ""
-            self.state.queue_head_kind = ""
+            head, queue_head_kind = "", ""
         else:
-            head, is_steer = entry
-            self.state.queue_head = head[:80] + ("…" if len(head) > 80 else "")
-            self.state.queue_head_kind = "steer" if is_steer else "follow"
-        self.state.touch()
+            raw_head, is_steer = entry
+            head = raw_head[:80] + ("…" if len(raw_head) > 80 else "")
+            queue_head_kind = "steer" if is_steer else "follow"
+        # This runs on every toolbar poll (every 250 ms) while a turn is busy.
+        # touch() invalidates the pinned prompt_toolkit app, so an unconditional
+        # touch here makes the toolbar repaint -> poll -> touch -> repaint loop
+        # run continuously for the whole turn — the composer flickers and burns
+        # CPU on long runs. Only invalidate on a real queue transition, the same
+        # idempotence rule _poll_pending_approval uses for the approval gate.
+        changed = (
+            self.state.queued != queued
+            or self.state.queue_steer != steer
+            or self.state.queue_follow != follow
+            or self.state.queue_head != head
+            or self.state.queue_head_kind != queue_head_kind
+        )
+        self.state.queued = queued
+        self.state.queue_steer = steer
+        self.state.queue_follow = follow
+        self.state.queue_head = head
+        self.state.queue_head_kind = queue_head_kind
+        if changed:
+            self.state.touch()
 
     def _dequeue_to_composer(self) -> str:
         items = self._inbox.drain_all()
@@ -3642,10 +3689,24 @@ class ChatSession:
             self._harness.request_interrupt()
 
     def _request_stop(self) -> None:
+        # A pending approval parks the worker inside ApprovalCoordinator.request()
+        # for up to its timeout — an interrupt alone cannot wake it. Resolve the
+        # gate as "stop" first: the agent sees that decision and interrupts
+        # itself, so Esc//stop stays responsive even at an approval prompt.
+        try:
+            self._resolve_approval_decision("stop")
+        except Exception:
+            pass
         if self._harness is not None:
             self._harness.request_interrupt()
         self.state.interrupted = True
         self._flash_note("stopping…")
+
+    def _request_quit(self) -> None:
+        """Quit during a live turn: stop it now, don't wait for the model to finish."""
+        self._quit_after_turn = True
+        self._request_stop()
+        self._teardown_jobs()
 
     def _wake_composer(self) -> None:
         """Interrupt prompt_toolkit so the main thread can show approval UI."""
@@ -3809,7 +3870,7 @@ class ChatSession:
                     on_slash_while_busy=_slash_busy_hint,
                     on_busy_slash=self._handle_slash_while_busy,
                     on_approval=self._resolve_approval_decision,
-                    on_eof=lambda: setattr(self, "_quit_after_turn", True),
+                    on_eof=self._request_quit,
                     on_empty=_composer_empty,
                     on_dequeue=self._dequeue_to_composer,
                     on_tick=self._busy_tick,
@@ -3822,7 +3883,7 @@ class ChatSession:
                     on_steer=self._queue_steer,
                     on_slash_while_busy=_slash_busy_hint,
                     on_busy_slash=self._handle_slash_while_busy,
-                    on_eof=lambda: setattr(self, "_quit_after_turn", True),
+                    on_eof=self._request_quit,
                     on_empty=_composer_empty,
                 )
                 while not done.is_set():
@@ -3848,7 +3909,9 @@ class ChatSession:
             while True:
                 _spawn_and_wait(run_task)
                 self._bind_session(harness)
-                if box.get("err") is not None or box.get("interrupted"):
+                # A quit/stop asked mid-turn must win over recovery auto-continue:
+                # otherwise /quit still starts another model turn before exiting.
+                if self._quit_after_turn or box.get("err") is not None or box.get("interrupted"):
                     break
                 extra = box.get("result") or {}
                 exit_status = str(extra.get("exit_status") or "")

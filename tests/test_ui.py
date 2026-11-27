@@ -55,8 +55,7 @@ def _isolated_ui_state(monkeypatch, kite_home, tmp_path):
 
     monkeypatch.setattr(theme, "_prefs", replace(theme._prefs, theme="auto", font="unicode"))
     monkeypatch.setattr(theme, "_loaded", True)
-    for cache in ("_repo_cache", "_status_cache", "_branch_cache"):
-        monkeypatch.setattr(git, cache, {})
+    monkeypatch.setattr(git, "_probe_cache", {})
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
     monkeypatch.setattr("kite.models.litellm_model.prewarm_litellm", lambda: None)
     monkeypatch.setattr(ChatSession, "_warm_auth_probes", lambda self: None)
@@ -877,24 +876,7 @@ def test_resume_transcript_rendering_and_tail(tmp_path, kite_home) -> None:
     assert session._parse_session_show_tail("--tail 3 abc") == ("abc", 3)
 
 
-def test_reasoning_picker_and_slash_levels(tmp_path, kite_home, reasoning_support) -> None:
-    from kite.models.reasoning import ReasoningSupport
-
-    session = ChatSession(cwd=str(tmp_path))
-    session._reasoning_support = reasoning_support
-    keys = [key for key, _ in session._reasoning_picker_choices()]
-    assert "auto" in keys
-
-    nodisable = ChatSession(cwd=str(tmp_path))
-    nodisable._reasoning_support = ReasoningSupport(
-        supported=True,
-        can_fast=True,
-        can_thinking=True,
-        can_disable=False,
-    )
-    assert "off" not in [key for key, _ in nodisable._reasoning_picker_choices()]
-    assert "auto" in [key for key, _ in nodisable._reasoning_picker_choices()]
-
+def test_variant_slash_levels_and_harness_invalidation(tmp_path, kite_home, reasoning_support) -> None:
     buf = StringIO()
     think = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
     think.console = Console(file=buf, force_terminal=False)
@@ -902,37 +884,121 @@ def test_reasoning_picker_and_slash_levels(tmp_path, kite_home, reasoning_suppor
     think._harness = MagicMock()
     think._harness_key = ("groq", "llama-3.3-70b", "build", "auto", False, None, None, "auto", True, "", "", None, None, None, False, False, False, "auto", False)
 
-    think._slash_thinking("high")
+    think._slash_variant("high")
     assert think.state.reasoning == "thinking:high"
     assert think._harness is None
-    assert "thinking" in strip_ansi(buf.getvalue()).lower()
+    assert "variant" in strip_ansi(buf.getvalue()).lower()
 
-    think._slash_thinking("")
-    assert think.state.reasoning == "off"
+    think._slash_variant("auto")
+    assert think.state.reasoning == "auto"
 
-    think._slash_fast("")
+    think._slash_variant("low")
     assert think.state.reasoning == "fast:low"
-
-    legacy = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
-    legacy.console = Console(file=StringIO(), force_terminal=False)
-    legacy._reasoning_support = reasoning_support
-    legacy._slash_reasoning("fast")
-    assert legacy.state.reasoning == "fast:low"
-    legacy._slash_reasoning("auto")
-    assert legacy.state.reasoning == "auto"
 
     dispatched = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
     dispatched.console = Console(file=StringIO(), force_terminal=False)
     dispatched._reasoning_support = reasoning_support
-    assert dispatched._handle_slash("/thinking medium") is True
+    assert dispatched._handle_slash("/variant medium") is True
     assert dispatched.state.reasoning == "thinking:medium"
     assert dispatched._handle_slash("/fast") is True
     assert dispatched.state.reasoning == "fast:low"
-    assert dispatched._handle_slash("/reasoning thinking:high") is True
+    assert dispatched._handle_slash("/reasoning high") is True
     assert dispatched.state.reasoning == "thinking:high"
+    # Retired names resolve to the same strict command.
+    assert dispatched._handle_slash("/thinking low") is True
+    assert dispatched.state.reasoning == "fast:low"
 
 
-def test_variants_strict_menu_persist_and_label(tmp_path, kite_home, reasoning_support) -> None:
+def test_model_direct_switch_reclamps_variant(tmp_path, kite_home, monkeypatch) -> None:
+    """/model sets state directly and must run the same handoff as connect."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    import kite.models.reasoning as reasoning
+    from kite.models.reasoning import ReasoningSupport
+    from kite.ui.repl import ChatSession
+    from tests.conftest import strip_ansi
+
+    limited = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium"),
+    )
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_: limited)
+    monkeypatch.setattr(ChatSession, "_warm_auth_probes", lambda self: None)
+    monkeypatch.setattr("kite.models.litellm_model.prewarm_litellm", lambda: None)
+
+    session = ChatSession(cwd=str(tmp_path), provider="groq", model="old")
+    session.console = Console(file=StringIO(), force_terminal=False, width=120)
+    session.state.reasoning = "thinking:high"
+    session._model_cmd("groq/limited")
+
+    assert (session.provider, session.model) == ("groq", "limited")
+    assert session.state.reasoning == "thinking:medium"
+    assert "variant" in strip_ansi(session.console.file.getvalue()).lower()
+    session.display.close()
+
+
+def test_explicit_variant_auto_cancels_deferred_clamp(tmp_path, kite_home, monkeypatch) -> None:
+    """/variant auto after a cold park is a user choice, not an empty interim."""
+    import threading
+    from io import StringIO
+
+    from rich.console import Console
+
+    import kite.models.reasoning as reasoning
+    from kite.models.reasoning import ReasoningSupport
+    from kite.ui.repl import ChatSession
+
+    limited = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium"),
+    )
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_: None)
+    jobs: list = []
+
+    class CaptureThread:
+        def __init__(self, *, target, daemon, name):
+            jobs.append(target)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(threading, "Thread", CaptureThread)
+    monkeypatch.setattr(ChatSession, "_warm_auth_probes", lambda self: None)
+    monkeypatch.setattr("kite.models.litellm_model.prewarm_litellm", lambda: None)
+
+    session = ChatSession(cwd=str(tmp_path), provider="groq", model="new")
+    session.console = Console(file=StringIO(), force_terminal=False, width=120)
+    session._reasoning_info_sync = lambda **_k: None
+    session._detect_reasoning_bounded = lambda *_a, **_k: limited
+    session.state.reasoning = "thinking:high"
+    session._model_resolved = True
+
+    session._handoff_reasoning_for_model("groq", "new")
+    assert session.state.reasoning == "auto"
+    assert len(jobs) == 1
+
+    assert session._handle_slash("/variant auto") is True
+    assert session.state.reasoning == "auto"
+
+    jobs[0]()  # stale worker must not restore a clamped level over the choice
+
+    assert session.state.reasoning == "auto"
+    session.display.close()
+
+
+def test_variant_strict_menu_persist_and_label(tmp_path, kite_home, reasoning_support) -> None:
     from kite.ui.status import format_model_label
 
     session = ChatSession(cwd=str(tmp_path), provider="groq", model="llama-3.3-70b")
@@ -940,21 +1006,21 @@ def test_variants_strict_menu_persist_and_label(tmp_path, kite_home, reasoning_s
     session._reasoning_support = reasoning_support
     session._harness = MagicMock()
 
-    session._slash_variants("high")
+    session._slash_variant("high")
     assert session.state.reasoning == "thinking:high"
     assert UserConfig.load().reasoning == "thinking:high"
     assert format_model_label(session.state) == "groq/llama-3.3-70b#high"
 
     before = session.state.reasoning
-    session._slash_variants("max")  # not offered: strict reject, no clamp
+    session._slash_variant("max")  # not offered: strict reject, no clamp
     assert session.state.reasoning == before
     assert "max is not offered" in strip_ansi(session.console.file.getvalue())
 
-    session._slash_variants("off")
+    session._slash_variant("off")
     assert session.state.reasoning == "off"
     assert format_model_label(session.state) == "groq/llama-3.3-70b#off"
 
-    assert session._handle_slash("/variants low") is True
+    assert session._handle_slash("/variant low") is True
     assert session.state.reasoning == "fast:low"
     assert session._handle_slash("/variants auto") is True
     assert session.state.reasoning == "auto"
@@ -965,7 +1031,7 @@ def test_variants_strict_menu_persist_and_label(tmp_path, kite_home, reasoning_s
     assert format_model_label(SessionUiState(model="m", provider="p")) == "p/m"
 
 
-def test_variants_unknown_support_strict_reject_and_known_absent(tmp_path, kite_home, reasoning_support) -> None:
+def test_variant_unknown_support_strict_reject_and_known_absent(tmp_path, kite_home, reasoning_support) -> None:
     """Unknown detection applies nothing; known-absent keeps its message."""
     from kite.models.reasoning import ReasoningSupport
 
@@ -976,13 +1042,13 @@ def test_variants_unknown_support_strict_reject_and_known_absent(tmp_path, kite_
 
     # Unknown: bounded detection fails → strict reject, state untouched.
     session._reasoning_info_sync = lambda **_k: None
-    session._slash_variants("high")
+    session._slash_variant("high")
     assert session.state.reasoning == before
     assert "could not confirm" in strip_ansi(session.console.file.getvalue())
 
     # Known-absent: the current message is preserved.
     session._reasoning_info_sync = lambda **_k: ReasoningSupport(False, False, False, False, source="live")
-    session._slash_variants("high")
+    session._slash_variant("high")
     assert session.state.reasoning == before
     assert "does not advertise" in strip_ansi(session.console.file.getvalue())
 
@@ -997,7 +1063,7 @@ def test_variants_unknown_support_strict_reject_and_known_absent(tmp_path, kite_
         return None if calls["n"] == 1 else reasoning_support
 
     session._reasoning_info_sync = _flaky
-    session._slash_variants("high")  # re-detect proves support → applies
+    session._slash_variant("high")  # re-detect proves support → applies
     assert session.state.reasoning == "thinking:high"
 
 
@@ -1115,7 +1181,7 @@ def test_git_dirty_tracking_and_branch_marker(tmp_path, kite_home, monkeypatch) 
     subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=60)
     from kite.ui import git as git_ui
 
-    git_ui._status_cache.clear()
+    git_ui._probe_cache.clear()
     subprocess.run(
         ["git", "-C", str(repo), "config", "user.email", "t@t"],
         check=True,
@@ -1128,13 +1194,13 @@ def test_git_dirty_tracking_and_branch_marker(tmp_path, kite_home, monkeypatch) 
     )
     assert git_dirty_count(str(repo)) == 0
     (repo / "new.txt").write_text("x", encoding="utf-8")
-    git_ui._status_cache.clear()
+    git_ui._probe_cache.clear()
     assert git_dirty_count(str(repo)) == 1
 
     chat = ChatSession(cwd=str(repo))
     buf = StringIO()
     chat.console = Console(file=buf, force_terminal=False)
-    git_ui._status_cache.clear()
+    git_ui._probe_cache.clear()
     chat._refresh_git_state(announce=True)
     assert chat.state.git_dirty == 1
     assert "1 uncommitted file" in buf.getvalue()
@@ -1228,13 +1294,13 @@ def test_git_helpers_survive_missing_binary_and_cache_repo(tmp_path, monkeypatch
         raise FileNotFoundError("no git")
 
     monkeypatch.setattr(git_ui.subprocess, "run", _boom)
-    git_ui._repo_cache.clear()
+    git_ui._probe_cache.clear()
     assert git_ui.is_repo(tmp_path) is False
     assert git_ui.git_dirty_count(tmp_path) == -1
     assert git_ui.git_branch(tmp_path) == ""
     assert git_ui.GitCheckpoints.open(tmp_path).undo() == (False, "not a git repo — nothing to undo")
     calls.clear()
-    git_ui._repo_cache.clear()
+    git_ui._probe_cache.clear()
     assert git_ui.is_repo(tmp_path) is False
     assert git_ui.is_repo(tmp_path) is False
     assert len(calls) == 1

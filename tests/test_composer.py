@@ -22,6 +22,26 @@ def chat(workspace, kite_home, monkeypatch):
     session.display.close()
 
 
+@pytest.fixture
+def deferred_threads(monkeypatch):
+    """Capture daemon-worker targets so off-thread handoffs run deterministically."""
+    import threading
+
+    jobs: list = []
+
+    class CaptureThread:
+        def __init__(self, *, target, daemon, name):
+            assert daemon
+            self.target = target
+            jobs.append(target)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(threading, "Thread", CaptureThread)
+    return jobs
+
+
 def test_composer_interrupt_kinds_queue_and_eof(monkeypatch) -> None:
     monkeypatch.setattr(
         "prompt_toolkit.patch_stdout.patch_stdout",
@@ -593,6 +613,154 @@ def test_reasoning_support_redetects_on_model_switch(chat, monkeypatch) -> None:
     chat.provider, chat.model = "groq", "model-b"
     assert chat._reasoning_info_sync().model == "model-b"
     assert [model for _, model in calls] == ["model-a", "model-b"]
+
+
+def test_model_switch_coerces_stale_variant_on_cache_miss(chat, monkeypatch) -> None:
+    """A cold support cache must still re-clamp a stale variant, promptly."""
+    import kite.models.reasoning as reasoning
+    from kite.models.reasoning import ReasoningSupport
+
+    limited = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium"),
+    )
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_: None)
+    detected = MagicMock(return_value=limited)
+    monkeypatch.setattr(reasoning, "detect_reasoning", detected)
+    chat.state.reasoning = "thinking:high"
+    chat._reasoning_support = None
+    chat._reasoning_support_key = None
+    chat._model_resolved = True
+    chat.provider, chat.model = "groq", "model-b"
+
+    chat._handoff_reasoning_for_model("groq", "model-b")
+
+    # high is not offered: coercion clamps to the nearest supported level.
+    assert chat.state.reasoning == "thinking:medium"
+    detected.assert_called_once_with("groq", "model-b")
+
+
+def _cold_handoff_setup(chat, monkeypatch):
+    import kite.models.reasoning as reasoning
+    from kite.models.reasoning import ReasoningSupport
+
+    limited = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium"),
+    )
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_: None)
+    chat._detect_reasoning_bounded = lambda *_a, **_k: limited  # worker resolves support
+    chat._reasoning_info_sync = lambda **_k: None  # bounded detect misses
+    chat.state.reasoning = "thinking:high"
+    chat._model_resolved = True
+    chat.provider, chat.model = "groq", "new"
+    return limited
+
+
+def test_inconclusive_handoff_parks_auto_then_clamps_when_known(
+    chat, monkeypatch, deferred_threads
+) -> None:
+    """A cold switch keeps the preference and clamps once levels resolve."""
+    limited = _cold_handoff_setup(chat, monkeypatch)
+
+    chat._handoff_reasoning_for_model("groq", "new")
+
+    assert chat.state.reasoning == "auto"  # safe while levels unknown
+    assert len(deferred_threads) == 1
+    deferred_threads[0]()  # off-thread detection resolves support
+
+    assert chat.state.reasoning == "thinking:medium"
+    assert chat._reasoning_support is limited
+    assert chat._reasoning_support_key == ("groq", "new")  # published key fits current model
+
+
+def test_switch_between_guard_and_publication_does_not_publish_stale_support(
+    chat, monkeypatch, deferred_threads
+) -> None:
+    """A switch reentering the worker's critical section must block publication."""
+    import kite.models.reasoning as reasoning
+    from kite.models.reasoning import ReasoningSupport
+
+    limited = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium"),
+    )
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_: None)
+    chat._reasoning_info_sync = lambda **_k: None
+    chat._detect_reasoning_bounded = lambda *_a, **_k: limited
+    chat.state.reasoning = "thinking:high"
+    chat._model_resolved = True
+    chat.provider, chat.model = "groq", "old"
+
+    original_coerce = reasoning.coerce_reasoning_for_model
+
+    def _switch_inside_worker(raw, info):
+        # Reentrant on the worker thread (RLock): a newer switch bumps the
+        # generation and changes the model while the worker holds the lock.
+        chat.provider, chat.model = "groq", "newer"
+        chat._handoff_reasoning_for_model("groq", "newer")
+        return original_coerce(raw, info)
+
+    monkeypatch.setattr(reasoning, "coerce_reasoning_for_model", _switch_inside_worker)
+
+    chat._handoff_reasoning_for_model("groq", "old")
+    assert chat.state.reasoning == "auto"
+    before_support, before_key = chat._reasoning_support, chat._reasoning_support_key
+
+    deferred_threads[0]()  # worker runs; switch occurs between guard and publish
+
+    assert (chat.provider, chat.model) == ("groq", "newer")
+    # Stale support must not be published for the newer model.
+    assert chat._reasoning_support is before_support
+    assert chat._reasoning_support_key == before_key
+    assert chat.state.reasoning == "auto"
+
+
+def test_deferred_handoff_does_not_override_later_user_choice(
+    chat, monkeypatch, deferred_threads
+) -> None:
+    _cold_handoff_setup(chat, monkeypatch)
+
+    chat._handoff_reasoning_for_model("groq", "new")
+    assert chat.state.reasoning == "auto"
+    chat._commit_reasoning("fast:low", label="variant")  # explicit user choice
+
+    deferred_threads[0]()
+
+    assert chat.state.reasoning == "fast:low"
+
+
+def test_deferred_handoff_does_not_override_newer_switch(
+    chat, monkeypatch, deferred_threads
+) -> None:
+    _cold_handoff_setup(chat, monkeypatch)
+
+    chat._handoff_reasoning_for_model("groq", "new")
+    chat.state.reasoning = "thinking:high"  # new preference before another switch
+    chat.provider, chat.model = "groq", "newer"  # the switch sets state first
+    chat._handoff_reasoning_for_model("groq", "newer")
+    assert len(deferred_threads) == 2
+
+    deferred_threads[0]()  # stale job must not touch current state
+    assert chat.state.reasoning == "auto"
+
+    deferred_threads[1]()  # newest job applies to the current model
+    assert chat.state.reasoning == "thinking:medium"
 
 
 def test_composer_data_paths_never_block_typing(chat, monkeypatch) -> None:

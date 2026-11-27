@@ -130,7 +130,7 @@ Glossary for humans and agents. **Terms and boundaries only** — no file paths,
 
 **Model** — A provider-specific model id (e.g. `groq/llama-3.3-70b-versatile`).
 
-**Reasoning / effort** — Optional extended-thinking vs low-latency settings when the provider advertises both (`/thinking`, `/fast`, `/reasoning`).
+**Reasoning / variant** — Optional extended-thinking vs low-latency setting when the provider advertises it. The user-facing control is `/variant` (Pi-style levels `off`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`); `/thinking`, `/reasoning`, `/effort`, `/variants` and `/fast` are hidden legacy aliases that resolve to the same command. Internally the choice is stored as a `reasoning` mode/effort string (`auto`, `off`, `fast:low`, `thinking:high`, …) and is re-clamped when the model changes.
 
 **Credential** — API key (or local endpoint) for a provider, stored in Kite home `.env`, never in the git workspace.
 

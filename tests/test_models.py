@@ -611,7 +611,7 @@ def _menu_support() -> ReasoningSupport:
     )
 
 
-def test_thinking_level_clamp_and_apply(workspace, kite_home, monkeypatch) -> None:
+def test_variant_strict_levels_and_clamp_helper(workspace, kite_home, monkeypatch) -> None:
     from io import StringIO
 
     from rich.console import Console
@@ -621,13 +621,11 @@ def test_thinking_level_clamp_and_apply(workspace, kite_home, monkeypatch) -> No
     from tests.conftest import strip_ansi
 
     info = _menu_support()
-    # Exact hits pass through.
+    # Clamping remains for model-switch coercion, not for the /variant command.
     assert clamp_thinking_level("high", info) == ("thinking:high", "high")
     assert clamp_thinking_level("off", info) == ("off", "off")
-    # Unsupported xhigh/max clamp down to high (nearest; ties prefer cheaper).
     assert clamp_thinking_level("xhigh", info) == ("thinking:high", "high")
     assert clamp_thinking_level("max", info) == ("thinking:high", "high")
-    # Unknown tokens and level-less models give nothing.
     assert clamp_thinking_level("turbo", info) is None
     assert clamp_thinking_level("high", ReasoningSupport(False, False, False, False)) is None
 
@@ -640,12 +638,13 @@ def test_thinking_level_clamp_and_apply(workspace, kite_home, monkeypatch) -> No
     session._reasoning_support_key = ("groq", "llama")
     session._ensure_model_resolved = lambda: None  # type: ignore[method-assign]
 
-    session._apply_thinking_level("xhigh")
-    assert session.state.reasoning == "thinking:high"
+    # /variant is strict: an unadvertised level is rejected, not clamped.
+    session._slash_variant("xhigh")
+    assert session.state.reasoning == "auto"
     out = strip_ansi(buf.getvalue())
-    assert "xhigh unavailable" in out and "high" in out
+    assert "xhigh is not offered" in out and "|high" in out
 
-    session._apply_thinking_level("high")
+    session._slash_variant("high")
     assert session.state.reasoning == "thinking:high"
     session.display.close()
 

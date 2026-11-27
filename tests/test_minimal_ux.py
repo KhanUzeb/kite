@@ -28,7 +28,7 @@ def test_cli_help_and_parser_lists_usable_commands(kite_home) -> None:
     assert "kite keys" in full
     parser = build_parser()
     help_text_cli = parser.format_help()
-    for name in ("run", "resume", "setup", "sessions", "tasks", "help", "models", "chat", "exec", "config", "bench", "theme", "font", "variants"):
+    for name in ("run", "resume", "setup", "sessions", "tasks", "help", "models", "chat", "exec", "config", "bench", "theme", "font", "variant", "variants"):
         assert name in help_text_cli
     assert "maintainer" not in help_text_cli
     assert parser.parse_args(["chat"]).command == "chat"
@@ -48,8 +48,11 @@ def test_repl_help_and_legacy_slash_dispatch(workspace, kite_home) -> None:
     assert "/select" not in brief
     assert "/compact" in full
     assert "/select" in full
-    assert parse_slash("/fast").command == "thinking"
+    assert parse_slash("/fast").command == "variant"
     assert parse_slash("/fast").legacy == "fast"
+    for retired in ("/variants", "/thinking", "/reasoning", "/effort"):
+        assert parse_slash(retired).command == "variant"
+        assert parse_slash(retired).legacy == ""
     assert parse_slash("/cost").command == "status"
     assert not is_primary_slash("compact")
     assert is_primary_slash("plan")
@@ -83,7 +86,9 @@ def test_completion_cues_and_variants_when_reasoning_is_unavailable(workspace, k
     assert "explain" in names
     assert "commit" in names
     assert "cost" not in names
-    assert "variants" in names and "thinking" in names
+    assert "variant" in names
+    for retired in ("variants", "thinking", "reasoning", "effort", "fast"):
+        assert retired not in names
 
     origins = {_slash_origin(s, index) for s in specs}
     assert "builtin" in origins
@@ -111,18 +116,39 @@ def test_completion_cues_and_variants_when_reasoning_is_unavailable(workspace, k
         )
     )
     completion_names = {completion.text for completion in bare_completions}
-    assert {"model", "plan", "compact", "explain", "commit", "tools", "variants", "thinking"} <= completion_names
-    # /reasoning is a documented builtin even though it stays out of the
-    # redesigned level picker; hidden aliases must not crowd the menu.
-    assert "reasoning" in completion_names
-    assert {"effort", "fast"}.isdisjoint(completion_names)
-    assert {c.text for c in bare_completer.get_completions(Document("/reas"), None)} == {"reasoning"}
+    assert {"model", "plan", "compact", "explain", "commit", "tools"} <= completion_names
+    assert "variant" in completion_names
+    # Retired names and the /fast shortcut stay parseable but must not crowd
+    # the bare-slash menu; the unified command is the only one discoverable.
+    assert {"variants", "thinking", "reasoning", "effort", "fast"}.isdisjoint(completion_names)
+    assert {c.text for c in bare_completer.get_completions(Document("/var"), None)} == {"variant"}
+    assert {c.text for c in bare_completer.get_completions(Document("/reas"), None)} == set()
 
-    args = {
-        completion.text
-        for completion in bare_completer.get_completions(Document("/variants "), None)
-    }
-    assert {"off", "low", "medium", "high"} <= args
+    for typed in ("/variant ", "/variants ", "/fast "):
+        args = {
+            completion.text
+            for completion in bare_completer.get_completions(Document(typed), None)
+        }
+        assert {"off", "low", "medium", "high"} <= args
+
+
+def test_hidden_retired_aliases_are_not_suggested(workspace, kite_home) -> None:
+    """Did-you-mean must offer discoverable commands, not hidden aliases."""
+    from kite.cli.slash import CommandIndex, resolve_slash
+
+    index = CommandIndex.load(workspace)
+    for typo, hidden in (
+        ("/thinkng", "/thinking"),
+        ("/reasong", "/reasoning"),
+        ("/varaints", "/variants"),
+        ("/fats", "/fast"),
+    ):
+        message = resolve_slash(typo, index).message
+        assert hidden not in message
+        assert "did you mean" in message or "type /help" in message
+    # Visible commands still get the normal suggestion.
+    assert "did you mean '/status'?" in resolve_slash("/staus", index).message
+    assert "did you mean '/variant'?" in resolve_slash("/varaints", index).message
 
 
 def test_status_footer_modes() -> None:

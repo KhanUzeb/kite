@@ -217,6 +217,95 @@ def test_open_session_tails_transcript_and_restores_reasoning(workspace, kite_ho
     assert chat._session_id == session.id
 
 
+def test_open_session_coerces_stale_reasoning_for_model(workspace, kite_home, monkeypatch) -> None:
+    from io import StringIO
+
+    from rich.console import Console
+
+    import kite.models.reasoning as reasoning
+    from kite.models.reasoning import ReasoningSupport
+    from kite.ui.repl import ChatSession
+    from tests.conftest import strip_ansi
+
+    limited = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium"),
+    )
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_: limited)
+    monkeypatch.setattr(ChatSession, "_warm_auth_probes", lambda self: None)
+    monkeypatch.setattr("kite.models.litellm_model.prewarm_litellm", lambda: None)
+
+    session = create_session(task="demo", cwd=str(workspace), provider="groq", model="llama-x")
+    session.note_runtime("groq", "llama-x", "thinking:high")
+
+    chat = ChatSession(cwd=str(workspace))
+    buf = StringIO()
+    chat.console = Console(file=buf, force_terminal=False, width=100)
+    chat._open_session(session.id)
+    out = strip_ansi(buf.getvalue())
+
+    assert chat.state.reasoning == "thinking:medium"
+    assert "variant" in out and "llama-x" in out
+    chat.display.close()
+
+
+def test_cold_resume_retains_variant_then_clamps_when_known(
+    workspace, kite_home, monkeypatch
+) -> None:
+    """Cold resume keeps the saved level, then clamps off-thread once known."""
+    import threading
+    from io import StringIO
+
+    from rich.console import Console
+
+    import kite.models.reasoning as reasoning
+    from kite.models.reasoning import ReasoningSupport
+    from kite.ui.repl import ChatSession
+
+    limited = ReasoningSupport(
+        supported=True,
+        can_fast=True,
+        can_thinking=True,
+        can_disable=True,
+        thinking_kwargs={"reasoning_effort": "high"},
+        fast_kwargs={"reasoning_effort": "low"},
+        efforts=("none", "low", "medium"),
+    )
+    monkeypatch.setattr(reasoning, "peek_reasoning", lambda *_: None)
+    jobs: list = []
+
+    class CaptureThread:
+        def __init__(self, *, target, daemon, name):
+            jobs.append(target)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(threading, "Thread", CaptureThread)
+    monkeypatch.setattr(ChatSession, "_warm_auth_probes", lambda self: None)
+    monkeypatch.setattr("kite.models.litellm_model.prewarm_litellm", lambda: None)
+
+    chat = ChatSession(cwd=str(workspace), provider="groq", model="llama-x")
+    chat.console = Console(file=StringIO(), force_terminal=False, width=120)
+    chat._reasoning_info_sync = lambda **_k: None  # bounded detect misses
+    chat._detect_reasoning_bounded = lambda *_a, **_k: limited  # worker resolves
+    chat.state.reasoning = "thinking:high"
+    chat._model_resolved = True
+
+    chat._handoff_reasoning_for_model("groq", "llama-x", preserve_unknown=True)
+
+    assert chat.state.reasoning == "thinking:high"  # restore contract first
+    assert len(jobs) == 1
+    jobs[0]()
+    assert chat.state.reasoning == "thinking:medium"  # clamped when levels known
+    chat.display.close()
+
+
 def test_checkpoint_redacts_and_confines_session_id(kite_home) -> None:
     import stat
 
