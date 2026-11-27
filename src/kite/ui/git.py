@@ -35,46 +35,88 @@ def _run(cwd: str | Path, *args: str, timeout: int = 20) -> subprocess.Completed
 
 
 _BRANCH_TTL = 4.0
-_branch_cache: dict[str, tuple[float, str]] = {}
+_REPO_TTL = 30.0
+_STATUS_TTL = 4.0
+
+# One status walk replaces the old rev-parse + rev-parse + status trio. It is
+# the most expensive of the three, so it owns the timeout; a hung git still
+# degrades to "no repo / no branch / -1 files" exactly like the old helpers.
+_PROBE_TIMEOUT = 10
+
+
+@dataclass(frozen=True)
+class _GitProbe:
+    """Snapshot from one ``git status --porcelain=v1 --branch`` invocation."""
+
+    at: float
+    is_repo: bool
+    branch: str
+    dirty: int
+
+
+_probe_cache: dict[str, _GitProbe] = {}
+
+
+def _branch_from_header(header: str) -> str:
+    """Map a ``## `` header to what ``rev-parse --abbrev-ref HEAD`` returned.
+
+    Detached HEAD is reported as ``HEAD (no branch)``; the old probe returned
+    the literal ``HEAD``. An unborn branch made rev-parse fail, so it returns
+    ``""`` — do not start surfacing the configured initial branch name.
+    """
+    if header.startswith("No commits yet on ") or header.startswith("Initial commit on "):
+        return ""
+    if header.startswith("HEAD (no branch)"):
+        return "HEAD"
+    name = header.split("...", 1)[0]
+    name = name.split(" [", 1)[0]
+    return name.strip()
+
+
+def _probe_now(cwd: str | Path) -> _GitProbe:
+    try:
+        proc = _run(cwd, "git", "status", "--porcelain=v1", "--branch", timeout=_PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        proc = None
+    # Stamp at completion, not at the start of the call: a probe that burns the
+    # full 10s timeout would otherwise produce a snapshot already older than
+    # the 4s dirty/branch TTL, so every subsequent call spawns a fresh probe.
+    completed_at = time.monotonic()
+    if proc is None or proc.returncode != 0:
+        # Not a work tree (outside a repo, bare repo, or inside .git), or git
+        # failed outright: every helper reports its "unavailable" sentinel.
+        return _GitProbe(at=completed_at, is_repo=False, branch="", dirty=-1)
+    lines = (proc.stdout or "").splitlines()
+    header = lines[0] if lines and lines[0].startswith("## ") else ""
+    body = lines[1:] if header else lines
+    return _GitProbe(
+        at=completed_at,
+        is_repo=True,
+        branch=_branch_from_header(header[3:]) if header else "",
+        dirty=sum(1 for line in body if line.strip()),
+    )
+
+
+def _probe(cwd: str | Path, ttl: float) -> _GitProbe:
+    """Return the cached snapshot, refreshing it with one git call when stale."""
+    key = str(cwd)
+    now = time.monotonic()
+    hit = _probe_cache.get(key)
+    if hit is not None and now - hit.at < ttl:
+        return hit
+    probe = _probe_now(cwd)
+    _probe_cache[key] = probe
+    return probe
 
 
 def git_branch(cwd: str | Path) -> str:
-    import time
-
-    key = str(cwd)
-    hit = _branch_cache.get(key)
-    now = time.monotonic()
-    if hit is not None and now - hit[0] < _BRANCH_TTL:
-        return hit[1]
-    try:
-        proc = _run(cwd, "git", "rev-parse", "--abbrev-ref", "HEAD", timeout=2)
-    except subprocess.TimeoutExpired:
-        _branch_cache[key] = (now, "")
-        return ""
-    branch = (proc.stdout or "").strip() if proc.returncode == 0 else ""
-    _branch_cache[key] = (now, branch)
-    return branch
-
-
-_REPO_TTL = 30.0
-_repo_cache: dict[str, tuple[float, bool]] = {}
+    """Current branch name; ``HEAD`` when detached, ``""`` on unborn/failure."""
+    return _probe(cwd, _BRANCH_TTL).branch
 
 
 def is_repo(cwd: str | Path) -> bool:
     """TTL-cached work-tree check — called on hot paths, must not spawn git every time."""
-    key = str(cwd)
-    hit = _repo_cache.get(key)
-    now = time.monotonic()
-    if hit is not None and now - hit[0] < _REPO_TTL:
-        return hit[1]
-    proc = _run(cwd, "git", "rev-parse", "--is-inside-work-tree")
-    result = proc.returncode == 0 and (proc.stdout or "").strip() == "true"
-    _repo_cache[key] = (now, result)
-    return result
-
-
-_STATUS_TTL = 4.0
-_status_cache: dict[str, tuple[float, int]] = {}
+    return _probe(cwd, _REPO_TTL).is_repo
 
 
 def git_dirty_count(cwd: str | Path) -> int:
@@ -82,33 +124,21 @@ def git_dirty_count(cwd: str | Path) -> int:
 
     Returns -1 when cwd is not a git repo or git fails — never raises.
     """
-    key = str(cwd)
-    hit = _status_cache.get(key)
-    now = time.monotonic()
-    if hit is not None and now - hit[0] < _STATUS_TTL:
-        return hit[1]
-    count = -1
-    try:
-        proc = _run(cwd, "git", "status", "--porcelain=v1", timeout=10)
-    except subprocess.TimeoutExpired:
-        proc = None
-    if proc is not None and proc.returncode == 0:
-        count = sum(1 for line in (proc.stdout or "").splitlines() if line.strip())
-    _status_cache[key] = (now, count)
-    return count
+    return _probe(cwd, _STATUS_TTL).dirty
 
 
 def invalidate_git_status_cache(cwd: str | Path | None = None) -> None:
-    """Drop memoized dirty counts after a git mutation.
+    """Drop the memoized snapshot after a git mutation.
 
     The footer reads a 4s TTL snapshot. A checkpoint commit inside that window
     would otherwise leave the pre-commit count visible for the rest of the
     idle turn, since ``git_dirty_count`` is only probed at turn boundaries.
+    Branch and repo state share the snapshot, so they are refreshed too.
     """
     if cwd is None:
-        _status_cache.clear()
+        _probe_cache.clear()
     else:
-        _status_cache.pop(str(cwd), None)
+        _probe_cache.pop(str(cwd), None)
 
 
 def _short_task(text: str, limit: int = 72) -> str:
